@@ -2,7 +2,6 @@ export {
   prepareAgentRuntime,
   buildModelPoolWithFallbacks,
   type AgentRuntimeRunRefs,
-  type PendingAskQuestionEntry,
   type PreparedAgentRuntime,
   type PrepareAgentRuntimeInput
 } from './AgentRuntimeFactory'

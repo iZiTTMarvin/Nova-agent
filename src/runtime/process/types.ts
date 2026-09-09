@@ -20,7 +20,7 @@ export interface RegisterProcessInput {
   destructive: boolean
   /** 会话首个 read 之前已产出的文本（调用方已净化） */
   seedOutput: string
-  /** 终止进程树；必须可安全重复调用；实现方保证最终 resolve */
+  /** 终止进程树；必须可安全重复调用；失败须 reject，退出由 child 另行确认。 */
   killTree: () => Promise<void>
   /** 向进程 stdin 写入（持久会话 stdin 保持打开）；进程退出后不可用 */
   writeStdin: (data: string) => Promise<void>
@@ -62,6 +62,8 @@ export type ProcessErrorCode =
   | 'active-limit'
   | 'retained-bytes-limit'
   | 'unsupported-on-windows'
+  | 'termination-timeout'
+  | 'termination-failed'
 
 export class ProcessSessionError extends Error {
   readonly code: ProcessErrorCode

@@ -39,6 +39,7 @@ function fakeChild(opts: { exitCode?: number | null; signalCode?: string | null 
 }
 
 function makeInput(overrides: Partial<RegisterProcessInput> = {}): RegisterProcessInput {
+  const child = fakeChild()
   return {
     owner: { sessionId: 'sess-A', runId: 'run-1' },
     source: 'main-run',
@@ -46,9 +47,9 @@ function makeInput(overrides: Partial<RegisterProcessInput> = {}): RegisterProce
     workdir: 'D:/ws',
     destructive: false,
     seedOutput: '',
-    killTree: async () => {},
+    killTree: async () => { child.emitClose(0) },
     writeStdin: async () => {},
-    child: fakeChild(),
+    child,
     checkpointBaseline: null,
     ...overrides
   }
@@ -185,10 +186,12 @@ describe('ProcessRegistry', () => {
     expect(registry.describe(h2.ref, 'sess-A').exitCode).toBe(2)
   })
 
-  it('child error 事件同样触发终态登记', () => {
+  it('child error 不证明退出，后续 close 才提交终态', () => {
     const child = fakeChild()
     const h = registry.register(makeInput({ child }))
     child.emitError()
+    expect(registry.describe(h.ref, 'sess-A')).toMatchObject({ state: 'running', exitCode: null })
+    child.emitClose(null)
     expect(registry.describe(h.ref, 'sess-A')).toMatchObject({ state: 'exited', exitCode: null })
   })
 
@@ -245,35 +248,115 @@ describe('ProcessRegistry', () => {
     expect(kills).toBe(0)
   })
 
-  it('killTree 超时未确认时移除记录并输出诊断，绝不永久等待', async () => {
+  it.each(['pending', 'resolved'] as const)('killTree %s 但没有退出确认时有界失败，保留身份并接受迟到退出', async kind => {
     const slow = new ProcessRegistry({ terminateTimeoutMs: 20 })
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const h = slow.register(
-      makeInput({ command: 'hung-process', killTree: () => new Promise<void>(() => {}) })
-    )
-    const r = await slow.stopSession(h.ref, 'sess-A')
-    expect(r.exitCode).toBeNull()
+    const child = fakeChild()
+    let confirmTree = false
+    const h = slow.register(makeInput({
+      child,
+      seedOutput: 'large output',
+      checkpointBaseline: new Map(),
+      killTree: () => kind === 'pending' && !confirmTree ? new Promise<void>(() => {}) : Promise.resolve()
+    }))
+    await expect(slow.terminateForSession('sess-A')).rejects.toMatchObject({ errors: [{ code: 'termination-timeout' }] })
+    expect(slow.describe(h.ref, 'sess-A')).toMatchObject({ state: 'running', exitCode: null })
+    expect(slow.getCheckpointBaseline(h.ref, 'sess-A')).toBeNull()
+    h.append('late output')
+    expect(slow.readPage(h.ref, 'sess-A').page.text).toBe('')
+    await expect(slow.waitForOutput(h.ref, 'sess-A', { silenceMs: 1, maxMs: 10 })).resolves.toBe('quiet')
+    child.emitClose(7)
+    expect(slow.describe(h.ref, 'sess-A')).toMatchObject({ state: 'exited', exitCode: 7 })
+    if (kind === 'pending') {
+      await expect(slow.terminateForSession('sess-A')).rejects.toMatchObject({ errors: [{ code: 'termination-timeout' }] })
+      expect(slow.describe(h.ref, 'sess-A').state).toBe('exited')
+    }
+    confirmTree = true
+    await slow.terminateForSession('sess-A')
     expectCode(() => slow.describe(h.ref, 'sess-A'), 'unknown-ref')
-    const msg = errSpy.mock.calls.map((c) => c.join(' ')).join('\n')
-    expect(msg).toContain(h.ref)
-    expect(msg).toContain('hung-process')
   })
 
-  it('killTree 抛出异常按超时路径处理', async () => {
-    const slow = new ProcessRegistry({ terminateTimeoutMs: 5000 })
-    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    const h = slow.register(
-      makeInput({ killTree: async () => { throw new Error('kill failed') } })
-    )
-    await slow.stopSession(h.ref, 'sess-A')
-    expectCode(() => slow.describe(h.ref, 'sess-A'), 'unknown-ref')
-    expect(errSpy).toHaveBeenCalled()
+  it('killTree 拒绝保留记录，定向重试确认退出后才移除', async () => {
+    const child = fakeChild()
+    let attempts = 0
+    const h = registry.register(makeInput({ child, killTree: async () => {
+      if (++attempts === 1) throw new Error('kill denied')
+      child.emitClose(null)
+    } }))
+    await expect(registry.terminateAll()).rejects.toThrow('kill denied')
+    expect(registry.describe(h.ref, 'sess-A').state).toBe('running')
+    await registry.terminateAll()
+    expect(attempts).toBe(2)
+    expectCode(() => registry.describe(h.ref, 'sess-A'), 'unknown-ref')
+  })
+
+  it('根退出后 stop 仍加入正在终止的树，失败重试不得丢弃后代', async () => {
+    const child = fakeChild()
+    let rejectTree!: (error: Error) => void
+    const killTree = vi.fn(() => new Promise<void>((_resolve, reject) => { rejectTree = reject }))
+    const h = registry.register(makeInput({ child, killTree }))
+    const first = registry.stopSession(h.ref, 'sess-A')
+    const firstRejected = expect(first).rejects.toThrow('descendant denied')
+    await Promise.resolve()
+    child.emitClose(0)
+    let secondSettled = false
+    const second = registry.stopSession(h.ref, 'sess-A')
+    void second.then(() => { secondSettled = true }, () => { secondSettled = true })
+    const secondRejected = expect(second).rejects.toThrow('descendant denied')
+    await Promise.resolve()
+    expect(secondSettled).toBe(false)
+    rejectTree(new Error('descendant denied'))
+    await Promise.all([firstRejected, secondRejected])
+    killTree.mockRejectedValueOnce(new Error('descendant still denied'))
+    await expect(registry.terminateForSession('sess-A')).rejects.toThrow('descendant still denied')
+    expect(registry.describe(h.ref, 'sess-A').state).toBe('exited')
+    killTree.mockResolvedValueOnce()
+    await registry.terminateForSession('sess-A')
+    expect(killTree).toHaveBeenCalledTimes(3)
+    expectCode(() => registry.describe(h.ref, 'sess-A'), 'unknown-ref')
+  })
+
+  it.each(['all', 'session', 'run'] as const)('%s 清理等待全部有界尝试后才汇总失败', async scope => {
+    vi.useFakeTimers()
+    try {
+      const bounded = new ProcessRegistry({ terminateTimeoutMs: 100 })
+      const failed = bounded.register(makeInput({ killTree: async () => { throw new Error('first denied') } }))
+      const held = bounded.register(makeInput({ killTree: () => new Promise<void>(() => {}) }))
+      let completed = false
+      const cleanup = scope === 'all' ? bounded.terminateAll()
+        : scope === 'session' ? bounded.terminateForSession('sess-A')
+          : bounded.terminateForRun('run-1', { includeMainRun: true })
+      void cleanup.then(() => { completed = true }, () => { completed = true })
+      const rejected = expect(cleanup).rejects.toMatchObject({
+        errors: [{ code: 'termination-failed' }, { code: 'termination-timeout' }]
+      })
+      await vi.advanceTimersByTimeAsync(99)
+      expect(completed).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await rejected
+      expect(bounded.describe(failed.ref, 'sess-A').state).toBe('running')
+      expect(bounded.describe(held.ref, 'sess-A').state).toBe('running')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('并发 stop 与清理共享终止请求，不能排在悬挂的 stdin 写入后', async () => {
+    const child = fakeChild()
+    const killTree = vi.fn(async () => { child.emitClose(0) })
+    const h = registry.register(makeInput({ child, killTree, writeStdin: () => new Promise<void>(() => {}) }))
+    void registry.writeInput(h.ref, 'sess-A', 'blocked')
+    const stopped = registry.stopSession(h.ref, 'sess-A')
+    await registry.terminateAll()
+    expect((await stopped).exitCode).toBe(0)
+    expect(killTree).toHaveBeenCalledTimes(1)
+    expectCode(() => registry.describe(h.ref, 'sess-A'), 'unknown-ref')
   })
 
   it('terminateForSession 只终止目标会话，其它会话不受影响', async () => {
     const kills: string[] = []
+    const childA1 = fakeChild()
     const a1 = registry.register(
-      makeInput({ command: 'a1', killTree: async () => { kills.push('a1') } })
+      makeInput({ child: childA1, command: 'a1', killTree: async () => { kills.push('a1'); childA1.emitClose(0) } })
     )
     const childA2 = fakeChild()
     registry.register(

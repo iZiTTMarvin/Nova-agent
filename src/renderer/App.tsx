@@ -4,7 +4,6 @@ import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
 import { neutralIconRegistry } from '@astryxdesign/theme-neutral'
 import { parchmentTheme } from './styles/parchment'
-import { useAgentStore } from './stores/useAgentStore'
 import { useChatStore } from './stores/useChatStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
@@ -22,7 +21,7 @@ import { useCodeIndexStore } from './stores/useCodeIndexStore'
 import { createStreamDeltaBuffer } from './lib/streamDeltaBuffer'
 import { installStreamingPerfMonitor } from './lib/streamingPerf'
 import { gateAgentEvent } from './lib/agentEventGate'
-import { isPlanReviewPermissionPayload } from '../shared/planReview'
+import { isTerminalRunStatus } from '../shared/run/types'
 import type { AppUpdateSnapshot } from '../shared/update'
 import { APP_UPDATE_STATE_CHANGED, GET_APP_UPDATE_STATE } from '../shared/ipc/channels'
 import './App.css'
@@ -65,11 +64,6 @@ function App(): React.ReactNode {
   const handleDiffUpdate = useChatStore(state => state.handleDiffUpdate)
   const handleMessageEnd = useChatStore(state => state.handleMessageEnd)
   const handleError = useChatStore(state => state.handleError)
-
-  // agent：权限 / askQuestion / 轮次归属
-  const handlePermissionRequest = useAgentStore(state => state.handlePermissionRequest)
-  const handleAskQuestionRequest = useAgentStore(state => state.handleAskQuestionRequest)
-  const clearAskQuestionRequest = useAgentStore(state => state.clearAskQuestionRequest)
 
   // todo: 由事件总线独立维护，订阅 IPC 即可
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
@@ -179,12 +173,6 @@ function App(): React.ReactNode {
       handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result, data.parentToolCallId, data.failed, data.processHandle)
     }))
 
-    // 监听：Agent 请求用户确认权限
-    const unsubPermissionRequest = window.api.on('agent:permission-request', gateAgentEvent('permission-request', (data) => {
-      if (isPlanReviewPermissionPayload({ toolName: data.toolName, args: data.args })) return
-      handlePermissionRequest(data)
-    }))
-
     // 监听：Agent 执行中实时 diff 更新
     const unsubDiffUpdate = window.api.on('agent:diff-update', gateAgentEvent('diff-update', (data) => {
       handleDiffUpdate(data.messageId, data.phase, data.diffs, data.reviews)
@@ -196,33 +184,11 @@ function App(): React.ReactNode {
       handleError(data.messageId, data.error)
     }))
 
-    // 监听：askQuestion 工具请求 → 写入 pendingAskQuestion 触发面板渲染
-    // 旧事件兼容：无 sessionId 时仍写入；有 sessionId 时仅当前会话渲染
-    const unsubAskQuestionRequest = window.api.on('agent:ask-question-request', (data) => {
-      const activeSessionId = useChatStore.getState().currentSessionId
-      if (data.sessionId && activeSessionId && data.sessionId !== activeSessionId) {
-        // 非当前会话：只刷新徽标，不抢当前会话卡片
-        void useRunStore.getState().refreshWaitingBadges()
-        return
-      }
-      handleAskQuestionRequest({
-        requestId: data.requestId,
-        questions: data.questions,
-        sessionId: data.sessionId,
-        messageId: data.messageId,
-        runId: data.runId,
-        interactionId: data.interactionId,
-        version: data.version
-      })
-    })
+    // 权限与提问仅由完整 run:snapshot 恢复，不从流式通知创建第二份 pending。
 
-    // 监听：askQuestion 已被 resolve（用户回答 / dismiss / guardFollowup / cancel）→ 清前端状态
-    const unsubAskQuestionResolved = window.api.on('agent:ask-question-resolved', (data) => {
-      clearAskQuestionRequest(data.requestId)
-    })
-
-    // RunCoordinator 权威快照（带 sequence）；缺口时 store 内重拉
+    // 完整快照可合帧跳号；终态先刷出尚在缓冲中的最后一段展示。
     const unsubRunSnapshot = window.api.on('run:snapshot', (data) => {
+      if (isTerminalRunStatus(data.snapshot.status)) buffer.flushNow()
       useRunStore.getState().handleSnapshotEvent(data.snapshot, data.event)
       useSubagentProjectionStore.getState().applyRunSnapshot(data.snapshot)
     })
@@ -330,11 +296,8 @@ function App(): React.ReactNode {
       unsubToolCallDelta()
       unsubToolCall()
       unsubToolResult()
-      unsubPermissionRequest()
       unsubDiffUpdate()
       unsubError()
-      unsubAskQuestionRequest()
-      unsubAskQuestionResolved()
       unsubRunSnapshot()
       unsubCodeIndexStatus()
       unsubSubagentLinked()
@@ -358,10 +321,7 @@ function App(): React.ReactNode {
     handleToolCall,
     handleToolResult,
     handleDiffUpdate,
-    handlePermissionRequest,
     handleError,
-    handleAskQuestionRequest,
-    clearAskQuestionRequest,
     applyTodoUpdate,
     applyComposeStageUpdate,
     applyComposePlanApprovalUpdate,

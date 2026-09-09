@@ -7,7 +7,7 @@ import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import type { SpawnSubagentPort } from '../../../../src/runtime/subagents'
 
 describe('runSkillFork durable child consumer', () => {
-  it('slash fork 用父 message 身份建立 Child Session，并持久化 skill 可读根', async () => {
+  it.each(['completed', 'failed', 'cancelled', 'interrupted', 'incomplete'] as const)('slash fork 保留子任务 %s 终态与父 message 身份', async status => {
     const skillsDir = join(tmpdir(), `fork-skill-${Date.now()}`)
     const skillDir = join(skillsDir, 'fork-ref')
     mkdirSync(join(skillDir, 'references'), { recursive: true })
@@ -19,7 +19,8 @@ describe('runSkillFork durable child consumer', () => {
     const spawn = vi.fn<SpawnSubagentPort['spawn']>(async () => ({
       childSessionId: 'child-skill',
       childRunId: 'run-skill',
-      status: 'completed',
+      status,
+      ...(status === 'incomplete' ? { incompleteReason: 'max_rounds' as const } : {}),
       summary: 'FORK-REF-XYZ',
       artifactIds: [],
       startedAt: 1,
@@ -38,7 +39,8 @@ describe('runSkillFork durable child consumer', () => {
       templateContext: { workspacePath: process.cwd() }
     })
 
-    expect(result).toEqual({ success: true, summary: 'FORK-REF-XYZ' })
+    expect(result).toEqual({ status, success: status === 'completed', summary: 'FORK-REF-XYZ',
+      ...(status === 'incomplete' ? { incompleteReason: 'max_rounds' } : {}) })
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         profileId: 'fork-ref',

@@ -54,7 +54,9 @@ interface ProcessRecord {
   interrupt: (() => boolean) | undefined
   flushPendingOutput: (() => string) | undefined
   checkpointBaseline: WorkspaceSnapshot | null
-  /** 同记录写操作（write / stop）串行链 */
+  termination?: Promise<void>
+  treeCleanup: 'not-requested' | 'unconfirmed' | 'confirmed'
+  /** 同记录写操作串行链 */
   chain: Promise<unknown>
 }
 
@@ -103,12 +105,17 @@ export class ProcessRegistry {
       interrupt: input.interrupt,
       flushPendingOutput: input.flushPendingOutput,
       checkpointBaseline: input.checkpointBaseline,
+      treeCleanup: 'not-requested',
       chain: Promise.resolve()
     }
     this.records.set(ref, record)
     // child 事件是退出的自主感知通道，与调用方 handle.settle 互为双保险（settleRecord 幂等）
-    input.child.once('close', () => this.settleRecord(record, input.child.exitCode))
-    input.child.once('error', () => this.settleRecord(record, input.child.exitCode))
+    record.child.once('close', () => this.settleRecord(record, record.child.exitCode))
+    record.child.once('error', () => {
+      if (record.child.exitCode !== null || record.child.signalCode !== null) {
+        this.settleRecord(record, record.child.exitCode)
+      }
+    })
     if (input.child.exitCode !== null || input.child.signalCode !== null) {
       this.settleRecord(record, input.child.exitCode)
     }
@@ -159,10 +166,7 @@ export class ProcessRegistry {
 
   async stopSession(ref: string, sessionId: string): Promise<{ page: ReadPage; exitCode: number | null }> {
     const record = this.resolve(ref, sessionId)
-    if (record.state === 'exited') {
-      return { page: record.journal.readUnread(), exitCode: record.exitCode }
-    }
-    await this.enqueue(record, () => this.awaitTermination(record))
+    await this.awaitTermination(record)
     return { page: record.journal.readUnread(), exitCode: record.exitCode }
   }
 
@@ -244,7 +248,7 @@ export class ProcessRegistry {
 
   /** 会话范围终止：杀掉并移除该 sessionId 全部记录 */
   async terminateForSession(sessionId: string): Promise<void> {
-    await Promise.all(
+    await this.terminateRecords(
       [...this.records.values()]
         .filter((r) => r.owner.sessionId === sessionId)
         .map((r) => this.terminateRecord(r))
@@ -256,7 +260,7 @@ export class ProcessRegistry {
    * false 只杀 source==='subagent-run' 的记录，主 run 正常完成的进程跨 turn 存活。
    */
   async terminateForRun(runId: string, opts: { includeMainRun: boolean }): Promise<void> {
-    await Promise.all(
+    await this.terminateRecords(
       [...this.records.values()]
         .filter(
           (r) => r.owner.runId === runId && (opts.includeMainRun || r.source === 'subagent-run')
@@ -266,45 +270,69 @@ export class ProcessRegistry {
   }
 
   async terminateAll(): Promise<void> {
-    await Promise.all([...this.records.values()].map((r) => this.terminateRecord(r)))
+    await this.terminateRecords([...this.records.values()].map((r) => this.terminateRecord(r)))
+  }
+
+  private async terminateRecords(attempts: Promise<void>[]): Promise<void> {
+    const outcomes = await Promise.allSettled(attempts)
+    const failures: unknown[] = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : [])
+    if (failures.length > 0) {
+      throw new AggregateError(failures, `进程清理失败: ${failures.map(String).join('; ')}`)
+    }
   }
 
   resetForTests(): void {
     this.records.clear()
   }
 
-  /**
-   * 终止一个 running 记录：killTree 与超时竞速。
-   * 核心安全属性：超时未确认（含 killTree 抛异常）时释放全部 registry 侧引用，
-   * 绝不留永久等待的记录。
-   */
+  /** 终止请求与实际退出都须确认；失败保留身份，后续退出或定向重试仍可收敛。 */
   private awaitTermination(record: ProcessRecord): Promise<void> {
-    if (record.state === 'exited') return Promise.resolve()
-    return new Promise<void>((resolve) => {
+    if (record.termination) return record.termination
+    if (record.state === 'exited' && record.treeCleanup !== 'unconfirmed') return Promise.resolve()
+    record.treeCleanup = 'unconfirmed'
+    const termination = new Promise<void>((resolve, reject) => {
       let finished = false
-      const finish = () => {
+      let killCompleted = false
+      let offSettled: (() => void) | undefined
+      const finish = (error?: Error) => {
         if (finished) return
         finished = true
         clearTimeout(timer)
-        resolve()
+        offSettled?.()
+        if (error) {
+          record.journal.releaseOutput()
+          record.checkpointBaseline = null
+          record.flushPendingOutput = undefined
+          reject(error)
+        } else {
+          resolve()
+        }
+      }
+      const confirm = () => {
+        if (killCompleted && record.state === 'exited') finish()
       }
       const timer = setTimeout(() => {
-        this.dropUnresponsive(record, `killTree ${this.terminateTimeoutMs}ms 内未确认退出`)
-        finish()
+        finish(new ProcessSessionError('termination-timeout',
+          `进程终止未确认 ref=${record.ref}: ${this.terminateTimeoutMs}ms 内未确认退出`))
       }, this.terminateTimeoutMs)
+      offSettled = record.journal.onSettled(confirm)
       Promise.resolve()
         .then(() => record.killTree())
-        .then(
-          () => {
+        .then(() => {
+          if (finished) return
+          killCompleted = true
+          record.treeCleanup = 'confirmed'
+          if (record.child.exitCode !== null || record.child.signalCode !== null) {
             this.settleRecord(record, record.child.exitCode)
-            finish()
-          },
-          () => {
-            this.dropUnresponsive(record, 'killTree 抛出异常')
-            finish()
           }
-        )
+          confirm()
+        }, (error: unknown) => {
+          finish(new ProcessSessionError('termination-failed',
+            `进程终止失败 ref=${record.ref}: ${error instanceof Error ? error.message : String(error)}`))
+        })
     })
+    record.termination = termination.finally(() => { record.termination = undefined })
+    return record.termination
   }
 
   /**
@@ -315,15 +343,6 @@ export class ProcessRegistry {
     await this.awaitTermination(record)
     this.records.delete(record.ref)
     record.journal.dispose()
-  }
-
-  private dropUnresponsive(record: ProcessRecord, reason: string): void {
-    this.records.delete(record.ref)
-    record.journal.dispose()
-    console.error(
-      `[process-registry] 进程终止未确认，已放弃跟踪 ref=${record.ref} ` +
-        `command=${JSON.stringify(record.command)} reason=${reason}`
-    )
   }
 
   /** 幂等终态：首个到达的退出通知胜出，后到的不覆盖；终结前先排空缓冲输出 */

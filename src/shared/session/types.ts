@@ -11,6 +11,8 @@ export interface UserDeliveryFacts {
   userMessageId: string
   sessionPrefix: string | null
   modeInstruction: string
+  /** 缺省表示旧会话或未变换输入；不得用当前技能正文补写历史。 */
+  skillInput?: { assistantPrelude: string; userContent: string }
 }
 
 /** 工具首发表示；全文仍由 result 拥有。 */
@@ -79,6 +81,7 @@ export interface ToolBlock {
   arguments: Record<string, unknown>
   status: 'running' | 'success' | 'error'
   result?: string
+  processOutcome?: import('../tools/types').ToolProcessOutcome
   artifactId?: string
   truncationMeta?: ToolTruncationMeta
 }

@@ -56,6 +56,10 @@ export function reconcileAgentTurnTerminal(
     })
     return
   }
+  if (outcome.status === 'interrupted') {
+    coordinator.commitTerminal({ runId, status: 'interrupted', reason: outcome.reason })
+    return
+  }
   coordinator.commitTerminal({
     runId,
     status:

@@ -60,6 +60,7 @@ describe('bashTool', () => {
     // 完整输出连同退出码标注一起回传，由模型判断。
     expect(result.success).toBe(true)
     expect(result.output).toContain('退出码: 1')
+    expect(result.processOutcome).toEqual({ state: 'exited', exitCode: 1 })
   })
 
   it('缺少 command 参数时返回错误', async () => {
@@ -368,6 +369,7 @@ describe('bashTool', () => {
     // 命令正常跑完、仅退出码非零 → 工具执行成功，退出码以标注形式出现在 output 中。
     expect(result.success).toBe(true)
     expect(result.output).toContain('退出码: 1')
+    expect(result.processOutcome).toEqual({ state: 'exited', exitCode: 1 })
   })
 
   // ── bashTool 描述（动态渲染） ────────────────────────

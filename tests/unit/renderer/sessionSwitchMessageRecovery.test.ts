@@ -9,7 +9,7 @@ import {
   resetChatStoreForTests,
   useChatStore
 } from '../../../src/renderer/stores/useChatStore'
-import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { useRunStore, selectSessionIsRunning } from '../../../src/renderer/stores/useRunStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 
 const sessionId = 'session-A'
@@ -131,7 +131,7 @@ describe('运行中会话切回恢复', () => {
 
     await vi.waitFor(() => {
       const state = useChatStore.getState()
-      expect(state.isGenerating).toBe(true)
+      expect(selectSessionIsRunning(useRunStore.getState(), sessionId)).toBe(true)
       expect(state.currentGeneratingMessageId).toBe(messageId)
       expect(state.messages.map(message => message.id)).toEqual(['user-A', messageId])
       expect(state.messages[1]?.content).toBe('已恢复的草稿')
@@ -142,6 +142,25 @@ describe('运行中会话切回恢复', () => {
         result: '文件内容'
       })
     })
+  })
+
+  it('未绑定消息的 queued 快照只恢复 busy，不创建空 assistant 行', async () => {
+    const queued: RunSnapshot = { ...runningSnapshot, sequence: 1, status: 'queued', messageId: '', turnDraft: null }
+    global.window = {
+      ...global.window,
+      api: {
+        invoke: vi.fn(async (channel: string) => channel === 'run:get-snapshot'
+          ? { snapshot: queued, waitingSessions: [] }
+          : channel === 'load-session' ? sessionDetail([userMessage]) : []),
+        on: vi.fn(), removeAllListeners: vi.fn()
+      }
+    } as unknown as Window & typeof globalThis
+    dispatchWorkspaceChange(workspaceState())
+    await vi.waitFor(() => expect(useChatStore.getState().messages.map(message => message.id)).toEqual(['user-A']))
+    expect(selectSessionIsRunning(useRunStore.getState(), sessionId)).toBe(true)
+    useRunStore.getState().handleSnapshotEvent(runningSnapshot, { sequence: 4, type: 'message_bound', at: 4 })
+    useChatStore.getState().handleMessageStart(messageId)
+    expect(useChatStore.getState().messages.map(message => message.id)).toEqual(['user-A', messageId])
   })
 
   it('同会话并发二次 pull 不得让水合丢失运行态', async () => {
@@ -180,12 +199,10 @@ describe('运行中会话切回恢复', () => {
     await extraPull
 
     await vi.waitFor(() => {
-      expect(useChatStore.getState().isGenerating).toBe(true)
+      expect(selectSessionIsRunning(useRunStore.getState(), sessionId)).toBe(true)
       expect(useChatStore.getState().currentGeneratingMessageId).toBe(messageId)
     })
-    // 第二次 IPC 是水合前的终态复核：pull 响应可能截于终态提交之前，
-    // 提交 isGenerating 前向主进程复核一次权威快照（本测试返回同一 running 快照）
-    expect(getSnapshotCalls).toBe(2)
+    expect(getSnapshotCalls).toBe(1)
   })
 
   it('错过 message_start 时首个 delta 自动创建 assistant 消息壳（文本进活跃回合）', () => {
@@ -193,7 +210,6 @@ describe('运行中会话切回恢复', () => {
       currentSessionId: sessionId,
       messages: [userMessage],
       messageIndexById: { 'user-A': 0 },
-      isGenerating: true,
       currentGeneratingMessageId: messageId
     })
 
@@ -288,7 +304,6 @@ describe('运行中会话切回恢复', () => {
         }
       ],
       messageIndexById: { 'user-A': 0, [messageId]: 1 },
-      isGenerating: true,
       currentGeneratingMessageId: messageId
     })
 

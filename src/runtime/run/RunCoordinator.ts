@@ -128,7 +128,8 @@ export class RunCoordinator {
   }
 
   getSnapshot(runId: string): RunSnapshot | null {
-    return this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    const snapshot = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    return snapshot ? cloneSnapshot(snapshot) : null
   }
 
   /** 按会话取最新 snapshot（含终态）；优先非终态 */
@@ -619,7 +620,7 @@ export class RunCoordinator {
     const now = Date.now()
     snap.turnDraft = {
       messageId: draft.messageId,
-      ...(draft.userDelivery ? { userDelivery: { ...draft.userDelivery } } : {}),
+      ...(draft.userDelivery ? { userDelivery: structuredClone(draft.userDelivery) } : {}),
       attemptId: draft.attemptId ?? snap.currentAttempt?.attemptId ?? 'default',
       blocks: structuredClone(draft.blocks),
       finalized: draft.finalized ?? false,
@@ -1044,7 +1045,7 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
     turnDraft: snap.turnDraft
       ? {
           ...snap.turnDraft,
-          ...(snap.turnDraft.userDelivery ? { userDelivery: { ...snap.turnDraft.userDelivery } } : {}),
+          ...(snap.turnDraft.userDelivery ? { userDelivery: structuredClone(snap.turnDraft.userDelivery) } : {}),
           blocks: structuredClone(snap.turnDraft.blocks)
         }
       : snap.turnDraft,

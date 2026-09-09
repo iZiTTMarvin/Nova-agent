@@ -11,6 +11,8 @@
  */
 import { extractTextFromContent, type ContentBlock } from '../../model/types'
 import type { SkillManifest } from '../../skills/types'
+import type { SkillForkResult } from '../../skills/runSkillFork'
+import { delegatedTurnOutcome, type AgentTurnOutcome } from './turnOutcome'
 import type { AgentTurnRoute } from './resolveAgentTurnRoute'
 
 /** skill fork 执行请求：ctx 由 AgentLoop 在分派时提供 durable message 身份。 */
@@ -29,7 +31,7 @@ export interface SkillForkExecutionRequest {
 export interface TurnExecutors {
   skillForkRunner?: (
     request: SkillForkExecutionRequest
-  ) => Promise<{ success: boolean; summary: string }>
+  ) => Promise<SkillForkResult>
 }
 
 /** 分派时由 AgentLoop 提供的本轮执行环境（dispatcher 不持有这些状态） */
@@ -49,7 +51,7 @@ export interface TurnDispatchContext {
  *   并写入 AgentContext.messages。
  */
 export type TurnDispatchOutcome =
-  | { kind: 'handled'; assistantSummary: string }
+  | { kind: 'handled'; assistantSummary: string; outcome: AgentTurnOutcome }
   | {
       kind: 'continue'
       userContent: string | ContentBlock[]
@@ -102,7 +104,7 @@ export class TurnDispatcher {
           },
           templateContext: { workspacePath: ctx.fork.workspacePath }
         })
-        return { kind: 'handled', assistantSummary: result.summary }
+        return { kind: 'handled', assistantSummary: result.summary, outcome: delegatedTurnOutcome(result) }
       }
 
       case 'slash_rejected': {

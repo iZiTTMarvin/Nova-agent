@@ -186,6 +186,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             ...block,
             status: isError ? 'error' : 'success',
             result: event.result,
+            ...(event.processOutcome ? { processOutcome: { ...event.processOutcome } } : {}),
             ...(event.resultImages?.length ? { resultImages: event.resultImages.map(image => ({ ...image })) } : {}),
             ...(event.artifactId ? { artifactId: event.artifactId } : {}),
             ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})

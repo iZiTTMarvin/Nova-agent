@@ -29,7 +29,7 @@ const forkSkill = { name: 'f', directory: '/skills/f', body: 'do it' } as unknow
 
 describe('TurnDispatcher 产品路径（handled）', () => {
   it('skill_fork route → 调用 skillForkRunner，fork ctx 与 templateContext 来自分派上下文', async () => {
-    const runner = vi.fn(async () => ({ success: true, summary: 'fork done' }))
+    const runner = vi.fn(async () => ({ status: 'completed' as const, success: true, summary: 'fork done' }))
     const dispatcher = new TurnDispatcher({ skillForkRunner: runner })
     const ctx = dispatchCtx()
 
@@ -39,7 +39,7 @@ describe('TurnDispatcher 产品路径（handled）', () => {
       ctx
     )
 
-    expect(outcome).toEqual({ kind: 'handled', assistantSummary: 'fork done' })
+    expect(outcome).toEqual({ kind: 'handled', assistantSummary: 'fork done', outcome: { status: 'completed' } })
     expect(runner).toHaveBeenCalledWith({
       skill: forkSkill,
       args: '参数',
@@ -51,9 +51,9 @@ describe('TurnDispatcher 产品路径（handled）', () => {
     })
   })
 
-  it('fork 执行失败（success=false）时摘要仍作为 handled 返回，不转译为异常', async () => {
+  it('fork 失败保留结构化终态，不再把摘要当成成功', async () => {
     const dispatcher = new TurnDispatcher({
-      skillForkRunner: async () => ({ success: false, summary: '子代理执行出错' })
+      skillForkRunner: async () => ({ status: 'failed', success: false, summary: '子代理执行出错' })
     })
 
     const outcome = await dispatcher.dispatch(
@@ -62,7 +62,14 @@ describe('TurnDispatcher 产品路径（handled）', () => {
       dispatchCtx()
     )
 
-    expect(outcome).toEqual({ kind: 'handled', assistantSummary: '子代理执行出错' })
+    expect(outcome).toEqual({ kind: 'handled', assistantSummary: '子代理执行出错', outcome: { status: 'failed', error: new Error('子代理执行出错') } })
+  })
+  it('截断结果缺少原因时明确失败，不捏造 completed 或停止原因', async () => {
+    const dispatcher = new TurnDispatcher({
+      skillForkRunner: async () => ({ status: 'incomplete', success: false, summary: '部分结果' })
+    })
+    expect(await dispatcher.dispatch('/f', { kind: 'skill_fork', skill: forkSkill, args: '' }, dispatchCtx()))
+      .toEqual({ kind: 'handled', assistantSummary: '部分结果', outcome: { status: 'failed', error: new Error('技能子代理截断结果缺少原因') } })
   })
 })
 

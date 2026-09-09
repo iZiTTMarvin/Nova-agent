@@ -192,7 +192,6 @@ describe('CompactionService', () => {
     const original = createMessages()
     original[1].reasoningContent = 'internal reasoning'
     const context = createContext(original)
-    context.userTurnsSinceCompaction = 7
     const client = new MockModelClient().addHandoffPair({
       events: [
         { type: 'text_delta', delta: '  compacted summary  ' },
@@ -214,7 +213,6 @@ describe('CompactionService', () => {
     expect(tail.length).toBeGreaterThan(0)
     expect(original.slice(-tail.length)).toEqual(tail)
     expect(context.compactionLevel).toBe(1)
-    expect(context.userTurnsSinceCompaction).toBe(0)
     expect(context.lastEstimatedTokens).toBeGreaterThan(0)
     expect(cacheDiagnostics.getEpochReason()).toBe('compaction')
     expect(onCompaction).toHaveBeenCalledTimes(1)
@@ -341,7 +339,6 @@ describe('CompactionService', () => {
     const snapshot = structuredClone(original)
     const context = createContext(original)
     context.compactionLevel = 2
-    context.userTurnsSinceCompaction = 6
     context.lastEstimatedTokens = 1234
     const client = new MockModelClient()
       .addHandoffPair({ events: [{ type: 'error', error: 'standard failed' }] })
@@ -354,7 +351,6 @@ describe('CompactionService', () => {
 
     expect(context.messages).toEqual(snapshot)
     expect(context.compactionLevel).toBe(2)
-    expect(context.userTurnsSinceCompaction).toBe(6)
     expect(context.lastEstimatedTokens).toBe(1234)
     expect(cacheDiagnostics.getEpochReason()).toBe('session_init')
     expect(onCompaction).not.toHaveBeenCalled()
@@ -450,7 +446,6 @@ describe('CompactionService', () => {
         content: `extra-${i}-${'z'.repeat(80)}`
       })
     }
-    context.userTurnsSinceCompaction = 7
     await expect(service.runThresholdCompaction(identitySummaryProjection)).resolves.toBe(true)
     const systemText = extractTextFromContent(context.messages[0].content)
     expect(systemText).toContain('第二版摘要')
@@ -506,7 +501,7 @@ describe('CompactionService', () => {
     expect(onCompaction).not.toHaveBeenCalled()
   })
 
-  it('restore 与 user turn 记账也由 service 更新同一 AgentContext', () => {
+  it('恢复与 token 估算由 service 更新同一 AgentContext', () => {
     const context = createContext([
       { role: 'system', content: 'system prompt' },
       { role: 'user', content: 'old message' }
@@ -523,13 +518,11 @@ describe('CompactionService', () => {
     expect(context.compactionLevel).toBe(3)
     expect(context.compactionState).toBe(ledger)
     expect(extractTextFromContent(context.messages[0].content)).toContain('restored summary')
-    expect(context.userTurnsSinceCompaction).toBe(0)
     expect(cacheDiagnostics.getEpochReason()).toBe('compaction')
 
     const beforeTokens = context.lastEstimatedTokens
     context.messages.push({ role: 'user', content: 'next turn' })
-    service.recordUserTurn()
-    expect(context.userTurnsSinceCompaction).toBe(1)
+    service.updateTokenEstimate()
     expect(context.lastEstimatedTokens).toBeGreaterThan(beforeTokens)
   })
 

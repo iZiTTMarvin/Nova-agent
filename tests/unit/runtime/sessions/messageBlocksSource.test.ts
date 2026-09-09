@@ -17,6 +17,7 @@ import {
 } from '../../../../src/runtime/sessions/messageProjection'
 import type { SessionMessage } from '../../../../src/runtime/sessions/types'
 import type { MessageBlock } from '../../../../src/shared/session'
+import { projectUserMessages } from '../../../../src/runtime/request-projection'
 
 describe('消息 block 单一事实源', () => {
   it('schema 升级到当前版本（含 v8 blocks 源）', () => {
@@ -74,6 +75,31 @@ describe('消息 block 单一事实源', () => {
     expect(normalized.content).toBe('hi')
   })
 
+  it.each([undefined, 1, 2, 3, 4])('读取旧消息版本 %s 不补写历史技能，新写入标记当前版本', messageSchemaVersion => {
+    const legacy: SessionMessage = { id: 'answer', role: 'assistant', content: '已处理', timestamp: 1,
+      messageSchemaVersion, userDelivery: { userMessageId: 'u', sessionPrefix: null, modeInstruction: '' } }
+    const normalized = normalizeMessageToBlocksSource(legacy)
+    expect(normalized.userDelivery?.skillInput).toBeUndefined()
+    expect(projectUserMessages('/skill 原文', 'u', normalized.userDelivery)).toEqual([
+      { role: 'user', content: '/skill 原文', origin: { messageId: 'u', step: 0 } }
+    ])
+    expect(serializeMessageForDisk(normalized).messageSchemaVersion).toBe(5)
+  })
+
+  it('结构化进程退出事实能往返保存，损坏事实不能降级成文本成功', () => {
+    const message: SessionMessage = {
+      id: 'process-result', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{ type: 'tool', toolCallId: 'bash-1', toolName: 'bash', arguments: {}, status: 'success',
+        result: '任意展示文案', processOutcome: { state: 'exited', exitCode: 0 } }]
+    }
+    const disk = serializeMessageForDisk(message)
+    const restored = normalizeMessageToBlocksSource(JSON.parse(JSON.stringify(disk)))
+    expect(restored.blocks?.[0]).toMatchObject({ processOutcome: { state: 'exited', exitCode: 0 } })
+    const invalid = JSON.parse(JSON.stringify(disk))
+    invalid.blocks[0].processOutcome = { state: 'running', exitCode: 0 }
+    expect(() => normalizeMessageToBlocksSource(invalid)).toThrow('Invalid tool process outcome')
+  })
+
   it('projectAssistantFieldsFromBlocks 只从 blocks 投影', () => {
     const blocks: MessageBlock[] = [
       { type: 'thinking', content: '...' },
@@ -124,7 +150,8 @@ describe('消息 block 单一事实源', () => {
   it('新事实版本往返只保存一份工具正文并保留 step、reasoning 与注入归属', () => {
     const original: SessionMessage = { id: 'a', parentId: 'u', role: 'assistant', content: '', timestamp: 1,
       messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE,
-      userDelivery: { userMessageId: 'u', sessionPrefix: '当时目录', modeInstruction: '当时模式' },
+      userDelivery: { userMessageId: 'u', sessionPrefix: '当时目录', modeInstruction: '当时模式',
+        skillInput: { assistantPrelude: '冻结技能', userContent: '当时实际任务' } },
       blocks: [{ type: 'thinking', content: '推理', providerId: 'deepseek', responseStep: 0 },
         { type: 'tool', toolCallId: 't', toolName: 'read', arguments: { path: 'a' }, status: 'success',
           result: '完整正文', artifactId: 'abc123', responseStep: 0 }] }
@@ -144,6 +171,9 @@ describe('消息 block 单一事实源', () => {
 
   it.each([
     { userDelivery: { userMessageId: 'u', modeInstruction: 4, sessionPrefix: null } },
+    ...[null, {}, { assistantPrelude: '正文' }, { assistantPrelude: 4, userContent: '任务' }, { assistantPrelude: '正文', userContent: [] }].map(skillInput => ({
+      userDelivery: { userMessageId: 'u', modeInstruction: '', sessionPrefix: null, skillInput }
+    })),
     { blocks: [{ type: 'text', content: 'x', responseStep: -1 }] },
     { blocks: [{ type: 'text', content: 'x', responseStep: 2 }, { type: 'text', content: 'y', responseStep: 1 }] },
     { blocks: [{ type: 'tool', toolCallId: 't', toolName: 'read', arguments: [], status: 'success' }] }

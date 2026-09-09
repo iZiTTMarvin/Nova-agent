@@ -3,6 +3,7 @@
  * 切点按 token 预算；重建用冻结 system + 只读交接包 + 原文尾部。
  */
 import type { ChatMessage } from '../../model/types'
+import { alignToUserInputBoundary } from '../../request-projection'
 import type { CompactionLedger, LedgerEntry } from '../../sessions'
 import type { CacheProfile } from '../../model/cacheProfile'
 import { CHARS_PER_TOKEN, estimateChatMessageTokens, estimateContextTokens, estimateTokens } from '../tokenEstimator'
@@ -20,13 +21,6 @@ export const COMPACTION_MARKER = '__compaction_instruction__'
 export function getCompactionThreshold(contextWindow: number): number {
   return Math.floor(contextWindow * 0.8)
 }
-
-/** 软触发：工具消息 token 占阈值比例 */
-export const SOFT_COMPACTION_TOOL_RATIO = 0.4
-/** 软触发：总上下文 token 占阈值比例 */
-export const SOFT_COMPACTION_TOTAL_RATIO = 0.6
-/** 软触发：距上次压缩至少经过的用户回合数 */
-export const SOFT_COMPACTION_COOLDOWN_TURNS = 5
 
 /**
  * 空闲压缩资格：当前 token 估算须至少达到硬阈值的此比例，否则不调度摘要请求。
@@ -88,46 +82,6 @@ export function shouldScheduleIdleCompaction(state: IdleCompactionScheduleState)
   if (totalTokens < threshold * IDLE_COMPACTION_MIN_THRESHOLD_RATIO) return false
 
   return true
-}
-
-/**
- * 估算上下文中 role:'tool' 消息的 token 数
- */
-export function estimateToolMessageTokens(context: ChatMessage[]): number {
-  const toolMessages = context.filter(m => m.role === 'tool')
-  if (toolMessages.length === 0) return 0
-  return estimateContextTokens(toolMessages)
-}
-
-/**
- * 判断当前上下文是否需要压缩
- *
- * - 硬触发：总 token > threshold（contextWindow 的 80%），无视冷却
- * - 软触发：工具 token > 40% threshold 且总 token > 60% threshold 且冷却 >= 5 user 回合
- *
- * @param userTurnsSinceCompaction 距上次压缩后的 user 消息数；默认 0（保守，软触发冷却不足）
- */
-export function shouldCompact(
-  context: ChatMessage[],
-  threshold: number = COMPACTION_THRESHOLD,
-  estimatedTokens?: number,
-  userTurnsSinceCompaction: number = 0
-): boolean {
-  const nonSystemCount = context.filter(message => message.role !== 'system').length
-  if (nonSystemCount < 2) return false
-  const totalTokens = estimatedTokens ?? estimateContextTokens(context)
-
-  // 硬 cap：超过 80% 阈值立即压缩
-  if (totalTokens > threshold) return true
-
-  // 软触发需满足冷却
-  if (userTurnsSinceCompaction < SOFT_COMPACTION_COOLDOWN_TURNS) return false
-
-  const toolTokens = estimateToolMessageTokens(context)
-  return (
-    toolTokens > threshold * SOFT_COMPACTION_TOOL_RATIO &&
-    totalTokens > threshold * SOFT_COMPACTION_TOTAL_RATIO
-  )
 }
 
 /**
@@ -299,8 +253,8 @@ export function rollbackBefore(context: ChatMessage[], markerIndex: number): Cha
 }
 
 /**
- * 从上下文中按 token 预算切出尾部原文，切点对齐工具调用组。
- * 下限为当前工具组（至少保留一组完整原文）。
+ * 从上下文中按 token 预算切出尾部原文，切点对齐工具组与技能输入。
+ * 下限为当前完整消息组。
  */
 export function splitForCompactionByTokens(
   context: ChatMessage[],
@@ -328,7 +282,7 @@ export function splitForCompactionByTokens(
   }
 }
 
-/** 将切点前移到工具调用组起点，确保 assistant(toolCalls) 与 tool 结果同在尾部。 */
+/** 切点前移到完整工具组或技能输入的起点。 */
 export function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: number): number {
   // 从切点位置向前扫描，如果当前消息是 tool 角色，继续前移
   while (splitIndex > 0 && (messages[splitIndex]?.role === 'tool' || messages[splitIndex]?.contextInstruction)) {
@@ -336,5 +290,5 @@ export function alignToToolGroupBoundary(messages: ChatMessage[], splitIndex: nu
   }
 
 
-  return Math.max(0, splitIndex)
+  return alignToUserInputBoundary(messages, Math.max(0, splitIndex))
 }

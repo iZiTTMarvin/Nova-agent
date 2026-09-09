@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentLoop } from '../../../../src/runtime/agent'
 import {
   AgentTurnExecutor,
+  type AgentTurnOutcome,
   agentRoute
 } from '../../../../src/runtime/agent/turn'
 import {
@@ -12,7 +13,7 @@ import {
   RunExecutionRegistry
 } from '../../../../src/runtime/run'
 
-function fakeLoop(sendMessage: () => Promise<any>) {
+function fakeLoop(sendMessage: () => Promise<AgentTurnOutcome>) {
   let fence = (): boolean => false
   const loop = {
     setExecutionIdentity: vi.fn(),
@@ -94,11 +95,11 @@ describe('AgentTurnExecutor', () => {
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
-  it('incomplete 轮次 → durable run 按 completed 收，截断原因落 incompleteReason，outcome 原样返回', async () => {
+  it.each(['incomplete', 'interrupted'] as const)('%s 轮次保留原因并收敛为对应 durable 终态', async status => {
     const coordinator = createRunCoordinator(tempRoot)
     const registry = new RunExecutionRegistry()
     const executor = new AgentTurnExecutor(coordinator, registry)
-    const fake = fakeLoop(async () => ({ status: 'incomplete', reason: 'max_rounds' }))
+    const fake = fakeLoop(async () => ({ status, reason: 'max_rounds' }))
     const cleanup = vi.fn()
     const runRefs = { runId: '', resourceOwnerRunId: '', executionGeneration: 0 }
 
@@ -114,10 +115,10 @@ describe('AgentTurnExecutor', () => {
       onCleanup: cleanup
     })
 
-    expect(executed.outcome).toEqual({ status: 'incomplete', reason: 'max_rounds' })
+    expect(executed.outcome).toEqual({ status, reason: 'max_rounds' })
     const terminal = coordinator.getSnapshot(executed.runId)
-    expect(terminal?.status).toBe('completed')
-    expect(terminal?.incompleteReason).toBe('max_rounds')
+    expect(terminal?.status).toBe(status === 'incomplete' ? 'completed' : 'interrupted')
+    expect(terminal?.incompleteReason).toBe(status === 'incomplete' ? 'max_rounds' : undefined)
     expect(registry.get(executed.runId)).toBeNull()
     expect(cleanup).toHaveBeenCalledTimes(1)
   })

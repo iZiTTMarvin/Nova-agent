@@ -33,7 +33,6 @@ import {
   isSessionTurnInProgress
 } from '../agent/state'
 import { reloadSkillsForWorkspace } from './SkillServiceHost'
-import { disposeIdleLoopForSession } from '../agent/turn'
 import { clearSteeringQueue } from '../agent/turn/SteeringQueue'
 import { planReviewWaiters } from '../agent/interaction/planReviewWaiters'
 import { buildSessionContextBreakdown } from './SessionContextView'
@@ -56,6 +55,7 @@ function pushContextBreakdownForSession(session: SessionData, getMainWindow: () 
 }
 
 export interface WorkspaceServiceDeps {
+  disposeIdleLoopForSession: (sessionId: string) => void
   /** 获取 SessionStore 单例 */
   getSessionStore: () => SessionStore
   /** 获取主窗口（用于文件夹选择对话框） */
@@ -319,7 +319,6 @@ export class WorkspaceService {
    * 删除的是当前会话时，自动切到剩余列表的第一条；没有剩余会话则清空工作区。
    */
   async deleteSession(sessionId: string): Promise<WorkspaceState> {
-    this.clearTier1View()
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     const summaries = store.listInternal()
@@ -345,23 +344,30 @@ export class WorkspaceService {
       deletingIds.push(id)
     }
     collectPostOrder(sessionId)
-    if (deletingIds.some((id) => isSessionTurnInProgress(id))) {
-      throw new Error('该会话或其子任务的 Agent 正在运行，请先停止再删除')
-    }
     const deletingIdSet = new Set(deletingIds)
     const runCoordinator = this.deps.getRunCoordinator()
-    runCoordinator.assertNoNonTerminalRunsForSessions(deletingIdSet)
+    const assertDeletionIdle = () => {
+      if (deletingIds.some((id) => isSessionTurnInProgress(id))) {
+        throw new Error('该会话或其子任务的 Agent 正在运行，请先停止再删除')
+      }
+      runCoordinator.assertNoNonTerminalRunsForSessions(deletingIdSet)
+    }
+    assertDeletionIdle()
 
+    // 整棵会话树的进程清理成功后才能删除历史，失败时保留选择与运行记录供重试。
+    const cleanup = await Promise.allSettled(deletingIds.map(id => processRegistry.terminateForSession(id)))
+    const failures: unknown[] = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
+    if (failures.length > 0) throw new AggregateError(failures, '会话进程清理失败，未删除会话')
+    assertDeletionIdle()
+    this.clearTier1View()
     for (const id of deletingIds) {
       const detail = store.load(id)
       if (detail) this.leaveSession(id, detail.workspaceRoot)
       store.delete(id)
       clearSessionWhitelist(id)
       deleteReadStateForSession(id)
-      disposeIdleLoopForSession(id)
+      this.deps.disposeIdleLoopForSession(id)
       clearSteeringQueue(id)
-      // 门禁只拦活跃 turn，持久进程恰在无 turn 时仍在跑，须随会话删除终止
-      await processRegistry.terminateForSession(id)
     }
     runCoordinator.deleteRunsForSessions(deletingIdSet)
 

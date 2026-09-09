@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 
+import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+
+import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
+import { useSettingsStore, resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
+import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
+import type { ExtendedMessage } from '../../../src/renderer/stores/types'
+
 import React, { Profiler } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
-import { useAppStore, type ExtendedMessage } from '../../../src/renderer/stores/useAppStore'
 import type { ModelConfig } from '../../../src/shared/config'
 import { act, renderDom } from './renderDom'
 
@@ -54,25 +60,24 @@ function seedLongConversation(): string {
   const streamingMessage = createMessage('msg_stream', 'assistant', '')
   const messages = [...history, streamingMessage]
 
-  useAppStore.setState({
+  useSettingsStore.setState({
     currentProject: 'D:/visual_ProgrammingSoftware/A_Projects/nova-agent',
     currentMode: 'default',
+    modelConfig: MODEL_CONFIG,
+    isConfigModalOpen: false
+  })
+  useChatStore.setState({
     sessions: [],
     currentSessionId: 'sess_phase3',
     messages,
     messageIndexById: buildMessageIndex(messages),
-    isGenerating: false,
     currentGeneratingMessageId: null,
-    modelConfig: MODEL_CONFIG,
-    isConfigModalOpen: false,
-    pendingPermissionRequest: null,
-    isSubmittingPermission: false,
-    permissionError: null,
     messageDiffs: {},
     loadingDiffs: new Set(),
     loadingDiffPlaceholders: {},
     liveTurn: {}
   })
+  resetAgentStoreForTests()
 
   return streamingMessage.id
 }
@@ -86,6 +91,8 @@ function getStats(values: number[]) {
 describe('长对话流式渲染性能回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     // MessageItem mount 时会调 get-message-diffs，需要提供默认 mock 返回
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'get-message-diffs') {
@@ -93,24 +100,9 @@ describe('长对话流式渲染性能回归', () => {
       }
       return Promise.resolve(undefined)
     })
-    useAppStore.setState({
-      currentProject: null,
-      currentMode: 'default',
-      sessions: [],
-      currentSessionId: null,
-      messages: [],
-      messageIndexById: {},
-      isGenerating: false,
-      currentGeneratingMessageId: null,
-      modelConfig: null,
-      isConfigModalOpen: false,
-      pendingPermissionRequest: null,
-      isSubmittingPermission: false,
-      permissionError: null,
-      messageDiffs: {},
-      loadingDiffs: new Set(),
-      loadingDiffPlaceholders: {}
-    })
+    resetSettingsStoreForTests()
+
+    resetAgentStoreForTests()
   })
 
   it('50 条历史消息下单次流式 thinking delta（applyStreamDeltas）不应出现 >50ms 长任务', () => {
@@ -119,7 +111,7 @@ describe('长对话流式渲染性能回归', () => {
 
     for (let i = 0; i < 120; i++) {
       const start = performance.now()
-      useAppStore.getState().applyStreamDeltas([
+      useChatStore.getState().applyStreamDeltas([
         { kind: 'thinking', messageId, delta: '推理中 ' }
       ])
       durations.push(performance.now() - start)
@@ -154,14 +146,14 @@ describe('长对话流式渲染性能回归', () => {
 
     // 单次同步 applyStreamDeltas(text) 不得改动 messages 引用——这是 ChatPanel
     // 不再每帧重提交的根本（同步调用，排除水合等异步副作用干扰）。
-    const messagesRefBefore = useAppStore.getState().messages
-    useAppStore.getState().applyStreamDeltas([{ kind: 'text', messageId, delta: 'x' }])
-    expect(useAppStore.getState().messages).toBe(messagesRefBefore)
-    expect(useAppStore.getState().liveTurn[messageId]).toMatchObject({ type: 'text', content: 'x' })
+    const messagesRefBefore = useChatStore.getState().messages
+    useChatStore.getState().applyStreamDeltas([{ kind: 'text', messageId, delta: 'x' }])
+    expect(useChatStore.getState().messages).toBe(messagesRefBefore)
+    expect(useChatStore.getState().liveTurn[messageId]).toMatchObject({ type: 'text', content: 'x' })
 
     for (let i = 0; i < 120; i++) {
       act(() => {
-        useAppStore.getState().applyStreamDeltas([
+        useChatStore.getState().applyStreamDeltas([
           { kind: 'text', messageId, delta: 'x' }
         ])
       })

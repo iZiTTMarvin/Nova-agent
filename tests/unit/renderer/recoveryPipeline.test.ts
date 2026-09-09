@@ -79,7 +79,7 @@ describe('useChatStore recovery / hookError handlers', () => {
     const state = useChatStore.getState()
     expect(state.recoveryState.msg_err).toBeUndefined()
     expect(state.recoveryHints.msg_err).toBeUndefined()
-    expect(state.isGenerating).toBe(false)
+    expect(state.currentGeneratingMessageId).toBeNull()
   })
 
   it('handleMessageStart → handleError：不应产生重复消息（防止 React key 冲突）', async () => {
@@ -145,6 +145,6 @@ describe('useChatStore recovery / hookError handlers', () => {
     expect(state.recoveryState.msg_end).toBeUndefined()
     expect(state.recoveryHints.msg_end).toBeUndefined()
     expect(state.hookErrors.msg_end).toBeUndefined()
-    expect(state.isGenerating).toBe(false)
+    expect(state.currentGeneratingMessageId).toBeNull()
   })
 })

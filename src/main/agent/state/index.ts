@@ -4,6 +4,5 @@ export {
   deleteReadStateForSession,
   isAgentTurnInProgress,
   isSessionTurnInProgress,
-  getActiveTurnSessionId,
   resetReadStateHostForTests
 } from './AgentExecutionStateHost'

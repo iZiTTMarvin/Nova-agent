@@ -14,16 +14,17 @@ let root: string
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'nova-draft-recovery-')) })
 afterEach(() => { vi.restoreAllMocks(); resetSessionIndexHostForTests(); rmSync(root, { recursive: true, force: true }) })
 
-function setup() {
+function setup(skill = false) {
   const store = new SessionStore(root)
   const session = store.create(root)
-  store.appendMessageFast(session.id, { id: 'user', role: 'user', content: '继续建站', timestamp: 1 })
+  store.appendMessageFast(session.id, { id: 'user', role: 'user', content: skill ? '/build 继续建站' : '继续建站', timestamp: 1 })
   const runStore = new RunStore({ runsRoot: join(root, 'runs') })
   const coordinator = new RunCoordinator({ store: runStore })
   const run = coordinator.startRun({ kind: 'agent', sessionId: session.id, workspaceId: root })
   coordinator.markRunning(run.runId, 'assistant')
   coordinator.upsertTurnDraft(run.runId, { messageId: 'assistant', userDelivery: {
-    userMessageId: 'user', modeInstruction: '执行', sessionPrefix: null
+    userMessageId: 'user', modeInstruction: '执行', sessionPrefix: null,
+    ...(skill ? { skillInput: { assistantPrelude: '冻结的建站技能', userContent: '按技能建站' } } : {})
   }, blocks: [
     { type: 'text', content: '已完成首页' },
     { type: 'tool', toolCallId: 'write', toolName: 'write', arguments: { path: 'index.html' }, status: 'success', result: '已写入' },
@@ -34,8 +35,13 @@ function setup() {
 }
 
 describe('中断草稿归档', () => {
-  it('重启恢复正文与工具结果，模型继续读取同一历史，重复恢复不重复归档', () => {
-    const { store, sessionId, runId, reboot } = setup()
+  it.each([false, true])('重启恢复正文与工具结果，技能=%s，重复恢复不重复归档', skill => {
+    const { store, sessionId, runId, coordinator: original, reboot } = setup(skill)
+    const snapshot = original.getSnapshot(runId)!
+    if (snapshot.turnDraft?.userDelivery?.skillInput) {
+      snapshot.turnDraft.userDelivery.skillInput.assistantPrelude = '外部修改不得污染权威草稿'
+      expect(original.getSnapshot(runId)?.turnDraft?.userDelivery?.skillInput?.assistantPrelude).toBe('冻结的建站技能')
+    }
     const coordinator = reboot()
     recoverSessionTurnDrafts(sessionId, store, coordinator)
     const restored = store.loadActivePath(sessionId)!
@@ -44,7 +50,15 @@ describe('中断草稿归档', () => {
       { type: 'text', content: '已完成首页' }, { type: 'tool', status: 'success', result: '已写入' },
       { type: 'tool', status: 'error', result: '工具执行被中断' }
     ] })
-    expect(JSON.stringify(buildConversationContext(restored, 'default'))).toContain('已完成首页')
+    const replay = buildConversationContext(restored, 'default')
+    expect(JSON.stringify(replay)).toContain('已完成首页')
+    if (skill) {
+      expect(restored.messages[0].content).toBe('/build 继续建站')
+      expect(replay.slice(0, 2)).toEqual([
+        { role: 'assistant', content: '冻结的建站技能', inputPrelude: true, origin: { messageId: 'user', step: 0 } },
+        { role: 'user', content: '按技能建站\n\n执行', origin: { messageId: 'user', step: 1 } }
+      ])
+    }
     expect(coordinator.getSnapshot(runId)?.turnDraft).toBeNull()
     const file = join(root, 'sessions', sessionId, 'messages.jsonl')
     const bytes = readFileSync(file, 'utf8')

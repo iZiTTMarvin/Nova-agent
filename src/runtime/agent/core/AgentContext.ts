@@ -60,7 +60,6 @@ export interface AgentContext {
   readState: ReadState
   /** 压缩相关运行态 */
   compactionLevel: number
-  userTurnsSinceCompaction: number
   lastEstimatedTokens: number
   /** 当前会话账本；null 表示尚未压缩 */
   compactionState: CompactionLedger | null
@@ -97,7 +96,6 @@ export function createAgentContext(initial: {
     sessionId: null,
     artifactStore: null,
     compactionLevel: 0,
-    userTurnsSinceCompaction: 0,
     lastEstimatedTokens: 0,
     compactionState: null,
     skillsTokenBudget: 0,

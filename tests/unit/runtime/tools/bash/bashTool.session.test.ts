@@ -50,6 +50,7 @@ interface FakeExecSession {
   child: FakeChild
   push(chunk: Buffer): void
   exit(exitCode: number): void
+  resolveWithoutExit(): void
   fail(err: Error): void
 }
 
@@ -79,6 +80,7 @@ function createFakeBackend(): { ops: BashOperations; sessions: FakeExecSession[]
           resolveExec({ exitCode: code })
           child.emitClose(code)
         },
+        resolveWithoutExit: () => resolveExec({ exitCode: null }),
         fail: (err) => {
           rejectExec(err)
           child.emitClose(null)
@@ -141,6 +143,7 @@ describe('bashTool 持久会话（让出边界）', () => {
     const result = await promise
     expect(result.success).toBe(true)
     expect(result.exitCode).toBe(0)
+    expect(result.processOutcome).toEqual({ state: 'exited', exitCode: 0 })
     expect(result.output).toContain('ok')
     expect(result.processHandle).toBeUndefined()
   })
@@ -155,6 +158,8 @@ describe('bashTool 持久会话（让出边界）', () => {
     const result = await promise
     expect(result.success).toBe(true)
     expect(result.processHandle?.state).toBe('running')
+    expect(result.processOutcome).toEqual({ state: 'running' })
+    expect(result.exitCode).toBeUndefined()
     const ref = result.processHandle!.ref
     expect(ref).toMatch(/^psn_/)
     // 预让出窗口的输出与续操作指引都进入首页交付
@@ -167,6 +172,18 @@ describe('bashTool 持久会话（让出边界）', () => {
     const first = processRegistry.readPage(ref, SESSION_ID)
     expect(first.state).toBe('running')
     expect(first.page.text).toBe('')
+  })
+
+  it('后端等待上限返回 null 不证明后台进程退出，迟到 close 仍可收敛', async () => {
+    const { ops, sessions } = createFakeBackend()
+    setBashOperations(ops)
+    const result = await bashTool.execute({ command: 'service' }, createContext())
+    const ref = result.processHandle!.ref
+    sessions[0].resolveWithoutExit()
+    await Promise.resolve()
+    expect(processRegistry.describe(ref, SESSION_ID).state).toBe('running')
+    sessions[0].child.emitClose(0)
+    expect(processRegistry.describe(ref, SESSION_ID)).toMatchObject({ state: 'exited', exitCode: 0 })
   })
 
   it('边界竞态：child 已退出但 exec 未 resolve → 不注册，内联返回退出码', async () => {    const { ops, sessions } = createFakeBackend()

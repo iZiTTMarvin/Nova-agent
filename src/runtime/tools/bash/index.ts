@@ -270,7 +270,7 @@ export const bashTool: ToolExecutor = {
               workdir: cwd,
               destructive,
               seedOutput: seed,
-              killTree: () => killProcessTree(cp.pid ?? undefined),
+              killTree: () => killProcessTree(cp),
               writeStdin: async (data) => { cp.stdin?.write(data) },
               interrupt: process.platform === 'win32'
                 ? undefined
@@ -286,7 +286,12 @@ export const bashTool: ToolExecutor = {
               handle.append(backlog)
               backlog = ''
             }
-            execPromise.then(r => handle.settle(r.exitCode)).catch(() => handle.settle(null))
+            // 执行后端拒绝不证明进程退出；失败路径由 child close 确认。
+            void execPromise.then(r => {
+              if (r.exitCode !== null || cp.exitCode !== null || cp.signalCode !== null) {
+                handle.settle(r.exitCode)
+              }
+            }).catch(() => {})
             yielded = true
 
             try {
@@ -327,6 +332,9 @@ export const bashTool: ToolExecutor = {
             return {
               success: true,
               output,
+              processOutcome: state === 'exited'
+                ? { state, exitCode: sessionExitCode }
+                : { state },
               processHandle: { ref: handle.ref, state },
               ...(state === 'exited' && sessionExitCode !== null ? { exitCode: sessionExitCode } : {}),
               ...(artifactId ? { artifactId } : {})
@@ -366,7 +374,7 @@ export const bashTool: ToolExecutor = {
       if (!yielded) {
         const cp = capturedChildRef.child
         if (cp && cp.exitCode === null && cp.signalCode === null) {
-          void killProcessTree(cp.pid ?? undefined)
+          void killProcessTree(cp).catch(error => console.error('bash 进程终止失败:', error))
         }
       }
     }
@@ -578,6 +586,7 @@ async function composeResult(
       success: false,
       output: outputWithPath,
       error: `命令执行超时（${Math.round(boundaryMs / 1000)} 秒），已强制终止`,
+      processOutcome: { state: 'unconfirmed' },
       ...(exitCode !== null ? { exitCode } : {}),
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
@@ -588,6 +597,7 @@ async function composeResult(
       success: false,
       output: outputWithPath,
       error: '命令已被用户取消',
+      processOutcome: { state: 'unconfirmed' },
       ...(exitCode !== null ? { exitCode } : {}),
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
@@ -598,6 +608,7 @@ async function composeResult(
       success: false,
       output: outputWithPath,
       error: '命令未正常退出（可能因信号终止）',
+      processOutcome: { state: 'unconfirmed' },
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
     }
@@ -615,6 +626,7 @@ async function composeResult(
     return {
       success: true,
       output: prependExitCodeNotice(outputWithPath, exitCode),
+      processOutcome: { state: 'exited', exitCode },
       exitCode,
       ...(artifactId ? { artifactId } : {}),
       ...(truncationMeta ? { truncationMeta } : {})
@@ -623,6 +635,7 @@ async function composeResult(
   return {
     success: true,
     output: outputWithPath || '(命令执行成功，无输出)',
+    processOutcome: { state: 'exited', exitCode },
     exitCode,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {})
@@ -746,7 +759,7 @@ function createLocalBashOperations(shellConfig: ReturnType<typeof getShellConfig
       const killTree = () => {
         if (killed) return
         killed = true
-        void killProcessTree(child.pid ?? undefined)
+        void killProcessTree(child).catch(error => console.error('bash 进程终止失败:', error))
       }
 
       if (options.signal) {

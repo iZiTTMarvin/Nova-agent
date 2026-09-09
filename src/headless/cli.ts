@@ -285,6 +285,9 @@ async function main(): Promise<void> {
       } else if (outcome.status === 'failed') {
         report = { status: 'failed', deadlineReached }
         error = outcome.error.message
+      } else if (outcome.status === 'interrupted') {
+        report = { status: 'failed', deadlineReached }
+        error = outcome.reason
       } else {
         report = { status: outcome.status, deadlineReached }
       }
@@ -297,8 +300,15 @@ async function main(): Promise<void> {
     activeLoop = null
     loop.dispose()
     // headless 无 will-quit，持久进程须在此统一终止
-    await processRegistry.terminateAll()
-    await codeGraphController?.close()
+    try {
+      await processRegistry.terminateAll()
+    } catch (cause) {
+      report = { status: 'failed', deadlineReached }
+      const cleanupError = cause instanceof Error ? cause.message : String(cause)
+      error = error ? `${error}\n${cleanupError}` : cleanupError
+    } finally {
+      await codeGraphController?.close()
+    }
   }
 
   const summaryDerivation = deriveHeadlessSummary(report)

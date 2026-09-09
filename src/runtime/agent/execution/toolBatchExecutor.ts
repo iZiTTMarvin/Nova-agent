@@ -1,3 +1,4 @@
+import type { ToolProcessOutcome } from '../../../shared/tools/types'
 import type { ChatToolCall } from '../../model/types'
 export { toToolContent } from '../../request-projection/messageFacts'
 import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
@@ -38,6 +39,7 @@ export interface ToolExecutionOutcome {
   artifactId?: string
   truncationMeta?: ToolTruncationMeta
   control?: ToolControlSignal
+  processOutcome?: ToolProcessOutcome
   /** 运行中进程会话句柄（与 ToolResult.processHandle 对齐，仅供事件/UI 层） */
   processHandle?: ToolProcessHandle
   skippedByAbort?: boolean
@@ -420,6 +422,7 @@ async function executePreparedToolCall(
   let artifactId: string | undefined
   let truncationMeta: ToolTruncationMeta | undefined
   let control: ToolControlSignal | undefined
+  let processOutcome: ToolProcessOutcome | undefined
   let processHandle: ToolProcessHandle | undefined
   let failed = false
 
@@ -432,6 +435,7 @@ async function executePreparedToolCall(
       }
     }
 
+    processOutcome = toolResult.processOutcome
     if (toolResult.success) {
       // 已走 OutputSink / OutputAccumulator 控量并附 artifact 指针时，跳过二次截断
       if (toolResult.artifactId) {
@@ -490,6 +494,7 @@ async function executePreparedToolCall(
     failed,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {}),
+    ...(processOutcome ? { processOutcome } : {}),
     ...(processHandle ? { processHandle } : {})
   })
 
@@ -503,6 +508,7 @@ async function executePreparedToolCall(
       artifactId,
       truncationMeta,
       ...(!failed && control ? { control } : {}),
+      ...(processOutcome ? { processOutcome } : {}),
       ...(processHandle ? { processHandle } : {}),
       failed
     },

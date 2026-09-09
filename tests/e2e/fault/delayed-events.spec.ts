@@ -15,7 +15,7 @@ test('HTTP 分块延迟流走完真实链路后，Renderer 能回到可输入状
   expect((await nova.getRunSnapshot())?.status).toBe('completed')
 })
 
-test('向 Renderer 注入带 sequence 缺口的 running 快照后，投影不会卡在生成中', async ({ nova }) => {
+test('完整快照接受合帧跳号，仅靠后续 terminal 就能恢复输入区', async ({ nova }) => {
   const completed = await nova.runTurnToCompletion({
     text: 'NOVA_E2E_SEQUENCE_GAP_OK',
     prompt: '完成后向 Renderer 注入缺口 snapshot'
@@ -35,7 +35,13 @@ test('向 Renderer 注入带 sequence 缺口的 running 快照后，投影不会
     }
   })
 
+  await expect(nova.page.getByRole('button', { name: '中断生成' })).toBeVisible()
+  await nova.emitRunSnapshot({
+    snapshot: { ...completed, sequence: completed.sequence + 8, updatedAt: Date.now() },
+    event: { sequence: completed.sequence + 8, type: 'e2e_terminal_only', at: Date.now() }
+  })
   await nova.waitUntilIdle()
   await expect(nova.page.getByRole('button', { name: '中断生成' })).toHaveCount(0)
+  await expect(nova.page.getByText('NOVA_E2E_SEQUENCE_GAP_OK', { exact: false })).toHaveCount(1)
   expect((await nova.getRunSnapshot())?.status).toBe('completed')
 })

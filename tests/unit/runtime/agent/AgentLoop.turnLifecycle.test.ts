@@ -184,6 +184,34 @@ describe('终态协议：模型终态错误', () => {
   })
 })
 
+describe('终态协议：直接技能委托', () => {
+  it.each(['completed', 'failed', 'cancelled', 'interrupted', 'incomplete'] as const)('%s 原样进入轮次终态并只收尾一次', async status => {
+    const idleStart = vi.spyOn(IdleCompressionTimer.prototype, 'start')
+    const client = new MockModelClient()
+    const { loop, events } = createLoop(client)
+    const cp = attachCheckpoint(loop)
+    loop.setTurnDispatcher(new TurnDispatcher({ skillForkRunner: async () => ({
+      status, success: status === 'completed', summary: '技能结果',
+      ...(status === 'incomplete' ? { incompleteReason: 'deadline' as const } : {})
+    }) }))
+    const skill: SkillManifest = { name: 'f', description: 'f', directory: '/tmp/f', body: 'do it',
+      source: 'virtual', sourcePath: '/tmp/f/SKILL.md', userInvocable: true, modelInvocable: true,
+      enabled: true, warnings: [], hasSupportingFiles: false }
+    const outcome = await loop.sendMessage('/f', { kind: 'skill_fork', skill, args: '' })
+    expect(outcome).toEqual(status === 'failed' ? { status, error: new Error('技能结果') }
+      : status === 'incomplete' ? { status, reason: 'deadline' }
+      : status === 'interrupted' ? { status, reason: '技能结果' } : { status })
+    expectExactlyOneTerminal(events, status === 'failed' ? 'error' : 'message_end')
+    const end = events.find(event => event.type === 'message_end')
+    expect(end?.type === 'message_end' ? end.interrupted : undefined)
+      .toBe(status === 'cancelled' || status === 'interrupted' ? true : undefined)
+    expect(cp.endMessage).toHaveBeenCalledTimes(1)
+    expect(loop.getState()).not.toBe('running')
+    expect(client.getCalls()).toHaveLength(0)
+    expect(idleStart).toHaveBeenCalledTimes(status === 'completed' || status === 'incomplete' ? 1 : 0)
+  })
+})
+
 describe('终态协议：分派执行器抛错', () => {
   it('fork 执行依赖抛错 → failed，error 恰好一个，checkpoint 关闭', async () => {
     const client = new MockModelClient()

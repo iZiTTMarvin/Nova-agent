@@ -75,6 +75,20 @@ describe('AgentEventAccumulator 思考耗时封存', () => {
     activeStreams.clear()
   })
 
+  it.each<ToolBlock['processOutcome']>([
+    { state: 'exited', exitCode: 0 }, { state: 'running' }, { state: 'unconfirmed' }
+  ])('工具退出事实随结果落入消息块，不从文案重建：%j', processOutcome => {
+    const ctx = makeCtx()
+    const messageId = 'process-evidence'
+    const feed = (event: AgentEvent) => accumulateStreamEvent('sess_test', event, ctx)
+    feed({ type: 'message_start', messageId })
+    feed({ type: 'tool_call', messageId, toolCallId: 'bash-call', toolName: 'bash', args: {} })
+    feed({ type: 'tool_result', messageId, toolCallId: 'bash-call', toolName: 'bash', result: 'arbitrary display', processOutcome })
+    feed({ type: 'message_end', messageId })
+    const block = appendMessageFast.mock.calls.at(-1)?.[1].blocks?.find(block => block.type === 'tool')
+    expect(block).toMatchObject({ type: 'tool', processOutcome })
+  })
+
   it('thinking → text → message_end：落盘的 thinking 块带 durationMs', () => {
     const ctx = makeCtx()
     const messageId = 'msg_think_text'

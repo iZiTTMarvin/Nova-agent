@@ -80,8 +80,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       const existingIndex = state.messageIndexById[messageId]
       if (existingIndex !== undefined) {
         return {
-          currentGeneratingMessageId: messageId,
-          sendInFlight: false
+          currentGeneratingMessageId: messageId
         }
       }
 
@@ -95,8 +94,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
           nextIndex: { ...state.messageIndexById, [messageId]: nextMessages.length - 1 },
           skipWindowTrim: true
         }),
-        currentGeneratingMessageId: messageId,
-        sendInFlight: false
+        currentGeneratingMessageId: messageId
       }
     })
   },
@@ -450,7 +448,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
 
       for (const delta of deltas) {
         if (nextMessageIndex[delta.messageId] !== undefined) continue
-        if (!state.isGenerating || state.currentGeneratingMessageId !== delta.messageId) {
+        if (state.currentGeneratingMessageId !== delta.messageId) {
           continue
         }
         if (!addedMissingMessage) {

@@ -1,9 +1,5 @@
-/**
- * 取消由 RunCoordinator 确认终态
- *
- * 旧行为：5s 本地兜底强制复位 isGenerating（会造成「界面说停了，后台还在跑」）。
- * 新行为：立即 cancelling；等 run:snapshot 终态或 force-terminate 后才 idle。
- */
+import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
+import { selectSessionIsRunning } from '../../../src/renderer/stores/useRunStore'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 const mockInvoke = vi.fn()
@@ -23,7 +19,7 @@ beforeEach(() => {
 describe('cancel 由 RunCoordinator 确认终态', () => {
   beforeEach(async () => {
     vi.clearAllMocks()
-    const { resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
+    const { useChatStore, resetChatStoreForTests } = await import('../../../src/renderer/stores/useChatStore')
     const { resetAgentStoreForTests } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
     const { useWorkspaceStore } = await import('../../../src/renderer/stores/useWorkspaceStore')
@@ -31,38 +27,47 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     resetAgentStoreForTests()
     useRunStore.getState().resetForTests()
     useWorkspaceStore.setState({ currentProjectPath: '/test/project' })
+    useChatStore.setState({ currentSessionId: 's1' })
+    useRunStore.getState().selectSession('s1')
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'load-session') return { messages: useChatStore.getState().messages, hasMoreMessagesAbove: false }
+      if (channel === 'get-message-diffs') return { diffs: [], reviews: {} }
+      return undefined
+    })
   })
 
   afterEach(() => {
     vi.useRealTimers()
   })
 
-  it('点击取消后立即 cancelling，不在本地宣布 isGenerating=false', async () => {
+  it('点击取消后立即 cancelling，不在本地宣布 运行已结束', async () => {
     const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
 
     useChatStore.getState().handleMessageStart('msg_to_cancel')
-    useChatStore.setState({ isGenerating: true, currentGeneratingMessageId: 'msg_to_cancel' })
+    useChatStore.setState({ currentGeneratingMessageId: 'msg_to_cancel' })
 
-    mockInvoke.mockResolvedValue({ runId: 'run_1', status: 'cancelling' })
+    publishRunSnapshot(makeRunSnapshot({ sessionId: useChatStore.getState().currentSessionId!, messageId: useChatStore.getState().currentGeneratingMessageId! }))
+    useRunStore.getState().selectSession(useChatStore.getState().currentSessionId)
     await useAgentStore.getState().cancelExecution()
 
-    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution')
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'run_1' })
     expect(useRunStore.getState().cancelling).toBe(true)
     // Renderer 不能独立宣布后台 run 已结束
-    expect(useChatStore.getState().isGenerating).toBe(true)
+    expect(selectSessionIsRunning(useRunStore.getState(), useChatStore.getState().currentSessionId)).toBe(true)
   })
 
-  it('snapshot 确认 terminal 后才复位 isGenerating', async () => {
+  it('snapshot 确认 terminal 后才结束运行', async () => {
     const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
 
     useChatStore.getState().handleMessageStart('msg_to_cancel')
-    useChatStore.setState({ isGenerating: true, currentGeneratingMessageId: 'msg_to_cancel' })
+    useChatStore.setState({ currentGeneratingMessageId: 'msg_to_cancel' })
 
-    mockInvoke.mockResolvedValue({ runId: 'run_1', status: 'cancelling' })
+    publishRunSnapshot(makeRunSnapshot({ sessionId: useChatStore.getState().currentSessionId!, messageId: useChatStore.getState().currentGeneratingMessageId! }))
+    useRunStore.getState().selectSession(useChatStore.getState().currentSessionId)
     await useAgentStore.getState().cancelExecution()
     expect(useRunStore.getState().cancelling).toBe(true)
 
@@ -87,7 +92,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
 
     await vi.waitFor(() => {
       expect(useRunStore.getState().cancelling).toBe(false)
-      expect(useChatStore.getState().isGenerating).toBe(false)
+      expect(selectSessionIsRunning(useRunStore.getState(), useChatStore.getState().currentSessionId)).toBe(false)
     })
   })
 
@@ -98,12 +103,12 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
 
     useChatStore.getState().handleMessageStart('msg_session_cancel')
     useChatStore.setState({
-      isGenerating: true,
       currentGeneratingMessageId: 'msg_session_cancel',
       currentSessionId: 's2'
     })
 
-    mockInvoke.mockResolvedValue({ runId: 'run_1', status: 'cancelling' })
+    publishRunSnapshot(makeRunSnapshot({ sessionId: useChatStore.getState().currentSessionId!, messageId: useChatStore.getState().currentGeneratingMessageId! }))
+    useRunStore.getState().selectSession(useChatStore.getState().currentSessionId)
     await useAgentStore.getState().cancelExecution()
     expect(useRunStore.getState().cancelling).toBe(true)
 
@@ -134,7 +139,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     )
     await vi.waitFor(() => {
       expect(useRunStore.getState().cancelling).toBe(false)
-      expect(useChatStore.getState().isGenerating).toBe(false)
+      expect(selectSessionIsRunning(useRunStore.getState(), useChatStore.getState().currentSessionId)).toBe(false)
     })
   })
 
@@ -144,8 +149,9 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
     const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
 
-    useChatStore.setState({ isGenerating: true, currentGeneratingMessageId: 'msg_x' })
-    mockInvoke.mockResolvedValue({ runId: 'run_1', status: 'cancelling' })
+    useChatStore.setState({ currentGeneratingMessageId: 'msg_x' })
+    publishRunSnapshot(makeRunSnapshot({ sessionId: useChatStore.getState().currentSessionId!, messageId: useChatStore.getState().currentGeneratingMessageId! }))
+    useRunStore.getState().selectSession(useChatStore.getState().currentSessionId)
     await useAgentStore.getState().cancelExecution()
 
     vi.advanceTimersByTime(8_000)
@@ -171,24 +177,27 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     })
     await useRunStore.getState().forceTerminate()
     expect(useRunStore.getState().cancelling).toBe(false)
-    expect(useChatStore.getState().isGenerating).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), useChatStore.getState().currentSessionId)).toBe(false)
   })
 
-  it('clearCancelFallback 单独调用是 no-op（兼容旧调用方）', async () => {
-    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
-    expect(() => useAgentStore.getState().clearCancelFallback()).not.toThrow()
-    expect(() => useAgentStore.getState().clearCancelFallback()).not.toThrow()
-  })
-
-  it('cancelledMessageId 为 null 时仍发 IPC，进入 cancelling', async () => {
-    const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
+  it('没有可识别 run 时不发送无归属取消命令', async () => {
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await useAgentStore.getState().cancelExecution()
+      expect(mockInvoke).not.toHaveBeenCalledWith('cancel-execution', expect.anything())
+      expect(useRunStore.getState().cancelling).toBe(false)
+      expect(error).toHaveBeenCalledWith('取消执行失败:', expect.objectContaining({ message: '无法取消：当前会话没有可识别的运行' }))
+    } finally { error.mockRestore() }
+  })
 
-    expect(useChatStore.getState().currentGeneratingMessageId).toBeNull()
-    mockInvoke.mockResolvedValue({ runId: null, status: 'idle' })
+  it('显示消息 ID 尚未建立时仍按快照 runId 取消', async () => {
+    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    publishRunSnapshot(makeRunSnapshot({ sessionId: 's1' }))
     await useAgentStore.getState().cancelExecution()
-    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution')
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'run_1' })
     expect(useRunStore.getState().cancelling).toBe(true)
   })
 
@@ -206,7 +215,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
 
-    const runASnap = {
+    const runASnap = makeRunSnapshot({
       runId: 'runA',
       kind: 'agent',
       workspaceId: '/ws',
@@ -220,8 +229,8 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       lastHeartbeatAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now()
-    }
-    useChatStore.setState({ currentSessionId: 'sessA', isGenerating: true })
+    })
+    useChatStore.setState({ currentSessionId: 'sessA' })
     useRunStore.setState({
       selectedSessionId: 'sessA',
       activeRunIdBySessionId: { sessA: 'runA' },
@@ -253,10 +262,10 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
     })
   })
 
-  it('取消只清归属本次取消目标（会话）的 pending 权限请求', async () => {
+  it('取消 ACK 保留权限请求，只有目标 run 终态快照清除请求', async () => {
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const snapA = {
+    const snapA = makeRunSnapshot({
       runId: 'runA',
       kind: 'agent',
       workspaceId: '/ws',
@@ -270,27 +279,24 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       lastHeartbeatAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now()
-    }
+    })
     useRunStore.setState({
       selectedSessionId: 'sessA',
       activeRunIdBySessionId: { sessA: 'runA' },
       snapshotsByRunId: { runA: snapA }
     })
-    useAgentStore.getState().handlePermissionRequest({
-      messageId: 'msg_a',
-      requestId: 'perm_1',
-      toolName: 'bash',
-      args: { command: 'npm test' },
-      riskLevel: 'low',
-      reason: '需要确认',
-      toolCallIds: ['tc_1'],
-      sessionId: 'sessA'
-    })
-
-    mockInvoke.mockResolvedValue({ runId: 'runA', status: 'cancelling' })
+    const { useChatStore } = await import('../../../src/renderer/stores/useChatStore')
+    useChatStore.setState({ currentSessionId: 'sessA' })
+    publishRunSnapshot({ ...snapA, status: 'waiting_user', sequence: 2, pendingInteractions: [{
+      interactionId: 'perm_1', runId: 'runA', sessionId: 'sessA', messageId: 'msg_a',
+      type: 'permission', status: 'pending', version: 1, createdAt: 1,
+      payload: { requestId: 'perm_1', toolName: 'bash', args: { command: 'npm test' } }
+    }] })
+    await useRunStore.getState().refreshInteractionProjection()
     await useAgentStore.getState().cancelExecution()
-
-    // pending 归属本次取消的会话：清空弹窗，避免卡在已取消的交互上
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm_1')
+    publishRunSnapshot({ ...snapA, status: 'cancelled', sequence: 3 })
+    await useRunStore.getState().refreshInteractionProjection()
     expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
     expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'runA' })
   })
@@ -298,7 +304,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
   it('子代理后代会话的 pending 请求不是本次取消目标，保留等待响应', async () => {
     const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
     const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
-    const snapA = {
+    const snapA = makeRunSnapshot({
       runId: 'runA',
       kind: 'agent',
       workspaceId: '/ws',
@@ -312,7 +318,7 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       lastHeartbeatAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now()
-    }
+    })
     useRunStore.setState({
       selectedSessionId: 'sessA',
       activeRunIdBySessionId: { sessA: 'runA' },

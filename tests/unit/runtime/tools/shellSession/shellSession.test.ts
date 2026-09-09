@@ -4,7 +4,7 @@
  * 越权/未知区分、方案甲滚动基线与 destructive write 的写者租约。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
@@ -101,6 +101,7 @@ describe('shellSessionTool', () => {
     expect(r1.output).toContain('seed output')
     expect(r1.output).toContain('increment')
     expect(r1.processHandle).toEqual({ ref: h.ref, state: 'running' })
+    expect(r1.processOutcome).toEqual({ state: 'running' })
 
     h.append('next chunk\n')
     const r2 = await execute({ ref: h.ref, action: 'read' })
@@ -137,6 +138,7 @@ describe('shellSessionTool', () => {
     expect(r1.output).toContain('final line')
     expect(r1.output).toContain('会话已结束，退出码: 0')
     expect(r1.exitCode).toBe(0)
+    expect(r1.processOutcome).toEqual({ state: 'exited', exitCode: 0 })
 
     const r2 = await execute({ ref: h.ref, action: 'read' })
     expect(r2.success).toBe(true)
@@ -204,6 +206,7 @@ describe('shellSessionTool', () => {
     expect(r1.output).toContain('tail before stop')
     expect(r1.output).toContain('会话已终止，退出码: 0')
     expect(r1.exitCode).toBe(0)
+    expect(r1.processOutcome).toEqual({ state: 'exited', exitCode: 0 })
     expect(r1.processHandle).toEqual({ ref: h.ref, state: 'exited' })
 
     const r2 = await execute({ ref: h.ref, action: 'stop' })
@@ -211,6 +214,20 @@ describe('shellSessionTool', () => {
     expect(r2.exitCode).toBe(0)
     expect(r2.processHandle?.state).toBe('exited')
     expect(kills).toBe(1)
+  })
+
+  it('stop 失败不返回已终止，也不遗失后续可读取的退出确认', async () => {
+    const child = fakeChild()
+    const h = registerSession({ child, killTree: async () => { throw new Error('permission denied') } })
+    const failed = await execute({ ref: h.ref, action: 'stop' })
+    expect(failed.success).toBe(false)
+    expect(failed.error).toContain('permission denied')
+    expect(failed.exitCode).toBeUndefined()
+    expect(failed.processOutcome?.state).not.toBe('exited')
+    expect(processRegistry.describe(h.ref, 'sess-A').state).toBe('running')
+    child.emitClose(0)
+    const read = await execute({ ref: h.ref, action: 'read' })
+    expect(read.processOutcome).toEqual({ state: 'exited', exitCode: 0 })
   })
 
   it('越权与未知 ref 是可区分的失败文案', async () => {
@@ -257,6 +274,7 @@ describe('shellSessionTool', () => {
     })
     const filePath = join(tempDir, 'watched.txt')
     writeFileSync(filePath, 'one\n', 'utf8')
+    utimesSync(filePath, 1, 1)
     const baseline = await snapshotWorkspace(tempDir)
     const h = registerSession({ checkpointBaseline: baseline })
     const spy = vi.spyOn(manager, 'recordBashChange')
@@ -264,6 +282,7 @@ describe('shellSessionTool', () => {
 
     manager.beginMessage('msg_1')
     writeFileSync(filePath, 'two-two\n', 'utf8')
+    utimesSync(filePath, 2, 2)
     await execute({ ref: h.ref, action: 'write', input: 'go\n' }, ctx)
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy.mock.calls[0]?.[0]).toBe(filePath)
@@ -272,6 +291,7 @@ describe('shellSessionTool', () => {
     // 基线已滚动到 two-two：第二次动作只记第二次改动，原始 one 不再重复入账
     manager.beginMessage('msg_2')
     writeFileSync(filePath, 'three\n', 'utf8')
+    utimesSync(filePath, 3, 3)
     await execute({ ref: h.ref, action: 'write', input: 'again\n' }, ctx)
     expect(spy).toHaveBeenCalledTimes(2)
     expect((spy.mock.calls[1]?.[1] as Buffer).toString('utf8')).toBe('two-two\n')

@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import React from 'react'
+import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
 import { act, renderDom } from './renderDom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel, type ChatPanelHandle } from '../../../src/renderer/features/chat/ChatPanel'
@@ -10,7 +11,7 @@ import {
   useSettingsStore
 } from '../../../src/renderer/stores/useSettingsStore'
 import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
-import { useRunStore } from '../../../src/renderer/stores/useRunStore'
+import { useRunStore, selectSessionIsRunning } from '../../../src/renderer/stores/useRunStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
 import type { ExtendedMessage } from '../../../src/renderer/stores/types'
 
@@ -74,6 +75,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     messageItemPropsByRender.length = 0
 
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
 
@@ -120,12 +122,10 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
 
   it('有 pending askQuestion 时（面板开着等回答），只有当前生成消息收到 isPausedForInput=true', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: true,
-        currentGeneratingMessageId: 'msg_2',
-        messages: [makeAssistantMessage('msg_1'), makeAssistantMessage('msg_2')]
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+currentGeneratingMessageId: 'msg_2',
+messages: [makeAssistantMessage('msg_1'), makeAssistantMessage('msg_2')]})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_1', messageId: 'msg_2' }))
     })
 
     const renderer = renderDom(React.createElement(ChatPanel))
@@ -154,12 +154,10 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
 
   it('有 pending bash 权限请求时，只有权限所属消息收到 isPausedForInput=true', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: true,
-        currentGeneratingMessageId: 'msg_2',
-        messages: [makeAssistantMessage('msg_1'), makeAssistantMessage('msg_2')]
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+currentGeneratingMessageId: 'msg_2',
+messages: [makeAssistantMessage('msg_1'), makeAssistantMessage('msg_2')]})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_1', messageId: 'msg_2' }))
     })
 
     const renderer = renderDom(React.createElement(ChatPanel))
@@ -204,6 +202,7 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     vi.clearAllMocks()
     messageItemPropsByRender.length = 0
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     mockInvoke.mockImplementation(async (channel: string) =>
@@ -230,12 +229,10 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     const nodeMock = { scrollTo, scrollHeight: 2000, scrollTop: 0, clientHeight: 400 }
 
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: true,
-        currentGeneratingMessageId: 'msg_2',
-        messages: [makeAssistantMessage('msg_2')]
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+currentGeneratingMessageId: 'msg_2',
+messages: [makeAssistantMessage('msg_2')]})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_1', messageId: 'msg_2' }))
       useAgentStore.setState({ pendingAskQuestion: null })
     })
 
@@ -291,6 +288,7 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     mockInvoke.mockImplementation(async (channel: string) =>
@@ -304,12 +302,10 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
 
   it('isGenerating=true 且无暂停时，在消息流尾部渲染状态指示器', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: true,
-        currentGeneratingMessageId: 'msg_1',
-        messages: [makeAssistantMessage('msg_1')]
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+currentGeneratingMessageId: 'msg_1',
+messages: [makeAssistantMessage('msg_1')]})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_1', messageId: 'msg_1' }))
     })
 
     const renderer = renderDom(React.createElement(ChatPanel))
@@ -322,12 +318,10 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
 
   it('isPausedForUserInput=true 时，流尾状态指示器不渲染', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: true,
-        currentGeneratingMessageId: 'msg_1',
-        messages: [makeAssistantMessage('msg_1')]
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+currentGeneratingMessageId: 'msg_1',
+messages: [makeAssistantMessage('msg_1')]})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_1', messageId: 'msg_1' }))
       useAgentStore.setState({
         pendingAskQuestion: {
           requestId: 'req_1',
@@ -345,12 +339,9 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
 
   it('isGenerating=false 时，流尾状态指示器不渲染', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: false,
-        currentGeneratingMessageId: null,
-        messages: [makeAssistantMessage('msg_1')]
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+currentGeneratingMessageId: null,
+messages: [makeAssistantMessage('msg_1')]})
     })
 
     const renderer = renderDom(React.createElement(ChatPanel))
@@ -373,6 +364,7 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     vi.clearAllMocks()
     messageItemPropsByRender.length = 0
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     useRunStore.getState().resetForTests()
@@ -402,11 +394,8 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
 
   it('A 会话的取消态不呈现到 B：停止按钮与「强制终止」横幅都不出现', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sessB',
-        isGenerating: false,
-        sessions: [primarySession('sessB')]
-      })
+      useChatStore.setState({currentSessionId: 'sessB',
+sessions: [primarySession('sessB')]})
       useRunStore.setState({
         cancelling: true,
         cancellingSessionId: 'sessA',
@@ -425,11 +414,9 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
 
   it('取消归属当前会话时停止按钮呈现，grace 前禁用', () => {
     act(() => {
-      useChatStore.setState({
-        currentSessionId: 'sessA',
-        isGenerating: true,
-        sessions: [primarySession('sessA')]
-      })
+      useChatStore.setState({currentSessionId: 'sessA',
+sessions: [primarySession('sessA')]})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sessA', messageId: 'msg_1' }))
       useRunStore.setState({
         cancelling: true,
         cancellingSessionId: 'sessA',
@@ -560,6 +547,7 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     vi.clearAllMocks()
     messageItemPropsByRender.length = 0
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     useRunStore.getState().resetForTests()
@@ -583,11 +571,8 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
         currentProject: '/ws'
       })
       useWorkspaceStore.setState({ currentProjectPath: '/ws' })
-      useChatStore.setState({
-        currentSessionId: 'sess_1',
-        isGenerating: false,
-        sendInFlight: false
-      })
+      useChatStore.setState({currentSessionId: 'sess_1',
+sendInFlight: false})
     })
   })
 
@@ -647,7 +632,8 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
 
   it('运行中 Enter 将补充放入已有队列', async () => {
     const renderer = renderDom(React.createElement(ChatPanel))
-    act(() => { useChatStore.setState({ isGenerating: true, sendInFlight: true }) })
+    act(() => { useChatStore.setState({sendInFlight: true})
+      publishRunSnapshot(makeRunSnapshot({ sessionId: 'sess_1', messageId: 'msg_1' })) })
     const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
     act(() => {
       editable.textContent = '页面标题叫小账本'
@@ -731,7 +717,7 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     expect(errors).toHaveLength(1)
     expect(errors[0].content).toContain('未找到技能 /typo')
     expect(errors[0].content).toContain('/todo')
-    expect(state.isGenerating).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(false)
     expect(state.sendInFlight).toBe(false)
     renderer.unmount()
   })
@@ -748,6 +734,7 @@ describe('ChatPanel → 阅读宽度冻结接口', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     mockInvoke.mockImplementation(async (channel: string) =>

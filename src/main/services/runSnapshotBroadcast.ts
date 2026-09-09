@@ -13,7 +13,7 @@ export type SnapshotBroadcastSend = (snapshot: RunSnapshot, event: RunEventRecor
 /** 中间态 50ms 合帧只发最新快照；终态 / 等待用户 / 交互立即发出。 */
 export class SnapshotBroadcastCoalescer {
   private timer: ReturnType<typeof setTimeout> | null = null
-  private pending: { snapshot: RunSnapshot; event: RunEventRecord } | null = null
+  private readonly pending = new Map<string, { snapshot: RunSnapshot; event: RunEventRecord }>()
 
   constructor(private readonly send: SnapshotBroadcastSend) {}
 
@@ -23,7 +23,7 @@ export class SnapshotBroadcastCoalescer {
       this.send(snapshot, event)
       return
     }
-    this.pending = { snapshot, event }
+    this.pending.set(snapshot.runId, { snapshot, event })
     if (this.timer == null) {
       this.timer = setTimeout(() => {
         this.timer = null
@@ -37,9 +37,10 @@ export class SnapshotBroadcastCoalescer {
       clearTimeout(this.timer)
       this.timer = null
     }
-    const next = this.pending
-    this.pending = null
-    if (next) this.send(next.snapshot, next.event)
+    for (const [runId, next] of this.pending) {
+      this.pending.delete(runId)
+      this.send(next.snapshot, next.event)
+    }
   }
 
   cancel(): void {
@@ -47,6 +48,6 @@ export class SnapshotBroadcastCoalescer {
       clearTimeout(this.timer)
       this.timer = null
     }
-    this.pending = null
+    this.pending.clear()
   }
 }

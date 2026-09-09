@@ -3,7 +3,7 @@
  *
  * 覆盖：Shell 发现 / 环境注入 / 自定义 shell 路径 / killProcessTree（Unix only）
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -102,6 +102,54 @@ describe('shell', () => {
         // 杀完不要求做额外断言——只要不抛异常即可
       })
     } else {
+      it('Unix：权限拒绝不能伪装成进程已退出', async () => {
+        const child = spawn('sleep', ['30'], { stdio: 'ignore' })
+        const denied = Object.assign(new Error('kill permission denied'), { code: 'EPERM' })
+        const originalKill = process.kill.bind(process)
+        const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+          if (pid === child.pid) throw denied
+          return originalKill(pid, signal)
+        })
+        try {
+          await expect(killProcessTree(child)).rejects.toMatchObject({ errors: [denied, denied] })
+        } finally {
+          kill.mockRestore()
+          child.kill('SIGKILL')
+        }
+      }, 10_000)
+
+      it('Unix：失败后根已退出，重试仍终止首次捕获并重新托管的后代', async () => {
+        const child = spawn('sh', ['-c', 'sleep 30 >/dev/null 2>&1 & printf "%s\\n" "$!"; wait'], {
+          stdio: ['ignore', 'pipe', 'ignore']
+        })
+        const descendant = await new Promise<number>(resolve => {
+          child.stdout!.once('data', chunk => resolve(Number(String(chunk).trim())))
+        })
+        const rootClosed = new Promise<void>(resolve => { child.once('close', () => resolve()) })
+        const originalKill = process.kill.bind(process)
+        let deny = true
+        const signals: Array<[number, NodeJS.Signals | number | undefined]> = []
+        const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+          signals.push([pid, signal])
+          if (pid === descendant && deny) throw Object.assign(new Error('descendant denied'), { code: 'EPERM' })
+          return originalKill(pid, signal)
+        })
+        try {
+          await expect(killProcessTree(child)).rejects.toThrow('进程树退出未确认')
+          await rootClosed
+          originalKill(descendant, 0)
+          signals.length = 0
+          deny = false
+          await killProcessTree(child)
+          expect(signals.some(([pid]) => pid === child.pid)).toBe(false)
+          expect(signals).toContainEqual([descendant, 'SIGTERM'])
+        } finally {
+          kill.mockRestore()
+          child.kill('SIGKILL')
+          try { originalKill(descendant, 'SIGKILL') } catch {}
+        }
+      }, 15_000)
+
       it('Unix：SIGTERM→SIGKILL 渐进式终止', async () => {
         // 起一个 sleep 子进程
         const child = spawn('sleep', ['30'], { stdio: 'ignore' })

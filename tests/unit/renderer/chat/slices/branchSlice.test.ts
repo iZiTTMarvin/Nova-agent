@@ -65,8 +65,36 @@ describe('branchSlice', () => {
     )
     expect(state.rollbackErrors.msg_3).toBe('IPC 断开')
     expect(state.branchForkInProgress).toBe(false)
-    expect(state.isGenerating).toBe(false)
+    expect(state.sendInFlight).toBe(false)
     expect(state.pendingBranchMetaReload).toBe(false)
+  })
+
+  it('重新生成的迟到失败不能回滚已经切换到的新会话', async () => {
+    seedMessages(4)
+    vi.spyOn(useWorkspaceStore.getState(), 'prepareRegenerate').mockResolvedValue()
+    let rejectOld!: (error: Error) => void
+    mockInvoke.mockImplementation((channel: string, params?: { regenerate?: boolean; sessionId?: string }) => {
+      if (channel === 'send-message') return params?.regenerate
+        ? new Promise((_resolve, reject) => { rejectOld = reject }) : new Promise(() => {})
+      if (channel === 'run:get-snapshot') return Promise.resolve({ snapshot: null, waitingSessions: [] })
+      if (channel === 'load-session') return Promise.resolve({ id: params?.sessionId, messages: [] })
+      return Promise.resolve([])
+    })
+    const old = useChatStore.getState().regenerateAssistant('sess-1', 'msg_3')
+    await vi.waitFor(() => expect(rejectOld).toBeTypeOf('function'))
+    useChatStore.getState().syncFromWorkspace({
+      currentSessionId: 'sess-2', availableSessions: [], messagesRevision: 1,
+      tier1BranchContext: null, tier1StaleDiffMessageIds: []
+    })
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('load-session', { sessionId: 'sess-2' }))
+    await vi.waitFor(() => expect(useWorkspaceStore.getState().isSessionLoading).toBe(false))
+    void useChatStore.getState().sendMessage('新会话输入')
+    await vi.waitFor(() => expect(useChatStore.getState().sendInFlight).toBe(true))
+    rejectOld(new Error('旧重生成失败'))
+    await old
+    expect(useChatStore.getState().messages.map(message => message.content)).toEqual(['新会话输入'])
+    expect(useChatStore.getState().sendInFlight).toBe(true)
+    expect(useChatStore.getState().rollbackErrors).toEqual({})
   })
 
   it('regenerateAssistant 叶子 slash 已失效时回滚并展示拒绝原因', async () => {
@@ -89,7 +117,7 @@ describe('branchSlice', () => {
     expect(state.messages).toEqual(messages)
     expect(state.rollbackErrors.msg_3).toContain('未找到技能 /gone')
     expect(state.branchForkInProgress).toBe(false)
-    expect(state.isGenerating).toBe(false)
+    expect(state.sendInFlight).toBe(false)
     expect(state.pendingBranchMetaReload).toBe(false)
   })
 
@@ -101,7 +129,7 @@ describe('branchSlice', () => {
 
     const state = useChatStore.getState()
     expect(state.messages.map(m => m.id)).toEqual(['msg_0', 'msg_1', 'msg_2'])
-    expect(state.isGenerating).toBe(true)
+    expect(state.sendInFlight).toBe(true)
     expect(state.pendingBranchMetaReload).toBe(true)
     expect(state.branchForkInProgress).toBe(true)
   })
@@ -125,7 +153,7 @@ describe('branchSlice', () => {
 
     expect(prepare).not.toHaveBeenCalled()
     expect(useChatStore.getState().messages).toEqual(messages)
-    expect(useChatStore.getState().isGenerating).toBe(false)
+    expect(useChatStore.getState().sendInFlight).toBe(false)
   })
 
   it('分叉准备窗口内 editResend 被拒绝，不进入 prepare', async () => {
@@ -175,7 +203,7 @@ describe('branchSlice', () => {
     const state = useChatStore.getState()
     expect(state.messages).toEqual(messages)
     expect(state.branchForkInProgress).toBe(false)
-    expect(state.isGenerating).toBe(false)
+    expect(state.sendInFlight).toBe(false)
     expect(Object.values(state.rollbackErrors)).toContain('send 失败')
   })
 

@@ -12,9 +12,10 @@ import type { MessageBlock, ToolCall } from '../../shared/session'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from './types'
 import { extractTextFromSerializableContent } from './types'
 import { isToolFailureText } from '../../shared/toolResultStatus'
+import { isToolProcessOutcome } from '../../shared/tools/processOutcome'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
-export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 4
+export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 5
 
 /**
  * 从 blocks 投影出 content 文本（仅 text 块拼接）。
@@ -134,10 +135,10 @@ export function buildBlocksFromLegacyFields(message: {
  * 不强制写盘；调用方决定是否持久化。
  */
 export function normalizeMessageToBlocksSource(message: SessionMessage): SessionMessage {
-  if (message.messageSchemaVersion !== undefined && ![1, 2, 3, 4].includes(message.messageSchemaVersion)) {
+  if (message.messageSchemaVersion !== undefined && ![1, 2, 3, 4, 5].includes(message.messageSchemaVersion)) {
     throw new Error('Unsupported message schema version')
   }
-  if (message.messageSchemaVersion !== undefined && message.messageSchemaVersion >= 2) validateMessageFacts(message)
+  if (message.userDelivery !== undefined || (message.messageSchemaVersion !== undefined && message.messageSchemaVersion >= 2)) validateMessageFacts(message)
   // 丢弃历史自动验证字段（功能已移除）
   const { verificationSummary: _drop, ...rest } = message as SessionMessage & {
     verificationSummary?: unknown
@@ -183,7 +184,7 @@ export function serializeMessageForDisk(message: SessionMessage): SessionMessage
   const normalized = normalizeMessageToBlocksSource(message)
   if (!normalized.blocks || normalized.blocks.length === 0) {
     // 无 blocks 的旧形态：保留 content 以便可读
-    return normalized
+    return { ...normalized, messageSchemaVersion: MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE }
   }
   const blocks = normalized.blocks.map(block => {
     if (block.type !== 'tool') return block
@@ -211,6 +212,10 @@ function validateMessageFacts(message: SessionMessage): void {
       (delivery.sessionPrefix !== null && typeof delivery.sessionPrefix !== 'string'))) {
     throw new Error('Invalid user delivery facts')
   }
+  if (delivery?.skillInput !== undefined && (!delivery.skillInput ||
+      typeof delivery.skillInput.assistantPrelude !== 'string' || typeof delivery.skillInput.userContent !== 'string')) {
+    throw new Error('Invalid skill input facts')
+  }
   if (message.blocks !== undefined && !Array.isArray(message.blocks)) throw new Error('Invalid message blocks')
   let previousStep = -1
   for (const block of message.blocks ?? []) {
@@ -227,6 +232,9 @@ function validateMessageFacts(message: SessionMessage): void {
       if (block.resultImages !== undefined && (!Array.isArray(block.resultImages) || block.resultImages.some(image =>
         !image || typeof image.data !== 'string' || !image.data || typeof image.mimeType !== 'string' ||
         !/^image\/(png|jpeg|gif|webp)$/.test(image.mimeType)))) throw new Error('Invalid tool images')
+      if (block.processOutcome !== undefined && !isToolProcessOutcome(block.processOutcome)) {
+        throw new Error('Invalid tool process outcome')
+      }
       const delivery = block.delivery
       if (delivery && (delivery.version !== 1 || !/^[a-f0-9]{64}$/.test(delivery.bodySha256) ||
           !['original', 'archive'].includes(delivery.kind) ||

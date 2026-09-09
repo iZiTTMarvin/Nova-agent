@@ -137,11 +137,6 @@ export class CompactionService {
     return this.compressingForOverflow
   }
 
-  recordUserTurn(): void {
-    this.context.userTurnsSinceCompaction++
-    this.updateTokenEstimate()
-  }
-
   updateTokenEstimate(): void {
     this.context.lastEstimatedTokens = estimateContextTokens(this.context.messages)
   }
@@ -223,7 +218,6 @@ export class CompactionService {
     this.context.messages = rebuildWithCompression(this.context.systemPrompt, ledger, tail)
     this.context.compactionState = ledger
     this.context.compactionLevel = ledger.entries.length
-    this.context.userTurnsSinceCompaction = 0
     this.updateTokenEstimate()
     this.cacheDiagnostics.bumpEpoch('compaction')
   }
@@ -700,7 +694,6 @@ export class CompactionService {
     this.context.messages = rebuilt
     this.context.compactionState = ledger
     this.context.compactionLevel = ledger.entries.length
-    this.context.userTurnsSinceCompaction = 0
     this.updateTokenEstimate()
     this.cacheDiagnostics.bumpEpoch('compaction')
     recordMetric('compaction.committed', { revision: ledger.revision ?? 0, facts: outputs.handoff.facts.length }, { tags: {

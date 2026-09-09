@@ -66,6 +66,7 @@ describe('WorkspaceService workspace root changes', () => {
 
   function createService(): WorkspaceService {
     const service = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
       getSessionStore: () => store,
       getMainWindow: () => null,
       getRunCoordinator: () => ({

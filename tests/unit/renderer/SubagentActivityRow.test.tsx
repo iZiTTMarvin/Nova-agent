@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import React from 'react'
+import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
+import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   SubagentActivityRow,
@@ -52,6 +54,7 @@ describe('SubagentActivityRow', () => {
   beforeEach(() => {
     useSubagentProjectionStore.getState().resetForTests()
     resetAgentStoreForTests()
+    resetChatStoreForTests()
     useRunStore.getState().resetForTests()
     mockInvoke.mockReset()
     mockOn.mockReset()
@@ -342,16 +345,29 @@ describe('SubagentActivityRow', () => {
   })
 
   it('子代理权限请求锚定到父会话视图的对应活动行，可拒绝并送达子 run', async () => {
-    useAgentStore.getState().handlePermissionRequest({
-      messageId: 'msg-child',
-      requestId: 'perm-child',
-      toolName: 'bash',
-      args: { command: 'npm test' },
-      riskLevel: 'low',
-      reason: '运行测试命令',
-      sessionId: 'sess-child',
-      interactionId: 'perm-child',
-      version: 1
+    useChatStore.setState({ currentSessionId: 'sess-parent', sessions: [{
+      id: 'sess-child', kind: 'subagent', workspaceRoot: '/ws', mode: 'default',
+      createdAt: 1, updatedAt: 1, messageCount: 0,
+      subagent: {
+        lineage: { parentSessionId: 'sess-parent', depth: 1 },
+        profile: { profileId: 'explore', name: 'Explore', permissionCeiling: 'read_only' }
+      }
+    }] })
+    useRunStore.getState().selectSession('sess-parent')
+    const snapshot = makeRunSnapshot({
+      sessionId: 'sess-child', runId: 'internal-run-id', messageId: 'msg-child', status: 'waiting_user',
+      pendingInteractions: [{
+        interactionId: 'perm-child', runId: 'internal-run-id', sessionId: 'sess-child', messageId: 'msg-child',
+        type: 'permission', status: 'pending', version: 1, createdAt: 1,
+        payload: { requestId: 'perm-child', toolName: 'bash', args: { command: 'npm test' }, riskLevel: 'low', reason: '运行测试命令' }
+      }]
+    })
+    publishRunSnapshot(snapshot)
+    await useRunStore.getState().refreshInteractionProjection()
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'respond-permission') return { ok: true }
+      if (channel === 'run:get-snapshot') return { snapshot, waitingSessions: [] }
+      return undefined
     })
 
     const renderer = renderDom(
@@ -381,6 +397,13 @@ describe('SubagentActivityRow', () => {
         expectedVersion: 1
       })
     )
+    expect(useAgentStore.getState().pendingPermissionRequest?.requestId).toBe('perm-child')
+    expect(renderer.container.querySelector('.subagent-activity-row__permission')).not.toBeNull()
+    await act(async () => {
+      publishRunSnapshot({ ...snapshot, status: 'running', sequence: 2, pendingInteractions: [] })
+      await useRunStore.getState().refreshInteractionProjection()
+    })
+    expect(renderer.container.querySelector('.subagent-activity-row__permission')).toBeNull()
     expect(useAgentStore.getState().pendingPermissionRequest).toBeNull()
     renderer.unmount()
   })

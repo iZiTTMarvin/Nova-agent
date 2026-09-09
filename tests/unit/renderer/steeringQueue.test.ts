@@ -1,178 +1,127 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import {
-  useChatStore,
-  resetChatStoreForTests,
-  type ChatState
-} from '../../../src/renderer/stores/useChatStore'
+import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
+import { useRunStore, selectSessionIsRunning } from '../../../src/renderer/stores/useRunStore'
+import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
 
 const mockInvoke = vi.fn()
-const mockOn = vi.fn()
 
-global.window = {
-  ...global.window,
-  api: {
-    invoke: mockInvoke,
-    on: mockOn,
-    removeAllListeners: vi.fn()
-  }
-} as unknown as Window & typeof globalThis
+beforeEach(() => {
+  vi.clearAllMocks()
+  resetChatStoreForTests()
+  useRunStore.getState().resetForTests()
+  useWorkspaceStore.setState({ currentProjectPath: '/test/project', currentSessionId: 'sess_1' })
+  useChatStore.setState({ currentSessionId: 'sess_1' })
+  global.window = {
+    ...global.window,
+    api: { invoke: mockInvoke, on: vi.fn(), removeAllListeners: vi.fn() }
+  } as unknown as Window & typeof globalThis
+  mockInvoke.mockImplementation(async (channel: string) => {
+    if (channel === 'send-message') return { accepted: true }
+    if (channel === 'load-session') return { messages: useChatStore.getState().messages, hasMoreMessagesAbove: false }
+    if (channel === 'get-message-diffs') return { diffs: [], reviews: {} }
+    return undefined
+  })
+  useRunStore.getState().selectSession('sess_1')
+})
+
+function startTurn(): void {
+  publishRunSnapshot(makeRunSnapshot())
+  useChatStore.getState().handleMessageStart('msg_1')
+}
+
+function sentContents(): unknown[] {
+  return mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message').map(([, payload]) => payload.content)
+}
 
 describe('Steering Queue', () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    resetChatStoreForTests()
-    // PRD §5.1：sendMessage 现在从 workspace store 读 currentProjectPath
-    useWorkspaceStore.setState({ currentProjectPath: '/test/project' })
-  })
-
-  it('enqueuePendingMessage 应把消息追加到队列', () => {
-    useChatStore.getState().enqueuePendingMessage('问题 1', [])
-    useChatStore.getState().enqueuePendingMessage('问题 2', [])
-
-    const queue = useChatStore.getState().pendingUserMessages
-    expect(queue).toHaveLength(2)
-    expect(queue[0].text).toBe('问题 1')
-    expect(queue[1].text).toBe('问题 2')
-  })
-
-  it.each(['message_end', 'cancel_fallback'])('暂停边界 %s 保留队列，显式继续才发出', async (boundary) => {
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
-    useChatStore.getState().handleMessageStart('paused')
-    useChatStore.getState().enqueuePendingMessage('补充要求', [])
-    if (boundary === 'message_end') await useChatStore.getState().handleMessageEnd('paused', true)
-    else await useChatStore.getState().markRunningAsCancelled()
-    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['补充要求'])
-    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(0)
-    await useChatStore.getState().sendNextPendingMessage()
-    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(1)
-    expect(useChatStore.getState().pendingUserMessages).toEqual([])
-  })
-
-  it('removePendingMessage 应按索引移除', () => {
-    useChatStore.getState().enqueuePendingMessage('问题 1', [])
-    useChatStore.getState().enqueuePendingMessage('问题 2', [])
-    useChatStore.getState().enqueuePendingMessage('问题 3', [])
-
+  it('入队、按索引移除和清空不改变其余消息的顺序', () => {
+    for (const text of ['Q1', 'Q2', 'Q3']) useChatStore.getState().enqueuePendingMessage(text, [])
     useChatStore.getState().removePendingMessage(1)
-
-    const queue = useChatStore.getState().pendingUserMessages
-    expect(queue).toHaveLength(2)
-    expect(queue[0].text).toBe('问题 1')
-    expect(queue[1].text).toBe('问题 3')
-  })
-
-  it('clearPendingMessages 应清空队列', () => {
-    useChatStore.getState().enqueuePendingMessage('问题 1', [])
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['Q1', 'Q3'])
     useChatStore.getState().clearPendingMessages()
-
     expect(useChatStore.getState().pendingUserMessages).toEqual([])
   })
 
-  it('turn boundary: handleMessageEnd 后若有挂起消息应自动 dispatch 第一条', async () => {
-    // 1. 先模拟一次正在进行的助手消息
-    useChatStore.getState().handleMessageStart('msg_running')
-    useChatStore.getState().handleTextDelta('msg_running', '正在思考')
-
-    // 2. 用户在生成过程中输入并入队
-    useChatStore.getState().enqueuePendingMessage('后续问题', [])
-    expect(useChatStore.getState().pendingUserMessages).toHaveLength(1)
-
-    // 3. 主进程推 message-end（正常完成）
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
-    await useChatStore.getState().handleMessageEnd('msg_running')
-
-    // 4. 队列首条应被 dispatch 触发 sendMessage
-    // sendMessage 会追加用户消息 + 调用 IPC
-    const state = useChatStore.getState()
-    expect(state.pendingUserMessages).toHaveLength(0)
-    expect(state.isGenerating).toBe(true)
-    expect(mockInvoke).toHaveBeenCalledWith('send-message', expect.objectContaining({
-      content: '后续问题'
-    }))
+  it.each(['cancelled', 'interrupted'] as const)('%s 快照保留队列，显式继续才发出', async status => {
+    startTurn()
+    useChatStore.getState().enqueuePendingMessage('补充要求', [])
+    publishRunSnapshot(makeRunSnapshot({ status, sequence: 2 }))
+    await vi.waitFor(() => expect(useChatStore.getState().messages[0].interrupted).toBe(true))
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['补充要求'])
+    expect(sentContents()).toEqual([])
+    await useChatStore.getState().sendNextPendingMessage()
+    expect(sentContents()).toEqual(['补充要求'])
+    expect(useChatStore.getState().pendingUserMessages).toEqual([])
   })
 
-  it('挂起消息按 FIFO 顺序 dispatch', async () => {
-    useChatStore.getState().handleMessageStart('msg_main')
+  it.each(['completed', 'failed'] as const)('只有首次 %s 快照派发队首，消息事件和重复快照不重复派发', async status => {
+    startTurn()
     useChatStore.getState().enqueuePendingMessage('Q1', [])
     useChatStore.getState().enqueuePendingMessage('Q2', [])
-
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
-    await useChatStore.getState().handleMessageEnd('msg_main')
-
-    // 第一次 dispatch 把 Q1 发出，会创建新的 user 消息 + 设置 isGenerating
-    // 此时不会再有第二次 dispatch（因为 sendMessage 自身 set 了 isGenerating=true）
-    const state = useChatStore.getState()
-    expect(state.isGenerating).toBe(true)
-    expect(state.pendingUserMessages).toHaveLength(1) // Q2 还在排队
-    expect(state.pendingUserMessages[0].text).toBe('Q2')
+    await useChatStore.getState().handleMessageEnd('msg_1')
+    await useChatStore.getState().handleError('msg_1', '连接失败')
+    expect(selectSessionIsRunning(useRunStore.getState(), 'sess_1')).toBe(true)
+    expect(sentContents()).toEqual([])
+    const terminal = makeRunSnapshot({ status, sequence: 2 })
+    publishRunSnapshot(terminal)
+    await vi.waitFor(() => expect(sentContents()).toEqual(['Q1']))
+    publishRunSnapshot(terminal)
+    publishRunSnapshot({ ...terminal, sequence: 3 })
+    await useRunStore.getState().refreshInteractionProjection()
+    expect(sentContents()).toEqual(['Q1'])
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['Q2'])
+    expect(useChatStore.getState().messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['Q1'])
   })
 
-  it('队列超过上限时应丢弃最早的项', () => {
-    // 默认上限是 20
-    for (let i = 0; i < 25; i++) {
-      useChatStore.getState().enqueuePendingMessage(`msg-${i}`, [])
-    }
-
-    const queue = useChatStore.getState().pendingUserMessages
-    expect(queue.length).toBe(20)
-    // 最早 5 条（msg-0..msg-4）被丢弃
-    expect(queue[0].text).toBe('msg-5')
-    expect(queue[19].text).toBe('msg-24')
-  })
-
-  it('dispatch 发送被守卫拒绝：消息放回队首，不丢失、不重复发送', async () => {
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
-    useChatStore.getState().handleMessageStart('msg_reject')
+  it('终态消息对账未完成时也派发队首，恢复对账后不重复发送', async () => {
+    startTurn()
     useChatStore.getState().enqueuePendingMessage('Q1', [])
-    useChatStore.getState().enqueuePendingMessage('Q2', [])
-
-    const originalSendMessage = useChatStore.getState().sendMessage
-    useChatStore.setState({
-      sendMessage: (async () => false) as unknown as ChatState['sendMessage']
+    let resolveLoad!: (detail: { messages: []; hasMoreMessagesAbove: false }) => void
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'send-message') return { accepted: true }
+      if (channel === 'load-session') return new Promise(resolve => { resolveLoad = resolve })
+      if (channel === 'get-message-diffs') return { diffs: [], reviews: {} }
+      return undefined
     })
-    try {
-      await useChatStore.getState().handleMessageEnd('msg_reject')
-    } finally {
-      useChatStore.setState({ sendMessage: originalSendMessage })
-    }
-
-    // 队首未发出：Q1 回队且顺序不变，等待下一个 turn boundary 重试
-    const queue = useChatStore.getState().pendingUserMessages.map(q => q.text)
-    expect(queue).toEqual(['Q1', 'Q2'])
-    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(0)
+    publishRunSnapshot(makeRunSnapshot({ status: 'completed', sequence: 2 }))
+    await vi.waitFor(() => expect(sentContents()).toEqual(['Q1']))
+    expect(useChatStore.getState().pendingUserMessages).toEqual([])
+    resolveLoad({ messages: [], hasMoreMessagesAbove: false })
+    await vi.waitFor(() => expect(mockInvoke).toHaveBeenCalledWith('get-message-diffs', expect.anything()))
+    expect(sentContents()).toEqual(['Q1'])
+    expect(useChatStore.getState().messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['Q1'])
   })
 
-  it('dispatch 发送抛错：消息放回队首等下次派发', async () => {
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
+  it('队列超过上限时丢弃最早的项', () => {
+    for (let i = 0; i < 25; i++) useChatStore.getState().enqueuePendingMessage(`msg-${i}`, [])
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `msg-${index + 5}`)
     )
-    useChatStore.getState().handleMessageStart('msg_throw')
+  })
+
+  it('运行中显式派发被守卫拒绝，不丢失队列', async () => {
+    startTurn()
     useChatStore.getState().enqueuePendingMessage('Q1', [])
     useChatStore.getState().enqueuePendingMessage('Q2', [])
+    await useChatStore.getState().sendNextPendingMessage()
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['Q1', 'Q2'])
+    expect(sentContents()).toEqual([])
+  })
 
-    const originalSendMessage = useChatStore.getState().sendMessage
-    useChatStore.setState({
-      sendMessage: (async () => {
-        throw new Error('IPC 不可用')
-      }) as unknown as ChatState['sendMessage']
-    })
+  it('派发入口抛错时消息放回队首，下次派发保持顺序', async () => {
+    useChatStore.getState().enqueuePendingMessage('Q1', [])
+    useChatStore.getState().enqueuePendingMessage('Q2', [])
+    const send = vi.spyOn(useChatStore.getState(), 'sendMessage').mockRejectedValueOnce(new Error('发送前失败'))
     try {
-      await useChatStore.getState().handleMessageEnd('msg_throw')
+      await useChatStore.getState().sendNextPendingMessage()
+      expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['Q1', 'Q2'])
+      expect(sentContents()).toEqual([])
     } finally {
-      useChatStore.setState({ sendMessage: originalSendMessage })
+      send.mockRestore()
     }
-
-    const queue = useChatStore.getState().pendingUserMessages.map(q => q.text)
-    expect(queue).toEqual(['Q1', 'Q2'])
-    expect(mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(0)
+    await useChatStore.getState().sendNextPendingMessage()
+    expect(sentContents()).toEqual(['Q1'])
+    expect(useChatStore.getState().pendingUserMessages.map(item => item.text)).toEqual(['Q2'])
   })
 })

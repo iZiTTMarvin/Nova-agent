@@ -22,7 +22,7 @@ function makeEntry(sessionId: string, runId: string): {
     resolve = r
   })
   return {
-    entry: { sessionId, runId, resolve, eventBus: new EventBus() },
+    entry: { sessionId, runId, executionGeneration: 1, resolve, eventBus: new EventBus() },
     resolved
   }
 }

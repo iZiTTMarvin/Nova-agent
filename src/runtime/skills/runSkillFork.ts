@@ -1,7 +1,7 @@
 /** Skill fork 只负责构造 durable child 命令，执行生命周期归统一子代理端口。 */
 import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../subagents'
 import type { ToolInvocationRef } from '../tools/types'
-import type { SpawnSubagentCommand, SubagentOrigin } from '../../shared/subagents'
+import type { SpawnSubagentCommand, SubagentOrigin, SubagentExecutionResult } from '../../shared/subagents'
 import { expandTemplate } from './template'
 import type { SkillManifest, TemplateContext } from './types'
 
@@ -16,6 +16,10 @@ const DEFAULT_TOOLS = [
   'todo_write'
 ] as const
 const WRITE_TOOLS = new Set(['edit', 'write', 'bash', 'save_plan', 'switch_mode'])
+
+export type SkillForkResult = Pick<SubagentExecutionResult, 'status' | 'summary' | 'incompleteReason'> & {
+  success: boolean
+}
 
 export interface RunSkillForkDeps {
   getSpawnSubagentPort: () => SpawnSubagentPort | undefined
@@ -72,9 +76,9 @@ function buildOrigin(params: RunSkillForkParams): SubagentOrigin {
 export async function runSkillFork(
   deps: RunSkillForkDeps,
   params: RunSkillForkParams
-): Promise<{ success: boolean; summary: string }> {
+): Promise<SkillForkResult> {
   const port = deps.getSpawnSubagentPort()
-  if (!port) return { success: false, summary: '统一子代理执行端口未装配' }
+  if (!port) return { status: 'failed', success: false, summary: '统一子代理执行端口未装配' }
 
   const { content: skillBody } = expandTemplate(params.skill.body, {
     ...(params.templateContext ?? {}),
@@ -101,15 +105,15 @@ export async function runSkillFork(
       ...(params.invocationRef ? { invocationRef: params.invocationRef } : {}),
       ...(params.abortSignal ? { abortSignal: params.abortSignal } : {})
     })
-    if (result.status !== 'completed') {
-      return {
-        success: false,
-        summary: result.failure?.message ?? `技能子代理已${result.status}`
-      }
+    return {
+      status: result.status,
+      success: result.status === 'completed',
+      summary: result.status === 'completed' ? result.summary : result.failure?.message ?? (result.summary || `技能子代理已${result.status}`),
+      ...(result.incompleteReason ? { incompleteReason: result.incompleteReason } : {})
     }
-    return { success: true, summary: result.summary }
   } catch (error) {
     return {
+      status: params.abortSignal?.aborted ? 'cancelled' : 'failed',
       success: false,
       summary: error instanceof Error ? error.message : String(error)
     }

@@ -130,13 +130,13 @@ describe('_revision bump', () => {
     expect(useChatStore.getState().messages[0]._revision).toBeGreaterThan(rev0)
   })
 
-  it('markRunningAsCancelled 应对被修改的消息 bump _revision', async () => {
+  it('取消消息应对被修改的消息 bump _revision', async () => {
     useChatStore.getState().handleMessageStart('msg_1')
     useChatStore.getState().handleToolCallStart('msg_1', 'tc_1', 'bash')
     const rev0 = useChatStore.getState().messages[0]._revision!
 
     vi.mocked(mockInvoke).mockResolvedValue(undefined)
-    await useChatStore.getState().markRunningAsCancelled()
+    await useChatStore.getState().handleMessageEnd('msg_1', true)
     expect(useChatStore.getState().messages[0]._revision).toBeGreaterThan(rev0)
   })
 })

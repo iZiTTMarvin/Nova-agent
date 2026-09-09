@@ -1,70 +1,39 @@
-/**
- * useAgentStore — Agent 运行时状态、权限、取消
- *
- * 负责：
- * - 权限请求与提交状态
- * - 取消执行（cancelExecution）：由 RunCoordinator 确认终态，不再本地 5s 宣布结束
- *
- * 依赖方向：
- * - useAgentStore → useChatStore（取消时需要把 running 工具标记为 error）
- * - useAgentStore → useRunStore（cancelling / snapshot 终态）
- * - 不被 useChatStore 内部状态依赖
- */
 import { create } from 'zustand'
 import type { PermissionDecision } from '../../shared/permissions/types'
 import type { PendingPermissionRequest } from './types'
 import type { AskQuestionRequest, AskQuestionAnswer } from '../../shared/askQuestion/types'
 
 export interface AgentState {
-  // ── 状态 ──
   pendingPermissionRequest: PendingPermissionRequest | null
   isSubmittingPermission: boolean
   permissionError: string | null
-  /** askQuestion 工具发起的提问请求；为空时面板不渲染 */
   pendingAskQuestion: AskQuestionRequest | null
-  /** askQuestion 提交中（ACK 前不删 pending） */
   isSubmittingAskQuestion: boolean
-  /** 提交/跳过 ACK 失败或异常时的可见错误；成功或新请求时清空 */
   askQuestionError: string | null
-  // ── Actions ──
-  /**
-   * 中断当前流式生成。
-   * - 立刻进入 cancelling（按钮「正在停止」）
-   * - 等 RunCoordinator snapshot 确认 terminal 后才 idle
-   * - 超 grace 由 useRunStore 显示「部分任务未退出」+ 强制终止
-   * - Renderer 不能独立宣布后台 run 已结束
-   */
   cancelExecution: (runId?: string) => Promise<void>
-
-  /**
-   * 兼容旧 clearCancelFallback：现由 run snapshot 终态驱动，保留空实现避免调用方报错。
-   */
-  clearCancelFallback: () => void
-
-  /** 收到主进程权限请求 */
   handlePermissionRequest: (request: PendingPermissionRequest) => void
-  /** 用户回应权限请求 */
   respondPermissionRequest: (decision: PermissionDecision) => Promise<void>
-
-  /** 收到 askQuestion 工具请求，写入 pendingAskQuestion 触发面板渲染 */
   handleAskQuestionRequest: (request: AskQuestionRequest) => void
-  /** 主进程 resolved（用户已回答 / dismissed / 新消息 guardFollowup / cancel）后清除前端状态。
-   *  仅当 requestId 匹配时清空，避免清错新请求 */
-  clearAskQuestionRequest: (requestId: string) => void
-  /** 用户提交答案：ACK 前只置 submitting，不提前删 pending */
   respondAskQuestion: (answers: AskQuestionAnswer[]) => Promise<void>
-  /** 用户点击跳过全部：invoke 传空数组，工具 formatAnswers 输出 dismissed */
   dismissAskQuestion: () => Promise<void>
-
-  /**
-   * 切换会话时清空本地 pending 投影。
-   * snapshot-first 会在随后 pullSnapshot 中按新会话恢复；此处只清 UI，不宣布 run 结束。
-   */
   resetAgentRuntime: () => void
 }
 
 function newCommandId(): string {
   return `cmd_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function sameInteraction(
+  a: PendingPermissionRequest | AskQuestionRequest | null,
+  b: PendingPermissionRequest | AskQuestionRequest
+): boolean {
+  return a?.requestId === b.requestId && a.runId === b.runId && a.interactionId === b.interactionId
+}
+
+async function refreshRequestSnapshot(sessionId: string | undefined): Promise<void> {
+  if (!sessionId) return
+  const { useRunStore } = await import('./useRunStore')
+  await useRunStore.getState().pullSnapshot(sessionId)
 }
 
 async function submitAskQuestionResponse(
@@ -74,43 +43,27 @@ async function submitAskQuestionResponse(
 ): Promise<void> {
   const pending = get().pendingAskQuestion
   if (!pending || get().isSubmittingAskQuestion) return
-  const requestId = pending.requestId
   const fallback = answers.length === 0 ? '跳过提问失败' : '提交答案失败'
   set({ isSubmittingAskQuestion: true, askQuestionError: null })
-  const commandId = newCommandId()
   try {
     const result = await window.api.invoke('respond-ask-question', {
-      requestId,
+      requestId: pending.requestId,
       answers,
-      commandId,
+      commandId: newCommandId(),
       expectedVersion: pending.version,
       interactionId: pending.interactionId ?? pending.requestId
     })
-    if (get().pendingAskQuestion?.requestId !== requestId) {
-      set({ isSubmittingAskQuestion: false })
-      return
-    }
-    if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+    if (sameInteraction(get().pendingAskQuestion, pending)) {
       set({
         isSubmittingAskQuestion: false,
-        askQuestionError: result.message || fallback
+        askQuestionError: result && !result.ok ? result.message || fallback : null
       })
-      if (pending.sessionId) {
-        const { useRunStore } = await import('./useRunStore')
-        void useRunStore.getState().pullSnapshot(pending.sessionId)
-      }
-      return
     }
-    set({ pendingAskQuestion: null, isSubmittingAskQuestion: false, askQuestionError: null })
+    await refreshRequestSnapshot(pending.sessionId)
   } catch (err) {
-    if (get().pendingAskQuestion?.requestId !== requestId) {
-      set({ isSubmittingAskQuestion: false })
-      return
+    if (sameInteraction(get().pendingAskQuestion, pending)) {
+      set({ isSubmittingAskQuestion: false, askQuestionError: err instanceof Error ? err.message : fallback })
     }
-    set({
-      isSubmittingAskQuestion: false,
-      askQuestionError: err instanceof Error ? err.message : fallback
-    })
   }
 }
 
@@ -122,209 +75,69 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   isSubmittingAskQuestion: false,
   askQuestionError: null,
 
-  cancelExecution: async (targetRunId?: string) => {
+  cancelExecution: async targetRunId => {
     try {
-      const { useRunStore } = await import('./useRunStore')
-      const runState = useRunStore.getState()
-      // 停止按钮只针对当前选中会话的活动 run，不能误取消后台其他会话。
-      const runId = targetRunId
-        ?? (runState.selectedSessionId
-          ? runState.activeRunIdBySessionId[runState.selectedSessionId]
-          : undefined)
-        ?? runState.snapshot?.runId
-        ?? null
-
-      // 本地立即进入 cancelling，不清 isGenerating（等 snapshot 终态）
+      const { useRunStore, selectSessionSnapshot } = await import('./useRunStore')
+      const sessionId = useRunStore.getState().selectedSessionId
+      let runId = targetRunId ?? selectSessionSnapshot(useRunStore.getState(), sessionId)?.runId
+      if (!runId && sessionId) {
+        await useRunStore.getState().pullSnapshot(sessionId)
+        runId = selectSessionSnapshot(useRunStore.getState(), sessionId)?.runId
+      }
+      if (!runId) throw new Error('无法取消：当前会话没有可识别的运行')
       useRunStore.getState().beginLocalCancel(runId)
-
-      // 本地清空弹窗，避免卡在已取消的交互上；但只清归属本次取消目标（run/会话）的请求。
-      // 子代理会话投影上来的 pending 请求（sessionId 指向后代会话）或明确属于其他 run 的
-      // 遗留请求不是本次 Stop 的目标，误清会让用户失去本次响应机会（子 run 不会因此终止）。
-      const pending = get().pendingPermissionRequest
-      const cancellingSessionId = useRunStore.getState().cancellingSessionId
-      const belongsToCancel =
-        pending == null ||
-        (runId != null && pending.runId != null
-          ? pending.runId === runId
-          : pending.sessionId == null ||
-            cancellingSessionId == null ||
-            pending.sessionId === cancellingSessionId)
-      if (belongsToCancel) {
-        set({
-          pendingPermissionRequest: null,
-          isSubmittingPermission: false,
-          permissionError: null,
-          pendingAskQuestion: null,
-          isSubmittingAskQuestion: false,
-          askQuestionError: null
-        })
-      }
-
-      const result = runId
-        ? await window.api.invoke('cancel-execution', { runId })
-        : await window.api.invoke('cancel-execution')
-      if (result?.runId) {
-        useRunStore.getState().beginLocalCancel(result.runId)
-      }
-      // 不在此处复位 isGenerating——等 run:snapshot 终态或 force-terminate
+      await window.api.invoke('cancel-execution', { runId })
+      // 卡片和运行态只在权威快照确认后清除。
     } catch (err) {
       console.error('取消执行失败:', err)
     }
   },
 
-  clearCancelFallback: () => {
-    // 旧 5s 兜底已移除；保留空实现兼容调用方
+  handlePermissionRequest: request => {
+    const same = sameInteraction(get().pendingPermissionRequest, request)
+    set({ pendingPermissionRequest: request, ...(same ? {} : { isSubmittingPermission: false, permissionError: null }) })
   },
 
-  handlePermissionRequest: (request: PendingPermissionRequest) => {
-    set({
-      pendingPermissionRequest: request,
-      isSubmittingPermission: false,
-      permissionError: null
-    })
-  },
-
-  respondPermissionRequest: async (decision: PermissionDecision) => {
-    const { pendingPermissionRequest } = get()
-    if (!pendingPermissionRequest) return
-
+  respondPermissionRequest: async decision => {
+    const pending = get().pendingPermissionRequest
+    if (!pending || get().isSubmittingPermission) return
     set({ isSubmittingPermission: true, permissionError: null })
-
-    const commandId = newCommandId()
     try {
       const result = await window.api.invoke('respond-permission', {
-        requestId: pendingPermissionRequest.requestId,
+        requestId: pending.requestId,
         decision,
-        commandId,
-        expectedVersion: pendingPermissionRequest.version,
-        interactionId: pendingPermissionRequest.interactionId ?? pendingPermissionRequest.requestId
+        commandId: newCommandId(),
+        expectedVersion: pending.version,
+        interactionId: pending.interactionId ?? pending.requestId
       })
-
-      // 新路径：根据 ACK 决定是否清除；旧路径 result 为 void 视为成功
-      if (result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+      if (sameInteraction(get().pendingPermissionRequest, pending)) {
         set({
           isSubmittingPermission: false,
-          permissionError: result.message || '提交权限决策失败'
+          permissionError: result && !result.ok ? result.message || '提交权限决策失败' : null
         })
-        // 刷新 snapshot
-        if (pendingPermissionRequest.sessionId) {
-          const { useRunStore } = await import('./useRunStore')
-          void useRunStore.getState().pullSnapshot(pendingPermissionRequest.sessionId)
-        }
-        return
       }
-
-      set({
-        pendingPermissionRequest: null,
-        isSubmittingPermission: false,
-        permissionError: null
-      })
+      await refreshRequestSnapshot(pending.sessionId)
     } catch (err) {
-      set({
-        isSubmittingPermission: false,
-        permissionError: err instanceof Error ? err.message : '提交权限决策失败'
-      })
+      if (sameInteraction(get().pendingPermissionRequest, pending)) {
+        set({ isSubmittingPermission: false, permissionError: err instanceof Error ? err.message : '提交权限决策失败' })
+      }
     }
   },
 
-  handleAskQuestionRequest: (request: AskQuestionRequest) => {
-    set({ pendingAskQuestion: request, isSubmittingAskQuestion: false, askQuestionError: null })
+  handleAskQuestionRequest: request => {
+    const same = sameInteraction(get().pendingAskQuestion, request)
+    set({ pendingAskQuestion: request, ...(same ? {} : { isSubmittingAskQuestion: false, askQuestionError: null }) })
   },
-
-  clearAskQuestionRequest: (requestId: string) => {
-    const current = get().pendingAskQuestion
-    if (current?.requestId === requestId) {
-      set({ pendingAskQuestion: null, isSubmittingAskQuestion: false, askQuestionError: null })
-    }
-  },
-
-  respondAskQuestion: async (answers: AskQuestionAnswer[]) => {
-    await submitAskQuestionResponse(get, set, answers)
-  },
-
-  dismissAskQuestion: async () => {
-    await submitAskQuestionResponse(get, set, [])
-  },
-
+  respondAskQuestion: answers => submitAskQuestionResponse(get, set, answers),
+  dismissAskQuestion: () => submitAskQuestionResponse(get, set, []),
   resetAgentRuntime: () => {
     set({
-      pendingPermissionRequest: null,
-      isSubmittingPermission: false,
-      permissionError: null,
-      pendingAskQuestion: null,
-      isSubmittingAskQuestion: false,
-      askQuestionError: null
+      pendingPermissionRequest: null, isSubmittingPermission: false, permissionError: null,
+      pendingAskQuestion: null, isSubmittingAskQuestion: false, askQuestionError: null
     })
   }
 }))
 
-/** 重置整个 agent store 到默认值。供测试 setup 复用。 */
 export function resetAgentStoreForTests(): void {
-  useAgentStore.setState({
-    pendingPermissionRequest: null,
-    isSubmittingPermission: false,
-    permissionError: null,
-    pendingAskQuestion: null,
-    isSubmittingAskQuestion: false,
-    askQuestionError: null
-  })
-}
-
-/**
- * 从当前会话的后代会话（子代理）恢复待处理权限请求到权限条。
- *
- * 子代理运行在独立会话，运行期请求靠事件推送；重启或切回后事件不重放，
- * durable 的 pending interaction 只存在于子 run 的 snapshot 里，需要重新投影。
- * 只填空位（父会话自身请求优先），且不触发 pullSnapshot——拉取会改写
- * selectedSessionId，重启后的 reconcile 广播已把子 run snapshot 投递到缓存。
- */
-export async function projectDescendantPendingPermissions(currentSessionId: string): Promise<void> {
-  const { useChatStore } = await import('./useChatStore')
-  const { useRunStore } = await import('./useRunStore')
-  const { isDescendantSessionOf } = await import('../lib/agentEventGate')
-  if (!currentSessionId) return
-
-  const { sessions } = useChatStore.getState()
-  const descendantIds: string[] = []
-  for (const session of sessions) {
-    if (session.kind !== 'subagent') continue
-    if (isDescendantSessionOf(session.id, currentSessionId)) descendantIds.push(session.id)
-  }
-  if (descendantIds.length === 0) return
-  if (useAgentStore.getState().pendingPermissionRequest) return
-
-  const { activeRunIdBySessionId, snapshotsByRunId } = useRunStore.getState()
-  for (const childSessionId of descendantIds) {
-    const childRunId = activeRunIdBySessionId[childSessionId]
-    if (!childRunId) continue
-    const snapshot = snapshotsByRunId[childRunId]
-    if (!snapshot) continue
-    const interaction = snapshot.pendingInteractions.find(
-      item => item.type === 'permission' && (item.status === 'pending' || item.status === 'submitting')
-    )
-    if (!interaction) continue
-
-    const payload = interaction.payload ?? {}
-    useAgentStore.getState().handlePermissionRequest({
-      messageId: interaction.messageId,
-      requestId: typeof payload.requestId === 'string' ? payload.requestId : interaction.interactionId,
-      toolName: typeof payload.toolName === 'string' ? payload.toolName : '未知工具',
-      args: payload.args && typeof payload.args === 'object' ? payload.args as Record<string, unknown> : {},
-      riskLevel: payload.riskLevel === 'low' || payload.riskLevel === 'high'
-        ? payload.riskLevel
-        : 'low',
-      reason: typeof payload.reason === 'string' ? payload.reason : '',
-      commands: Array.isArray(payload.commands)
-        ? payload.commands.filter((item): item is string => typeof item === 'string')
-        : undefined,
-      toolCallIds: Array.isArray(payload.toolCallIds)
-        ? payload.toolCallIds.filter((item): item is string => typeof item === 'string')
-        : undefined,
-      interactionId: interaction.interactionId,
-      sessionId: childSessionId,
-      version: interaction.version
-    })
-    // 权限条单槽，一次只投影一个后代请求
-    return
-  }
+  useAgentStore.getState().resetAgentRuntime()
 }

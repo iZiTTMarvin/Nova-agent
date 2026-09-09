@@ -18,7 +18,7 @@ import { isReasoningSourceCompatible } from '../model/reasoningSource'
 import type { SessionData, SessionMessage, SessionToolCall } from './types'
 import { getSessionActiveMessages } from './tree'
 import type { Mode, MessageBlock } from '../../shared/session/types'
-import { projectUserContent, projectAssistantContent as sanitizeAssistantContent, serializeToolArguments, toToolContent } from '../request-projection'
+import { projectUserMessages, alignToUserInputBoundary, projectAssistantContent as sanitizeAssistantContent, serializeToolArguments, toToolContent } from '../request-projection'
 
 /** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
 function isInternalImageUrl(url: string): boolean {
@@ -116,12 +116,12 @@ export function sliceMessagesFromOrigin(
   const exact = messages.findIndex(
     m => m.origin?.messageId === from.messageId && m.origin.step === from.step
   )
-  if (exact >= 0) return messages.slice(exact)
+  if (exact >= 0) return messages.slice(alignToUserInputBoundary(messages, exact))
 
   const laterSameMessage = messages.findIndex(
     m => m.origin?.messageId === from.messageId && (m.origin.step ?? 0) >= from.step
   )
-  if (laterSameMessage >= 0) return messages.slice(laterSameMessage)
+  if (laterSameMessage >= 0) return messages.slice(alignToUserInputBoundary(messages, laterSameMessage))
 
   return []
 }
@@ -370,13 +370,8 @@ export function buildConversationContext(
       continue
     }
 
-    // user 消息：原样保留（content 可能是 string 或 ContentBlock[]）。
-    const userContent = projectUserContent(msg.content as string | ContentBlock[], deliveries.get(msg.id))
-    context.push({
-      role: msg.role,
-      content: resolveImageUrl ? resolveImageUrlsInContent(userContent, resolveImageUrl) : userContent,
-      origin: archiveOrigin(msg.id, 0)
-    })
+    const input = projectUserMessages(msg.content as string | ContentBlock[], msg.id, deliveries.get(msg.id))
+    context.push(...(resolveImageUrl ? resolveImageUrlsInMessages(input, resolveImageUrl) : input))
   }
 
   return opts.from ? sliceMessagesFromOrigin(context, opts.from) : context

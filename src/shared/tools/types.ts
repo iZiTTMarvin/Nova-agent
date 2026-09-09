@@ -1,3 +1,8 @@
+/** 命令退出事实独立于工具调用是否成功；后台启动不代表命令退出。 */
+export type ToolProcessOutcome =
+  | { state: 'running' | 'unconfirmed' }
+  | { state: 'exited'; exitCode: number | null }
+
 /** 大输出截断元数据（工具 / 事件 / 持久化共用） */
 export interface ToolTruncationMeta {
   totalBytes: number

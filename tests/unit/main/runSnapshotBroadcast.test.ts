@@ -75,6 +75,45 @@ describe('SnapshotBroadcastCoalescer', () => {
     expect(send.mock.calls[0]?.[1].type).toBe('terminal')
   })
 
+  it('并发 run 各保留最新一帧且只共享一个 timer，立即事件不丢失其它 run', () => {
+    const frames: Array<[string, number]> = []
+    const coalescer = new SnapshotBroadcastCoalescer(snapshot => {
+      frames.push([snapshot.runId, snapshot.sequence])
+    })
+    const push = (runId: string, sequence: number, type = 'heartbeat'): void => {
+      coalescer.push({ ...snap(sequence), runId }, { ...event(sequence, type), runId })
+    }
+    push('A', 1)
+    push('B', 10)
+    push('A', 2)
+    expect(vi.getTimerCount()).toBe(1)
+    vi.advanceTimersByTime(50)
+    expect(frames).toEqual([['A', 2], ['B', 10]])
+    expect(vi.getTimerCount()).toBe(0)
+
+    push('A', 3)
+    push('B', 11)
+    push('A', 4, 'terminal')
+    expect(frames.slice(2)).toEqual([['A', 3], ['B', 11], ['A', 4]])
+    expect(vi.getTimerCount()).toBe(0)
+    vi.advanceTimersByTime(50)
+    expect(frames).toHaveLength(5)
+  })
+
+  it('flush 发送期间 cancel 会丢弃所有尚未发送的 run', () => {
+    const frames: string[] = []
+    const coalescer = new SnapshotBroadcastCoalescer(snapshot => {
+      frames.push(snapshot.runId)
+      coalescer.cancel()
+    })
+    for (const runId of ['A', 'B']) {
+      coalescer.push({ ...snap(1), runId }, { ...event(1, 'heartbeat'), runId })
+    }
+    vi.advanceTimersByTime(50)
+    expect(frames).toEqual(['A'])
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('cancel 后不再发出合帧中的中间态', () => {
     const send = vi.fn()
     const coalescer = new SnapshotBroadcastCoalescer(send)

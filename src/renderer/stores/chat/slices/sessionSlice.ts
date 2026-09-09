@@ -28,7 +28,6 @@ export const createSessionSlice: ChatSliceCreator<SessionSliceState> = (set) => 
   selectSession: async (sessionId: string) => {
     // 会话切换统一走 workspace store（单一事实源），由主进程广播 workspace:changed
     // 触发本 store 重新加载消息（见 dispatchWorkspaceChange 副作用）。
-    // 本方法保留签名以兼容 useAppStore，内部只转发。
     const { useWorkspaceStore } = await import('../../useWorkspaceStore')
     await useWorkspaceStore.getState().selectSession(sessionId)
   },

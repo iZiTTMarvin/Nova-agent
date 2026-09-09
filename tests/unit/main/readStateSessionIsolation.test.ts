@@ -58,7 +58,6 @@ describe('readState 按会话隔离', () => {
   })
 
   it('isSessionTurnInProgress / isAgentTurnInProgress 在未初始化时不抛错', () => {
-    // 未初始化 RunCoordinator 时回退到 activeRunId null
     expect(() => isSessionTurnInProgress('s1')).not.toThrow()
     expect(() => isAgentTurnInProgress()).not.toThrow()
     expect(isSessionTurnInProgress('s1')).toBe(false)

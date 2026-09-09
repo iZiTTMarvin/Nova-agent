@@ -1,3 +1,4 @@
+import { selectSessionIsRunning, useRunStore } from '../../useRunStore'
 import type { ChatSliceCreator, BranchSliceState } from '../types'
 import {
   buildMessageIndex,
@@ -8,47 +9,21 @@ import {
 } from '../internal'
 import { slashRejectionText } from '../../../lib/slashRejection'
 
-export function initialBranchState(): Pick<
-  BranchSliceState,
-  | 'pendingBranchMetaReload'
-  | 'branchForkInProgress'
-  | 'tier1BranchContext'
-  | 'tier1StaleDiffMessageIds'
-> {
-  return {
-    pendingBranchMetaReload: false,
-    branchForkInProgress: false,
-    tier1BranchContext: null,
-    tier1StaleDiffMessageIds: []
-  }
+export function initialBranchState(): Pick<BranchSliceState,
+  'pendingBranchMetaReload' | 'branchForkInProgress' | 'tier1BranchContext' | 'tier1StaleDiffMessageIds'> {
+  return { pendingBranchMetaReload: false, branchForkInProgress: false, tier1BranchContext: null, tier1StaleDiffMessageIds: [] }
 }
 
-/**
- * 切会话时丢弃分叉瞬态。tier1BranchContext 的跨会话取舍由
- * workspaceSyncSlice 按主进程广播决定，此处只提供分叉锁、刷新标记与
- * 灰显标记的清零（灰显只属于旧会话语境，不得跨会话残留）。
- */
-export function resetBranchForkOnSessionSwitch(): Pick<
-  BranchSliceState,
-  | 'branchForkInProgress'
-  | 'pendingBranchMetaReload'
-  | 'tier1StaleDiffMessageIds'
-> {
-  return {
-    branchForkInProgress: false,
-    pendingBranchMetaReload: false,
-    tier1StaleDiffMessageIds: []
-  }
+export function resetBranchForkOnSessionSwitch(): Pick<BranchSliceState,
+  'branchForkInProgress' | 'pendingBranchMetaReload' | 'tier1StaleDiffMessageIds'> {
+  return { branchForkInProgress: false, pendingBranchMetaReload: false, tier1StaleDiffMessageIds: [] }
 }
 
 export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) => ({
   ...initialBranchState(),
 
-  regenerateAssistant: async (sessionId: string, messageId: string) => {
-    // 重生成/编辑/发送/切分支共用同一把入口锁：分叉准备窗口（prepare → send
-    // 两段 IPC 之间）的并发操作会覆盖乐观截断视图或漂移 regenerate 身份
-    if (get().isGenerating || get().branchForkInProgress || get().sendInFlight) return
-
+  regenerateAssistant: async (sessionId, messageId) => {
+    if (selectSessionIsRunning(useRunStore.getState(), get().currentSessionId) || get().branchForkInProgress || get().sendInFlight) return
     const { messages } = get()
     const assistantIdx = messages.findIndex(m => m.id === messageId)
     const parentUser = assistantIdx > 0 ? messages[assistantIdx - 1] : undefined
@@ -56,167 +31,110 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
       set(state => setRollbackErrorPatch(state, messageId, '重新生成暂不支持含图片的消息'))
       return
     }
-
-    set({ branchForkInProgress: true })
-
+    const requestId = crypto.randomUUID()
+    const selectedSessionId = get().currentSessionId
+    const isCurrentRequest = () => get().sendRequestId === requestId && get().currentSessionId === selectedSessionId
+    const rollback = { messages: [...messages], messageIndexById: buildMessageIndex(messages) }
+    let truncated = false
+    set({ branchForkInProgress: true, sendRequestId: requestId })
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
+      if (!isCurrentRequest()) return
       await useWorkspaceStore.getState().prepareRegenerate(sessionId, messageId)
+      if (!isCurrentRequest()) return
       set(state => clearRollbackErrorPatch(state, messageId))
-    } catch (err) {
-      set({ branchForkInProgress: false })
-      const error = err instanceof Error ? err.message : '重新生成失败'
-      console.error('重新生成出错:', err)
-      set(state => setRollbackErrorPatch(state, messageId, error))
-      return
-    }
-
-    if (assistantIdx !== -1) {
-      const preTruncate = {
-        messages: [...messages],
-        messageIndexById: buildMessageIndex(messages)
-      }
-      const truncated = messages.slice(0, assistantIdx)
-      set({
-        ...commitMessageList(get(), { nextMessages: truncated, skipWindowTrim: true }),
-        ...resetDiffProjectionForBranchChange(),
-        isGenerating: true,
-        sendInFlight: true,
-        activeAgentSessionId: sessionId
-      })
-
-      set({ pendingBranchMetaReload: true })
-
-      try {
-        const result = await window.api.invoke('send-message', {
-          sessionId,
-          content: '',
-          regenerate: true
-        })
-        // 重发叶子是已失效 slash 时走同一回滚路径展示原因
-        if (!result.accepted) throw new Error(slashRejectionText(result.rejection))
-      } catch (err) {
+      if (assistantIdx !== -1) {
+        truncated = true
         set({
-          ...commitMessageList(get(), {
-            nextMessages: preTruncate.messages,
-            nextIndex: preTruncate.messageIndexById,
-            skipWindowTrim: true
-          }),
-          branchForkInProgress: false,
-          isGenerating: false,
-          sendInFlight: false,
-          activeAgentSessionId: null,
-          pendingBranchMetaReload: false
+          ...commitMessageList(get(), { nextMessages: messages.slice(0, assistantIdx), skipWindowTrim: true }),
+          ...resetDiffProjectionForBranchChange()
         })
+      }
+      set({ pendingBranchMetaReload: true, sendInFlight: true, activeAgentSessionId: sessionId })
+      const result = await window.api.invoke('send-message', { sessionId, content: '', regenerate: true })
+      if (!isCurrentRequest()) return
+      if (!result.accepted) throw new Error(slashRejectionText(result.rejection))
+    } catch (err) {
+      if (!isCurrentRequest()) return
+      set({
+        ...(truncated ? commitMessageList(get(), { nextMessages: rollback.messages, nextIndex: rollback.messageIndexById, skipWindowTrim: true }) : {}),
+        branchForkInProgress: false, sendInFlight: false, activeAgentSessionId: null, pendingBranchMetaReload: false
+      })
+      if (truncated) {
         try {
           const { useWorkspaceStore } = await import('../../useWorkspaceStore')
+          if (!isCurrentRequest()) return
           await useWorkspaceStore.getState().bumpMessagesRevision()
         } catch (reloadErr) {
           console.error('[regenerateAssistant] 回滚后重载会话失败:', reloadErr)
         }
-        set(state => setRollbackErrorPatch(
-          state,
-          messageId,
-          err instanceof Error ? err.message : '重新生成失败'
-        ))
       }
-      return
-    }
-
-    set({ pendingBranchMetaReload: true, isGenerating: true, sendInFlight: true, activeAgentSessionId: sessionId })
-
-    try {
-      const result = await window.api.invoke('send-message', {
-        sessionId,
-        content: '',
-        regenerate: true
-      })
-      if (!result.accepted) throw new Error(slashRejectionText(result.rejection))
-    } catch (err) {
-      set({
-        branchForkInProgress: false,
-        isGenerating: false,
-        sendInFlight: false,
-        activeAgentSessionId: null,
-        pendingBranchMetaReload: false
-      })
-      set(state => setRollbackErrorPatch(
-        state,
-        messageId,
-        err instanceof Error ? err.message : '重新生成失败'
-      ))
+      if (isCurrentRequest()) set(state => setRollbackErrorPatch(state, messageId, err instanceof Error ? err.message : '重新生成失败'))
+    } finally {
+      if (isCurrentRequest()) set({ sendRequestId: null })
     }
   },
 
-  switchBranch: async (sessionId: string, targetMessageId: string) => {
-    if (get().isGenerating || get().branchForkInProgress || get().sendInFlight) return
-
+  switchBranch: async (sessionId, targetMessageId) => {
+    if (selectSessionIsRunning(useRunStore.getState(), get().currentSessionId) || get().branchForkInProgress || get().sendInFlight) return
+    const selectedSessionId = get().currentSessionId
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().switchBranch(sessionId, targetMessageId)
-      set(state => clearRollbackErrorPatch(state, targetMessageId))
+      if (get().currentSessionId === selectedSessionId) set(state => clearRollbackErrorPatch(state, targetMessageId))
     } catch (err) {
+      if (get().currentSessionId !== selectedSessionId) return
       const error = err instanceof Error ? err.message : '切换分支失败'
       console.error('切换分支出错:', err)
       set(state => setRollbackErrorPatch(state, targetMessageId, error))
     }
   },
 
-  editResend: async (sessionId: string, messageId: string, newContent: string) => {
-    if (get().isGenerating || get().branchForkInProgress || get().sendInFlight) return
-
-    // 分叉准备 + 发送全程禁止翻页/切分支（prepare 与 send-message 是两段 IPC，中间须锁住）
-    set({ branchForkInProgress: true })
-
+  editResend: async (sessionId, messageId, newContent) => {
+    if (selectSessionIsRunning(useRunStore.getState(), get().currentSessionId) || get().branchForkInProgress || get().sendInFlight) return
+    const requestId = crypto.randomUUID()
+    const selectedSessionId = get().currentSessionId
+    const isCurrentRequest = () => get().sendRequestId === requestId && get().currentSessionId === selectedSessionId
+    set({ branchForkInProgress: true, sendRequestId: requestId })
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
+      if (!isCurrentRequest()) return
       await useWorkspaceStore.getState().prepareEditResend(sessionId, messageId)
+      if (!isCurrentRequest()) return
       set(state => clearRollbackErrorPatch(state, messageId))
     } catch (err) {
-      set({ branchForkInProgress: false })
+      if (!isCurrentRequest()) return
+      set({ branchForkInProgress: false, sendRequestId: null })
       const error = err instanceof Error ? err.message : '编辑重发失败'
       console.error('编辑重发出错:', err)
       set(state => setRollbackErrorPatch(state, messageId, error))
       return
     }
-
-    // 2. 乐观截断视图到分叉点（移除被编辑消息及其之后）。
-    //    主进程 prepareEditResend 不 bump messagesRevision，不会触发 reload 覆盖这里。
     const { messages } = get()
     const idx = messages.findIndex(m => m.id === messageId)
-    const rollbackSnapshot = {
-      messages: [...messages],
-      messageIndexById: buildMessageIndex(messages)
-    }
+    const rollbackSnapshot = { messages: [...messages], messageIndexById: buildMessageIndex(messages) }
     if (idx !== -1) {
-      const truncated = messages.slice(0, idx)
       set({
-        ...commitMessageList(get(), { nextMessages: truncated, skipWindowTrim: true }),
-        // 分叉后旧 diff 缓存与磁盘可能不一致，清空避免误导
+        ...commitMessageList(get(), { nextMessages: messages.slice(0, idx), skipWindowTrim: true }),
         ...resetDiffProjectionForBranchChange()
       })
     }
-
-    // 3. 复用普通发送：乐观追加新用户消息 + 流式渲染。
-    //    appendMessage 在主进程会把新用户消息的 parentId 设为分叉点，天然成兄弟分支。
     set({ pendingBranchMetaReload: true })
     await get().sendMessage(newContent, undefined, { rollbackSnapshot })
+    if (isCurrentRequest()) set({ sendRequestId: null })
   },
 
   finishBranchMetaRefresh: async () => {
     if (!get().pendingBranchMetaReload) return
+    const sessionId = get().currentSessionId
     try {
       const { useWorkspaceStore } = await import('../../useWorkspaceStore')
       await useWorkspaceStore.getState().bumpMessagesRevision()
-      // 刷新成功才清标记：失败时保留，下一次轮次结束（message_end / error）自动重试，
-      // 否则落盘的分叉分支信息（徽标/翻页器）会一直陈旧直到重开会话
-      set({ pendingBranchMetaReload: false })
+      if (get().currentSessionId === sessionId) set({ pendingBranchMetaReload: false })
     } catch (err) {
       console.error('[useChatStore] finishBranchMetaRefresh 失败:', err)
     }
   },
 
-  dismissTier1BranchNotice: () => {
-    set({ tier1BranchContext: null })
-  }
+  dismissTier1BranchNotice: () => set({ tier1BranchContext: null })
 })

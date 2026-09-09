@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import {
-  shouldCompact,
   buildCompactionPrompt,
   buildCompactionRequestTail,
   buildStateInstruction,
@@ -9,10 +8,7 @@ import {
   splitForCompactionByTokens,
   rebuildWithCompression,
   rollbackBefore,
-  COMPACTION_THRESHOLD,
   MAX_SUMMARY_ESTIMATED_TOKENS,
-  SOFT_COMPACTION_COOLDOWN_TURNS,
-  estimateToolMessageTokens,
 } from '../../../../src/runtime/agent/compaction/compaction'
 import { renderHandoffPacket, renderLedgerEntry, formatPointerStub } from '../../../../src/runtime/agent/core/renderHandoffPacket'
 import { makeCompactionLedger } from '../../../../src/test-support/builders/compactionLedger'
@@ -58,112 +54,6 @@ describe('tokenEstimator', () => {
 })
 
 describe('compaction', () => {
-  describe('shouldCompact', () => {
-    it('消息数不足时不触发', () => {
-      const messages = makeMessages(10)
-      expect(shouldCompact(messages)).toBe(false)
-    })
-
-    it('token 数未达阈值时不触发', () => {
-      const messages = makeMessages(30, 100)
-      expect(shouldCompact(messages)).toBe(false)
-    })
-
-    it('token 数超过阈值时触发', () => {
-      // 30 条消息 × 20000 字符 = 600000 字符 → 150000 tokens > 120000
-      const messages = makeMessages(30, 20000)
-      expect(shouldCompact(messages)).toBe(true)
-    })
-
-    it('自定义阈值生效', () => {
-      const messages = makeMessages(30, 100)
-      expect(shouldCompact(messages, 1)).toBe(true)
-    })
-
-    it('软触发：工具 45% + 总窗口 65% + 冷却 5 回合 → 触发', () => {
-      const threshold = 10_000
-      const messages: ChatMessage[] = [{ role: 'system', content: 's'.repeat(400) }]
-      for (let i = 0; i < 12; i++) {
-        messages.push({ role: 'user', content: `u${i} ` + 'a'.repeat(300) })
-        messages.push({
-          role: 'assistant',
-          content: 'run',
-          toolCalls: [{ id: `tc${i}`, name: 'bash', arguments: '{}' }]
-        })
-        messages.push({
-          role: 'tool',
-          content: 't'.repeat(1600),
-          toolCallId: `tc${i}`
-        })
-      }
-      for (let i = 0; i < 8; i++) {
-        messages.push({ role: 'user', content: 'f'.repeat(400) })
-        messages.push({ role: 'assistant', content: 'g'.repeat(400) })
-      }
-
-      const totalTokens = estimateContextTokens(messages)
-      const toolTokens = estimateToolMessageTokens(messages)
-      expect(toolTokens).toBeGreaterThan(threshold * 0.4)
-      expect(totalTokens).toBeGreaterThan(threshold * 0.6)
-      expect(totalTokens).toBeLessThanOrEqual(threshold)
-
-      expect(shouldCompact(messages, threshold, totalTokens, SOFT_COMPACTION_COOLDOWN_TURNS)).toBe(true)
-    })
-
-    it('软触发：总窗口未达 60% 时不触发（即使工具占比高）', () => {
-      const threshold = 10_000
-      const messages: ChatMessage[] = [{ role: 'system', content: 'sys' }]
-      for (let i = 0; i < 12; i++) {
-        messages.push({ role: 'user', content: `u${i}` })
-        messages.push({
-          role: 'assistant',
-          content: 'x',
-          toolCalls: [{ id: `tc${i}`, name: 'grep', arguments: '{}' }]
-        })
-        messages.push({
-          role: 'tool',
-          content: 'g'.repeat(1700),
-          toolCallId: `tc${i}`
-        })
-      }
-      const totalTokens = estimateContextTokens(messages)
-      const toolTokens = estimateToolMessageTokens(messages)
-      expect(toolTokens).toBeGreaterThan(threshold * 0.4)
-      expect(totalTokens).toBeLessThan(threshold * 0.6)
-
-      expect(shouldCompact(messages, threshold, totalTokens, SOFT_COMPACTION_COOLDOWN_TURNS)).toBe(false)
-    })
-
-    it('软触发：冷却不足 5 user 回合时不触发', () => {
-      const threshold = 10_000
-      const messages: ChatMessage[] = [{ role: 'system', content: 's'.repeat(400) }]
-      for (let i = 0; i < 12; i++) {
-        messages.push({ role: 'user', content: `u${i} ` + 'a'.repeat(300) })
-        messages.push({
-          role: 'assistant',
-          content: 'run',
-          toolCalls: [{ id: `tc${i}`, name: 'bash', arguments: '{}' }]
-        })
-        messages.push({
-          role: 'tool',
-          content: 't'.repeat(1600),
-          toolCallId: `tc${i}`
-        })
-      }
-      for (let i = 0; i < 8; i++) {
-        messages.push({ role: 'user', content: 'f'.repeat(400) })
-        messages.push({ role: 'assistant', content: 'g'.repeat(400) })
-      }
-      const totalTokens = estimateContextTokens(messages)
-      expect(shouldCompact(messages, threshold, totalTokens, 3)).toBe(false)
-    })
-
-    it('硬 cap 超阈值时无视冷却立即触发', () => {
-      const messages = makeMessages(30, 20000)
-      expect(shouldCompact(messages, COMPACTION_THRESHOLD, undefined, 0)).toBe(true)
-    })
-  })
-
   describe('buildCompactionPrompt', () => {
     it('要求结构化字段、来源与完整 JSON', () => {
       const prompt = buildCompactionPrompt()

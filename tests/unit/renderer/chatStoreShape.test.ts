@@ -3,8 +3,8 @@ import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stor
 
 const CHAT_STATE_KEYS = [
   'sessions', 'currentSessionId', 'currentSubagentTask', 'messages', 'messageIndexById', 'lastMessagesRevision',
-  'pendingBranchMetaReload', 'branchForkInProgress', 'tier1BranchContext', 'tier1StaleDiffMessageIds', 'isGenerating',
-  'currentGeneratingMessageId', 'activeAgentSessionId', 'sendInFlight', 'streamingToolArgs',
+  'pendingBranchMetaReload', 'branchForkInProgress', 'tier1BranchContext', 'tier1StaleDiffMessageIds',
+  'currentGeneratingMessageId', 'activeAgentSessionId', 'sendInFlight', 'sendRequestId', 'streamingToolArgs',
   'messageDiffs', 'loadingDiffs', 'loadingDiffPlaceholders', 'pendingUserMessages',
   'recoveryState', 'recoveryHints', 'hookErrors', 'rollbackErrors', 'hasMoreMessagesAbove',
   'isLoadingOlderMessages', 'oldestLoadedMessageId', 'suspendHeadTrim', 'liveTurn',
@@ -14,8 +14,8 @@ const CHAT_STATE_KEYS = [
   'loadOlderMessages', 'finishBranchMetaRefresh', 'dismissTier1BranchNotice', 'applyStreamDeltas',
   'handleMessageStart', 'handleAttemptFailed', 'handleThinkingDelta', 'handleTextDelta',
   'handleToolCallStart', 'handleToolCallDelta', 'handleToolCall', 'handleToolResult',
-  'handleDiffUpdate', 'handleMessageEnd', 'handleError', 'handleRecoveryState',
-  'handleRecoveryHint', 'handleHookError', 'markRunningAsCancelled', 'enqueuePendingMessage',
+  'handleRunTerminal', 'handleDiffUpdate', 'handleMessageEnd', 'handleError', 'handleRecoveryState',
+  'handleRecoveryHint', 'handleHookError', 'enqueuePendingMessage',
   'removePendingMessage', 'clearPendingMessages', 'syncFromWorkspace'
 ] as const
 
@@ -41,7 +41,6 @@ describe('chat store shape baseline', () => {
       pendingBranchMetaReload: true,
       branchForkInProgress: true,
       tier1BranchContext: { branchMessageId: 'm1', branchType: 'tier1', siblingCount: 2, selectedSiblingIndex: 1 },
-      isGenerating: true,
       currentGeneratingMessageId: 'm1',
       activeAgentSessionId: 's1',
       sendInFlight: true,
@@ -75,7 +74,7 @@ describe('chat store shape baseline', () => {
     expect(state.branchForkInProgress).toBe(false)
     expect(state.tier1BranchContext).toBeNull()
     expect(state.tier1StaleDiffMessageIds).toEqual([])
-    expect(state.isGenerating).toBe(false)
+    expect(state).not.toHaveProperty('isGenerating')
     expect(state.currentGeneratingMessageId).toBeNull()
     expect(state.activeAgentSessionId).toBeNull()
     expect(state.sendInFlight).toBe(false)
