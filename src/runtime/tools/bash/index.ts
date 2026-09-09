@@ -146,7 +146,8 @@ export const bashTool: ToolExecutor = {
     // 破坏性命令（写文件 / 删文件 / 改 git 等）需获取写者租约，
     // 避免并发 run 同时改同一工作区；纯读命令不获取，保持并发友好。
     // 透传 abortSignal：run 取消时立即出队，避免持租者释放后把租约授予已死掉的 run。
-    if (isDestructiveBashCommand(command)) {
+    const destructive = isDestructiveBashCommand(command)
+    if (destructive) {
       const conflict = await acquireWriterLeaseOrConflict({
         runId: context.resourceOwnerRunId ?? context.runId,
         workspaceRoot: context.workspaceRoot ?? context.workingDir,
@@ -155,9 +156,13 @@ export const bashTool: ToolExecutor = {
       if (conflict) return conflict
     }
 
-    // 拍快照（如果存在 checkpointManager）
+    // 只读命令只记 mtime/size，避免大仓库每次读最多 1 万文件正文。
+    // 若分类失误仍改了文件，无正文条目走 skipped，不会写成空备份。
     const beforeSnapshot = context.checkpointManager
-      ? await snapshotWorkspace(context.workingDir, { abortSignal: context.abortSignal })
+      ? await snapshotWorkspace(context.workingDir, {
+          abortSignal: context.abortSignal,
+          includeContent: destructive
+        })
       : null
 
     // 大输出优先落到会话 artifact 目录，便于 ArtifactStore 认领
@@ -263,7 +268,7 @@ export const bashTool: ToolExecutor = {
                 : 'main-run',
               command,
               workdir: cwd,
-              destructive: isDestructiveBashCommand(command),
+              destructive,
               seedOutput: seed,
               killTree: () => killProcessTree(cp.pid ?? undefined),
               writeStdin: async (data) => { cp.stdin?.write(data) },

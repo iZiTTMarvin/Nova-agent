@@ -51,6 +51,20 @@ describe('snapshot', () => {
     expect(main.mtimeMs).toBeGreaterThan(0)
   })
 
+  it('includeContent:false 只记 mtime 与 size，不读正文', async () => {
+    tempDir = createTempWorkspace({
+      'src/main.ts': 'const x = 1',
+      'README.md': '# hello'
+    })
+
+    const result = await snapshotWorkspace(tempDir, { includeContent: false })
+    const main = result.get('src/main.ts')!
+    expect(main.content).toBeUndefined()
+    expect(main.size).toBe(11)
+    expect(main.mtimeMs).toBeGreaterThan(0)
+    expect(result.get('README.md')?.content).toBeUndefined()
+  })
+
   it('snapshotMtimes 只采集 mtime', async () => {
     tempDir = createTempWorkspace({
       'a.txt': 'a',

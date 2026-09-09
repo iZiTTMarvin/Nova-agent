@@ -259,6 +259,75 @@ describe('bashTool', () => {
     }
   }, 15_000)
 
+  it('只读命令的 checkpoint 快照不读取文件正文', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-readonly-snap-'))
+    const checkpointDir = join(tempDir, '.checkpoints')
+    const manager = new CheckpointManager({
+      checkpointDir,
+      sessionId: 'sess_ro',
+      workspaceRoot: tempDir
+    })
+    manager.beginMessage('msg_ro')
+    const payload = 'y'.repeat(80 * 1024)
+    await import('fs/promises').then(fs => fs.writeFile(join(tempDir, 'payload.txt'), payload, 'utf8'))
+
+    const { snapshotWorkspace } = await import('../../../../src/runtime/checkpoints/snapshot')
+    const { readManifest } = await import('../../../../src/runtime/checkpoints/manifest')
+
+    try {
+      const before = await snapshotWorkspace(tempDir, { includeContent: false })
+      expect(before.get('payload.txt')?.content).toBeUndefined()
+      expect(before.get('payload.txt')?.size).toBe(payload.length)
+
+      const result = await bashTool.execute(
+        { command: process.platform === 'win32' ? 'dir' : 'ls' },
+        { workingDir: tempDir, readState: createReadState(), checkpointManager: manager }
+      )
+      expect(result.success).toBe(true)
+      expect(checkpointSpy).not.toHaveBeenCalled()
+      const manifest = readManifest(checkpointDir, 'sess_ro', 'msg_ro')
+      expect(manifest?.modifiedFiles ?? []).toHaveLength(0)
+      expect(manifest?.skippedFiles ?? []).toHaveLength(0)
+    } finally {
+      manager.endMessage()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  }, 15_000)
+
+  it('分类为只读但仍改动文件时登记跳过，不写空备份', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-unbacked-'))
+    const checkpointDir = join(tempDir, '.checkpoints')
+    const manager = new CheckpointManager({
+      checkpointDir,
+      sessionId: 'sess_ub',
+      workspaceRoot: tempDir
+    })
+    manager.beginMessage('msg_ub')
+    const filePath = join(tempDir, 'secret.txt')
+    await import('fs/promises').then(fs => fs.writeFile(filePath, 'before', 'utf8'))
+
+    const mutateCommand = process.platform === 'win32'
+      ? `powershell -NoProfile -Command "[IO.File]::WriteAllText('${filePath.replace(/'/g, "''")}', 'after')"`
+      : `sh -c ${JSON.stringify(`python3 -c ${JSON.stringify(`open(${JSON.stringify(filePath)}, "w").write("after")`)}`)}`
+
+    try {
+      const result = await bashTool.execute(
+        { command: mutateCommand },
+        { workingDir: tempDir, readState: createReadState(), checkpointManager: manager }
+      )
+      expect(result.success).toBe(true)
+      expect(checkpointSpy).not.toHaveBeenCalled()
+      const { readManifest } = await import('../../../../src/runtime/checkpoints/manifest')
+      const manifest = readManifest(checkpointDir, 'sess_ub', 'msg_ub')
+      expect(manifest?.modifiedFiles ?? []).not.toContain('secret.txt')
+      expect(manifest?.skippedFiles?.some(s => s.path === 'secret.txt')).toBe(true)
+      expect(existsSync(join(checkpointDir, 'sess_ub', 'msg_ub', 'files', 'secret.txt'))).toBe(false)
+    } finally {
+      manager.endMessage()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   // ── workdir 参数（新） ────────────────────────────────
 
   it('workdir 参数：相对路径解析', async () => {

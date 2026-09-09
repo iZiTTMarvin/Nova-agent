@@ -64,6 +64,11 @@ export interface SnapshotOptions {
   maxFiles?: number
   /** 最大读取字节数（含已读 content），超出后后续文件只记 mtime。 */
   maxBytes?: number
+  /**
+   * 是否读取文件正文。默认 true。
+   * 只读命令只需 mtime/size 做变更检测；无正文的条目无法回退，走 skipped。
+   */
+  includeContent?: boolean
 }
 
 export interface FileSnapshot {
@@ -195,6 +200,11 @@ async function walk(
         const fileStat = await stat(fullPath)
         stats.fileCount++
         stats.totalBytes += fileStat.size
+
+        if (options.includeContent === false) {
+          snapshot.set(relPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size })
+          continue
+        }
 
         // 预算超限：只记 mtime，不读 content
         if (isBudgetExceeded(stats, options)) {
