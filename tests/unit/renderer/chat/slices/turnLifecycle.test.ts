@@ -6,12 +6,60 @@ import {
   resetChatStoreForTests,
   useChatStore
 } from '../../../../../src/renderer/stores/useChatStore'
+import { TERMINAL_ERROR_NOTICE_PREFIX } from '../../../../../src/shared/session/terminalErrorBlocks'
 import {
   resetWorkspaceStoreForTests,
   useWorkspaceStore
 } from '../../../../../src/renderer/stores/useWorkspaceStore'
 
 const mockInvoke = vi.fn()
+
+function loadSessionCallCount(): number {
+  return mockInvoke.mock.calls.filter(([channel]) => channel === 'load-session').length
+}
+
+function sentContents(): unknown[] {
+  return mockInvoke.mock.calls.filter(([channel]) => channel === 'send-message').map(([, payload]) => (
+    payload as { content?: unknown }
+  ).content)
+}
+
+function terminalErrorNoticeCount(): number {
+  let count = 0
+  for (const message of useChatStore.getState().messages) {
+    for (const block of message.blocks ?? []) {
+      if (block.type !== 'text' || typeof block.content !== 'string') continue
+      let from = 0
+      while (from < block.content.length) {
+        const at = block.content.indexOf(TERMINAL_ERROR_NOTICE_PREFIX, from)
+        if (at === -1) break
+        count += 1
+        from = at + TERMINAL_ERROR_NOTICE_PREFIX.length
+      }
+    }
+  }
+  return count
+}
+
+function mockTurnIpc(): void {
+  mockInvoke.mockImplementation(async (channel: string) => {
+    if (channel === 'send-message') return { accepted: true }
+    if (channel === 'load-session') {
+      return {
+        id: 'sess-1',
+        workspaceRoot: '/tmp/project',
+        mode: 'default',
+        createdAt: 1,
+        updatedAt: 2,
+        messageCount: useChatStore.getState().messages.length,
+        messages: useChatStore.getState().messages,
+        hasMoreMessagesAbove: false
+      }
+    }
+    if (channel === 'get-message-diffs') return { diffs: [], reviews: {} }
+    return undefined
+  })
+}
 
 describe('turnLifecycleSlice', () => {
   beforeEach(() => {
@@ -259,5 +307,64 @@ describe('turnLifecycleSlice', () => {
       .toBe('对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。')
     expect(messages.find(message => message.id === 'msg_network')?.content)
       .toBe('网络连接失败')
+  })
+
+  it('实时 message-end 后再到终态快照时只对账一次，仍释放发送锁并派发队列', async () => {
+    mockTurnIpc()
+    useChatStore.setState({ currentSessionId: 'sess-1', sendInFlight: true })
+    useChatStore.getState().handleMessageStart('msg_1')
+    useChatStore.getState().enqueuePendingMessage('排队', [])
+
+    await useChatStore.getState().handleMessageEnd('msg_1')
+    expect(loadSessionCallCount()).toBe(1)
+
+    await useChatStore.getState().handleRunTerminal(makeRunSnapshot({
+      sessionId: 'sess-1', messageId: 'msg_1', status: 'completed', sequence: 2
+    }))
+
+    expect(loadSessionCallCount()).toBe(1)
+    expect(useChatStore.getState().sendInFlight).toBe(false)
+    expect(sentContents()).toEqual(['排队'])
+    expect(useChatStore.getState().pendingUserMessages).toEqual([])
+  })
+
+  it('实时 error 后再到失败快照时错误提示只出现一次，仍释放发送锁并派发队列', async () => {
+    mockTurnIpc()
+    useChatStore.setState({ currentSessionId: 'sess-1', sendInFlight: true })
+    useChatStore.getState().handleMessageStart('msg_err')
+    useChatStore.getState().applyStreamDeltas([{ kind: 'text', messageId: 'msg_err', delta: '部分输出' }])
+    useChatStore.getState().enqueuePendingMessage('失败后续', [])
+
+    await useChatStore.getState().handleError('msg_err', '模型连接失败')
+    expect(loadSessionCallCount()).toBe(1)
+    expect(terminalErrorNoticeCount()).toBe(1)
+
+    await useChatStore.getState().handleRunTerminal(makeRunSnapshot({
+      sessionId: 'sess-1',
+      messageId: 'msg_err',
+      status: 'failed',
+      sequence: 2,
+      terminalReason: '模型连接失败'
+    }))
+
+    expect(loadSessionCallCount()).toBe(1)
+    expect(terminalErrorNoticeCount()).toBe(1)
+    expect(useChatStore.getState().sendInFlight).toBe(false)
+    expect(sentContents()).toEqual(['失败后续'])
+  })
+
+  it('空 messageId 的失败快照不创建空消息，仍释放发送锁并派发队列', async () => {
+    mockTurnIpc()
+    useChatStore.setState({ currentSessionId: 'sess-1', sendInFlight: true })
+    useChatStore.getState().enqueuePendingMessage('空 id 后续', [])
+
+    await useChatStore.getState().handleRunTerminal(makeRunSnapshot({
+      sessionId: 'sess-1', messageId: '', status: 'failed', sequence: 2, terminalReason: '执行失败'
+    }))
+
+    expect(useChatStore.getState().messages.some(message => message.id === '')).toBe(false)
+    expect(loadSessionCallCount()).toBe(0)
+    expect(useChatStore.getState().sendInFlight).toBe(false)
+    expect(sentContents()).toEqual(['空 id 后续'])
   })
 })

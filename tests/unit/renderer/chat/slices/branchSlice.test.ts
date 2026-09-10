@@ -129,7 +129,8 @@ describe('branchSlice', () => {
 
     const state = useChatStore.getState()
     expect(state.messages.map(m => m.id)).toEqual(['msg_0', 'msg_1', 'msg_2'])
-    expect(state.sendInFlight).toBe(true)
+    // send-message 在轮次结束后才返回 accepted，发送锁随之释放；分叉元信息仍等终态快照收口
+    expect(state.sendInFlight).toBe(false)
     expect(state.pendingBranchMetaReload).toBe(true)
     expect(state.branchForkInProgress).toBe(true)
   })

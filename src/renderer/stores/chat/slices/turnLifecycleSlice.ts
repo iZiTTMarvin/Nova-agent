@@ -17,6 +17,14 @@ import {
 } from '../internal'
 import type { ChatSliceCreator, TurnLifecycleSliceState } from '../types'
 
+/** resume/steering 会复用 messageId，终态封存只能看当前是否仍在生成。 */
+function isActiveTurn(
+  state: Pick<ChatState, 'currentGeneratingMessageId' | 'liveTurn'>,
+  messageId: string
+): boolean {
+  return state.currentGeneratingMessageId === messageId || state.liveTurn[messageId] !== undefined
+}
+
 function cancelToolBlock(block: RendererToolBlock): RendererToolBlock {
   const nestedActivities = block.nestedActivities?.map(activity =>
     activity.status === 'running'
@@ -63,15 +71,27 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
   ...initialTurnLifecycleState(),
 
   handleRunActive: snapshot => {
-    set({ sendInFlight: false, currentGeneratingMessageId: snapshot.messageId || null, activeAgentSessionId: snapshot.sessionId })
+    const currentGeneratingMessageId = snapshot.messageId || null
+    const state = get()
+    if (
+      state.sendInFlight === false &&
+      state.currentGeneratingMessageId === currentGeneratingMessageId &&
+      state.activeAgentSessionId === snapshot.sessionId
+    ) {
+      return
+    }
+    set({ sendInFlight: false, currentGeneratingMessageId, activeAgentSessionId: snapshot.sessionId })
   },
 
   handleRunTerminal: async snapshot => {
     if (get().currentSessionId !== snapshot.sessionId) return
     set({ sendInFlight: false, branchForkInProgress: false })
-    const reconcile = snapshot.status === 'failed'
-      ? get().handleError(snapshot.messageId, snapshot.terminalReason ?? '执行失败')
-      : get().handleMessageEnd(snapshot.messageId, snapshot.status === 'cancelled' || snapshot.status === 'interrupted')
+    const messageId = snapshot.messageId
+    const reconcile = !messageId
+      ? Promise.resolve()
+      : snapshot.status === 'failed'
+        ? get().handleError(messageId, snapshot.terminalReason ?? '执行失败')
+        : get().handleMessageEnd(messageId, snapshot.status === 'cancelled' || snapshot.status === 'interrupted')
     // 消息对账不拥有运行终态，慢或失败的 load-session 不阻塞队列。
     // 取消与异常中断不自动续发；截断轮次与旧版一致，终态仍触发一次派发。
     const dispatch = snapshot.status === 'completed' || snapshot.status === 'failed'
@@ -81,8 +101,12 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
   },
 
   handleMessageEnd: async (messageId: string, interrupted?: boolean) => {
+    if (!isActiveTurn(get(), messageId)) return
     const epoch = getHydrationEpoch()
+    let sealed = false
     set(state => {
+      if (!isActiveTurn(state, messageId)) return state
+      sealed = true
       const nextMessages = state.messages.slice()
       const idx = state.messageIndexById[messageId]
       // 轮次终态前先回收未封存的活跃文本/思考，避免内容停留在活跃回合里。
@@ -144,6 +168,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
       if (live) patch.liveTurn = removeLiveTurnEntry(state.liveTurn, messageId)
       return patch
     })
+    if (!sealed) return
 
     // 后台启动的回复可能缺少早期流式片段；终态始终回到 SessionStore
     // 做按 id 对账。已持久化消息优先，下一轮刚产生的实时消息仍会被保留。
@@ -178,9 +203,12 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
     const displayError = formatTerminalErrorMessage(error)
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
+    let applied = false
 
     set(state => {
       const idx = state.messageIndexById[messageId]
+      if (!isActiveTurn(state, messageId) && idx !== undefined) return state
+      applied = true
       const live = state.liveTurn[messageId]
       // 无条件清空与按会话判断等价：error 事件经 gateAgentEvent 只放行当前会话
       const commonFields = {
@@ -248,6 +276,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         ...livePatch
       }
     })
+    if (!applied) return
 
     if (currentSessionId && !opts?.skipReconcile) {
       try {

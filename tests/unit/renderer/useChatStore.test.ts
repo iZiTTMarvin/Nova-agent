@@ -481,6 +481,29 @@ describe('useChatStore Zustand Store', () => {
       content: '你好',
       userMessageId: userMsg!.id
     }))
+    expect(useChatStore.getState().sendInFlight).toBe(false)
+  })
+
+  it('send-message 被接受后即使没有 run 快照也释放发送锁', async () => {
+    useWorkspaceStore.setState({
+      currentSessionId: null,
+      currentProjectPath: '/project/root',
+      currentMode: 'default',
+      availableSessions: [],
+      initialized: true
+    })
+    useChatStore.setState({ currentSessionId: null, messages: [], messageIndexById: {} })
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'send-message') return { accepted: true }
+      if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
+      return undefined
+    })
+
+    await useChatStore.getState().sendMessage('你好')
+
+    expect(useChatStore.getState().sendInFlight).toBe(false)
+    expect(selectSessionIsRunning(useRunStore.getState(), useChatStore.getState().currentSessionId)).toBe(false)
+    expect(useChatStore.getState().messages[0]?.role).toBe('user')
   })
 
   it('regenerateAssistant 应先分叉准备再以 regenerate 模式发送', async () => {

@@ -184,4 +184,27 @@ describe('Renderer 按 run/session 隔离权威投影', () => {
     expect(useChatStore.getState().pendingUserMessages.map(message => message.text)).toEqual(['Q2'])
     expect(useChatStore.getState().sendInFlight).toBe(true)
   })
+
+  it('水合已完成 run 不触发对账，仍释放发送锁并派发队列', async () => {
+    focus('sessA')
+    useChatStore.setState({ sendInFlight: true })
+    useChatStore.getState().enqueuePendingMessage('Q1', [])
+    invoke.mockImplementation((channel, params) => {
+      if (channel === 'run:get-snapshot') {
+        return Promise.resolve({ snapshot: makeSnap('runA', 'sessA', 1, 'completed'), waitingSessions: [] })
+      }
+      if (channel === 'send-message') return Promise.resolve({ accepted: true })
+      if (channel === 'load-session') return Promise.resolve({ id: params.sessionId, messages: [] })
+      if (channel === 'get-message-diffs') return Promise.resolve({ diffs: [], reviews: {} })
+      if (channel === 'run:list-waiting') return Promise.resolve([])
+      return Promise.resolve(undefined)
+    })
+
+    await useRunStore.getState().pullSnapshot('sessA')
+    await vi.waitFor(() => expect(useChatStore.getState().sendInFlight).toBe(false))
+    await vi.waitFor(() => expect(invoke.mock.calls.filter(([channel]) => channel === 'send-message')).toHaveLength(1))
+    expect(invoke.mock.calls.filter(([channel]) => channel === 'load-session')).toHaveLength(0)
+    expect(useChatStore.getState().pendingUserMessages).toEqual([])
+    expect(useChatStore.getState().messages.filter(message => message.role === 'user').map(message => message.content)).toEqual(['Q1'])
+  })
 })

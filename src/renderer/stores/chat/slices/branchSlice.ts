@@ -54,6 +54,8 @@ export const createBranchSlice: ChatSliceCreator<BranchSliceState> = (set, get) 
       const result = await window.api.invoke('send-message', { sessionId, content: '', regenerate: true })
       if (!isCurrentRequest()) return
       if (!result.accepted) throw new Error(slashRejectionText(result.rejection))
+      // IPC 在轮次结束或入队后才返回 accepted，发送锁不能再依赖快照到达。
+      set({ sendInFlight: false })
     } catch (err) {
       if (!isCurrentRequest()) return
       set({

@@ -115,6 +115,8 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
         }
         throw new Error(slashRejectionText(result.rejection))
       }
+      // IPC 在轮次结束或入队后才返回 accepted，发送锁不能再依赖快照到达。
+      if (isCurrentRequest()) set({ sendInFlight: false })
     } catch (err) {
       if (!isCurrentRequest()) return true
       if (options?.rollbackSnapshot) {
