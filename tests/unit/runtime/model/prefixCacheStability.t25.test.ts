@@ -300,7 +300,7 @@ describe('前缀稳定性黑盒', () => {
     expect(directSnapshot.exactBodyHash).toBe(yieldedSnapshot!.exactBodyHash)
   })
 
-  it('多轮会话含超阈值历史工具结果时，round 0 与 round 1 可复用前缀一致', async () => {
+  it('多轮会话含超阈值工具结果：首投递全文、之后占位符且前缀稳定', async () => {
     const huge = 'x'.repeat(18 * 1024)
     const tmp = mkdtempSync(join(tmpdir(), 'nova-prefix-d4-'))
     const client = new MockModelClient()
@@ -378,12 +378,24 @@ describe('前缀稳定性黑盒', () => {
       const thisTurnRound0 = calls[2].messages
       const thisTurnRound1 = calls[3].messages
 
-      expect(isArchivedPlaceholder(toolContent(1, 'call_huge'))).toBe(true)
-      expect(toolContent(2, 'call_huge')).toBe(toolContent(1, 'call_huge'))
-      expect(toolContent(3, 'call_huge')).toBe(toolContent(1, 'call_huge'))
+      // toolDelivery 是运行时元数据，不上 wire，不参与前缀比较
+      const wireShape = (messages: ChatMessage[]) =>
+        messages.map(({ toolDelivery: _delivery, ...rest }) => rest)
 
-      expect(thisTurnRound0.slice(0, previousTurnLast.length)).toEqual(previousTurnLast)
-      expect(thisTurnRound1.slice(0, thisTurnRound0.length)).toEqual(thisTurnRound0)
+      // 新契约：最新结果先全文投递一次（round 1 全文），下一请求起替换为占位符
+      expect(toolContent(1, 'call_huge')).toBe(huge)
+      expect(isArchivedPlaceholder(toolContent(2, 'call_huge'))).toBe(true)
+      expect(toolContent(3, 'call_huge')).toBe(toolContent(2, 'call_huge'))
+
+      // 全文→占位符是唯一一次刻意断点：断点之前的消息前缀保持逐字节一致
+      const prefixBeforeArchivedTool = previousTurnLast.length - 1
+      expect(wireShape(thisTurnRound0.slice(0, prefixBeforeArchivedTool))).toEqual(
+        wireShape(previousTurnLast.slice(0, prefixBeforeArchivedTool))
+      )
+      // 断点之后恢复 append-only：round 1 完整包含 round 0
+      expect(wireShape(thisTurnRound1.slice(0, thisTurnRound0.length))).toEqual(
+        wireShape(thisTurnRound0)
+      )
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

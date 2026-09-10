@@ -4,8 +4,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   projectRequestMessages,
-  freezeToolDelivery,
-  ACTIVE_TOOL_RESULT_MAX_TOKENS,
   SUPERSEDED_MIN_ESTIMATED_TOKENS,
   CHARS_PER_TOKEN,
   isArchivedPlaceholder,
@@ -23,20 +21,79 @@ import { join } from 'path'
 import { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
 
 describe('projectRequestMessages archiving', () => {
-  it.each([false, true])('首发决定跨新投影保留，首次归档成功=%s', async success => {
+  it.each([true, false])('首次归档成败决定投递与冻结，归档成功=%s', async success => {
     const body = '中文结果\n'.repeat(3000)
-    const input = { messages: [], policy: { enabled: true }, archiveCache: createRequestProjectionArchiveCache(), archive: async () => success ? { artifactId: 'stable' } : null }
     const original: ChatMessage = { role: 'tool', toolCallId: 'old', content: body }
-    const frozen = await freezeToolDelivery(input, original)
-    const first = await projectRequestMessages({ ...input, messages: [frozen] })
-    const next = await projectRequestMessages({ ...input, archiveCache: createRequestProjectionArchiveCache(), archive: async () => ({ artifactId: 'later' }), messages: [
-      { role: 'assistant', content: '', toolCalls: [{ id: 'old', name: 'read', arguments: '{"path":"a"}' }] }, frozen,
-      { role: 'assistant', content: '', toolCalls: [{ id: 'new', name: 'read', arguments: '{"path":"a"}' }] }, { ...original, toolCallId: 'new' }
-    ] })
-    expect(next.messages[1].content).toBe(first.messages[0].content)
-    expect(frozen.content).toBe(body)
-    expect(frozen.toolDelivery?.kind).toBe(success ? 'archive' : 'original')
+    const input = {
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => (success ? { artifactId: 'stable' } : null)
+    }
+    const first = await projectRequestMessages({ ...input, messages: [original] })
     expect(isArchivedPlaceholder(String(first.messages[0].content))).toBe(success)
+    expect(first.frozenDeliveries).toHaveLength(success ? 1 : 0)
+    // 调用方（runAgentLoop）写回冻结投递后再投影：幂等复用同一占位符
+    for (const { toolCallId, delivery } of first.frozenDeliveries) {
+      if (toolCallId === 'old') original.toolDelivery = delivery
+    }
+    const second = await projectRequestMessages({
+      ...input,
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'later' }),
+      messages: [original]
+    })
+    if (success) {
+      expect(second.messages[0].content).toBe(first.messages[0].content)
+      expect(second.frozenDeliveries).toHaveLength(0)
+    } else {
+      // 归档失败不冻结为永久原文：下次投影重试归档
+      expect(isArchivedPlaceholder(String(second.messages[0].content))).toBe(true)
+      expect(second.diagnostics.archiveFailures + second.diagnostics.prunedCount).toBe(1)
+    }
+    expect(original.content).toBe(body)
+  })
+
+  it('延后集合命中的超阈值结果全文投递且不产生冻结投递', async () => {
+    const body = 'x'.repeat(18 * 1024)
+    let archiveCalls = 0
+    const result = await projectRequestMessages({
+      messages: [{ role: 'tool', content: body, toolCallId: 'tc1' }],
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => {
+        archiveCalls++
+        return { artifactId: 'art1' }
+      },
+      deferToolCallIds: new Set(['tc1'])
+    })
+    expect(result.messages[0].content).toBe(body)
+    expect(archiveCalls).toBe(0)
+    expect(result.diagnostics.prunedCount).toBe(0)
+    expect(result.frozenDeliveries).toHaveLength(0)
+  })
+
+  it('延后集合命中的结果不归档，同批更早的重复结果仍被 supersede 归档', async () => {
+    const big = Array.from({ length: 80 }, (_, i) => `${i + 1}: ${'y'.repeat(50)}`).join('\n')
+    const messages: ChatMessage[] = [
+      { role: 'assistant', content: '', toolCalls: [{ id: 'r1', name: 'read', arguments: JSON.stringify({ file_path: 'a' }) }] },
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'r2', name: 'read', arguments: JSON.stringify({ file_path: 'a' }) }] },
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' }),
+      deferToolCallIds: new Set(['r2'])
+    })
+    // r1 已被 r2 覆盖：即使 r2 在延后集合，r1 仍归档
+    expect(isArchivedPlaceholder(result.messages[1].content as string)).toBe(true)
+    const parsed = JSON.parse(result.messages[1].content as string) as ArchivedToolResultPlaceholder
+    expect(parsed.reason).toBe('superseded_by_newer_result')
+    // r2 命中延后集合：全文投递
+    expect(result.messages[3].content).toBe(big)
+    expect(result.frozenDeliveries.map(f => f.toolCallId)).toEqual(['r1'])
   })
   it('18KB 的工具输出经投影后变为占位符，原消息未被 mutate', async () => {
     const original = 'x'.repeat(18 * 1024)
@@ -72,7 +129,7 @@ describe('projectRequestMessages archiving', () => {
     expect(result.diagnostics.estimatedTokensSaved).toBe(0)
   })
 
-  it('超过阈值的工具结果在任何轮次都归档', async () => {
+  it('超过阈值且不在延后集合的工具结果归档', async () => {
     const messages: ChatMessage[] = [
       { role: 'tool', content: 'x'.repeat(18 * 1024), toolCallId: 'tc1' }
     ]

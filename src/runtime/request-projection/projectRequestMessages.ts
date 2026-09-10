@@ -5,6 +5,10 @@
  * 1. 投影结果绝不写回 context.messages——context.messages 永远保留全文，是权威事实。
  * 2. 溢出压缩恢复后必须重新投影（调用方的 continue 路径回到循环顶会重新执行投影；若未来有人把恢复改成就地重试，必须显式重新投影）。
  * 3. 投影是幂等的——对已是占位符的内容再次投影原样返回。
+ *
+ * 归档时机：最新一步的工具结果先全文投递一次（deferToolCallIds），模型消费过之后
+ * 的请求才按体积/覆盖规则归档。已归档结果的 delivery 由首次归档时的 frozenDeliveries
+ * 交回调用方写回权威上下文，此后投影幂等复用该占位符，不回全文。
  */
 import type { ChatMessage, ContentBlock } from '../model/types'
 import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
@@ -47,7 +51,8 @@ export interface ArchivedToolResultPlaceholder {
   originalEstimatedTokens: number
   /** 正文头尾预览，供模型多数情况下免回读决策 */
   preview: string
-  reason: 'active_current_turn_pruned' | 'superseded_by_newer_result'
+  /** 归档原因：模型消费过全文后按体积归档，或被更新的结果覆盖 */
+  reason: 'consumed_then_archived' | 'superseded_by_newer_result'
   readInstructions: string
 }
 
@@ -98,7 +103,7 @@ function buildPlaceholder(
   toolCallId: string,
   body: string,
   bodySha256: string,
-  reason: ArchivedToolResultPlaceholder['reason'] = 'active_current_turn_pruned'
+  reason: ArchivedToolResultPlaceholder['reason'] = 'consumed_then_archived'
 ): string {
   const originalBytes = Buffer.byteLength(body, 'utf8')
   const placeholder: ArchivedToolResultPlaceholder = {
@@ -113,7 +118,7 @@ function buildPlaceholder(
     originalEstimatedTokens: Math.ceil(body.length / CHARS_PER_TOKEN),
     preview: buildArchiveContentPreview(body),
     reason,
-    readInstructions: 'This result is archived but still readable. Call archive_read with this ref: operation "inspect" for structure, "search" with keyword to locate content, "read" with offset/limit for a bounded page.'
+    readInstructions: 'This result is archived but still readable. You saw its full text in a previous request; read back only when you need exact details. Call archive_read with this ref: operation "inspect" for structure, "search" with keyword to locate content, "read" with offset/limit for a bounded page.'
   }
   return JSON.stringify(placeholder)
 }
@@ -162,6 +167,11 @@ export interface RequestProjectionInput {
    * 契约：实现方不得抛异常，所有失败都必须表达为 null。
    */
   archive: (input: ArchiveCandidate) => Promise<{ artifactId: string } | null>
+  /**
+   * 最新一步刚提交的工具调用 id：其结果在紧随其后的那次请求中全文投递，
+   * 体积与覆盖归档都从再下一次请求开始生效。
+   */
+  deferToolCallIds?: ReadonlySet<string>
 }
 
 export interface RequestProjectionDiagnostics {
@@ -170,10 +180,18 @@ export interface RequestProjectionDiagnostics {
   estimatedTokensSaved: number
 }
 
+/** 首次归档时交回调用方的冻结投递；写回权威上下文与发事件的 Owner 是调用方。 */
+export interface FrozenToolDelivery {
+  toolCallId: string
+  delivery: NonNullable<ChatMessage['toolDelivery']>
+}
+
 export interface RequestProjectionResult {
   messages: ChatMessage[]
   /** 诊断用，不进模型上下文 */
   diagnostics: RequestProjectionDiagnostics
+  /** 本次投影里首次被归档的结果；再次投影同一消息不会再产生条目（幂等）。 */
+  frozenDeliveries: FrozenToolDelivery[]
 }
 
 const EMPTY_DIAGNOSTICS: RequestProjectionDiagnostics = {
@@ -181,6 +199,8 @@ const EMPTY_DIAGNOSTICS: RequestProjectionDiagnostics = {
   archiveFailures: 0,
   estimatedTokensSaved: 0
 }
+
+const EMPTY_DEFER_SET: ReadonlySet<string> = new Set()
 
 function imageRequestBytes(block: Extract<ContentBlock, { type: 'image_url' }>): number {
   return Buffer.byteLength(JSON.stringify(block), 'utf8')
@@ -233,11 +253,17 @@ export function resolveRequestProjectionPolicy(
 export async function projectRequestMessages(
   input: RequestProjectionInput
 ): Promise<RequestProjectionResult> {
+  const frozenDeliveries: FrozenToolDelivery[] = []
   if (!input.policy.enabled) {
-    return { messages: projectImagesWithinBudget(input.messages), diagnostics: EMPTY_DIAGNOSTICS }
+    return {
+      messages: projectImagesWithinBudget(input.messages),
+      diagnostics: EMPTY_DIAGNOSTICS,
+      frozenDeliveries
+    }
   }
 
   const maxTokens = input.policy.maxEstimatedTokens ?? ACTIVE_TOOL_RESULT_MAX_TOKENS
+  const deferToolCallIds = input.deferToolCallIds ?? EMPTY_DEFER_SET
 
   const maxChars = maxTokens * CHARS_PER_TOKEN
   const supersededMinChars = SUPERSEDED_MIN_ESTIMATED_TOKENS * CHARS_PER_TOKEN
@@ -255,13 +281,18 @@ export async function projectRequestMessages(
       continue
     }
 
-    if (msg.toolDelivery) {
+    // 已冻结的归档表示：幂等复用占位符，绝不回到全文
+    if (msg.toolDelivery?.kind === 'archive') {
       if (typeof msg.content !== 'string' || sha256Hex(msg.content) !== msg.toolDelivery.bodySha256) {
         throw new Error('Tool delivery does not match its source body')
       }
-      projected.push(msg.toolDelivery.kind === 'archive'
-        ? { ...msg, content: msg.toolDelivery.placeholder }
-        : msg)
+      projected.push({ ...msg, content: msg.toolDelivery.placeholder })
+      continue
+    }
+
+    // 最新一步的结果：全文投递一次；体积与覆盖归档从下一请求开始
+    if (deferToolCallIds.has(msg.toolCallId)) {
+      projected.push(msg)
       continue
     }
 
@@ -288,7 +319,7 @@ export async function projectRequestMessages(
     }
     const reason: ArchivedToolResultPlaceholder['reason'] = superseded
       ? 'superseded_by_newer_result'
-      : 'active_current_turn_pruned'
+      : 'consumed_then_archived'
 
     const bodySha256 = sha256Hex(text)
     const cacheKey = `${msg.toolCallId}:${bodySha256}`
@@ -303,6 +334,10 @@ export async function projectRequestMessages(
       projected.push({ ...msg, content: cachedPlaceholder })
       prunedCount++
       estimatedTokensSaved += Math.ceil((text.length - cachedPlaceholder.length) / CHARS_PER_TOKEN)
+      frozenDeliveries.push({
+        toolCallId: msg.toolCallId,
+        delivery: { version: 1, kind: 'archive', bodySha256, placeholder: cachedPlaceholder }
+      })
       continue
     }
 
@@ -335,22 +370,23 @@ export async function projectRequestMessages(
     projected.push({ ...msg, content: placeholder })
     prunedCount++
     estimatedTokensSaved += Math.ceil((text.length - placeholder.length) / CHARS_PER_TOKEN)
+    frozenDeliveries.push({
+      toolCallId: msg.toolCallId,
+      delivery: { version: 1, kind: 'archive', bodySha256, placeholder }
+    })
   }
 
   return {
     messages: projectImagesWithinBudget(projected),
-    diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved }
+    diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved },
+    frozenDeliveries
   }
 }
 
-/** 在结果第一次可投递前决定表示，包括归档失败后的原文选择。 */
-export async function freezeToolDelivery(input: RequestProjectionInput, message: ChatMessage): Promise<ChatMessage> {
-  if (message.toolDelivery || message.role !== 'tool' || typeof message.content !== 'string') return message
-  const result = await projectRequestMessages({ ...input, messages: [message] })
-  const content = result.messages[0].content
-  const bodySha256 = sha256Hex(message.content)
-  const toolDelivery: NonNullable<ChatMessage['toolDelivery']> = typeof content === 'string' && content !== message.content
-    ? { version: 1, kind: 'archive', bodySha256, placeholder: content }
-    : { version: 1, kind: 'original', bodySha256 }
-  return { ...message, toolDelivery }
+/**
+ * 提交时登记"原文投递"表示：最新结果先全文进下一次请求；归档发生在
+ * 首次投影归档时（frozenDeliveries），由调用方写回权威上下文。
+ */
+export function originalToolDelivery(content: string): NonNullable<ChatMessage['toolDelivery']> {
+  return { version: 1, kind: 'original', bodySha256: sha256Hex(content) }
 }

@@ -15,7 +15,7 @@ export interface UserDeliveryFacts {
   skillInput?: { assistantPrelude: string; userContent: string }
 }
 
-/** 工具首发表示；全文仍由 result 拥有。 */
+/** 工具结果的当前投递表示：提交时为 original 全文，首次投影归档后改写为 archive；全文仍由 result 拥有。 */
 export type ToolDelivery =
   | { version: 1; kind: 'original'; bodySha256: string }
   | { version: 1; kind: 'archive'; bodySha256: string; placeholder: string }

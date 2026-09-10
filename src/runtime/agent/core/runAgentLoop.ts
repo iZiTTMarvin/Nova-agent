@@ -17,13 +17,14 @@ import type { AgentEvent } from '../types'
 import type { AgentContext } from './AgentContext'
 import type { AgentLoopConfig, StopReason } from './loopTypes'
 import {
-  freezeToolDelivery,
+  originalToolDelivery,
   projectAssistantContent,
   serializeToolArguments,
   createRequestProjectionArchiveCache,
   projectRequestMessages,
   type ActiveToolResultPrunePolicy,
   type ArchiveCandidate,
+  type FrozenToolDelivery,
   type RequestProjectionArchiveCache,
   type SummaryProjection,
   DISABLED_PRUNE_POLICY
@@ -117,6 +118,8 @@ export function createSummaryProjection(options: {
   context: AgentContext
   policy: ActiveToolResultPrunePolicy | (() => ActiveToolResultPrunePolicy)
   archiveCache?: RequestProjectionArchiveCache
+  /** 与主请求同源的延后归档集合：摘要投影必须复现主请求对最新结果的全文投递 */
+  deferToolCallIds?: () => ReadonlySet<string>
 }): SummaryProjection {
   const archive = createArchiveWriter(options.context)
   return {
@@ -125,7 +128,8 @@ export function createSummaryProjection(options: {
         messages,
         policy: typeof options.policy === 'function' ? options.policy() : options.policy,
         archiveCache: options.archiveCache ?? createRequestProjectionArchiveCache(),
-        archive
+        archive,
+        ...(options.deferToolCallIds ? { deferToolCallIds: options.deferToolCallIds() } : {})
       })
       return result.messages
     }
@@ -152,11 +156,28 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
   const archiveWriter = createArchiveWriter(context)
   const requestProjectionPolicy = config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY
+  // 最新一批工具调用：其结果在紧随其后的请求中全文投递，再之后才可归档。
+  // 摘要投影经 getter 与主请求读同一集合，保证两视图字节前缀恒等。
+  let deferredToolCallIds: ReadonlySet<string> = new Set()
   const summaryProjection = createSummaryProjection({
     context,
     policy: requestProjectionPolicy,
-    archiveCache: requestProjectionArchiveCache
+    archiveCache: requestProjectionArchiveCache,
+    deferToolCallIds: () => deferredToolCallIds
   })
+
+  /** 首次归档的冻结投递写回权威上下文（唯一写入 Owner 是本循环）并通知持久化。 */
+  const applyFrozenDeliveries = (frozen: readonly FrozenToolDelivery[]): void => {
+    if (frozen.length === 0) return
+    for (const { toolCallId, delivery } of frozen) {
+      const target = context.messages.find(
+        m => m.role === 'tool' && m.toolCallId === toolCallId && m.toolDelivery?.kind !== 'archive'
+      )
+      if (!target) continue
+      target.toolDelivery = delivery
+      emit({ type: 'tool_delivery', messageId, toolCallId, delivery })
+    }
+  }
 
   try {
     while (toolRound < config.maxToolRounds) {
@@ -197,15 +218,18 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       chatMessages = preChatHook?.messages ?? chatMessages
       // 请求投影：把本次模型请求看到的消息与权威上下文分离。
       // 投影结果只赋给 chatMessages，绝不写回 context.messages（权威事实保留全文）。
+      // 首次归档的冻结投递在此写回权威上下文，供后续投影幂等复用。
       // 预算压缩成功后的 continue 会回到循环顶重新执行投影，
       // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
       const projection = await projectRequestMessages({
         messages: chatMessages,
         policy: requestProjectionPolicy,
         archiveCache: requestProjectionArchiveCache,
-        archive: archiveWriter
+        archive: archiveWriter,
+        deferToolCallIds: deferredToolCallIds
       })
       chatMessages = projection.messages
+      applyFrozenDeliveries(projection.frozenDeliveries)
 
       const nativeTools = context.dialect === 'xml' ? undefined : tools
       const permit = await p.prepareMainRequest(chatMessages, nativeTools, summaryProjection)
@@ -329,19 +353,26 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         for (const outcome of batchResult.outcomes) {
           if (outcome.skippedByAbort) continue
           const content = toToolContent(outcome.resultText, outcome.resultImages)
-          const toolMessage = await freezeToolDelivery({ messages: [], policy: requestProjectionPolicy, archiveCache: requestProjectionArchiveCache, archive: archiveWriter }, {
+          const toolMessage: ChatMessage = {
             role: 'tool',
             content,
             toolCallId: outcome.toolCall.id,
             origin: stepOrigin,
+            // 提交时只登记原文投递；归档表示由首次投影归档冻结（applyFrozenDeliveries）
+            ...(typeof content === 'string' ? { toolDelivery: originalToolDelivery(content) } : {}),
             ...(outcome.artifactId ? { artifactId: outcome.artifactId } : {}),
             ...(outcome.truncationMeta ? { truncationMeta: outcome.truncationMeta } : {})
-          })
+          }
           if (p.signal() || p.abortSignal()?.aborted) return { ended: 'normal', cancelled: true }
-          if (toolMessage.toolDelivery) emit({ type: 'tool_delivery', messageId, toolCallId: outcome.toolCall.id, delivery: toolMessage.toolDelivery })
           context.messages.push(toolMessage)
           p.onToolResultCommitted?.(content)
         }
+        // 本批结果在下一请求全文投递；再之后的请求才进入归档判定
+        deferredToolCallIds = new Set(
+          batchResult.outcomes
+            .filter(outcome => !outcome.skippedByAbort)
+            .map(outcome => outcome.toolCall.id)
+        )
         p.updateTokenEstimate()
         if (batchResult.outcomes.some(outcome => outcome.control?.type === 'turn_complete')) {
           turnCompletedByControl = true

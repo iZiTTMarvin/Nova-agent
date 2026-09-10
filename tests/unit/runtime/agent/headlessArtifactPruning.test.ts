@@ -14,7 +14,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
 describe('headless artifact pruning', () => {
-  it('第 1 轮将大工具结果归档，下一轮以同一命名空间通过 archive_read 校验回读', async () => {
+  it('最新结果先全文投递，下一步归档后同命名空间可通过 archive_read 校验回读', async () => {
     const logsDir = mkdtempSync(join(tmpdir(), 'nova-headless-artifacts-'))
     const sessionId = 'headless-run'
     const body = Array.from({ length: 5000 }, (_, index) => `line-${index + 1}`).join('\n')
@@ -26,6 +26,17 @@ describe('headless artifact pruning', () => {
         {
           type: 'tool_call',
           toolCall: { id: 'tc-large', name: 'large_output', arguments: '{}' }
+        },
+        { type: 'message_end', finishReason: 'tool_calls' }
+      ]
+    })
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'tool_call_start', toolCallId: 'tc-ping', toolName: 'ping', index: 0 },
+        {
+          type: 'tool_call',
+          toolCall: { id: 'tc-ping', name: 'ping', arguments: '{}' }
         },
         { type: 'message_end', finishReason: 'tool_calls' }
       ]
@@ -46,6 +57,15 @@ describe('headless artifact pruning', () => {
       executionMode: 'sequential',
       async execute(_args: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
         return { success: true, output: body }
+      }
+    })
+    registry.register({
+      name: 'ping',
+      description: 'returns a small result',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      executionMode: 'sequential',
+      async execute(_args: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
+        return { success: true, output: 'ok' }
       }
     })
     registry.register(archiveReadTool)
@@ -72,13 +92,22 @@ describe('headless artifact pruning', () => {
         status: 'completed'
       })
 
-      const secondCall = client.getCalls()[1]
-      const toolMessage = secondCall.messages.find(
-        message => message.role === 'tool' && message.toolCallId === 'tc-large'
-      )
-      expect(toolMessage).toBeDefined()
-      expect(typeof toolMessage?.content).toBe('string')
-      const placeholder = JSON.parse(toolMessage?.content as string) as {
+      const calls = client.getCalls()
+      const toolContent = (callIndex: number, toolCallId: string): string => {
+        const toolMessage = calls[callIndex].messages.find(
+          message => message.role === 'tool' && message.toolCallId === toolCallId
+        )
+        expect(toolMessage).toBeDefined()
+        expect(typeof toolMessage?.content).toBe('string')
+        return toolMessage?.content as string
+      }
+
+      // 第 1 次看到该结果：全文投递（延后一步归档）
+      expect(toolContent(1, 'tc-large')).toBe(body)
+
+      // 第 2 次看到该结果：已是占位符
+      const placeholderView = toolContent(2, 'tc-large')
+      const placeholder = JSON.parse(placeholderView) as {
         kind: string
         artifactId: string
         resourceRef: string
