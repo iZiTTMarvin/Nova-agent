@@ -977,6 +977,8 @@ describe('AgentLoop', () => {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
       maxToolRounds: 20,
+      // 历史体量按默认窗口不再过阈值压缩；显式缩小窗口让本用例回到压缩路径
+      contextWindow: 10_000,
       onCompaction: (_ctx, _meta) => {}
     })
     loop.setToolRegistry(createTestRegistry())
@@ -1055,6 +1057,8 @@ describe('AgentLoop', () => {
     const loop = new AgentLoop(client, new EventBus(), {
       permissionManager: new PermissionManager(),
       systemPrompt: '你是助手。',
+      // 同上：显式缩小窗口，让恢复后的历史重新触发阈值压缩
+      contextWindow: 10_000,
       onCompaction: (_context, meta) => compactionLevels.push(meta.compactionLevel)
     })
     loop.setToolRegistry(createTestRegistry())
