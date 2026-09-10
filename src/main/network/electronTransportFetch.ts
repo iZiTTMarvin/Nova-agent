@@ -8,8 +8,10 @@
 import { net } from 'electron'
 import type { TransportFetchImpl } from '../../runtime/model/types'
 
+// net 只存在于 Electron 进程内；单元测试等纯 Node 环境退回全局 fetch，
+// 使传输保持可替换、测试可 stub，生产主进程不受影响。
 export const electronTransportFetch: TransportFetchImpl = (url, init) =>
-  net.fetch(url, {
+  (net?.fetch ?? fetch)(url, {
     method: init.method,
     headers: init.headers,
     body: init.body,
