@@ -75,13 +75,19 @@ describe('resolveImageBudgetRule', () => {
     expect(estimateImageBlockBudgetTokens('qwen3.7-plus', 'data:image/png;base64,AAAA')).toBe(1536)
   })
 
-  it('无可靠规则的模型保持原行为（返回 null）', () => {
-    // 未实测的 qwen 代际不套用 qwen3.7-plus 的实测上限
+  it('未实测型号改用有界通用启发式（任意图片预算增量 ≤1536）', () => {
     for (const modelId of ['qwen-vl-max', 'qwen3.5-plus', 'Qwen3.5-397B-A17B', 'qwen3.7', 'qwen3.7-flash',
       'glm-4.6', 'deepseek-v4-flash', 'grok-4.5', 'mimo-v2.5']) {
-      expect(resolveImageBudgetRule(modelId), modelId).toBeNull()
-      expect(estimateImageBlockBudgetTokens(modelId, pngDataUrl(100, 100))).toBeNull()
+      expect(resolveImageBudgetRule(modelId), modelId).not.toBeNull()
+      expect(estimateImageBlockBudgetTokens(modelId, pngDataUrl(100, 100)), modelId).toBeLessThanOrEqual(1536)
     }
+    // 尺寸解析失败 / 非常见格式回退到硬帽值
+    expect(estimateImageBlockBudgetTokens('glm-4.6', 'https://example.com/a.png')).toBe(1536)
+    expect(estimateImageBlockBudgetTokens('glm-4.6', 'data:image/png;base64,AAAA')).toBe(1536)
+    // 1920×911 的缩放取整裸公式为 1539，通用口径必须被硬帽压住；qwen3.7-plus 保留裸值
+    expect(estimateImageBlockBudgetTokens('grok-4.5', pngDataUrl(1920, 911))).toBe(1536)
+    expect(estimateImageBlockBudgetTokens('qwen3.7-plus', pngDataUrl(1920, 911))!).toBeGreaterThan(1536)
+    // 无模型 id 时调用方未提供路由身份，保持原口径
     expect(resolveImageBudgetRule(undefined)).toBeNull()
   })
 })
@@ -106,12 +112,14 @@ describe('measureRequestBudget 图片计量', () => {
     expect(delta).toBeLessThan(4_000)
   })
 
-  it('未知模型保持 URL 文本口径（行为不变）', () => {
+  it('未实测型号图片增量被有界通用口径压住（不再虚报两个数量级）', () => {
     const body = { ...imageBody, model: 'grok-4.5' }
     const withImage = measureRequestBudget(body, 'route', 200_000)
     const withoutImage = measureRequestBudget({ ...textBody, model: 'grok-4.5' }, 'route', 200_000)
     const delta = withImage.budgetUnits! - withoutImage.budgetUnits!
-    expect(delta).toBeGreaterThan(90_000) // 原行为：base64 文本 ≈ url.length/4
+    // 视觉预留 ≤1536；余量来自图片块 JSON 结构自身的文本量（约 20 token）
+    expect(delta).toBeGreaterThan(500)
+    expect(delta).toBeLessThan(2_000)
   })
 
   it('图片计量只改 budgetUnits，不改请求哈希与字节数', () => {
@@ -134,11 +142,13 @@ describe('estimateContextSize 图片计量', () => {
     { role: 'user', content: [{ type: 'text', text: '看图' }, { type: 'image_url', image_url: { url } }] }
   ]
 
-  it('命中模型规则时按规则值计；不传 modelId 保持原口径', () => {
+  it('命中模型规则时按规则值计；未实测型号同样有界，不传 modelId 保持原口径', () => {
     const withRule = estimateContextSize(messages, 'qwen3.7-plus')
     const legacy = estimateContextSize(messages)
+    const unknown = estimateContextSize(messages, 'grok-4.5')
     expect(withRule.bytes).toBe(legacy.bytes)
     expect(legacy.tokens - withRule.tokens).toBeGreaterThan(90_000)
     expect(withRule.tokens).toBeLessThan(5_000)
+    expect(unknown.tokens).toBeLessThan(5_000)
   })
 })

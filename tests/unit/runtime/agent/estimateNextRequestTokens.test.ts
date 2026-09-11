@@ -114,7 +114,7 @@ describe('同路由最终投影预算', () => {
     expect(service.observeMainRequest(90_034, after, source(after), 1)).toBe(true)
     expect(service.assessNextRequest(after)).toMatchObject({ estimatedTokens: 90_034, source: 'provider' })
   })
-  it.each([1, 2, 3] as const)('旧估算版本 %i 仅对相同请求保留实测，不跨单位计算增量', version => {
+  it.each([1, 2, 3, 4] as const)('旧估算版本 %i 仅对相同请求保留实测，不跨单位计算增量', version => {
     const { service, pool, context } = setup()
     const request = pool.measureRequest(messages)
     service.observeMainRequest(1_000, request, source(request))
@@ -126,7 +126,17 @@ describe('同路由最终投影预算', () => {
     const appended = pool.measureRequest([...messages, { role: 'assistant', content: '后续' }])
     expect(service.assessNextRequest(appended)).toMatchObject({ source: 'conservative-estimate', status: 'within' })
     expect(service.observeMainRequest(1_010, appended, source(appended), 1)).toBe(true)
-    expect(context.compactionState?.budgetAnchor?.estimatorVersion).toBe(4)
+    expect(context.compactionState?.budgetAnchor?.estimatorVersion).toBe(5)
+  })
+  it('未实测型号的大图不再触发误压缩（有界通用口径）', () => {
+    const { service, pool } = setup({ ...config, contextWindow: 200_000 })
+    const withImage: ChatMessage[] = [...messages, { role: 'user', content: [
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(700_000)}` } }
+    ] }]
+    const assessment = service.assessNextRequest(pool.measureRequest(withImage))
+    // 旧口径按 base64 文本计约 17.5 万 token 会越过 80% 阈值；新口径应在千级
+    expect(assessment.estimatedTokens).toBeLessThan(10_000)
+    expect(assessment).toMatchObject({ status: 'within', source: 'conservative-estimate' })
   })
   it('未知快照版本不被锚点写入覆盖', () => {
     const { root, session, store, service, pool } = setup()

@@ -90,8 +90,11 @@ export class StreamProcessor {
   /**
    * 单轮溢出压缩守卫（与 AttemptController 正交）。
    * - contextOverflowRetryAttempted：单轮一次性守卫，新消息开始时重置。
+   * - contextOverflowCompactionAttempted：本 turn 是否进入过压缩链。
+   *   failed 分类的文案只允许一次压缩链机会，降级先手不占用该机会。
    */
   private contextOverflowRetryAttempted = false
+  private contextOverflowCompactionAttempted = false
   private contextOverflowRetryCount = 0
   /** 上一 attempt 已向 UI 发出 retrying；下次 run 开始时收回横幅 */
   private resumeAfterRetry = false
@@ -124,6 +127,7 @@ export class StreamProcessor {
     this.logicalRequestId = undefined
     this.attemptController.reset()
     this.contextOverflowRetryAttempted = false
+    this.contextOverflowCompactionAttempted = false
     this.contextOverflowRetryCount = 0
     this.resumeAfterRetry = false
   }
@@ -390,11 +394,13 @@ export class StreamProcessor {
             const overflowState = this.attemptController.classifyForEmit(event.rawError)
             this.emit({ type: 'recovery_state', messageId, state: overflowState })
             await this.hookManager.trigger({ event: 'onError', messageId, error: event.rawError })
+            // hook 是异步等待点：期间用户停止则终态 cancelled，不再进入恢复链
+            if (params.isCancelled() || signal?.aborted) return finish({ kind: 'cancelled' })
 
             if (this.contextOverflowRetryCount >= StreamProcessor.MAX_CONTEXT_OVERFLOW_RETRIES) {
               return finish({ kind: 'error', error: event.rawError })
             }
-            if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed') {
+            if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed' && this.contextOverflowCompactionAttempted) {
               return finish({ kind: 'error', error: event.rawError })
             }
             this.contextOverflowRetryCount++
@@ -410,12 +416,23 @@ export class StreamProcessor {
               })
             }
 
+            // 恢复第一档：优先降级可省略的历史图片并重投影重试；与压缩共享同一重试额度。
+            if (params.requestOverflowImageDegradation?.()) {
+              shouldRetryChat = true
+              break
+            }
+
+            // 进入压缩链。failed 分类的文案只保留这一次压缩链机会：降级先手不算数，
+            // 压缩后仍溢出才终止，避免「降级顶掉唯一一次标准压缩」的恢复缺失。
+            this.contextOverflowCompactionAttempted = true
             const standardOk = await this.runOverflowCompaction('standard', params.summaryProjection)
+            if (params.isCancelled() || signal?.aborted) return finish({ kind: 'cancelled' })
             if (standardOk) {
               shouldRetryChat = true
               break
             }
             const aggressiveOk = await this.runOverflowCompaction('aggressive', params.summaryProjection)
+            if (params.isCancelled() || signal?.aborted) return finish({ kind: 'cancelled' })
             if (aggressiveOk) {
               shouldRetryChat = true
               break

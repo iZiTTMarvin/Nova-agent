@@ -20,11 +20,11 @@ import type { ModelClient, ChatOptions } from '../../../../src/runtime/model/Mod
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 
 /** 产出持续 context_overflow 事件的 mock ModelClient */
-function createAlwaysOverflowClient(): ModelClient {
+function createAlwaysOverflowClient(rawError = 'context overflow token limit'): ModelClient {
   return {
     chat(_messages: ChatMessage[], _tools?: ToolDefinition[], _options?: ChatOptions): AsyncIterable<ChatEvent> {
       return (async function* () {
-        yield { type: 'context_overflow', rawError: 'context overflow token limit' }
+        yield { type: 'context_overflow', rawError }
       })()
     },
     updateConfig: () => {}
@@ -54,12 +54,18 @@ function createNativeContext(): AgentContext {
 }
 
 /** 构造一个注入了 mock 依赖的 StreamProcessor */
-function createProcessor(opts: { compactionResult: () => Promise<boolean> }): {
+function createProcessor(opts: {
+  compactionResult: () => Promise<boolean>
+  onCompaction?: (mode: 'standard' | 'aggressive') => void
+  /** 溢出文案；用于覆盖 recovery 分类为 failed（不匹配 OVERFLOW_PATTERNS）的 provider 文案 */
+  overflowError?: string
+}): {
   processor: StreamProcessor
   emitted: AgentEvent[]
+  hookManager: HookManager
 } {
   const emitted: AgentEvent[] = []
-  const client = createAlwaysOverflowClient()
+  const client = createAlwaysOverflowClient(opts.overflowError)
   // 用真实 ModelClientPool 包装 mock client，避免手写 pool 的全部方法
   const stubConfig: ModelConfig = {
     baseUrl: 'http://test',
@@ -68,21 +74,31 @@ function createProcessor(opts: { compactionResult: () => Promise<boolean> }): {
   }
   const modelPool = new ModelClientPool({ primary: client, primaryConfig: stubConfig })
 
+  const hookManager = new HookManager()
   const processor = new StreamProcessor({
     modelPool,
     recovery: new RecoveryStateMachine(),
     cacheDiagnostics: new CacheDiagnostics(),
     emit: (e) => { emitted.push(e) },
     emitContextBreakdown: () => {},
-    runOverflowCompaction: () => opts.compactionResult(),
-    hookManager: new HookManager()
+    runOverflowCompaction: (mode) => {
+      opts.onCompaction?.(mode)
+      return opts.compactionResult()
+    },
+    hookManager
   })
 
-  return { processor, emitted }
+  return { processor, emitted, hookManager }
 }
 
 /** 调用 processor.run 一次（模拟 AgentLoop 外层循环的一次迭代） */
-async function runOnce(processor: StreamProcessor): Promise<{ kind: string; error?: string }> {
+async function runOnce(
+  processor: StreamProcessor,
+  opts: {
+    isCancelled?: () => boolean
+    requestOverflowImageDegradation?: () => boolean
+  } = {}
+): Promise<{ kind: string; error?: string }> {
   return processor.run({
     messageId: 'msg_test',
     chatMessages: [{ role: 'user', content: 'hi' }],
@@ -90,8 +106,11 @@ async function runOnce(processor: StreamProcessor): Promise<{ kind: string; erro
     context: createNativeContext(),
     signal: undefined,
     summaryProjection: identitySummaryProjection,
-    isCancelled: () => false,
-    sleep: () => Promise.resolve()
+    isCancelled: opts.isCancelled ?? (() => false),
+    sleep: () => Promise.resolve(),
+    ...(opts.requestOverflowImageDegradation
+      ? { requestOverflowImageDegradation: opts.requestOverflowImageDegradation }
+      : {})
   })
 }
 
@@ -140,5 +159,118 @@ describe('StreamProcessor C3：上下文溢出重试上限', () => {
     const r = await runOnce(processor)
     expect(r.kind).toBe('error')
     expect((r as { error: string }).error).toBe('context overflow token limit')
+  })
+})
+
+describe('StreamProcessor 溢出图片降级优先级', () => {
+  it('降级回调 true：直接重试，不调用压缩', async () => {
+    const modes: string[] = []
+    const { processor } = createProcessor({
+      compactionResult: async () => true,
+      onCompaction: mode => modes.push(mode)
+    })
+    const r = await runOnce(processor, { requestOverflowImageDegradation: () => true })
+    expect(r.kind).toBe('retry')
+    expect(modes).toEqual([])
+  })
+
+  it('降级回调 false：落入标准压缩', async () => {
+    const modes: string[] = []
+    const { processor } = createProcessor({
+      compactionResult: async () => true,
+      onCompaction: mode => modes.push(mode)
+    })
+    const r = await runOnce(processor, { requestOverflowImageDegradation: () => false })
+    expect(r.kind).toBe('retry')
+    expect(modes).toEqual(['standard'])
+  })
+
+  it('降级与压缩共用 3 次封顶', async () => {
+    let degrade = true
+    const { processor } = createProcessor({ compactionResult: async () => true })
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => degrade })).kind).toBe('retry')
+    degrade = false
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => degrade })).kind).toBe('retry')
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => degrade })).kind).toBe('retry')
+    // 第 4 次：额度耗尽，即使降级回调可再返回 true 也不再恢复
+    degrade = true
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => degrade })).kind).toBe('error')
+  })
+})
+
+describe('StreamProcessor 溢出恢复的取消终态', () => {
+  it('onError hook 期间用户停止 → cancelled，不再进入恢复链', async () => {
+    const modes: string[] = []
+    const { processor, hookManager } = createProcessor({
+      compactionResult: async () => true,
+      onCompaction: mode => modes.push(mode)
+    })
+    let cancelled = false
+    hookManager.on('onError', () => { cancelled = true })
+    const r = await runOnce(processor, { isCancelled: () => cancelled })
+    expect(r.kind).toBe('cancelled')
+    expect(modes).toEqual([])
+  })
+
+  it('标准压缩期间用户停止 → cancelled，不再启动激进压缩', async () => {
+    const modes: string[] = []
+    let cancelled = false
+    const { processor } = createProcessor({
+      compactionResult: async () => { cancelled = true; return true },
+      onCompaction: mode => modes.push(mode)
+    })
+    const r = await runOnce(processor, { isCancelled: () => cancelled })
+    expect(r.kind).toBe('cancelled')
+    expect(modes).toEqual(['standard'])
+  })
+
+  it('激进压缩返回后发现用户停止 → cancelled，不是 error', async () => {
+    const modes: string[] = []
+    let cancelled = false
+    const { processor } = createProcessor({
+      compactionResult: async () => false,
+      onCompaction: mode => {
+        modes.push(mode)
+        if (mode === 'aggressive') cancelled = true
+      }
+    })
+    const r = await runOnce(processor, { isCancelled: () => cancelled })
+    expect(r.kind).toBe('cancelled')
+    expect(modes).toEqual(['standard', 'aggressive'])
+  })
+})
+
+describe('StreamProcessor 溢出恢复：分类为 failed 的文案', () => {
+  // 'prompt is too long' 被客户端识别为溢出，但不匹配 RecoveryStateMachine.OVERFLOW_PATTERNS
+  const failedOverflow = 'prompt is too long'
+
+  it('降级先手不剥夺 failed 分类的唯一一次压缩链机会', async () => {
+    const modes: string[] = []
+    const { processor } = createProcessor({
+      overflowError: failedOverflow,
+      compactionResult: async () => true,
+      onCompaction: mode => modes.push(mode)
+    })
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => true })).kind).toBe('retry')
+    expect(modes).toEqual([])
+    // 集合已非空（降级回调 false）后仍走标准压缩，而不是直接 error
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => false })).kind).toBe('retry')
+    expect(modes).toEqual(['standard'])
+    // 压缩链已试过仍溢出 → 终止
+    const r = await runOnce(processor, { requestOverflowImageDegradation: () => false })
+    expect(r.kind).toBe('error')
+    expect((r as { error: string }).error).toBe(failedOverflow)
+  })
+
+  it('无可降级对象时维持既有语义：首次即压缩、二次终止', async () => {
+    const modes: string[] = []
+    const { processor } = createProcessor({
+      overflowError: failedOverflow,
+      compactionResult: async () => true,
+      onCompaction: mode => modes.push(mode)
+    })
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => false })).kind).toBe('retry')
+    expect(modes).toEqual(['standard'])
+    expect((await runOnce(processor, { requestOverflowImageDegradation: () => false })).kind).toBe('error')
   })
 })

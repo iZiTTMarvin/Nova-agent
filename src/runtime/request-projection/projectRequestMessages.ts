@@ -9,6 +9,9 @@
  * 归档时机：最新一步的工具结果先全文投递一次（deferToolCallIds），模型消费过之后
  * 的请求才按体积/覆盖规则归档。已归档结果的 delivery 由首次归档时的 frozenDeliveries
  * 交回调用方写回权威上下文，此后投影幂等复用该占位符，不回全文。
+ *
+ * 4. 溢出降级也是投影层改写：命中外来降级集合（omittedImages）的 tool 图片块被机械
+ *    替换为固定占位文本，权威上下文仍保留原图；「哪些图可降」的策略由调用方拥有。
  */
 import { extractTextFromContent, type ChatMessage, type ContentBlock } from '../model/types'
 import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
@@ -32,6 +35,12 @@ export const MAX_PROVIDER_IMAGE_REQUEST_BYTES = 12 * 1024 * 1024
 /** 图片超过轮预算后保留的可操作提示。 */
 export const IMAGE_REQUEST_BUDGET_PLACEHOLDER =
   '[图片已省略：本轮图片请求已超过 12 MiB 上限。请减少图片数量或尺寸后重试。]'
+/**
+ * 溢出降级占位符：可省略的历史工具图片被替换为该固定文案。
+ * 无 archive_read 指引（与归档占位符语义不同）；同一降级集合生命周期内逐字节稳定。
+ */
+export const IMAGE_OVERFLOW_OMITTED_PLACEHOLDER =
+  '[图片已省略：历史图片因上下文溢出恢复被移除。如确需该图内容，请重新发送。]'
 /** 占位符预览：正文前 N 行 */
 const PREVIEW_HEAD_LINES = 3
 /** 占位符预览：正文后 N 行 */
@@ -159,6 +168,8 @@ export function createRequestProjectionArchiveCache(): RequestProjectionArchiveC
  * 调用方（活跃轮次）必须传入复用主请求同一 archiveCache 实例的实现——占位符
  * artifact 指纹跨步骤不漂移是摘要请求与主请求字节前缀恒等的前提，不能改为
  * 独立投影。投影保持逐条 1:1 对齐且不改写 role，调用方按切点切片即可。
+ * 溢出降级同理：活跃轮次的摘要投影必须传入与主请求同源的 omittedImages 集合，
+ * 两个视图对同一图片的替换决策才能保持一致。
  */
 export interface SummaryProjection {
   project: (messages: ChatMessage[]) => Promise<ChatMessage[]>
@@ -179,6 +190,11 @@ export interface RequestProjectionInput {
    * 体积与覆盖归档都从再下一次请求开始生效。
    */
   deferToolCallIds?: ReadonlySet<string>
+  /**
+   * 溢出降级集合：元素为 `${toolCallId}:${imageBlockFingerprint(url)}`，由调用方（Agent turn）拥有。
+   * 投影只做机械替换：命中复合键的 tool 图片块 → 固定占位文本；user 图片与无 toolCallId 的消息不受影响。
+   */
+  omittedImages?: ReadonlySet<string>
 }
 
 export interface RequestProjectionDiagnostics {
@@ -208,6 +224,35 @@ const EMPTY_DIAGNOSTICS: RequestProjectionDiagnostics = {
 }
 
 const EMPTY_DEFER_SET: ReadonlySet<string> = new Set()
+
+/** 图片块指纹：溢出降级复合键 `${toolCallId}:${fingerprint}` 的组成单元，与 Owner 共用同一实现。 */
+export function imageBlockFingerprint(url: string): string {
+  return sha256Hex(url)
+}
+
+/** 机械替换：命中复合键的 tool 图片块 → 固定占位文本；不改写输入消息，未命中时原样返回。 */
+function applyOmittedImages(
+  messages: ChatMessage[],
+  omittedImages: ReadonlySet<string> | undefined
+): ChatMessage[] {
+  if (!omittedImages || omittedImages.size === 0) return messages
+  let changed = false
+  const mapped = messages.map(message => {
+    if (message.role !== 'tool' || !message.toolCallId || !Array.isArray(message.content)) return message
+    const toolCallId = message.toolCallId
+    let messageChanged = false
+    const content: ContentBlock[] = message.content.map(block => {
+      if (block.type !== 'image_url') return block
+      if (!omittedImages.has(`${toolCallId}:${imageBlockFingerprint(block.image_url.url)}`)) return block
+      messageChanged = true
+      return { type: 'text', text: IMAGE_OVERFLOW_OMITTED_PLACEHOLDER }
+    })
+    if (!messageChanged) return message
+    changed = true
+    return { ...message, content }
+  })
+  return changed ? mapped : messages
+}
 
 function imageRequestBytes(block: Extract<ContentBlock, { type: 'image_url' }>): number {
   return Buffer.byteLength(JSON.stringify(block), 'utf8')
@@ -261,9 +306,11 @@ export async function projectRequestMessages(
   input: RequestProjectionInput
 ): Promise<RequestProjectionResult> {
   const frozenDeliveries: FrozenToolDelivery[] = []
+  // 降级先于所有分支统一应用：早退路径、归档判定、深位后缀计量与 12 MiB 预算都按降级后形态计算。
+  const sourceMessages = applyOmittedImages(input.messages, input.omittedImages)
   if (!input.policy.enabled) {
     return {
-      messages: projectImagesWithinBudget(input.messages),
+      messages: projectImagesWithinBudget(sourceMessages),
       diagnostics: EMPTY_DIAGNOSTICS,
       frozenDeliveries
     }
@@ -275,7 +322,7 @@ export async function projectRequestMessages(
   const maxChars = maxTokens * CHARS_PER_TOKEN
   const supersededMinChars = SUPERSEDED_MIN_ESTIMATED_TOKENS * CHARS_PER_TOKEN
   // 被更新结果覆盖的旧证据计划：算一次，逐条遍历时复用。
-  const supersessionPlan = planToolResultSupersession(input.messages)
+  const supersessionPlan = planToolResultSupersession(sourceMessages)
   let prunedCount = 0
   let archiveFailures = 0
   let estimatedTokensSaved = 0
@@ -286,16 +333,16 @@ export async function projectRequestMessages(
   let suffixTokensAfter: number[] | null = null
   const suffixAfter = (index: number): number => {
     if (!suffixTokensAfter) {
-      suffixTokensAfter = new Array(input.messages.length).fill(0)
-      for (let j = input.messages.length - 2; j >= 0; j--) {
-        suffixTokensAfter[j] = suffixTokensAfter[j + 1]! + estimateDeliveredMessageTokens(input.messages[j + 1]!)
+      suffixTokensAfter = new Array(sourceMessages.length).fill(0)
+      for (let j = sourceMessages.length - 2; j >= 0; j--) {
+        suffixTokensAfter[j] = suffixTokensAfter[j + 1]! + estimateDeliveredMessageTokens(sourceMessages[j + 1]!)
       }
     }
     return suffixTokensAfter[index] ?? 0
   }
 
-  for (let index = 0; index < input.messages.length; index++) {
-    const msg = input.messages[index]!
+  for (let index = 0; index < sourceMessages.length; index++) {
+    const msg = sourceMessages[index]!
     if (msg.role !== 'tool' || !msg.toolCallId) {
       projected.push(msg)
       continue

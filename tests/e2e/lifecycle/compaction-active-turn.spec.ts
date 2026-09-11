@@ -31,7 +31,7 @@ test('长历史在本轮投影后压缩提交，主请求恢复并可重启续�
     const ledger = JSON.parse(await readFile(snapshotPath, 'utf8'))
     expect(ledger.entries).toHaveLength(1)
     expect(ledger.budgetAnchor.inputTokens).toBe(1234)
-    expect(ledger.budgetAnchor.estimatorVersion).toBe(4)
+    expect(ledger.budgetAnchor.estimatorVersion).toBe(5)
     const compactedRequest = nova.provider.requests[3].body
     await nova.app.close()
     nova = await launchNova(testInfo, { skipWorkspaceSetup: true }, nova)

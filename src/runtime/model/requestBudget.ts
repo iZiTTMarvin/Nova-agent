@@ -3,7 +3,7 @@ import type { UsageSource } from '../../shared/model/types'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
 import { estimateImageBlockBudgetTokens } from './imageTokens'
 
-export const REQUEST_ESTIMATOR_VERSION = 4
+export const REQUEST_ESTIMATOR_VERSION = 5
 
 /** 最终协议投影的无正文计量；前缀链用于验证纯追加。 */
 export interface RequestBudgetMeasurement {
@@ -18,7 +18,8 @@ export interface RequestBudgetMeasurement {
 }
 
 export interface RequestBudgetAnchor {
-  estimatorVersion: 1 | 2 | 3 | 4
+  /** 1–4：旧口径（图片按 URL 文本计）；5：图片按模型族有界视觉预留计。 */
+  estimatorVersion: 1 | 2 | 3 | 4 | 5
   revision: number
   routeId: string
   envelopeHash: string
@@ -37,7 +38,7 @@ export function parseRequestBudgetAnchor(value: unknown): RequestBudgetAnchor | 
   const a = value as Partial<RequestBudgetAnchor>
   const sha = (v: unknown): boolean => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)
   const integer = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
-  if ((a.estimatorVersion !== 1 && a.estimatorVersion !== 2 && a.estimatorVersion !== 3 && a.estimatorVersion !== 4) ||
+  if ((a.estimatorVersion !== 1 && a.estimatorVersion !== 2 && a.estimatorVersion !== 3 && a.estimatorVersion !== 4 && a.estimatorVersion !== 5) ||
       (a.budgetUnits !== undefined && !integer(a.budgetUnits)) ||
       (a.estimatorVersion !== 1 && !integer(a.budgetUnits)) ||
       !integer(a.revision) || !integer(a.messageCount) || !a.messageCount ||
@@ -59,7 +60,8 @@ export function measureRequestBudget(body: Record<string, unknown>, routeId: str
   const serialized = JSON.stringify(body)
   const serializedBytes = Buffer.byteLength(serialized, 'utf8')
   let budgetUnits = estimateTextTokens(serialized)
-  // 图片块按模型族规则替换 URL 文本的虚高估算；无可靠规则的模型维持原口径（保守高估方向）。
+  // 图片块先按 URL 文本计入，再按模型族规则替换成有界视觉预留（未实测型号走通用硬帽）；
+  // 无模型 id 时维持 URL 文本口径（保守高估方向）。
   const wireModel = typeof body.model === 'string' ? body.model : undefined
   for (const message of body.messages) {
     if (!message || typeof message !== 'object' || !Array.isArray(message.content)) continue

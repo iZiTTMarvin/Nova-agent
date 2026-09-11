@@ -21,6 +21,7 @@ import {
   projectAssistantContent,
   serializeToolArguments,
   createRequestProjectionArchiveCache,
+  imageBlockFingerprint,
   projectRequestMessages,
   type ActiveToolResultPrunePolicy,
   type ArchiveCandidate,
@@ -120,6 +121,8 @@ export function createSummaryProjection(options: {
   archiveCache?: RequestProjectionArchiveCache
   /** 与主请求同源的延后归档集合：摘要投影必须复现主请求对最新结果的全文投递 */
   deferToolCallIds?: () => ReadonlySet<string>
+  /** 与主请求同源的溢出降级集合：两视图对同一图片的替换决策必须一致 */
+  omittedImages?: () => ReadonlySet<string>
 }): SummaryProjection {
   const archive = createArchiveWriter(options.context)
   return {
@@ -129,7 +132,8 @@ export function createSummaryProjection(options: {
         policy: typeof options.policy === 'function' ? options.policy() : options.policy,
         archiveCache: options.archiveCache ?? createRequestProjectionArchiveCache(),
         archive,
-        ...(options.deferToolCallIds ? { deferToolCallIds: options.deferToolCallIds() } : {})
+        ...(options.deferToolCallIds ? { deferToolCallIds: options.deferToolCallIds() } : {}),
+        ...(options.omittedImages ? { omittedImages: options.omittedImages() } : {})
       })
       return result.messages
     }
@@ -159,11 +163,17 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   // 最新一批工具调用：其结果在紧随其后的请求中全文投递，再之后才可归档。
   // 摘要投影经 getter 与主请求读同一集合，保证两视图字节前缀恒等。
   let deferredToolCallIds: ReadonlySet<string> = new Set()
+  /**
+   * 溢出降级集合（turn 级，随本循环释放）：元素为 `${toolCallId}:${imageBlockFingerprint}`。
+   * 只作用于投影层，权威上下文不被改写；主请求与摘要投影读取同一实例。
+   */
+  const omittedImages = new Set<string>()
   const summaryProjection = createSummaryProjection({
     context,
     policy: requestProjectionPolicy,
     archiveCache: requestProjectionArchiveCache,
-    deferToolCallIds: () => deferredToolCallIds
+    deferToolCallIds: () => deferredToolCallIds,
+    omittedImages: () => omittedImages
   })
 
   /** 首次归档的冻结投递写回权威上下文（唯一写入 Owner 是本循环）并通知持久化。 */
@@ -177,6 +187,53 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       target.toolDelivery = delivery
       emit({ type: 'tool_delivery', messageId, toolCallId, delivery })
     }
+  }
+
+  /**
+   * 受保护的最后一批工具调用 id：当前批直接复用 deferredToolCallIds（其结果是最近投递）；
+   * 恢复历史（本批为空）时取最后一条带 toolCalls 的 assistant 消息 id 集与现存 tool 消息求交，
+   * 关联不可靠（交集为空 / 无 assistant toolCalls）返回 null。
+   */
+  const resolveProtectedToolCallIds = (): ReadonlySet<string> | null => {
+    if (deferredToolCallIds.size > 0) return deferredToolCallIds
+    const lastAssistantWithCalls = [...context.messages]
+      .reverse()
+      .find(m => m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0)
+    if (!lastAssistantWithCalls?.toolCalls) return null
+    const existingToolCallIds = new Set(
+      context.messages
+        .filter(m => m.role === 'tool' && m.toolCallId)
+        .map(m => m.toolCallId!)
+    )
+    const protectedIds = new Set(
+      lastAssistantWithCalls.toolCalls
+        .filter(toolCall => existingToolCallIds.has(toolCall.id))
+        .map(toolCall => toolCall.id)
+    )
+    return protectedIds.size > 0 ? protectedIds : null
+  }
+
+  /**
+   * 溢出恢复第一档：把最近一批之外的历史工具图片登记进降级集合，由投影层替换为占位文本。
+   * 每个 turn 最多一次有效降级（集合非空即不再扩充）；无候选或批次关联不可靠时返回 false。
+   */
+  const requestOverflowImageDegradation = (): boolean => {
+    if (omittedImages.size > 0) return false
+    const protectedIds = resolveProtectedToolCallIds()
+    if (!protectedIds) return false
+    const candidates: string[] = []
+    for (const message of context.messages) {
+      if (message.role !== 'tool' || !message.toolCallId || !Array.isArray(message.content)) continue
+      if (protectedIds.has(message.toolCallId)) continue
+      for (const block of message.content) {
+        if (block.type === 'image_url') {
+          candidates.push(`${message.toolCallId}:${imageBlockFingerprint(block.image_url.url)}`)
+        }
+      }
+    }
+    if (candidates.length === 0) return false
+    for (const candidate of candidates) omittedImages.add(candidate)
+    return true
   }
 
   try {
@@ -226,7 +283,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         policy: requestProjectionPolicy,
         archiveCache: requestProjectionArchiveCache,
         archive: archiveWriter,
-        deferToolCallIds: deferredToolCallIds
+        deferToolCallIds: deferredToolCallIds,
+        omittedImages
       })
       chatMessages = projection.messages
       applyFrozenDeliveries(projection.frozenDeliveries)
@@ -244,7 +302,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         summaryProjection,
         signal: p.abortSignal(),
         isCancelled: () => p.signal(),
-        sleep: (ms: number) => p.sleep(ms)
+        sleep: (ms) => p.sleep(ms),
+        requestOverflowImageDegradation
       })
 
       if (turnResult.kind === 'cancelled') {
