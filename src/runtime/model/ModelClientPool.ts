@@ -73,7 +73,7 @@ export class ModelClientPool implements ModelClient {
     const slot = this.slots[this.activeIndex]
     if (slot.client.measureRequest) return slot.client.measureRequest(messages, tools, options)
     const route = resolveRouteIdentity({ ...slot.config, reasoningEffort: options?.reasoningEffort ?? slot.config.reasoningEffort })
-    return measureRequestBudget({ messages, tools }, route.routeId, resolveContextWindow(slot.config.modelId, slot.config.contextWindow))
+    return measureRequestBudget({ model: slot.config.modelId, messages, tools }, route.routeId, resolveContextWindow(slot.config.modelId, slot.config.contextWindow))
   }
 
   /** 实现 ModelClient.chat：委托给当前 active client */

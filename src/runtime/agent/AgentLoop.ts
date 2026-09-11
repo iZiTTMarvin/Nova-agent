@@ -252,7 +252,8 @@ export class AgentLoop {
     this.ctx.permissionCeiling = config?.permissionCeiling ?? null
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.contextBudgetManager = createProductionContextBudgetManager({
-      contextWindow: this.config.contextWindow ?? 200_000
+      contextWindow: this.config.contextWindow ?? 200_000,
+      resolveModelId: () => this.modelPool.getActiveProvider().modelId
     })
     this.compactionService = new CompactionService({
       context: this.ctx,

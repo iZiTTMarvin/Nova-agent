@@ -114,7 +114,7 @@ describe('同路由最终投影预算', () => {
     expect(service.observeMainRequest(90_034, after, source(after), 1)).toBe(true)
     expect(service.assessNextRequest(after)).toMatchObject({ estimatedTokens: 90_034, source: 'provider' })
   })
-  it.each([1, 2] as const)('旧估算版本 %i 仅对相同请求保留实测，不跨单位计算增量', version => {
+  it.each([1, 2, 3] as const)('旧估算版本 %i 仅对相同请求保留实测，不跨单位计算增量', version => {
     const { service, pool, context } = setup()
     const request = pool.measureRequest(messages)
     service.observeMainRequest(1_000, request, source(request))
@@ -126,7 +126,7 @@ describe('同路由最终投影预算', () => {
     const appended = pool.measureRequest([...messages, { role: 'assistant', content: '后续' }])
     expect(service.assessNextRequest(appended)).toMatchObject({ source: 'conservative-estimate', status: 'within' })
     expect(service.observeMainRequest(1_010, appended, source(appended), 1)).toBe(true)
-    expect(context.compactionState?.budgetAnchor?.estimatorVersion).toBe(3)
+    expect(context.compactionState?.budgetAnchor?.estimatorVersion).toBe(4)
   })
   it('未知快照版本不被锚点写入覆盖', () => {
     const { root, session, store, service, pool } = setup()

@@ -10,9 +10,10 @@
  * 的请求才按体积/覆盖规则归档。已归档结果的 delivery 由首次归档时的 frozenDeliveries
  * 交回调用方写回权威上下文，此后投影幂等复用该占位符，不回全文。
  */
-import type { ChatMessage, ContentBlock } from '../model/types'
+import { extractTextFromContent, type ChatMessage, type ContentBlock } from '../model/types'
 import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
 import { planToolResultSupersession } from './toolResultSupersession'
+import { estimateTextTokens } from '../../shared/model/tokenEstimate'
 
 /** 当轮归档阈值：超过此估算 token 的工具结果替换为占位符 */
 export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
@@ -20,6 +21,12 @@ export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
 export const CHARS_PER_TOKEN = 4
 /** 被覆盖结果的最低归档阈值：低于此体积不归档，避免占位符比原文还大 */
 export const SUPERSEDED_MIN_ESTIMATED_TOKENS = 256
+/**
+ * 深位守卫阈值：仅以 superseded 触发的未冻结候选，其后的投递后缀超过该估算
+ * token 时保留原文（等压缩整段回收），避免历史中段改写让大段缓存前缀作废。
+ * 阈值量级与尾部分布对齐：后缀翻转的中位成本远低于此，深位事件远高于此。
+ */
+export const SUPERSEDED_DEEP_SUFFIX_TOKENS = 8000
 /** 单次模型请求允许携带的图片 JSON 字节上限。 */
 export const MAX_PROVIDER_IMAGE_REQUEST_BYTES = 12 * 1024 * 1024
 /** 图片超过轮预算后保留的可操作提示。 */
@@ -275,7 +282,20 @@ export async function projectRequestMessages(
 
   const projected: ChatMessage[] = []
 
-  for (const msg of input.messages) {
+  // 深位守卫的后缀计量表按需构建：多数请求没有纯 superseded 候选，零成本跳过。
+  let suffixTokensAfter: number[] | null = null
+  const suffixAfter = (index: number): number => {
+    if (!suffixTokensAfter) {
+      suffixTokensAfter = new Array(input.messages.length).fill(0)
+      for (let j = input.messages.length - 2; j >= 0; j--) {
+        suffixTokensAfter[j] = suffixTokensAfter[j + 1]! + estimateDeliveredMessageTokens(input.messages[j + 1]!)
+      }
+    }
+    return suffixTokensAfter[index] ?? 0
+  }
+
+  for (let index = 0; index < input.messages.length; index++) {
+    const msg = input.messages[index]!
     if (msg.role !== 'tool' || !msg.toolCallId) {
       projected.push(msg)
       continue
@@ -313,7 +333,15 @@ export async function projectRequestMessages(
     // 两种归档触发：被更新结果覆盖（且原文足够大），或单纯超过体积阈值。
     const superseded = supersessionPlan.has(msg.toolCallId)
       && text.length >= supersededMinChars
-    if (!superseded && text.length <= maxChars) {
+    const oversize = text.length > maxChars
+    if (!superseded && !oversize) {
+      projected.push(msg)
+      continue
+    }
+    // 深位守卫：仅以 superseded 触发（不超重）且尚未冻结的候选，其后缀仍深时
+    // 保留原文、等压缩整段回收——中段改写会让其后全部缓存前缀作废。
+    // 双重命中（既被覆盖又超体积阈值）按体积归档放行，守卫不适用。
+    if (superseded && !oversize && suffixAfter(index) > SUPERSEDED_DEEP_SUFFIX_TOKENS) {
       projected.push(msg)
       continue
     }
@@ -381,6 +409,26 @@ export async function projectRequestMessages(
     diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved },
     frozenDeliveries
   }
+}
+
+/**
+ * 本请求实际投递形态的 token 估算：冻结归档按占位符计（不是原文），
+ * reasoningContent 计入（回放档案真实携带该字节），image_url 块按 URL 线上字节计
+ * （上下文构建期 nova-image:// 已解析为 data URL）。深位守卫与离线回放共用此口径。
+ */
+export function estimateDeliveredMessageTokens(msg: ChatMessage): number {
+  const content = msg.toolDelivery?.kind === 'archive' ? msg.toolDelivery.placeholder : msg.content
+  let total = estimateTextTokens(extractTextFromContent(content))
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      if (block.type === 'image_url') total += estimateTextTokens(block.image_url.url)
+    }
+  }
+  if (msg.toolCalls) {
+    for (const toolCall of msg.toolCalls) total += estimateTextTokens(toolCall.arguments)
+  }
+  total += estimateTextTokens(msg.reasoningContent ?? '')
+  return total
 }
 
 /**

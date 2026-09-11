@@ -1,8 +1,9 @@
 import { createHash } from 'crypto'
 import type { UsageSource } from '../../shared/model/types'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
+import { estimateImageBlockBudgetTokens } from './imageTokens'
 
-export const REQUEST_ESTIMATOR_VERSION = 3
+export const REQUEST_ESTIMATOR_VERSION = 4
 
 /** 最终协议投影的无正文计量；前缀链用于验证纯追加。 */
 export interface RequestBudgetMeasurement {
@@ -17,7 +18,7 @@ export interface RequestBudgetMeasurement {
 }
 
 export interface RequestBudgetAnchor {
-  estimatorVersion: 1 | 2 | 3
+  estimatorVersion: 1 | 2 | 3 | 4
   revision: number
   routeId: string
   envelopeHash: string
@@ -36,7 +37,7 @@ export function parseRequestBudgetAnchor(value: unknown): RequestBudgetAnchor | 
   const a = value as Partial<RequestBudgetAnchor>
   const sha = (v: unknown): boolean => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)
   const integer = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
-  if ((a.estimatorVersion !== 1 && a.estimatorVersion !== 2 && a.estimatorVersion !== 3) ||
+  if ((a.estimatorVersion !== 1 && a.estimatorVersion !== 2 && a.estimatorVersion !== 3 && a.estimatorVersion !== 4) ||
       (a.budgetUnits !== undefined && !integer(a.budgetUnits)) ||
       (a.estimatorVersion !== 1 && !integer(a.budgetUnits)) ||
       !integer(a.revision) || !integer(a.messageCount) || !a.messageCount ||
@@ -58,17 +59,15 @@ export function measureRequestBudget(body: Record<string, unknown>, routeId: str
   const serialized = JSON.stringify(body)
   const serializedBytes = Buffer.byteLength(serialized, 'utf8')
   let budgetUnits = estimateTextTokens(serialized)
-  // M3 的最大 2016px / 14px patch 网格；不抵扣模型的 2x2 patch 合并，另预留全局图。
-  const imageReserve = typeof body.model === 'string' && /^minimax-m3(?:$|[-_])/i.test(body.model)
-    ? (2016 / 14) ** 2 + 576
-    : null
-  if (imageReserve !== null) {
-    for (const message of body.messages) {
-      if (!message || typeof message !== 'object' || !Array.isArray(message.content)) continue
-      for (const block of message.content) {
-        if (block?.type !== 'image_url' || typeof block.image_url?.url !== 'string') continue
-        budgetUnits += imageReserve - estimateTextTokens(JSON.stringify(block.image_url.url))
-      }
+  // 图片块按模型族规则替换 URL 文本的虚高估算；无可靠规则的模型维持原口径（保守高估方向）。
+  const wireModel = typeof body.model === 'string' ? body.model : undefined
+  for (const message of body.messages) {
+    if (!message || typeof message !== 'object' || !Array.isArray(message.content)) continue
+    for (const block of message.content) {
+      if (block?.type !== 'image_url' || typeof block.image_url?.url !== 'string') continue
+      const imageTokens = estimateImageBlockBudgetTokens(wireModel, block.image_url.url)
+      if (imageTokens === null) continue
+      budgetUnits += imageTokens - estimateTextTokens(JSON.stringify(block.image_url.url))
     }
   }
   return { routeId, tokenizerId: 'unknown', contextWindow,

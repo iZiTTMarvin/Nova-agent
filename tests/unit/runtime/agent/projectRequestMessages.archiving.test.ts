@@ -13,7 +13,7 @@ import {
   DISABLED_PRUNE_POLICY,
   type ArchivedToolResultPlaceholder
 } from '../../../../src/runtime/request-projection'
-import type { ChatMessage } from '../../../../src/runtime/model/types'
+import type { ChatMessage, ContentBlock } from '../../../../src/runtime/model/types'
 import { createHash } from 'crypto'
 import { mkdtempSync, readdirSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
@@ -416,5 +416,187 @@ describe('projectRequestMessages supersession 集成', () => {
     })
     expect(second.messages).toEqual(first.messages)
     expect(archiveCalls).toBe(1)
+  })
+})
+
+describe('深位 superseded 守卫', () => {
+  function asst(id: string, name: string, args: string): ChatMessage {
+    return { role: 'assistant', content: '', toolCalls: [{ id, name, arguments: args }] }
+  }
+
+  /** 让指定位置之后的投递后缀超过守卫阈值（8k token ≈ 32K 字符） */
+  function deepSuffix(): ChatMessage[] {
+    // 6 条约 6KB 的未覆盖工具结果 ≈ 9k+ token
+    return Array.from({ length: 6 }, (_, i) => ({
+      role: 'tool' as const,
+      toolCallId: `f${i}`,
+      content: `f${i}:\n${'z'.repeat(6_000)}`
+    }))
+  }
+
+  it('深位纯 superseded 候选保留原文、不归档、不产生冻结投递', async () => {
+    const big = 't\n' + 'x'.repeat(2_000)
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      ...deepSuffix(),
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    let archiveCalls = 0
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => { archiveCalls++; return { artifactId: 'art1' } }
+    })
+    // 守卫：r1 保持全文投递；r2 是最新覆盖者，不在计划内
+    expect(result.messages[1].content).toBe(big)
+    expect(result.frozenDeliveries).toHaveLength(0)
+    expect(archiveCalls).toBe(0)
+    expect(result.diagnostics.prunedCount).toBe(0)
+  })
+
+  it('同一候选移到尾部（后缀不足阈值）仍正常归档', async () => {
+    const big = 't\n' + 'x'.repeat(2_000)
+    const messages: ChatMessage[] = [
+      ...deepSuffix(),
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(isArchivedPlaceholder(result.messages[7].content as string)).toBe(true)
+    expect(result.frozenDeliveries.map(f => f.toolCallId)).toEqual(['r1'])
+  })
+
+  it('双重命中（superseded + 超体积阈值）深位仍按体积归档放行', async () => {
+    const huge = 'h\n' + 'x'.repeat(20_000) // >2048 token 体积阈值
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: huge, toolCallId: 'r1' },
+      ...deepSuffix(),
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: huge, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(isArchivedPlaceholder(result.messages[1].content as string)).toBe(true)
+    // r2 的覆盖结果本身也超体积阈值，同请求内按体积归档
+    expect(result.frozenDeliveries.map(f => f.toolCallId)).toEqual(['r1', 'r2'])
+  })
+
+  it('已冻结占位符的深位消息不被守卫复活（幂等复用）', async () => {
+    const big = 't\n' + 'x'.repeat(2_000)
+    const frozen: ChatMessage = {
+      role: 'tool',
+      toolCallId: 'r1',
+      content: big,
+      toolDelivery: {
+        version: 1, kind: 'archive',
+        bodySha256: createHash('sha256').update(big, 'utf8').digest('hex'),
+        placeholder: JSON.stringify({ kind: 'nova.archived_tool_result', v: 1, artifactId: 'a1', toolCallId: 'r1', toolName: '_runtime_archived', sha256: 'x'.repeat(64), originalBytes: 2002, originalEstimatedTokens: 500, preview: 't', reason: 'superseded_by_newer_result', readInstructions: 'archive_read', resourceRef: 'artifact://a1' })
+      }
+    }
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      frozen,
+      ...deepSuffix(),
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => { throw new Error('冻结投递不应触发归档') }
+    })
+    expect(result.messages[1].content).toBe(frozen.toolDelivery!.placeholder)
+    expect(result.frozenDeliveries).toHaveLength(0)
+  })
+
+  it('后缀中的 reasoningContent 计入深度（无它则候选在尾部应归档）', async () => {
+    const big = 't\n' + 'x'.repeat(2_000)
+    const withReasoning: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      { role: 'assistant', content: '短', reasoningContent: '推'.repeat(40_000) },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const guarded = await projectRequestMessages({
+      messages: withReasoning,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(guarded.messages[1].content).toBe(big)
+
+    const withoutReasoning = withReasoning.map(m => m.role === 'assistant' && m.reasoningContent ? { ...m, reasoningContent: undefined } : m)
+    const unguarded = await projectRequestMessages({
+      messages: withoutReasoning,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(isArchivedPlaceholder(unguarded.messages[1].content as string)).toBe(true)
+  })
+
+  it('后缀中的图片块按线上字节计入深度', async () => {
+    const big = 't\n' + 'x'.repeat(2_000)
+    const imageBlock: ContentBlock = { type: 'image_url', image_url: { url: `data:image/png;base64,${'A'.repeat(40_000)}` } }
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      { role: 'tool', toolCallId: 'shot', content: [{ type: 'text' as const, text: '截图' }, imageBlock] },
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(result.messages[1].content).toBe(big)
+  })
+
+  it('后缀中已冻结消息按占位符计入（不是原文）', async () => {
+    const big = 't\n' + 'x'.repeat(2_000)
+    const frozenHuge: ChatMessage = {
+      role: 'tool', toolCallId: 'old',
+      content: 'y'.repeat(200_000),
+      toolDelivery: {
+        version: 1, kind: 'archive',
+        bodySha256: createHash('sha256').update('y'.repeat(200_000), 'utf8').digest('hex'),
+        placeholder: JSON.stringify({ kind: 'nova.archived_tool_result', v: 1, artifactId: 'a0', toolCallId: 'old', toolName: '_runtime_archived', sha256: 'x'.repeat(64), originalBytes: 200_000, originalEstimatedTokens: 50_000, preview: 'y', reason: 'consumed_then_archived', readInstructions: 'archive_read', resourceRef: 'artifact://a0' })
+      }
+    }
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r1' },
+      frozenHuge,
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: big, toolCallId: 'r2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    // 后缀只有占位符（~500B）+ 短文本 → 不足阈值 → r1 正常归档
+    expect(isArchivedPlaceholder(result.messages[1].content as string)).toBe(true)
+    expect(result.messages[2].content).toBe(frozenHuge.toolDelivery!.placeholder)
   })
 })
