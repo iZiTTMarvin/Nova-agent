@@ -25,6 +25,11 @@ import { toSharedMessage } from '../../../../src/main/ipc/sessionMessageMapper'
 import { toRendererRunSnapshot } from '../../../../src/shared/run/rendererProjection'
 import { forwardEventToRenderer } from '../../../../src/main/agent/events/AgentEventForwarder'
 import type { MessageContext } from '../../../../src/main/agent/events/types'
+import {
+  ACTIVE_TOOL_RESULT_MAX_TOKENS,
+  CHARS_PER_TOKEN,
+  isArchivedPlaceholder
+} from '../../../../src/runtime/request-projection'
 
 let sessionStore: SessionStore
 let coordinator: RunCoordinator
@@ -41,6 +46,15 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 const hash = (s: string) => createHash('sha256').update(s).digest('hex')
+type WireMessage = { role: string; content?: unknown; tool_call_id?: string; [key: string]: unknown }
+const asWire = (messages: unknown[]) => messages as WireMessage[]
+const wireTool = (messages: unknown[], id: string) =>
+  asWire(messages).find(message => message.role === 'tool' && message.tool_call_id === id)
+const wireBeforeTool = (messages: unknown[], id: string) => {
+  const list = asWire(messages)
+  const index = list.findIndex(message => message.role === 'tool' && message.tool_call_id === id)
+  return index === -1 ? list : list.slice(0, index)
+}
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'nova-message-facts-'))
@@ -168,10 +182,23 @@ describe('消息事实提交往返', () => {
     expect((await restored.sendMessage('下一题', agentRoute())).status).toBe('completed')
     expect(sessionStore.loadContextSnapshot(session.id)?.revision).toBe(4)
     const next = bodies.at(-1)!
-    expect(bodies[2].messages.slice(0, bodies[1].messages.length)).toEqual(bodies[1].messages)
     const prefix = next.messages.slice(0, previous.messages.length)
+    const oversize = size > ACTIVE_TOOL_RESULT_MAX_TOKENS * CHARS_PER_TOKEN
+    const fullTool = '中'.repeat(size)
     console.info(JSON.stringify({ previousCount: previous.messages.length, nextCount: next.messages.length, previousHash: hash(JSON.stringify(previous.messages)), restoredPrefixHash: hash(JSON.stringify(prefix)), envelopeEqual: JSON.stringify({ ...previous, messages: null }) === JSON.stringify({ ...next, messages: null }) }))
-    expect(JSON.stringify(prefix)).toBe(JSON.stringify(previous.messages))
+    if (oversize) {
+      // 超阈值结果先全文投递一轮，下一请求换成可回读占位符；断点前的前缀仍逐字节一致。
+      expect(wireTool(bodies[1].messages, 't1')?.content).toBe(fullTool)
+      expect(isArchivedPlaceholder(String(wireTool(bodies[2].messages, 't1')?.content))).toBe(true)
+      expect(wireTool(bodies[2].messages, 't2')?.content).toBe(fullTool)
+      expect(wireBeforeTool(bodies[2].messages, 't1')).toEqual(wireBeforeTool(bodies[1].messages, 't1'))
+      expect(wireTool(next.messages, 't1')?.content).toBe(wireTool(previous.messages, 't1')?.content)
+      expect(isArchivedPlaceholder(String(wireTool(next.messages, 't2')?.content))).toBe(true)
+      expect(wireBeforeTool(next.messages, 't2')).toEqual(wireBeforeTool(previous.messages, 't2'))
+    } else {
+      expect(bodies[2].messages.slice(0, bodies[1].messages.length)).toEqual(bodies[1].messages)
+      expect(JSON.stringify(prefix)).toBe(JSON.stringify(previous.messages))
+    }
     expect({ ...next, messages: null }).toEqual({ ...previous, messages: null })
   })
   it.each(['x'.repeat(8035), 'y'.repeat(12000), '中文🙂'.repeat(2500)])('完整事件经过草稿和正式存储保留工具正文 %#', async (body) => {
