@@ -915,37 +915,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           </div>
         )}
 
-        {/* Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
-        {pendingUserMessages.length > 0 && (
-          <div className="steering-queue">
-            <div className="steering-queue__header">
-              <span className="steering-queue__title">
-                已排队 {pendingUserMessages.length} 条消息（{isGenerating ? '本轮正常结束后发送' : '等待继续'}）
-              </span>
-              {!isGenerating && !sendInFlight && (
-                <Button label="发送排队消息" variant="secondary" size="sm" onClick={() => void useChatStore.getState().sendNextPendingMessage()}>
-                  发送排队消息
-                </Button>
-              )}
-            </div>
-            <div className="steering-queue__list">
-              {pendingUserMessages.map((msg, idx) => (
-                <div key={`pending-${idx}`} className="steering-queue__item">
-                  <span className="steering-queue__index">{idx + 1}.</span>
-                  <span className="steering-queue__text">{msg.text || '(空文本)'}</span>
-                  <IconButton
-                    label="从队列移除"
-                    icon={<span aria-hidden="true">×</span>}
-                    variant="ghost"
-                    size="sm"
-                    className="steering-queue__remove"
-                    onClick={() => removePendingMessage(idx)}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
         </div>
         </MaybeProfiler>
       </div>
@@ -1016,6 +985,43 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 />
               </div>
             )}
+
+          {/* Steering Queue：排队消息吸附在 composer 上方，像一叠待发卡片 */}
+          {pendingUserMessages.length > 0 && (
+            <div className="w-full pointer-events-auto">
+              <div className="steering-queue">
+                <div className="steering-queue__header">
+                  <span className="steering-queue__title">
+                    已排队 {pendingUserMessages.length} 条消息
+                  </span>
+                  <span className="steering-queue__hint">
+                    {isGenerating ? '本轮正常结束后发送' : '等待继续'}
+                  </span>
+                  {!isGenerating && !sendInFlight && (
+                    <Button label="发送排队消息" variant="secondary" size="sm" onClick={() => void useChatStore.getState().sendNextPendingMessage()}>
+                      发送排队消息
+                    </Button>
+                  )}
+                </div>
+                <div className="steering-queue__list">
+                  {pendingUserMessages.map((msg, idx) => (
+                    <div key={`pending-${idx}`} className="steering-queue__item">
+                      <span className="steering-queue__index">{idx + 1}</span>
+                      <span className="steering-queue__text">{msg.text || '(空文本)'}</span>
+                      <IconButton
+                        label="从队列移除"
+                        icon={<span aria-hidden="true">×</span>}
+                        variant="ghost"
+                        size="sm"
+                        className="steering-queue__remove"
+                        onClick={() => removePendingMessage(idx)}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
             {isEmptyState && (
               <div className="mb-8 flex flex-col items-center justify-center space-y-4">

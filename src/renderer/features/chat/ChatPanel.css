@@ -1264,53 +1264,66 @@ button.code-index-status-chip:hover {
 }
 
 /* ──────────────────────────────────────────────────────────
-   Steering Queue 提示
-   Agent 运行期间，用户入队的消息以淡蓝虚线框展示在消息流底部，
-   turn boundary 自动 dispatch 时逐条消失。
+   Steering Queue
+   排队消息吸附在 composer 上方，与 composer 共用同一卡片表面语言
+   （bg-card / border-cream / shadow-card）；条目用发丝分隔线，
+   移除按钮 hover/focus 才显现。turn boundary 自动 dispatch 时逐条消失。
 ────────────────────────────────────────────────────────── */
 .steering-queue {
-  margin: 12px 0 0 0;
-  padding: 10px 14px;
-  border: 1px dashed rgba(56, 152, 236, 0.4);
-  border-radius: 10px;
-  background: rgba(56, 152, 236, 0.04);
-  font-size: 13px;
+  margin: 0 0 8px 0;
+  padding: 6px 10px 4px;
+  border: 1px solid var(--border-cream);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+  font-size: 12px;
   color: var(--text-primary, #1a1a1a);
 }
 
 .steering-queue__header {
   display: flex;
   align-items: center;
-  margin-bottom: 6px;
+  gap: 8px;
+  padding: 2px 4px 6px;
 }
 
 .steering-queue__title {
   font-weight: 500;
-  color: var(--color-focus, #3898ec);
-  font-size: 12px;
+  color: var(--text-secondary, #5c5c5c);
+  font-size: 11px;
   letter-spacing: 0.02em;
+}
+
+.steering-queue__hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-muted, #999);
 }
 
 .steering-queue__list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  border-top: 1px solid var(--border-cream);
 }
 
 .steering-queue__item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.6);
+  gap: 8px;
+  padding: 5px 4px;
   border-radius: 6px;
 }
 
+.steering-queue__item + .steering-queue__item {
+  border-top: 1px solid var(--border-cream);
+}
+
 .steering-queue__index {
-  font-weight: 600;
-  color: var(--color-focus, #3898ec);
+  min-width: 14px;
   font-size: 11px;
-  min-width: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted, #999);
+  text-align: right;
 }
 
 .steering-queue__text {
@@ -1318,7 +1331,7 @@ button.code-index-status-chip:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary, #555);
+  color: var(--text-primary, #1a1a1a);
 }
 
 .steering-queue__remove {
@@ -1332,13 +1345,26 @@ button.code-index-status-chip:hover {
   color: var(--text-muted, #999);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.steering-queue__item:hover .steering-queue__remove,
+.steering-queue__item:focus-within .steering-queue__remove {
+  opacity: 1;
 }
 
 .steering-queue__remove:hover {
   background: rgba(0, 0, 0, 0.05);
   color: #d33;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .steering-queue__remove {
+    transition: none;
+  }
 }
 
 
