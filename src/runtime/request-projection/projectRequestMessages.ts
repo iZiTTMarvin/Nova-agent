@@ -6,8 +6,10 @@
  * 2. 溢出压缩恢复后必须重新投影（调用方的 continue 路径回到循环顶会重新执行投影；若未来有人把恢复改成就地重试，必须显式重新投影）。
  * 3. 投影是幂等的——对已是占位符的内容再次投影原样返回。
  *
- * 归档时机：最新一步的工具结果先全文投递一次（deferToolCallIds），模型消费过之后
- * 的请求才按体积/覆盖规则归档。已归档结果的 delivery 由首次归档时的 frozenDeliveries
+ * 归档时机：最新一步的工具结果先全文投递一次（deferToolCallIds）。体积归档只在
+ * 结果滑出最近投递窗口（protectRecentTokens）且本批可回收总量达标（minSavingsTokens）
+ * 时批量发生；被更新结果覆盖的候选满足深位守卫仍立即归档，深位且超体积的并入体积批量。
+ * 已归档结果的 delivery 由首次归档时的 frozenDeliveries
  * 交回调用方写回权威上下文，此后投影幂等复用该占位符，不回全文。
  *
  * 4. 溢出降级也是投影层改写：命中外来降级集合（omittedImages）的 tool 图片块被机械
@@ -134,7 +136,7 @@ function buildPlaceholder(
     originalEstimatedTokens: Math.ceil(body.length / CHARS_PER_TOKEN),
     preview: buildArchiveContentPreview(body),
     reason,
-    readInstructions: 'This result is archived but still readable. You saw its full text in a previous request; read back only when you need exact details. Call archive_read with this ref: operation "inspect" for structure, "search" with keyword to locate content, "read" with offset/limit for a bounded page.'
+    readInstructions: 'This result is archived but still readable. You saw its full text in a previous request; read back only when you need exact details. Call archive_read with this ref: operation "inspect" for structure, "search" with keyword to locate content, "read" with offset/limit for a bounded page. If it was a file read, calling read on the file again (with offset/limit) is equally fine.'
   }
   return JSON.stringify(placeholder)
 }
@@ -144,6 +146,10 @@ export interface ActiveToolResultPrunePolicy {
   enabled: boolean
   /** 归档阈值（估算 token） */
   maxEstimatedTokens?: number
+  /** 最近投递窗口：其后投递后缀不足该 token 数的结果视为仍在工作集，不因体积归档；缺省 0 */
+  protectRecentTokens?: number
+  /** 本次体积归档候选可回收 token 总量不足该值时全部保留原文，减少缓存前缀断裂次数；缺省 0 */
+  minSavingsTokens?: number
 }
 
 /** 归档候选：一份待写入 artifact 的工具结果原文 */
@@ -292,14 +298,40 @@ function projectImagesWithinBudget(messages: ChatMessage[]): ChatMessage[] {
   return changed ? projected : messages
 }
 
+/** 占位符 JSON 外壳（kind/ref/指令等字段）的估算 token，约 600 字符 */
+const ARCHIVED_PLACEHOLDER_ENVELOPE_TOKENS = 150
+
+/** 单条结果归档为占位符的净节省估算：原文 − 预览 − 占位符外壳。 */
+function estimateArchiveSavingsTokens(text: string): number {
+  return Math.max(
+    0,
+    estimateTextTokens(text) - estimateTextTokens(buildArchiveContentPreview(text)) - ARCHIVED_PLACEHOLDER_ENVELOPE_TOKENS
+  )
+}
+
 /** 关闭态策略：门面默认值 */
 export const DISABLED_PRUNE_POLICY: ActiveToolResultPrunePolicy = { enabled: false }
 
+/** 最近窗口保护上限（token），防止超大窗口把全部历史都视为"正在用" */
+export const PROTECT_RECENT_TOKENS_CAP = 40_000
+/** 最近窗口占上下文窗口的比例 */
+export const PROTECT_RECENT_WINDOW_RATIO = 0.2
+/** 批量归档最低可回收量上限（token） */
+export const MIN_SAVINGS_TOKENS_CAP = 20_000
+/** 批量归档最低可回收量占上下文窗口的比例 */
+export const MIN_SAVINGS_WINDOW_RATIO = 0.1
+
 /** 仅在模型具备 archive_read 时启用投影归档，避免发出无法回读的占位符。 */
 export function resolveRequestProjectionPolicy(
-  hasArchiveRead: boolean
+  hasArchiveRead: boolean,
+  contextWindow: number
 ): ActiveToolResultPrunePolicy {
-  return hasArchiveRead ? { enabled: true } : DISABLED_PRUNE_POLICY
+  if (!hasArchiveRead) return DISABLED_PRUNE_POLICY
+  return {
+    enabled: true,
+    protectRecentTokens: Math.min(PROTECT_RECENT_TOKENS_CAP, Math.floor(contextWindow * PROTECT_RECENT_WINDOW_RATIO)),
+    minSavingsTokens: Math.min(MIN_SAVINGS_TOKENS_CAP, Math.floor(contextWindow * MIN_SAVINGS_WINDOW_RATIO))
+  }
 }
 
 export async function projectRequestMessages(
@@ -317,6 +349,8 @@ export async function projectRequestMessages(
   }
 
   const maxTokens = input.policy.maxEstimatedTokens ?? ACTIVE_TOOL_RESULT_MAX_TOKENS
+  const protectRecentTokens = input.policy.protectRecentTokens ?? 0
+  const minSavingsTokens = input.policy.minSavingsTokens ?? 0
   const deferToolCallIds = input.deferToolCallIds ?? EMPTY_DEFER_SET
 
   const maxChars = maxTokens * CHARS_PER_TOKEN
@@ -329,7 +363,7 @@ export async function projectRequestMessages(
 
   const projected: ChatMessage[] = []
 
-  // 深位守卫的后缀计量表按需构建：多数请求没有纯 superseded 候选，零成本跳过。
+  // 深位守卫与最近窗口的后缀计量表按需构建：多数请求没有候选，零成本跳过。
   let suffixTokensAfter: number[] | null = null
   const suffixAfter = (index: number): number => {
     if (!suffixTokensAfter) {
@@ -341,10 +375,23 @@ export async function projectRequestMessages(
     return suffixTokensAfter[index] ?? 0
   }
 
+  // 阶段 1 逐条分类，只记决定不做归档 IO；体积候选先入批量集合，阶段 2 按可回收总量统一裁决。
+  type Decision =
+    | { kind: 'passthrough' }
+    | { kind: 'placeholder'; placeholder: string }
+    | {
+        kind: 'archive'
+        toolCallId: string
+        text: string
+        reason: ArchivedToolResultPlaceholder['reason']
+        immediate: boolean
+      }
+  const decisions: Decision[] = []
+
   for (let index = 0; index < sourceMessages.length; index++) {
     const msg = sourceMessages[index]!
     if (msg.role !== 'tool' || !msg.toolCallId) {
-      projected.push(msg)
+      decisions.push({ kind: 'passthrough' })
       continue
     }
 
@@ -353,13 +400,13 @@ export async function projectRequestMessages(
       if (typeof msg.content !== 'string' || sha256Hex(msg.content) !== msg.toolDelivery.bodySha256) {
         throw new Error('Tool delivery does not match its source body')
       }
-      projected.push({ ...msg, content: msg.toolDelivery.placeholder })
+      decisions.push({ kind: 'placeholder', placeholder: msg.toolDelivery.placeholder })
       continue
     }
 
     // 最新一步的结果：全文投递一次；体积与覆盖归档从下一请求开始
     if (deferToolCallIds.has(msg.toolCallId)) {
-      projected.push(msg)
+      decisions.push({ kind: 'passthrough' })
       continue
     }
 
@@ -367,13 +414,13 @@ export async function projectRequestMessages(
     // 占位符只承载文本，会把图片块丢失；保守跳过。
     const text = typeof msg.content === 'string' ? msg.content : ''
     if (!text) {
-      projected.push(msg)
+      decisions.push({ kind: 'passthrough' })
       continue
     }
 
     // 幂等：已是占位符则原样返回
     if (isArchivedPlaceholder(text)) {
-      projected.push(msg)
+      decisions.push({ kind: 'passthrough' })
       continue
     }
 
@@ -382,22 +429,67 @@ export async function projectRequestMessages(
       && text.length >= supersededMinChars
     const oversize = text.length > maxChars
     if (!superseded && !oversize) {
-      projected.push(msg)
+      decisions.push({ kind: 'passthrough' })
       continue
     }
-    // 深位守卫：仅以 superseded 触发（不超重）且尚未冻结的候选，其后缀仍深时
-    // 保留原文、等压缩整段回收——中段改写会让其后全部缓存前缀作废。
-    // 双重命中（既被覆盖又超体积阈值）按体积归档放行，守卫不适用。
-    if (superseded && !oversize && suffixAfter(index) > SUPERSEDED_DEEP_SUFFIX_TOKENS) {
-      projected.push(msg)
-      continue
-    }
-    const reason: ArchivedToolResultPlaceholder['reason'] = superseded
-      ? 'superseded_by_newer_result'
-      : 'consumed_then_archived'
 
+    const suffix = suffixAfter(index)
+    // 深位守卫：仅以 superseded 触发且后缀仍深的候选保留原文、等压缩整段回收——
+    // 中段改写会让其后全部缓存前缀作废。双重命中（superseded + 超体积）深位时
+    // 并入体积批量，由最近窗口与批量门槛统一裁决。
+    if (superseded && suffix <= SUPERSEDED_DEEP_SUFFIX_TOKENS) {
+      decisions.push({
+        kind: 'archive',
+        toolCallId: msg.toolCallId,
+        text,
+        reason: 'superseded_by_newer_result',
+        immediate: true
+      })
+      continue
+    }
+    // 体积候选：其后投递后缀超过最近窗口才可归档，模型正在使用的内容不动。
+    if (oversize && (protectRecentTokens <= 0 || suffix > protectRecentTokens)) {
+      decisions.push({
+        kind: 'archive',
+        toolCallId: msg.toolCallId,
+        text,
+        reason: superseded ? 'superseded_by_newer_result' : 'consumed_then_archived',
+        immediate: false
+      })
+      continue
+    }
+    decisions.push({ kind: 'passthrough' })
+  }
+
+  // 批量裁决：可回收总量不达标时全部保留原文，避免为小收益反复打断缓存前缀。
+  let batchSavingsTokens = 0
+  for (const decision of decisions) {
+    if (decision.kind === 'archive' && !decision.immediate) {
+      batchSavingsTokens += estimateArchiveSavingsTokens(decision.text)
+    }
+  }
+  const batchAllowed = batchSavingsTokens >= minSavingsTokens
+
+  // 阶段 2：按决定产出投影，归档回调仍按消息顺序串行执行。
+  for (let index = 0; index < sourceMessages.length; index++) {
+    const msg = sourceMessages[index]!
+    const decision = decisions[index]!
+    if (decision.kind === 'passthrough') {
+      projected.push(msg)
+      continue
+    }
+    if (decision.kind === 'placeholder') {
+      projected.push({ ...msg, content: decision.placeholder })
+      continue
+    }
+    if (!decision.immediate && !batchAllowed) {
+      projected.push(msg)
+      continue
+    }
+
+    const text = decision.text
     const bodySha256 = sha256Hex(text)
-    const cacheKey = `${msg.toolCallId}:${bodySha256}`
+    const cacheKey = `${decision.toolCallId}:${bodySha256}`
 
     // 缓存命中则复用占位符
     const cachedPlaceholder = input.archiveCache.get(cacheKey)
@@ -410,7 +502,7 @@ export async function projectRequestMessages(
       prunedCount++
       estimatedTokensSaved += Math.ceil((text.length - cachedPlaceholder.length) / CHARS_PER_TOKEN)
       frozenDeliveries.push({
-        toolCallId: msg.toolCallId,
+        toolCallId: decision.toolCallId,
         delivery: { version: 1, kind: 'archive', bodySha256, placeholder: cachedPlaceholder }
       })
       continue
@@ -418,7 +510,7 @@ export async function projectRequestMessages(
 
     // 写入 artifact；archive 回调不得抛异常，失败表达为 null（保留原文）
     const archived = await input.archive({
-      toolCallId: msg.toolCallId,
+      toolCallId: decision.toolCallId,
       toolName: ARCHIVE_TOOL_NAME_TAG,
       body: text,
       bodySha256
@@ -432,10 +524,10 @@ export async function projectRequestMessages(
 
     const placeholder = buildPlaceholder(
       archived.artifactId,
-      msg.toolCallId,
+      decision.toolCallId,
       text,
       bodySha256,
-      reason
+      decision.reason
     )
     if (!isSmallerWireContent(text, placeholder)) {
       projected.push(msg)
@@ -446,7 +538,7 @@ export async function projectRequestMessages(
     prunedCount++
     estimatedTokensSaved += Math.ceil((text.length - placeholder.length) / CHARS_PER_TOKEN)
     frozenDeliveries.push({
-      toolCallId: msg.toolCallId,
+      toolCallId: decision.toolCallId,
       delivery: { version: 1, kind: 'archive', bodySha256, placeholder }
     })
   }

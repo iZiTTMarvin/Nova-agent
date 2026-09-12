@@ -297,7 +297,8 @@ export class AgentLoop {
   /** 当前应使用的投影归档策略：仅当模型具备 archive_read 时启用（含摘要投影） */
   private currentRequestProjectionPolicy() {
     return resolveRequestProjectionPolicy(
-      getEffectiveToolDefinitions(this.ctx).some(tool => tool.name === 'archive_read')
+      getEffectiveToolDefinitions(this.ctx).some(tool => tool.name === 'archive_read'),
+      this.config.contextWindow ?? 200_000
     )
   }
 

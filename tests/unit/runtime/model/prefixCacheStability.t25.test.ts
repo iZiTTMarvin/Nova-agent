@@ -300,8 +300,8 @@ describe('前缀稳定性黑盒', () => {
     expect(directSnapshot.exactBodyHash).toBe(yieldedSnapshot!.exactBodyHash)
   })
 
-  it('多轮会话含超阈值工具结果：首投递全文、之后占位符且前缀稳定', async () => {
-    const huge = 'x'.repeat(18 * 1024)
+  it('多轮会话含超体积工具结果：滑出最近窗口后才换占位符，此前前缀 append-only', async () => {
+    const huge = 'x'.repeat(40_000)
     const tmp = mkdtempSync(join(tmpdir(), 'nova-prefix-d4-'))
     const client = new MockModelClient()
     const toolCall = (id: string, path: string) => ({
@@ -338,7 +338,7 @@ describe('前缀稳定性黑盒', () => {
       async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
         return {
           success: true,
-          output: args.path === '.' ? huge : 'src/'
+          output: args.path === '.' ? huge : 'y'.repeat(36_000)
         }
       }
     })
@@ -353,7 +353,8 @@ describe('前缀稳定性黑盒', () => {
 
     const loop = new AgentLoop(client, new EventBus(), {
       permissionManager: new PermissionManager(),
-      permissionMode: 'full_access'
+      permissionMode: 'full_access',
+      contextWindow: 40_000
     })
     loop.setToolRegistry(registry)
     loop.setSessionId('sess_d4')
@@ -382,19 +383,23 @@ describe('前缀稳定性黑盒', () => {
       const wireShape = (messages: ChatMessage[]) =>
         messages.map(({ toolDelivery: _delivery, ...rest }) => rest)
 
-      // 新契约：最新结果先全文投递一次（round 1 全文），下一请求起替换为占位符
+      // 新契约：最新结果先全文投递一次；其后投递后缀超过最近窗口（8K token）
+      // 才换占位符。本轮首请求时后缀不足，仍全文；后续 ~9K token 结果投递后归档。
       expect(toolContent(1, 'call_huge')).toBe(huge)
-      expect(isArchivedPlaceholder(toolContent(2, 'call_huge'))).toBe(true)
-      expect(toolContent(3, 'call_huge')).toBe(toolContent(2, 'call_huge'))
+      expect(toolContent(2, 'call_huge')).toBe(huge)
+      expect(isArchivedPlaceholder(toolContent(3, 'call_huge'))).toBe(true)
 
-      // 全文→占位符是唯一一次刻意断点：断点之前的消息前缀保持逐字节一致
-      const prefixBeforeArchivedTool = previousTurnLast.length - 1
-      expect(wireShape(thisTurnRound0.slice(0, prefixBeforeArchivedTool))).toEqual(
-        wireShape(previousTurnLast.slice(0, prefixBeforeArchivedTool))
+      // 归档尚未发生时前缀 append-only：本轮首请求完整包含上一轮最后一次请求
+      expect(wireShape(thisTurnRound0.slice(0, previousTurnLast.length))).toEqual(
+        wireShape(previousTurnLast)
       )
-      // 断点之后恢复 append-only：round 1 完整包含 round 0
-      expect(wireShape(thisTurnRound1.slice(0, thisTurnRound0.length))).toEqual(
-        wireShape(thisTurnRound0)
+      // 断点发生在 round0→round1 的归档改写：占位符之前的消息前缀逐字节一致
+      const indexOfHugeTool = thisTurnRound0.findIndex(
+        m => m.role === 'tool' && m.toolCallId === 'call_huge'
+      )
+      expect(indexOfHugeTool).toBeGreaterThanOrEqual(0)
+      expect(wireShape(thisTurnRound1.slice(0, indexOfHugeTool))).toEqual(
+        wireShape(thisTurnRound0.slice(0, indexOfHugeTool))
       )
     } finally {
       rmSync(tmp, { recursive: true, force: true })

@@ -33,9 +33,10 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string; detail?: string } }
 
-/** 从 content（string 或 ContentBlock 数组）中提取纯文本 */
+/** 从 content（string 或 ContentBlock 数组）中提取纯文本；回放/恢复数据中的 null 按空文本计 */
 export function extractTextFromContent(content: string | ContentBlock[]): string {
   if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
   return content
     .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
     .map(block => block.text)

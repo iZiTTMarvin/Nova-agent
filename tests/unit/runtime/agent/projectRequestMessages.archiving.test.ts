@@ -269,9 +269,18 @@ describe('projectRequestMessages archiving', () => {
     expect(buildArchiveContentPreview(body)).toBe('L1\nL2\nL3\n…\nL6\nL7')
   })
 
-  it('无 archive_read 时投影归档策略关闭', () => {
-    expect(resolveRequestProjectionPolicy(false)).toEqual(DISABLED_PRUNE_POLICY)
-    expect(resolveRequestProjectionPolicy(true)).toEqual({ enabled: true })
+  it('无 archive_read 时策略关闭；开启时按上下文窗口给出保护窗口与批量门槛', () => {
+    expect(resolveRequestProjectionPolicy(false, 200_000)).toEqual(DISABLED_PRUNE_POLICY)
+    expect(resolveRequestProjectionPolicy(true, 200_000)).toEqual({
+      enabled: true,
+      protectRecentTokens: 40_000,
+      minSavingsTokens: 20_000
+    })
+    expect(resolveRequestProjectionPolicy(true, 32_000)).toEqual({
+      enabled: true,
+      protectRecentTokens: 6_400,
+      minSavingsTokens: 3_200
+    })
   })
 
   it('无 archive_read 策略时超大工具结果不产生归档占位符', async () => {
@@ -281,7 +290,7 @@ describe('projectRequestMessages archiving', () => {
     let archiveCalls = 0
     const result = await projectRequestMessages({
       messages,
-      policy: resolveRequestProjectionPolicy(false),
+      policy: resolveRequestProjectionPolicy(false, 200_000),
       archiveCache: createRequestProjectionArchiveCache(),
       archive: async () => {
         archiveCalls++
@@ -598,5 +607,122 @@ describe('深位 superseded 守卫', () => {
     // 后缀只有占位符（~500B）+ 短文本 → 不足阈值 → r1 正常归档
     expect(isArchivedPlaceholder(result.messages[1].content as string)).toBe(true)
     expect(result.messages[2].content).toBe(frozenHuge.toolDelivery!.placeholder)
+  })
+})
+
+describe('压力驱动归档', () => {
+  function asst(id: string, name: string, args: string): ChatMessage {
+    return { role: 'assistant', content: '', toolCalls: [{ id, name, arguments: args }] }
+  }
+
+  /** ~3K token 的多行正文：预览远小于全文，保证占位符为净节省 */
+  function bigResult(seed: string, lines = 220): string {
+    return Array.from({ length: lines }, (_, i) => `${seed}${i + 1}: ${'y'.repeat(50)}`).join('\n')
+  }
+
+  /** 让指定位置之后的投递后缀超过深位守卫阈值（8k token ≈ 32K 字符） */
+  function deepSuffix(): ChatMessage[] {
+    return Array.from({ length: 6 }, (_, i) => ({
+      role: 'tool' as const,
+      toolCallId: `f${i}`,
+      content: `f${i}:\n${'z'.repeat(6_000)}`
+    }))
+  }
+
+  it('超体积结果在其后投递后缀未滑出最近窗口时保留原文，滑出后归档', async () => {
+    const big = 'x'.repeat(18 * 1024)
+    let archiveCalls = 0
+    const archive = async () => { archiveCalls++; return { artifactId: 'art1' } }
+    const policy = { enabled: true, protectRecentTokens: 1_000 }
+
+    // 后缀 ~200 token < 窗口：仍在工作集，全文投递且不归档
+    const recent = await projectRequestMessages({
+      messages: [
+        { role: 'tool', toolCallId: 'tc1', content: big },
+        { role: 'tool', toolCallId: 'tc2', content: 'y'.repeat(800) }
+      ],
+      policy,
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive
+    })
+    expect(recent.messages[0].content).toBe(big)
+    expect(recent.frozenDeliveries).toHaveLength(0)
+    expect(archiveCalls).toBe(0)
+
+    // 后缀 ~1500 token > 窗口：滑出最近工作集，归档为占位符
+    const slidOut = await projectRequestMessages({
+      messages: [
+        { role: 'tool', toolCallId: 'tc1', content: big },
+        { role: 'tool', toolCallId: 'tc2', content: 'y'.repeat(6_000) }
+      ],
+      policy,
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive
+    })
+    expect(isArchivedPlaceholder(slidOut.messages[0].content as string)).toBe(true)
+    expect(slidOut.frozenDeliveries).toHaveLength(1)
+    expect(archiveCalls).toBe(1)
+  })
+
+  it('体积候选可回收总量不足门槛时全部保留原文，达标后同批归档', async () => {
+    const policy = { enabled: true, minSavingsTokens: 8_000 }
+    const tail: ChatMessage = { role: 'tool', toolCallId: 'tail', content: 'y'.repeat(400) }
+    let archiveCalls = 0
+    const archive = async () => { archiveCalls++; return { artifactId: `art${archiveCalls}` } }
+
+    // 两条各 ~3K token 的候选合计 < 8K：本次全部保留原文
+    const two = await projectRequestMessages({
+      messages: [
+        { role: 'tool', toolCallId: 'a1', content: bigResult('a') },
+        { role: 'tool', toolCallId: 'a2', content: bigResult('b') },
+        tail
+      ],
+      policy,
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive
+    })
+    expect(two.messages[0].content).toBe(bigResult('a'))
+    expect(two.messages[1].content).toBe(bigResult('b'))
+    expect(two.diagnostics.prunedCount).toBe(0)
+    expect(archiveCalls).toBe(0)
+
+    // 三条合计 ≥ 8K：同一次投影里一起归档，只断一次缓存前缀
+    const three = await projectRequestMessages({
+      messages: [
+        { role: 'tool', toolCallId: 'a1', content: bigResult('a') },
+        { role: 'tool', toolCallId: 'a2', content: bigResult('b') },
+        { role: 'tool', toolCallId: 'a3', content: bigResult('c') },
+        tail
+      ],
+      policy,
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive
+    })
+    expect(three.messages.slice(0, 3).every(m => isArchivedPlaceholder(m.content as string))).toBe(true)
+    expect(three.frozenDeliveries.map(f => f.toolCallId)).toEqual(['a1', 'a2', 'a3'])
+    expect(archiveCalls).toBe(3)
+  })
+
+  it('深位 superseded 且超体积的候选并入批量门槛，不达标时保留原文', async () => {
+    const huge = 'h\n' + 'x'.repeat(20_000)
+    const messages: ChatMessage[] = [
+      asst('r1', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: huge, toolCallId: 'r1' },
+      ...deepSuffix(),
+      asst('r2', 'read', JSON.stringify({ file_path: 'a' })),
+      { role: 'tool', content: huge, toolCallId: 'r2' }
+    ]
+    let archiveCalls = 0
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true, minSavingsTokens: 20_000 },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => { archiveCalls++; return { artifactId: 'art1' } }
+    })
+    // r1 深位双重命中不再直接归档，与 r2 一起按可回收总量裁决；合计不足门槛 → 保留原文
+    expect(result.messages[1].content).toBe(huge)
+    expect(result.messages[result.messages.length - 1].content).toBe(huge)
+    expect(result.frozenDeliveries).toHaveLength(0)
+    expect(archiveCalls).toBe(0)
   })
 })

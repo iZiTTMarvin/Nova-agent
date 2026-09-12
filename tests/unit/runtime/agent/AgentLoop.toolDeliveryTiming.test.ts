@@ -19,8 +19,8 @@ import { isArchivedPlaceholder } from '../../../../src/runtime/request-projectio
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 
 describe('AgentLoop tool_delivery 时序', () => {
-  it('提交时原文投递不发事件，首次归档投影发且只发一次 archive 事件', async () => {
-    const huge = 'x'.repeat(18 * 1024)
+  it('提交时原文投递不发事件，滑出最近窗口后的归档投影发且只发一次 archive 事件', async () => {
+    const huge = 'x'.repeat(40_000)
     const tmp = mkdtempSync(join(tmpdir(), 'nova-delivery-timing-'))
     const client = new MockModelClient()
     const toolTurn = (id: string, path: string) => ({
@@ -54,7 +54,7 @@ describe('AgentLoop tool_delivery 时序', () => {
         properties: { path: { type: 'string' } }
       },
       async execute(args: Record<string, unknown>, _ctx: ToolContext): Promise<ToolResult> {
-        return { success: true, output: args.path === '.' ? huge : 'src/' }
+        return { success: true, output: args.path === '.' ? huge : 'y'.repeat(36_000) }
       }
     })
     registry.register({
@@ -73,7 +73,8 @@ describe('AgentLoop tool_delivery 时序', () => {
     })
     const loop = new AgentLoop(client, eventBus, {
       permissionManager: new PermissionManager(),
-      permissionMode: 'full_access'
+      permissionMode: 'full_access',
+      contextWindow: 40_000
     })
     loop.setToolRegistry(registry)
     loop.setSessionId('sess_delivery_timing')
@@ -90,7 +91,8 @@ describe('AgentLoop tool_delivery 时序', () => {
 
       await loop.sendMessage('再看 src', agentRoute())
 
-      // 第 2 轮首次投影归档：事件恰好一次，kind 为 archive
+      // 后续大结果（~9K token）投递后 call_huge 滑出最近窗口，同批归档：
+      // 事件恰好一次，kind 为 archive
       const deliveries = events.filter(e => e.toolCallId === 'call_huge')
       expect(deliveries).toHaveLength(1)
       expect(deliveries[0]!.delivery.kind).toBe('archive')
@@ -102,8 +104,10 @@ describe('AgentLoop tool_delivery 时序', () => {
         )
         return typeof msg?.content === 'string' ? msg.content : ''
       }
-      expect(isArchivedPlaceholder(toolContent(2))).toBe(true)
-      expect(toolContent(3)).toBe(toolContent(2))
+      expect(toolContent(1)).toBe(huge)
+      // 本轮首请求时后缀不足最近窗口（8K token）：仍全文投递
+      expect(toolContent(2)).toBe(huge)
+      expect(isArchivedPlaceholder(toolContent(3))).toBe(true)
     } finally {
       unsubscribe()
       rmSync(tmp, { recursive: true, force: true })

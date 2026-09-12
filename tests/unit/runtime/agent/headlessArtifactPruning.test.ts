@@ -65,7 +65,7 @@ describe('headless artifact pruning', () => {
       parameters: { type: 'object', properties: {}, additionalProperties: false },
       executionMode: 'sequential',
       async execute(_args: Record<string, unknown>, _context: ToolContext): Promise<ToolResult> {
-        return { success: true, output: 'ok' }
+        return { success: true, output: 'y'.repeat(36_000) }
       }
     })
     registry.register(archiveReadTool)
@@ -78,7 +78,8 @@ describe('headless artifact pruning', () => {
       maxParallelToolCalls: 1,
       supportsVision: false,
       permissionMode: 'full_access',
-      toolDialectOverride: 'native'
+      toolDialectOverride: 'native',
+      contextWindow: 40_000
     })
     loop.setToolRegistry(registry)
     loop.setArtifactStore(store)
@@ -105,7 +106,7 @@ describe('headless artifact pruning', () => {
       // 第 1 次看到该结果：全文投递（延后一步归档）
       expect(toolContent(1, 'tc-large')).toBe(body)
 
-      // 第 2 次看到该结果：已是占位符
+      // 第 2 次看到该结果：其后已有 ~9K token 投递，滑出最近窗口（8K），已是占位符
       const placeholderView = toolContent(2, 'tc-large')
       const placeholder = JSON.parse(placeholderView) as {
         kind: string

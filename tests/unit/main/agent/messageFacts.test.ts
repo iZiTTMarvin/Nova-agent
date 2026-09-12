@@ -113,9 +113,9 @@ describe('消息事实提交往返', () => {
   })
   it.each([
     { size: 8035, image: false, skill: true },
-    { size: 12000, image: false, skill: false },
+    { size: 12000, image: false, skill: false, contextWindow: 50_000 },
     { size: 50, image: true, skill: false }
-  ])('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image / skill=$skill', async ({ size, image, skill }) => {
+  ] as Array<{ size: number; image: boolean; skill: boolean; contextWindow?: number }>)('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image / skill=$skill', async ({ size, image, skill, contextWindow }) => {
     const { root, session, run, runStore, bus, ctx } = setup()
     const input = skill ? '/f 原始问题' : '原始问题'
     const skillDir = join(root, 'skills', 'f')
@@ -151,7 +151,7 @@ describe('消息事实提交往返', () => {
     registry.register({ name: 'archive_read', description: '读取归档', parameters: { type: 'object', properties: {} }, execute: async () => ({ success: true, output: 'readable' }) })
     const makeLoop = () => {
       const client = new OpenAICompatibleModelClient({ baseUrl: 'https://offline.test/v1', apiKey: 'test-key', modelId: image ? 'MiniMax-M3' : 'deepseek-chat', cacheProfile: image ? 'minimax' : 'deepseek' })
-      const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access' })
+      const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access', contextWindow })
       loop.setToolRegistry(registry)
       loop.setSessionContext(sessionStore, session.id)
       loop.setArtifactStore(new ArtifactStore(root))
@@ -187,18 +187,16 @@ describe('消息事实提交往返', () => {
     const fullTool = '中'.repeat(size)
     console.info(JSON.stringify({ previousCount: previous.messages.length, nextCount: next.messages.length, previousHash: hash(JSON.stringify(previous.messages)), restoredPrefixHash: hash(JSON.stringify(prefix)), envelopeEqual: JSON.stringify({ ...previous, messages: null }) === JSON.stringify({ ...next, messages: null }) }))
     if (oversize) {
-      // 超阈值结果先全文投递一轮，下一请求换成可回读占位符；断点前的前缀仍逐字节一致。
+      // 超体积结果先全文投递；t2 投递后 t1 滑出最近窗口换成可回读占位符，断点前的前缀仍逐字节一致。
       expect(wireTool(bodies[1].messages, 't1')?.content).toBe(fullTool)
       expect(isArchivedPlaceholder(String(wireTool(bodies[2].messages, 't1')?.content))).toBe(true)
       expect(wireTool(bodies[2].messages, 't2')?.content).toBe(fullTool)
       expect(wireBeforeTool(bodies[2].messages, 't1')).toEqual(wireBeforeTool(bodies[1].messages, 't1'))
-      expect(wireTool(next.messages, 't1')?.content).toBe(wireTool(previous.messages, 't1')?.content)
-      expect(isArchivedPlaceholder(String(wireTool(next.messages, 't2')?.content))).toBe(true)
-      expect(wireBeforeTool(next.messages, 't2')).toEqual(wireBeforeTool(previous.messages, 't2'))
     } else {
       expect(bodies[2].messages.slice(0, bodies[1].messages.length)).toEqual(bodies[1].messages)
-      expect(JSON.stringify(prefix)).toBe(JSON.stringify(previous.messages))
     }
+    // 恢复后 t1 复用同一占位符、t2 后缀不足最近窗口仍为全文：整段已发前缀逐字节相等。
+    expect(JSON.stringify(prefix)).toBe(JSON.stringify(previous.messages))
     expect({ ...next, messages: null }).toEqual({ ...previous, messages: null })
   })
   it.each(['x'.repeat(8035), 'y'.repeat(12000), '中文🙂'.repeat(2500)])('完整事件经过草稿和正式存储保留工具正文 %#', async (body) => {

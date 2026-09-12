@@ -8,7 +8,7 @@ import {
   parseArtifactRef
 } from '../../artifacts/artifactRef'
 
-export const ARCHIVE_READ_MAX_RESPONSE_CHARS = 7500
+export const ARCHIVE_READ_MAX_RESPONSE_CHARS = 40_000
 export const ARCHIVE_READ_DEFAULT_LIMIT = 4000
 export const ARCHIVE_READ_MAX_LIMIT = 6000
 
