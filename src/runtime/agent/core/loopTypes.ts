@@ -99,9 +99,9 @@ export interface AgentLoopConfig {
   ) => Promise<boolean>
 
   /**
-   * 当轮工具结果归档策略；未设置时投影关闭。
-   * 门面负责注入实际策略（当前默认关闭）。
+   * 当轮工具结果归档策略：每次模型请求前解析一次（随预算压力在 economic / relief 间变化）；
+   * 未设置时投影关闭。已冻结的占位符不随策略回落复活。
    */
-  requestProjectionPolicy?: ActiveToolResultPrunePolicy
+  resolveRequestProjectionPolicy?: () => ActiveToolResultPrunePolicy
 
 }

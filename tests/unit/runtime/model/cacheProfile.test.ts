@@ -207,7 +207,17 @@ describe('resolveCacheProfile', () => {
         expect(['none', 'tool-call-history', 'all-history']).toContain(p.reasoningReplay)
         expect(['reasoning_content', 'think-tag']).toContain(p.reasoningWire)
         expect(['anthropic-short-ttl', 'provider-managed', 'unknown']).toContain(p.idlePolicy)
+        // 归档回本判定的规划参数：命中价必须低于未命中价，重建单价不得低于未命中价
+        expect(p.economics.readRatio).toBeGreaterThan(0)
+        expect(p.economics.readRatio).toBeLessThan(1)
+        expect(p.economics.writePremium).toBeGreaterThanOrEqual(1)
       }
+    })
+
+    it('经济参数取值：anthropic 有缓存写入溢价，minimax 命中价更高', () => {
+      const catalog = getCacheProfileCatalog()
+      expect(catalog.anthropic.economics).toEqual({ readRatio: 0.1, writePremium: 1.25 })
+      expect(catalog.minimax.economics).toEqual({ readRatio: 0.2, writePremium: 1 })
     })
 
     it('仅 anthropic 使用 cache_control marker', () => {

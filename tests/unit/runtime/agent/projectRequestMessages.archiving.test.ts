@@ -610,6 +610,181 @@ describe('深位 superseded 守卫', () => {
   })
 })
 
+describe('经济归档裁决', () => {
+  const economics = {
+    readRatio: 0.1,
+    writePremium: 1,
+    carryHorizonRounds: 12,
+    reliefMinSavingsRatio: 1.0
+  }
+  const policy = { enabled: true, protectRecentTokens: 500, minSavingsTokens: 0, economics }
+  const reliefPolicy = { ...policy, pressure: 'relief' as const }
+
+  /** 多行正文：preview（头 3 + 尾 2 行）远小于全文，保证占位符为净节省 */
+  function bigBody(seed: string, chars: number): string {
+    const line = `${seed}: ${'y'.repeat(50)}`
+    return Array.from({ length: Math.ceil(chars / (line.length + 1)) }, (_, i) => `${i + 1}${line}`).join('\n')
+  }
+
+  /** 非候选大文本：assistant 消息不参与归档，只贡献断点后重建后缀 */
+  function filler(chars: number): ChatMessage {
+    return { role: 'assistant', content: 'z'.repeat(chars) }
+  }
+
+  const project = (messages: ChatMessage[], p = policy, deferToolCallIds?: Set<string>) =>
+    projectRequestMessages({
+      messages,
+      policy: p,
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' }),
+      ...(deferToolCallIds ? { deferToolCallIds } : {})
+    })
+
+  it('深断点小回收被经济层拒绝，浅断点被采纳', async () => {
+    const candidate = (id: string): ChatMessage => ({ role: 'tool', toolCallId: id, content: bigBody('a', 12_000) })
+
+    // ~3K 候选 + ~30K 重建后缀：G = 1.2·R − 0.9·S < 0，保留原文
+    const deep = await project([candidate('a1'), filler(120_000)])
+    expect(deep.messages[0].content).toBe(bigBody('a', 12_000))
+    expect(deep.frozenDeliveries).toHaveLength(0)
+    expect(deep.diagnostics.batch).toMatchObject({
+      mode: 'economic',
+      candidateCount: 1,
+      admittedCount: 0
+    })
+    expect(deep.diagnostics.batch!.netBenefitTokens!).toBeLessThan(0)
+
+    // 同一候选 + ~1K 后缀：回本，归档
+    const shallow = await project([candidate('a1'), filler(4_000)])
+    expect(isArchivedPlaceholder(shallow.messages[0].content as string)).toBe(true)
+    expect(shallow.diagnostics.batch).toMatchObject({ mode: 'economic', admittedCount: 1 })
+    expect(shallow.diagnostics.batch!.netBenefitTokens!).toBeGreaterThan(0)
+  })
+
+  it('共享断点切点选择：只归档回本的后段候选', async () => {
+    // [A ~3K] [非候选 ~30K] [B ~20K] [非候选 ~1K]
+    // 从 A 切：R≈22K 但要重建 ~31K 后缀，G<0；从 B 切：R≈20K、S≈1K，G>0
+    const bodyA = bigBody('a', 12_000)
+    const messages: ChatMessage[] = [
+      { role: 'tool', toolCallId: 'A', content: bodyA },
+      filler(120_000),
+      { role: 'tool', toolCallId: 'B', content: bigBody('b', 80_000) },
+      filler(4_000)
+    ]
+    const result = await project(messages)
+    expect(result.messages[0].content).toBe(bodyA)
+    expect(isArchivedPlaceholder(result.messages[2].content as string)).toBe(true)
+    expect(result.frozenDeliveries.map(f => f.toolCallId)).toEqual(['B'])
+    expect(result.diagnostics.batch).toMatchObject({
+      mode: 'economic',
+      candidateCount: 2,
+      admittedCount: 1
+    })
+  })
+
+  it('携带地平线按压缩距离截断：经济层拒绝的批量由纾解层救出', async () => {
+    // [A ~30K] [非候选 ~20K]：R/S ≈ 1.5
+    const messages: ChatMessage[] = [
+      { role: 'tool', toolCallId: 'a1', content: bigBody('a', 120_000) },
+      filler(80_000)
+    ]
+    // 仅 1 条 assistant → 平均每请求增长 ≈ 50K；headroom 8K → horizon=1，
+    // 需 R/S > 9 才回本 → 经济层拒绝
+    const economic = await project(messages, {
+      ...policy,
+      economics: { ...economics, headroomTokens: 8_000 }
+    })
+    expect(economic.messages[0].content).toBe(bigBody('a', 120_000))
+    expect(economic.diagnostics.batch).toMatchObject({
+      mode: 'economic',
+      candidateCount: 1,
+      admittedCount: 0,
+      carryRounds: 1
+    })
+    expect(economic.diagnostics.batch!.netBenefitTokens!).toBeLessThan(0)
+
+    // 同一消息进入纾解层：R/S ≈ 1.5 ≥ 1.0 → 采纳
+    const relief = await project(messages, reliefPolicy)
+    expect(isArchivedPlaceholder(relief.messages[0].content as string)).toBe(true)
+    expect(relief.diagnostics.batch).toMatchObject({
+      mode: 'relief',
+      candidateCount: 1,
+      admittedCount: 1,
+      netBenefitTokens: null,
+      carryRounds: null
+    })
+
+    // 不带 headroomTokens 时地平线不截断：horizon=12 → 经济层采纳
+    const full = await project(messages)
+    expect(isArchivedPlaceholder(full.messages[0].content as string)).toBe(true)
+    expect(full.diagnostics.batch).toMatchObject({ mode: 'economic', admittedCount: 1, carryRounds: 12 })
+
+    // [A ~10K] [非候选 ~30K]：R/S ≈ 0.33 < 1.0 → 纾解层也拒绝
+    const rejectBody = bigBody('a', 40_000)
+    const reject = await project(
+      [{ role: 'tool', toolCallId: 'a1', content: rejectBody }, filler(120_000)],
+      reliefPolicy
+    )
+    expect(reject.messages[0].content).toBe(rejectBody)
+    expect(reject.frozenDeliveries).toHaveLength(0)
+    expect(reject.diagnostics.batch).toMatchObject({ mode: 'relief', admittedCount: 0 })
+  })
+
+  it('新付费尾部不计入重建后缀', async () => {
+    const body = bigBody('a', 12_000)
+    const messages: ChatMessage[] = [
+      { role: 'tool', toolCallId: 'a1', content: body },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'd1', name: 'read', arguments: '{}' }] },
+      { role: 'tool', toolCallId: 'd1', content: bigBody('d', 120_000) }
+    ]
+
+    // d1 在延后集合：其 assistant 起是本请求新付费输入，S≈0 → 采纳
+    const deferred = await project(messages, policy, new Set(['d1']))
+    expect(isArchivedPlaceholder(deferred.messages[0].content as string)).toBe(true)
+    expect(deferred.messages[2].content).toBe(bigBody('d', 120_000))
+    expect(deferred.diagnostics.batch).toMatchObject({ mode: 'economic', admittedCount: 1 })
+    expect(deferred.diagnostics.batch!.rebuildSuffixTokens).toBeLessThan(1_000)
+
+    // 无延后集合：30K 尾部计入重建后缀 → 拒绝
+    const plain = await project(messages)
+    expect(plain.messages[0].content).toBe(body)
+    expect(plain.diagnostics.batch).toMatchObject({ mode: 'economic', admittedCount: 0 })
+  })
+
+  it('resolveRequestProjectionPolicy 挂接经济参数与纾解层', () => {
+    const resolved = resolveRequestProjectionPolicy(true, 200_000, {
+      economics: { readRatio: 0.1, writePremium: 1.25 }
+    })
+    expect(resolved.economics).toEqual({
+      readRatio: 0.1,
+      writePremium: 1.25,
+      carryHorizonRounds: 12,
+      reliefMinSavingsRatio: 1.0
+    })
+    expect(resolved.pressure).toBeUndefined()
+    expect('headroomTokens' in resolved.economics!).toBe(false)
+
+    // budget 存在时 headroomTokens = threshold − estimatedTokens
+    const withBudget = resolveRequestProjectionPolicy(true, 200_000, {
+      economics: { readRatio: 0.1, writePremium: 1 },
+      budget: { estimatedTokens: 100_000, threshold: 160_000, contextWindow: 200_000 }
+    })
+    expect(withBudget.economics!.headroomTokens).toBe(60_000)
+
+    // 纾解线 = threshold − contextWindow·10% = 160_000 − 20_000 = 140_000
+    const below = resolveRequestProjectionPolicy(true, 200_000, {
+      economics: { readRatio: 0.1, writePremium: 1 },
+      budget: { estimatedTokens: 139_999, threshold: 160_000, contextWindow: 200_000 }
+    })
+    expect(below.pressure).toBeUndefined()
+    const atLine = resolveRequestProjectionPolicy(true, 200_000, {
+      economics: { readRatio: 0.1, writePremium: 1 },
+      budget: { estimatedTokens: 140_000, threshold: 160_000, contextWindow: 200_000 }
+    })
+    expect(atLine.pressure).toBe('relief')
+  })
+})
+
 describe('压力驱动归档', () => {
   function asst(id: string, name: string, args: string): ChatMessage {
     return { role: 'assistant', content: '', toolCalls: [{ id, name, arguments: args }] }

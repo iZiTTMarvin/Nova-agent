@@ -29,7 +29,7 @@ describe('projectRequestMessages', () => {
       archive: async () => null
     })
     expect(result.messages).toEqual(messages)
-    expect(result.diagnostics).toEqual({ prunedCount: 0, archiveFailures: 0, estimatedTokensSaved: 0 })
+    expect(result.diagnostics).toEqual({ prunedCount: 0, archiveFailures: 0, estimatedTokensSaved: 0, batch: null })
   })
 
   it('投影不 mutate 输入消息', async () => {

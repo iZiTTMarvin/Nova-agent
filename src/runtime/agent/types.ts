@@ -225,6 +225,11 @@ export interface AgentLoopConfig {
    * 不含，避免误导读取摘要的父代理。
    */
   stopNoticeAudience?: import('./extensions/stopPolicyExtension').StopNoticeAudience
+  /**
+   * 投影层归档经济门槛：'auto' 按 provider 缓存档案的价格参数裁决；
+   * 'off' 回到固定批量门槛（对照实验与回退用）。
+   */
+  projectionEconomics?: 'auto' | 'off'
 }
 
 /** 压缩完成时传给 onCompaction 的元数据 */

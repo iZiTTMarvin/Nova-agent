@@ -48,6 +48,8 @@ export type MetricCategory =
   | 'readState.stats'
   | 'cache.first_diff'
   | 'cache.reuse_vs_actual'
+  /** 一次投影层批量归档裁决（切点、回收量与重建后缀估算） */
+  | 'projection.archive_batch'
 
 export interface MetricEvent {
   /** 事件类别 */

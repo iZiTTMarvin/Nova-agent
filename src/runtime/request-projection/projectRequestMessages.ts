@@ -8,7 +8,8 @@
  *
  * 归档时机：最新一步的工具结果先全文投递一次（deferToolCallIds）。体积归档只在
  * 结果滑出最近投递窗口（protectRecentTokens）且本批可回收总量达标（minSavingsTokens）
- * 时批量发生；被更新结果覆盖的候选满足深位守卫仍立即归档，深位且超体积的并入体积批量。
+ * 时批量发生；批量候选共享最早断点，按回本收益或压力纾解比统一选切点。
+ * 被更新结果覆盖的候选满足深位守卫仍立即归档，深位且超体积的并入体积批量。
  * 已归档结果的 delivery 由首次归档时的 frozenDeliveries
  * 交回调用方写回权威上下文，此后投影幂等复用该占位符，不回全文。
  *
@@ -19,6 +20,8 @@ import { extractTextFromContent, type ChatMessage, type ContentBlock } from '../
 import { buildArtifactRef, sha256Hex } from '../artifacts/artifactRef'
 import { planToolResultSupersession } from './toolResultSupersession'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
+import type { CacheEconomics } from '../model/cacheProfile'
+import { recordMetric } from '../../shared/diagnostics/metrics'
 
 /** 当轮归档阈值：超过此估算 token 的工具结果替换为占位符 */
 export const ACTIVE_TOOL_RESULT_MAX_TOKENS = 2048
@@ -49,6 +52,13 @@ const PREVIEW_HEAD_LINES = 3
 const PREVIEW_TAIL_LINES = 2
 /** 预览的字符硬上限；单行与超长行也不能让占位符反向膨胀。 */
 const PREVIEW_MAX_CHARS = 800
+
+/** 低压力层的携带地平线（请求数）；待真实对照实验标定 */
+export const DEFAULT_CARRY_HORIZON_ROUNDS = 12
+/** 纾解层的最低 R/S：低于此值时按 token 账压缩反而更省，纾解只在可回收量至少与重建后缀相当时替代压缩 */
+export const RELIEF_MIN_SAVINGS_RATIO = 1.0
+/** 距压缩阈值不足该比例的上下文窗口时进入纾解层 */
+export const RELIEF_HEADROOM_RATIO = 0.1
 
 /** 占位符 kind 常量 */
 export const ARCHIVED_PLACEHOLDER_KIND = 'nova.archived_tool_result'
@@ -141,6 +151,16 @@ function buildPlaceholder(
   return JSON.stringify(placeholder)
 }
 
+/** 归档经济门槛参数；缺省时批量只按 minSavingsTokens 裁决 */
+export interface ArchiveEconomics extends CacheEconomics {
+  /** 低压力层假设可回收内容还要携带的请求数 N̂ */
+  carryHorizonRounds: number
+  /** 纾解层允许的最低 回收/重建 比 R/S */
+  reliefMinSavingsRatio: number
+  /** 距压缩阈值的剩余空间（估算 token）；给定时携带地平线取 min(N̂, 剩余空间 / 本会话平均每请求增长) */
+  headroomTokens?: number
+}
+
 /** 当轮工具结果归档策略 */
 export interface ActiveToolResultPrunePolicy {
   enabled: boolean
@@ -150,6 +170,13 @@ export interface ActiveToolResultPrunePolicy {
   protectRecentTokens?: number
   /** 本次体积归档候选可回收 token 总量不足该值时全部保留原文，减少缓存前缀断裂次数；缺省 0 */
   minSavingsTokens?: number
+  /** 归档经济门槛；缺省时批量只按 minSavingsTokens 裁决 */
+  economics?: ArchiveEconomics
+  /**
+   * 'relief'：上下文接近压缩阈值，批量归档改用纾解规则（不要求回本，只要求 R/S 达标），
+   * 用无损归档替代有损整段压缩；缺省 'economic'
+   */
+  pressure?: 'economic' | 'relief'
 }
 
 /** 归档候选：一份待写入 artifact 的工具结果原文 */
@@ -207,6 +234,21 @@ export interface RequestProjectionDiagnostics {
   prunedCount: number
   archiveFailures: number
   estimatedTokensSaved: number
+  /** 本次批量归档裁决；没有批量候选时为 null */
+  batch: ArchiveBatchDecision | null
+}
+
+export interface ArchiveBatchDecision {
+  mode: 'legacy' | 'economic' | 'relief'
+  candidateCount: number
+  admittedCount: number
+  /** 采纳切点的净回收 R 与断点后存活后缀 S（估算 token）；未采纳时取评估过的最优切点 */
+  savingsTokens: number
+  rebuildSuffixTokens: number
+  /** 经济层净收益 G；其他模式为 null */
+  netBenefitTokens: number | null
+  /** 经济层实际使用的携带地平线（请求数）；其他模式为 null */
+  carryRounds: number | null
 }
 
 /** 首次归档时交回调用方的冻结投递；写回权威上下文与发事件的 Owner 是调用方。 */
@@ -226,7 +268,8 @@ export interface RequestProjectionResult {
 const EMPTY_DIAGNOSTICS: RequestProjectionDiagnostics = {
   prunedCount: 0,
   archiveFailures: 0,
-  estimatedTokensSaved: 0
+  estimatedTokensSaved: 0,
+  batch: null
 }
 
 const EMPTY_DEFER_SET: ReadonlySet<string> = new Set()
@@ -321,17 +364,129 @@ export const MIN_SAVINGS_TOKENS_CAP = 20_000
 /** 批量归档最低可回收量占上下文窗口的比例 */
 export const MIN_SAVINGS_WINDOW_RATIO = 0.1
 
-/** 仅在模型具备 archive_read 时启用投影归档，避免发出无法回读的占位符。 */
+export interface RequestProjectionPolicyOptions {
+  /** 来自 CacheProfile；缺省不启用经济门槛 */
+  economics?: CacheEconomics
+  /** 压缩服务最近一次预算评估快照；缺省视为低压力 */
+  budget?: { estimatedTokens: number; threshold: number; contextWindow: number }
+}
+
+/**
+ * 仅在模型具备 archive_read 时启用投影归档，避免发出无法回读的占位符。
+ * 预算逼近压缩阈值时进入纾解层：批量归档按 R/S 裁决，用无损归档替代有损压缩。
+ */
 export function resolveRequestProjectionPolicy(
   hasArchiveRead: boolean,
-  contextWindow: number
+  contextWindow: number,
+  options?: RequestProjectionPolicyOptions
 ): ActiveToolResultPrunePolicy {
   if (!hasArchiveRead) return DISABLED_PRUNE_POLICY
-  return {
+  const policy: ActiveToolResultPrunePolicy = {
     enabled: true,
     protectRecentTokens: Math.min(PROTECT_RECENT_TOKENS_CAP, Math.floor(contextWindow * PROTECT_RECENT_WINDOW_RATIO)),
     minSavingsTokens: Math.min(MIN_SAVINGS_TOKENS_CAP, Math.floor(contextWindow * MIN_SAVINGS_WINDOW_RATIO))
   }
+  if (options?.economics) {
+    policy.economics = {
+      readRatio: options.economics.readRatio,
+      writePremium: options.economics.writePremium,
+      carryHorizonRounds: DEFAULT_CARRY_HORIZON_ROUNDS,
+      reliefMinSavingsRatio: RELIEF_MIN_SAVINGS_RATIO
+    }
+  }
+  const budget = options?.budget
+  if (budget && policy.economics) {
+    policy.economics.headroomTokens = Math.max(0, budget.threshold - budget.estimatedTokens)
+  }
+  if (budget && budget.estimatedTokens >= budget.threshold - Math.floor(budget.contextWindow * RELIEF_HEADROOM_RATIO)) {
+    policy.pressure = 'relief'
+  }
+  return policy
+}
+
+/**
+ * 批量归档裁决：所有候选共享最早断点，按切点 k（归档批内第 k 个及之后全部候选）评估。
+ * R_k 为切点后净回收总量；S_k 为断点后需按全价重建的存活后缀
+ * （newTailStart 起是本请求新付费的尾部，不计入重建）。返回批内序号；null 表示全部保留。
+ */
+function resolveArchiveBatch(args: {
+  /** 批量候选在 sourceMessages 中的下标（升序）与各自净回收估算 */
+  candidates: Array<{ index: number; savingsTokens: number }>
+  /** 投递形态下第 i 条消息到末尾的 token 估算；i === messages.length 时为 0 */
+  tokensFrom: (index: number) => number
+  /** 本请求新付费尾部起点：延迟投递批次对应的 assistant 消息下标 */
+  newTailStart: number
+  /** 本会话平均每请求增长的估算 token（tokensFrom(0) / assistant 条数），用于截断携带地平线 */
+  averageGrowthTokens: number
+  minSavingsTokens: number
+  economics?: ArchiveEconomics
+  pressure?: 'economic' | 'relief'
+}): { admitFrom: number | null; decision: ArchiveBatchDecision } {
+  const { candidates, tokensFrom, newTailStart, averageGrowthTokens, minSavingsTokens, economics, pressure } = args
+  const n = candidates.length
+  const savingsAfter = new Array<number>(n)
+  let acc = 0
+  for (let k = n - 1; k >= 0; k--) {
+    acc += candidates[k]!.savingsTokens
+    savingsAfter[k] = acc
+  }
+  const tailTokens = tokensFrom(newTailStart)
+  const rebuildSuffix = (k: number): number =>
+    Math.max(0, tokensFrom(candidates[k]!.index) - tailTokens - savingsAfter[k]!)
+  const report = (k: number, admitFrom: number | null, netBenefitTokens: number | null, mode: ArchiveBatchDecision['mode'], carryRounds: number | null) => ({
+    admitFrom,
+    decision: {
+      mode,
+      candidateCount: n,
+      admittedCount: admitFrom === null ? 0 : n - admitFrom,
+      savingsTokens: savingsAfter[k]!,
+      rebuildSuffixTokens: rebuildSuffix(k),
+      netBenefitTokens,
+      carryRounds
+    }
+  })
+
+  // 无经济参数：总量达标即整批归档，与历史行为一致
+  if (!economics) {
+    return report(0, savingsAfter[0]! >= minSavingsTokens ? 0 : null, null, 'legacy', null)
+  }
+
+  // 纾解层：逼近压缩阈值，不要求回本，只要求回收量相对重建后缀达标
+  if (pressure === 'relief') {
+    let firstEligible = -1
+    for (let k = 0; k < n; k++) {
+      if (savingsAfter[k]! < minSavingsTokens) continue
+      if (firstEligible < 0) firstEligible = k
+      if (savingsAfter[k]! >= economics.reliefMinSavingsRatio * rebuildSuffix(k)) {
+        return report(k, k, null, 'relief', null)
+      }
+    }
+    return report(firstEligible >= 0 ? firstEligible : 0, null, null, 'relief', null)
+  }
+
+  // 经济层：在达标切点中取净收益 G = α·N̂·R − (β−α)·S 最大者，G > 0 才采纳。
+  // 携带地平线按压缩距离截断：越近压缩，内容被携带的次数越少，改写越不值。
+  // 纾解层不受此影响——它的对手是压缩本身，不是携带成本。
+  const { readRatio, writePremium, carryHorizonRounds } = economics
+  const horizon = economics.headroomTokens === undefined
+    ? carryHorizonRounds
+    : Math.min(carryHorizonRounds, Math.max(1, Math.floor(economics.headroomTokens / Math.max(1, averageGrowthTokens))))
+  let bestK = -1
+  let bestGain = -Infinity
+  for (let k = 0; k < n; k++) {
+    if (savingsAfter[k]! < minSavingsTokens) continue
+    const gain = readRatio * horizon * savingsAfter[k]! - (writePremium - readRatio) * rebuildSuffix(k)
+    // 并列取更靠后的切点：断点更浅，重建范围更小
+    if (gain >= bestGain) {
+      bestGain = gain
+      bestK = k
+    }
+  }
+  if (bestK < 0) {
+    const gain0 = readRatio * horizon * savingsAfter[0]! - (writePremium - readRatio) * rebuildSuffix(0)
+    return report(0, null, gain0, 'economic', horizon)
+  }
+  return report(bestK, bestGain > 0 ? bestK : null, bestGain, 'economic', horizon)
 }
 
 export async function projectRequestMessages(
@@ -461,16 +616,55 @@ export async function projectRequestMessages(
     decisions.push({ kind: 'passthrough' })
   }
 
-  // 批量裁决：可回收总量不达标时全部保留原文，避免为小收益反复打断缓存前缀。
-  let batchSavingsTokens = 0
-  for (const decision of decisions) {
+  // 批量裁决：候选共享最早断点，按政策模式（legacy / economic / relief）统一选切点。
+  const batchCandidates: Array<{ index: number; savingsTokens: number }> = []
+  for (let index = 0; index < decisions.length; index++) {
+    const decision = decisions[index]!
     if (decision.kind === 'archive' && !decision.immediate) {
-      batchSavingsTokens += estimateArchiveSavingsTokens(decision.text)
+      batchCandidates.push({ index, savingsTokens: estimateArchiveSavingsTokens(decision.text) })
     }
   }
-  const batchAllowed = batchSavingsTokens >= minSavingsTokens
+  // 新付费尾部起点：最新一批工具调用对应的 assistant 消息；其后的输入本请求无论如何全价计费
+  const deferredHead = sourceMessages.findIndex(
+    m => m.role === 'assistant' && (m.toolCalls?.some(call => deferToolCallIds.has(call.id)) ?? false)
+  )
+  const newTailStart = deferredHead >= 0 ? deferredHead : sourceMessages.length
+  const tokensFrom = (index: number): number =>
+    index >= sourceMessages.length ? 0 : estimateDeliveredMessageTokens(sourceMessages[index]!) + suffixAfter(index)
+
+  // 平均每请求增长：用总量 / assistant 步数估算；含系统提示会略高估，即偏保守
+  let averageGrowthTokens = 0
+  if (batchCandidates.length > 0) {
+    const assistantCount = sourceMessages.reduce((count, m) => count + (m.role === 'assistant' ? 1 : 0), 0)
+    averageGrowthTokens = tokensFrom(0) / Math.max(1, assistantCount)
+  }
+  const batch = batchCandidates.length > 0
+    ? resolveArchiveBatch({
+        candidates: batchCandidates,
+        tokensFrom,
+        newTailStart,
+        averageGrowthTokens,
+        minSavingsTokens,
+        economics: input.policy.economics,
+        pressure: input.policy.pressure
+      }).decision
+    : null
+  if (batch) {
+    recordMetric('projection.archive_batch', {
+      candidateCount: batch.candidateCount,
+      admittedCount: batch.admittedCount,
+      savingsTokens: batch.savingsTokens,
+      rebuildSuffixTokens: batch.rebuildSuffixTokens,
+      ...(batch.netBenefitTokens !== null ? { netBenefitTokens: batch.netBenefitTokens } : {}),
+      ...(batch.carryRounds !== null ? { carryRounds: batch.carryRounds } : {})
+    }, { tags: { mode: batch.mode, admitted: batch.admittedCount > 0 ? '1' : '0' } })
+  }
+  const admitFrom = batch === null
+    ? null
+    : batch.admittedCount > 0 ? batch.candidateCount - batch.admittedCount : null
 
   // 阶段 2：按决定产出投影，归档回调仍按消息顺序串行执行。
+  let batchOrdinal = 0
   for (let index = 0; index < sourceMessages.length; index++) {
     const msg = sourceMessages[index]!
     const decision = decisions[index]!
@@ -482,9 +676,12 @@ export async function projectRequestMessages(
       projected.push({ ...msg, content: decision.placeholder })
       continue
     }
-    if (!decision.immediate && !batchAllowed) {
-      projected.push(msg)
-      continue
+    if (!decision.immediate) {
+      const position = batchOrdinal++
+      if (admitFrom === null || position < admitFrom) {
+        projected.push(msg)
+        continue
+      }
     }
 
     const text = decision.text
@@ -545,7 +742,7 @@ export async function projectRequestMessages(
 
   return {
     messages: projectImagesWithinBudget(projected),
-    diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved },
+    diagnostics: { prunedCount, archiveFailures, estimatedTokensSaved, batch },
     frozenDeliveries
   }
 }

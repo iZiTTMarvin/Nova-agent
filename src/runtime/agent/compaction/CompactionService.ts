@@ -9,6 +9,7 @@ import type { ChatMessage, MessageOrigin } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { CacheDiagnostics } from '../../model/cacheDiagnostics'
 import type { CacheProfile } from '../../model/cacheProfile'
+import type { ReasoningEffort } from '../../../shared/config/llmRegistry'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { ContextBudgetExceededError, ContextRecoveryFailedError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import { getEffectiveToolDefinitions, type AgentContext } from '../core/AgentContext'
@@ -70,6 +71,8 @@ export interface CompactionServiceOptions {
    * 落在同一路由槽位，前缀对齐才能命中；非亲和档案由客户端白名单忽略。
    */
   promptCacheKey?: string
+  /** 会话级思考强度；reasoningEffort 参与路由身份，摘要请求须与主请求一致 */
+  getReasoningEffort?: () => ReasoningEffort | undefined
   /** 按被折叠 messageId 聚合 checkpoint 文件清单；缺省视为无变更 */
   collectTouchedFiles?: (messageIds: readonly string[]) => TouchedFilesSnapshot
   /** 提交瞬间的工作区 / activePlan 路径 */
@@ -87,7 +90,10 @@ type CompactionApplyResult = { adopted: true } | { adopted: false; reason: 'stal
 
 interface CompactionOutputs { stub: string | null; state: string; handoff: StructuredHandoff }
 
-/** 管理压缩候选与提交资格；持久化成功后统一发布上下文和缓存纪元。 */
+/**
+ * 管理压缩候选与提交资格；持久化成功后统一发布上下文和缓存纪元。
+ * 阈值压缩是留有 20% 预算余量的优化：摘要失败只记退避并放行本次请求，不终止任务；blocked 才是硬约束。
+ */
 export class CompactionService {
   private historyProjection: BuildConversationContextOptions = {}
   private readonly measureRequest: NonNullable<CompactionServiceOptions['measureRequest']>
@@ -104,6 +110,7 @@ export class CompactionService {
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
   private readonly idleProjection: SummaryProjection
   private readonly promptCacheKey: string | undefined
+  private readonly getReasoningEffort: CompactionServiceOptions['getReasoningEffort']
   private readonly collectTouchedFiles: CompactionServiceOptions['collectTouchedFiles']
   private readonly getRealityAnchors?: () => { workspacePath: string | null; activePlanPath: string | null }
   private readonly idleTimer: IdleCompressionTimer
@@ -113,6 +120,8 @@ export class CompactionService {
   private idleReschedulePending = false
   private idleGeneration = 0
   private disposed = false
+  /** 最近一次阈值压缩 fail-open 时的估算 token；估算增长不足窗口 2% 前不再重试摘要 */
+  private thresholdFailOpenAt: number | undefined
   constructor(options: CompactionServiceOptions) {
     this.measureRequest = options.measureRequest ?? ((messages, tools) => measureRequestBudget({ messages, tools }, 'unknown', options.contextWindow))
     this.canWrite = () => !this.disposed && (options.canWrite?.() ?? true)
@@ -126,6 +135,7 @@ export class CompactionService {
     this.getIdleCacheProfile = options.getIdleCacheProfile
     this.idleProjection = options.idleProjection
     this.promptCacheKey = options.promptCacheKey
+    this.getReasoningEffort = options.getReasoningEffort
     this.collectTouchedFiles = options.collectTouchedFiles
     this.getRealityAnchors = options.getRealityAnchors
     this.idleTimer = new IdleCompressionTimer(() => {
@@ -201,9 +211,26 @@ export class CompactionService {
     if (budget.status === 'blocked' && this.splitThresholdContext().oldMessages.length === 0) {
       throw new ContextBudgetExceededError(budget.estimatedTokens, request.serializedBytes, false)
     }
+    // fail-open 退避：估算增长不足窗口 2% 时不再重试摘要，避免每轮白付两次压缩调用
+    if (budget.status === 'compact' && this.thresholdFailOpenAt !== undefined &&
+        budget.estimatedTokens < this.thresholdFailOpenAt + Math.floor(budget.contextWindow * 0.02)) {
+      const hardBudget = this.contextBudgetManager.enforceInline(messages)
+      if (hardBudget.status === 'requires_compaction') {
+        throw new ContextBudgetExceededError(hardBudget.estimatedTokens, hardBudget.serializedBytes, true)
+      }
+      return { status: 'within', revision: this.context.compactionState?.revision ?? 0 }
+    }
     const result = await this.runCompaction('threshold', projection, signal, this.canWrite)
     if (!this.canWrite() || signal?.aborted) throw new ContextRecoveryFailedError('authority-expired')
-    if (result.failure) throw result.failure
+    // compact 只是优化目标：摘要失败放行并记退避点；blocked 的失败仍须抛出
+    if (result.failure && budget.status !== 'compact') throw result.failure
+    if (result.failure) {
+      this.thresholdFailOpenAt = budget.estimatedTokens
+      recordMetric('compaction.rejected', { estimatedTokens: budget.estimatedTokens }, { tags: {
+        reason: 'fail-open',
+        failure: result.failure instanceof ContextRecoveryFailedError ? result.failure.reason : result.failure.message
+      } })
+    }
     if (!result.adopted) {
       const hardBudget = this.contextBudgetManager.enforceInline(messages)
       if (hardBudget.status === 'requires_compaction') throw new ContextBudgetExceededError(hardBudget.estimatedTokens, hardBudget.serializedBytes, true)
@@ -297,6 +324,7 @@ export class CompactionService {
   reset(): void {
     this.cancelIdle()
     this.budget = undefined
+    this.thresholdFailOpenAt = undefined
   }
 
   dispose(): void {
@@ -491,7 +519,8 @@ export class CompactionService {
   }
 
   /**
-   * 并行发出 stub / state 两次压缩请求，都回放主对话前缀。
+   * 并行发出 stub / state 两次压缩请求，都回放主对话前缀——含工具定义与思考强度。
+   * 路由身份（resolveRouteIdentity 含 reasoningEffort）必须与主请求一致，否则服务端前缀缓存从头 miss。
    * state 失败则整轮放弃；stub 失败则降级为代码指针。
    */
   private async requestCompactionOutputs(
@@ -601,19 +630,26 @@ export class CompactionService {
     usageSources: UsageSource[],
     abortSignal?: AbortSignal
   ): Promise<string | null> {
+    // 摘要请求携带与主请求相同的工具定义以复现前缀。
+    // 不发 tool_choice：实测 CommandCode/DeepSeek 把它计入缓存键，会让摘要请求从头 miss；
+    // 模型若仍发 tool_call，下方只收 text_delta → 空文本 → empty-summary，由 fail-open 兜住。
+    const tools = this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context)
+    const effort = this.getReasoningEffort?.()
     const chatOptions: ChatOptions = {
       abortSignal,
       includeInternalMessages: true,
       purpose,
       observation: { logicalRequestId: randomUUID(), runId: this.context.runId, sessionId: this.context.sessionId },
-      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {})
+      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {}),
+      ...(effort !== undefined ? { reasoningEffort: effort } : {})
     }
 
     let text = ''
     let source: UsageSource | undefined
     let acceptedText = false
     try {
-      const stream = this.modelClient.chat(messages, undefined, chatOptions)
+      // 摘要指令已禁止调用工具；模型仍发 tool_call 时下方只收 text_delta → 空文本 → empty-summary，由 fail-open 兜住
+      const stream = this.modelClient.chat(messages, tools, chatOptions)
       for await (const event of stream) {
         if (abortSignal?.aborted) return null
         if (event.type === 'text_delta') {
@@ -699,6 +735,7 @@ export class CompactionService {
     recordMetric('compaction.committed', { revision: ledger.revision ?? 0, facts: outputs.handoff.facts.length }, { tags: {
       routeId: parts.authority!.routeId, envelopeHash: parts.authority!.envelopeHash, trigger,
       durability: this.context.sessionStore ? 'persisted' : 'ephemeral' } })
+    this.thresholdFailOpenAt = undefined
     return { adopted: true }
   }
 

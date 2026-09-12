@@ -6,6 +6,7 @@
  * - promptCacheKey → 会话缓存路由 key 注入（OpenAICompatibleModelClient）
  * - reasoningReplay / reasoningWire → 历史 reasoning 回放（toApiMessage）
  * - idlePolicy → 空闲压缩资格（shouldScheduleIdleCompaction）
+ * - economics → 投影层归档回本判定（resolveRequestProjectionPolicy）
  * - minCacheableTokens 暂无消费方，预留
  *
  * 判定风格对齐 dialect.ts 的 preferredToolDialect（域名片段 + modelId 分词）。
@@ -16,6 +17,14 @@ export type { CacheProfileId }
 
 /** 请求体缓存标记策略：仅 anthropic 注入 cache_control */
 export type CacheMarker = 'cache_control' | 'none'
+
+/** 缓存经济参数：相对未命中输入单价 = 1 的比例；用于归档回本判定，不是账单价表 */
+export interface CacheEconomics {
+  /** 命中 token 单价比例 α */
+  readRatio: number
+  /** 断点后重建后缀的有效单价比例 β；有缓存写入溢价的服务 > 1 */
+  writePremium: number
+}
 
 export interface CacheProfile {
   id: CacheProfileId
@@ -43,6 +52,8 @@ export interface CacheProfile {
   minCacheableTokens?: number
   /** 空闲压缩 / TTL 相关策略 */
   idlePolicy: 'anthropic-short-ttl' | 'provider-managed' | 'unknown'
+  /** 归档回本判定用的相对价格参数 */
+  economics: CacheEconomics
 }
 
 /** resolveCacheProfile 的可选覆盖（显式 profile + 旧 cacheStrategy 兼容） */
@@ -53,7 +64,11 @@ export interface ResolveCacheProfileOverride {
   cacheStrategy?: CacheStrategy
 }
 
-/** 各档案的静态能力表 */
+/**
+ * 各档案的静态能力表。
+ * economics 是规划参数而非精确账单：官方直连 DeepSeek 命中价更低、第三方网关各异；
+ * 真实 α 越低归档越不划算，按模型配置覆盖是后续事项。
+ */
 const PROFILES: Record<CacheProfileId, CacheProfile> = {
   anthropic: {
     id: 'anthropic',
@@ -61,7 +76,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     promptCacheKey: 'never',
     reasoningReplay: 'none',
     reasoningWire: 'reasoning_content',
-    idlePolicy: 'anthropic-short-ttl'
+    idlePolicy: 'anthropic-short-ttl',
+    economics: { readRatio: 0.1, writePremium: 1.25 }
   },
   deepseek: {
     id: 'deepseek',
@@ -69,7 +85,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     promptCacheKey: 'never',
     reasoningReplay: 'tool-call-history',
     reasoningWire: 'reasoning_content',
-    idlePolicy: 'provider-managed'
+    idlePolicy: 'provider-managed',
+    economics: { readRatio: 0.1, writePremium: 1 }
   },
   kimi: {
     id: 'kimi',
@@ -79,7 +96,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     reasoningWire: 'reasoning_content',
     // Kimi 实际 reasoning 字段由首次响应观测决定（reasoning_content / reasoning 两种端点变体）
     reasoningWireObservable: true,
-    idlePolicy: 'provider-managed'
+    idlePolicy: 'provider-managed',
+    economics: { readRatio: 0.1, writePremium: 1 }
   },
   glm: {
     id: 'glm',
@@ -87,7 +105,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     promptCacheKey: 'never',
     reasoningReplay: 'all-history',
     reasoningWire: 'reasoning_content',
-    idlePolicy: 'provider-managed'
+    idlePolicy: 'provider-managed',
+    economics: { readRatio: 0.1, writePremium: 1 }
   },
   minimax: {
     id: 'minimax',
@@ -96,7 +115,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     // M2/M3 为交错思维链模型：官方要求全量历史保留思考，否则模型退化为只输出摘要式标题
     reasoningReplay: 'all-history',
     reasoningWire: 'think-tag',
-    idlePolicy: 'provider-managed'
+    idlePolicy: 'provider-managed',
+    economics: { readRatio: 0.2, writePremium: 1 }
   },
   openai: {
     id: 'openai',
@@ -104,7 +124,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     promptCacheKey: 'session',
     reasoningReplay: 'none',
     reasoningWire: 'reasoning_content',
-    idlePolicy: 'provider-managed'
+    idlePolicy: 'provider-managed',
+    economics: { readRatio: 0.1, writePremium: 1 }
   },
   generic: {
     id: 'generic',
@@ -112,7 +133,8 @@ const PROFILES: Record<CacheProfileId, CacheProfile> = {
     promptCacheKey: 'never',
     reasoningReplay: 'none',
     reasoningWire: 'reasoning_content',
-    idlePolicy: 'unknown'
+    idlePolicy: 'unknown',
+    economics: { readRatio: 0.1, writePremium: 1 }
   }
 }
 

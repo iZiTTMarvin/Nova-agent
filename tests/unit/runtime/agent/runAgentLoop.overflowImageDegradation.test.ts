@@ -16,7 +16,7 @@ import { HookManager } from '../../../../src/runtime/agent/core/HookManager'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { createAgentContext } from '../../../../src/runtime/agent/core/AgentContext'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
-import { IMAGE_OVERFLOW_OMITTED_PLACEHOLDER, type SummaryProjection } from '../../../../src/runtime/request-projection'
+import { IMAGE_OVERFLOW_OMITTED_PLACEHOLDER, type ActiveToolResultPrunePolicy, type SummaryProjection } from '../../../../src/runtime/request-projection'
 import type { ChatEvent, ChatMessage, ChatToolCall, ContentBlock } from '../../../../src/runtime/model/types'
 import type { ToolBatchExecutionResult } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 
@@ -83,6 +83,7 @@ function createHarness(opts: {
   compactionResult?: () => Promise<boolean>
   runOverflowCompaction?: (mode: 'standard' | 'aggressive', projection: SummaryProjection) => Promise<boolean>
   executeBatch?: (toolCalls: ChatToolCall[]) => Promise<ToolBatchExecutionResult>
+  resolveRequestProjectionPolicy?: () => ActiveToolResultPrunePolicy
 }) {
   const client = new MockModelClient()
   const modelPool = new ModelClientPool({
@@ -113,7 +114,15 @@ function createHarness(opts: {
     messageId: 'msg_test',
     userText: '看图',
     context,
-    config: { maxToolRounds: 8, toolExecution: 'parallel', maxParallelToolCalls: 4, supportsVision: true },
+    config: {
+      maxToolRounds: 8,
+      toolExecution: 'parallel',
+      maxParallelToolCalls: 4,
+      supportsVision: true,
+      ...(opts.resolveRequestProjectionPolicy
+        ? { resolveRequestProjectionPolicy: opts.resolveRequestProjectionPolicy }
+        : {})
+    },
     streamProcessor: processor,
     hookManager: new HookManager(),
     emit: () => {},
@@ -278,5 +287,25 @@ describe('runAgentLoop 溢出图片降级策略', () => {
     expect(summaryMessages).toBeDefined()
     // 压缩链与随后的主请求读取同一降级集合：两视图逐字节一致
     expect(JSON.stringify(summaryMessages)).toBe(JSON.stringify(client.getCalls()[2]!.messages))
+  })
+
+  it('投影归档策略在每次模型请求前重新解析（纾解层可在一个 turn 中途生效）', async () => {
+    const history: ChatMessage[] = [{ role: 'user', content: 'hi' }]
+    let resolveCalls = 0
+    const { client, run } = createHarness({
+      history,
+      resolveRequestProjectionPolicy: () => {
+        resolveCalls++
+        return { enabled: false }
+      }
+    })
+    client.addResponse(toolCallResponse('r1'))
+    client.addResponse(textResponse())
+
+    const end = await run()
+
+    expect(end).toEqual({ ended: 'normal' })
+    expect(client.getCalls()).toHaveLength(2)
+    expect(resolveCalls).toBe(2)
   })
 })

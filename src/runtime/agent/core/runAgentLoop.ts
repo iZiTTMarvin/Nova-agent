@@ -159,7 +159,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   let stopReason: StopReason | undefined
   const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
   const archiveWriter = createArchiveWriter(context)
-  const requestProjectionPolicy = config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY
+  // 策略每请求解析一次：占位符一旦冻结，不会因后续策略回落而复活
+  let currentProjectionPolicy: ActiveToolResultPrunePolicy = DISABLED_PRUNE_POLICY
   // 最新一批工具调用：其结果在紧随其后的请求中全文投递，再之后才可归档。
   // 摘要投影经 getter 与主请求读同一集合，保证两视图字节前缀恒等。
   let deferredToolCallIds: ReadonlySet<string> = new Set()
@@ -170,7 +171,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   const omittedImages = new Set<string>()
   const summaryProjection = createSummaryProjection({
     context,
-    policy: requestProjectionPolicy,
+    policy: () => currentProjectionPolicy,
     archiveCache: requestProjectionArchiveCache,
     deferToolCallIds: () => deferredToolCallIds,
     omittedImages: () => omittedImages
@@ -278,9 +279,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       // 首次归档的冻结投递在此写回权威上下文，供后续投影幂等复用。
       // 预算压缩成功后的 continue 会回到循环顶重新执行投影，
       // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
+      currentProjectionPolicy = config.resolveRequestProjectionPolicy?.() ?? DISABLED_PRUNE_POLICY
       const projection = await projectRequestMessages({
         messages: chatMessages,
-        policy: requestProjectionPolicy,
+        policy: currentProjectionPolicy,
         archiveCache: requestProjectionArchiveCache,
         archive: archiveWriter,
         deferToolCallIds: deferredToolCallIds,
