@@ -50,6 +50,7 @@ import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { useTodoStore } from '../todo/useTodoStore'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
+import { PlanApprovalCard } from './PlanApprovalCard'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
@@ -181,6 +182,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     !!pendingPlanReview
   const pausedMessageId =
     pendingPlanReview?.messageId ?? pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+  // 审批 dock 只服务当前会话的 review：快照归属其他会话时不替换输入区
+  const planReviewForCurrentSession =
+    pendingPlanReview && pendingPlanReview.sessionId === currentSessionId ? pendingPlanReview : null
 
   // 取消/中断都归属发起会话：其他会话的视图不呈现、不操作（归属未知时按旧语义放行当前会话）
   const cancellingForCurrentSession =
@@ -981,7 +985,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
               <div className="w-full pointer-events-auto">
                 <TodoPanel
                   sessionId={currentSessionId}
-                  priorityDockOccupied={!!pendingAskQuestion}
+                  priorityDockOccupied={!!pendingAskQuestion || !!planReviewForCurrentSession}
                 />
               </div>
             )}
@@ -1039,6 +1043,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 role="note"
               >
                 子会话为只读执行记录。请从父会话的子任务行继续、授权或重试。
+              </div>
+            ) : planReviewForCurrentSession ? (
+              /* 计划审批 dock：替换输入区（同 ZCode 形态），审批期间不再排队输入 */
+              <div className="plan-approval-dock w-full">
+                <PlanApprovalCard review={planReviewForCurrentSession} />
               </div>
             ) : (
               /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */

@@ -1,3 +1,27 @@
+/* 审批 dock：替换输入区的容器，表面与 composer 一致 */
+.plan-approval-dock {
+  pointer-events: auto;
+  border: 1px solid var(--border-cream);
+  border-radius: 16px;
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-whisper);
+  backdrop-filter: blur(24px);
+  overflow: hidden;
+}
+
+.plan-approval-dock:hover {
+  box-shadow: var(--shadow-card);
+}
+
+/* dock 内的审批卡不再自带边框/外边距/投影，由 dock 提供表面 */
+.plan-approval-dock .plan-approval-card {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
 .plan-approval-card {
   margin: 12px 0;
   overflow: hidden;
@@ -14,7 +38,7 @@
 }
 
 .plan-approval-card--ignored .plan-approval-card__header {
-  padding-bottom: 13px;
+  padding-bottom: 10px;
   border-bottom: 0;
 }
 
@@ -30,16 +54,13 @@
 
 .plan-approval-card__header {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px 11px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 14px 8px;
   border-bottom: 1px solid var(--border-cream);
 }
 
 .plan-approval-card__eyebrow {
-  display: block;
-  margin-bottom: 3px;
   color: var(--text-muted);
   font-size: 0.68rem;
   font-weight: 650;
@@ -50,11 +71,12 @@
 .plan-approval-card__title {
   margin: 0;
   color: var(--text-primary);
-  font-size: 0.94rem;
+  font-size: 0.86rem;
   font-weight: 650;
 }
 
 .plan-approval-card__count {
+  margin-left: auto;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.7rem;
@@ -62,8 +84,8 @@
 
 .plan-approval-card__choices {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  gap: 6px;
+  padding: 8px 10px;
 }
 
 .plan-approval-card__choice,
@@ -79,8 +101,8 @@
 .plan-approval-card__choice {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 12px;
+  gap: 8px;
+  padding: 7px 10px;
   cursor: pointer;
   text-align: left;
 }
@@ -95,8 +117,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
   flex: 0 0 auto;
   border: 1px solid var(--border-warm);
   border-radius: 50%;
@@ -111,34 +133,30 @@
 
 .plan-approval-card__choice strong,
 .plan-approval-card__choice small {
-  display: block;
+  display: inline;
 }
 
 .plan-approval-card__choice strong {
-  font-size: 0.83rem;
+  font-size: 0.8rem;
 }
 
 .plan-approval-card__choice small {
-  margin-top: 2px;
+  margin-left: 6px;
   color: var(--text-muted);
   font-size: 0.74rem;
 }
 
 .plan-approval-card__feedback {
-  display: grid;
-  gap: 7px;
-  padding: 10px 11px;
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 600;
+  padding: 6px;
 }
 
 .plan-approval-card__feedback textarea {
   box-sizing: border-box;
   width: 100%;
   resize: vertical;
-  min-height: 66px;
-  padding: 8px 9px;
+  min-height: 40px;
+  max-height: 140px;
+  padding: 6px 8px;
   border: 1px solid var(--border-warm);
   border-radius: 7px;
   background: var(--bg-app);
@@ -149,10 +167,11 @@
 .plan-approval-card__feedback textarea:focus {
   border-color: var(--color-brand);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-brand) 15%, transparent);
+  outline: none;
 }
 
 .plan-approval-card__error {
-  padding: 0 14px 10px;
+  padding: 0 12px 8px;
   color: var(--nova-status-error, var(--color-error));
   font-size: 0.76rem;
 }
@@ -162,7 +181,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 7px;
-  padding: 9px 12px;
+  padding: 7px 10px;
   border-top: 1px solid var(--border-cream);
 }
 
@@ -177,4 +196,41 @@
   .plan-approval-card__hint {
     display: none;
   }
+}
+
+/* 消息流内的等待状态行：与 ask-question-tool-card 同形态的原子行 */
+.plan-approval-pending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 1px 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--text-secondary, #5c574e);
+  font-size: 0.78rem;
+}
+
+.plan-approval-pending__glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--color-brand, #c96442);
+  animation: plan-approval-pending-pulse 1.4s ease-in-out infinite;
+}
+
+.plan-approval-pending__label {
+  font-weight: 600;
+}
+
+.plan-approval-pending__hint {
+  color: var(--text-muted, #8a857d);
+  font-size: 0.72rem;
+}
+
+@keyframes plan-approval-pending-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
 }
