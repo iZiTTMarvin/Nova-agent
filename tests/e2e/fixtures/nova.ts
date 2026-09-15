@@ -118,6 +118,7 @@ function isolatedElectronEnv(profileRoot: string): Record<string, string> {
   return {
     ...inherited,
     NODE_ENV: 'production',
+    NOVA_E2E: '1',
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
     APPDATA: path.join(profileRoot, 'appdata'),
     XDG_CONFIG_HOME: path.join(profileRoot, 'xdg'),

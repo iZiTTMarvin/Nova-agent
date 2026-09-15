@@ -3,7 +3,7 @@ import { readManifest } from '../../../runtime/checkpoints/manifest'
 import type { SessionMessageAppend, AppendMessageResult } from '../../../runtime/sessions/types'
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../../runtime/sessions/messageProjection'
 import type { MessageBlock, UserDeliveryFacts } from '../../../shared/session/types'
-import { appendTerminalErrorToBlocks } from '../../../shared/session/terminalErrorBlocks'
+import { appendTerminalErrorToBlocks, formatTerminalErrorMessage } from '../../../shared/session/terminalErrorBlocks'
 import { retainCommittedBlocksForRetry } from '../../../shared/session/retainCommittedBlocksForRetry'
 import { getSessionStore } from '../../services/SessionStoreHost'
 import { getRunCoordinator } from '../../services/RunCoordinatorHost'
@@ -535,10 +535,12 @@ function saveErrorMessage(
   turnEndedAt: number = Date.now()
 ): void {
   const sessionStore = getSessionStore()
+  // 落盘即人话：协议前缀（ModelFailure:/ContextBudgetExceeded:）不进持久化，
+  // 与 blocks 路径的翻译落盘保持同一不变量
   const errorMessage: SessionMessageAppend = {
     id: messageId,
     role: 'assistant',
-    content: error,
+    content: formatTerminalErrorMessage(error),
     timestamp: Date.now(),
     ...(turnStartedAt !== undefined ? { turnStartedAt, turnEndedAt } : {})
   }

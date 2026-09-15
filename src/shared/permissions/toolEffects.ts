@@ -30,6 +30,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
     risk: 'dynamic'
   },
   web_search: { effects: ['network.read'], pathScope: 'none' },
+  web_fetch: { effects: ['network.read'], pathScope: 'none' },
   run_code: { effects: [], pathScope: 'none' },
   todo_write: { effects: ['session.write'], pathScope: 'none' },
   stage_transition: { effects: ['session.write'], pathScope: 'none' },

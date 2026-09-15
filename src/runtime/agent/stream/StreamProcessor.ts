@@ -25,6 +25,7 @@
 import { randomUUID } from 'crypto'
 import type { UsageSource } from '../../../shared/model/types'
 import { metricUsageAdoption } from '../../../shared/diagnostics/metrics'
+import { encodeModelFailureError } from '../../../shared/model/failureKinds'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
 import { resolveCacheProfile } from '../../model/cacheProfile'
 import { recordMetric } from '../../../shared/diagnostics/metrics'
@@ -398,10 +399,10 @@ export class StreamProcessor {
             if (params.isCancelled() || signal?.aborted) return finish({ kind: 'cancelled' })
 
             if (this.contextOverflowRetryCount >= StreamProcessor.MAX_CONTEXT_OVERFLOW_RETRIES) {
-              return finish({ kind: 'error', error: event.rawError })
+              return finish({ kind: 'error', error: encodeModelFailureError('context_overflow', event.rawError) })
             }
             if (this.contextOverflowRetryAttempted && overflowState.kind === 'failed' && this.contextOverflowCompactionAttempted) {
-              return finish({ kind: 'error', error: event.rawError })
+              return finish({ kind: 'error', error: encodeModelFailureError('context_overflow', event.rawError) })
             }
             this.contextOverflowRetryCount++
             this.contextOverflowRetryAttempted = true
@@ -437,7 +438,7 @@ export class StreamProcessor {
               shouldRetryChat = true
               break
             }
-            return finish({ kind: 'error', error: event.rawError })
+            return finish({ kind: 'error', error: encodeModelFailureError('context_overflow', event.rawError) })
           }
 
           case 'error': {
@@ -505,7 +506,7 @@ export class StreamProcessor {
                 break
               }
               case 'fail':
-                return finish({ kind: 'error', error: decision.error })
+                return finish({ kind: 'error', error: encodeModelFailureError(decision.kind, decision.error) })
             }
             break
           }
@@ -616,7 +617,7 @@ export class StreamProcessor {
         case 'recover_context':
           return finish({ kind: 'retry' })
         case 'fail':
-          return finish({ kind: 'error', error: decision.error })
+          return finish({ kind: 'error', error: encodeModelFailureError(decision.kind, decision.error) })
       }
     }
 

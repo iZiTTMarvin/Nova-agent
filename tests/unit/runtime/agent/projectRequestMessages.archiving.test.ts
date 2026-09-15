@@ -222,6 +222,43 @@ describe('projectRequestMessages archiving', () => {
     }
   })
 
+  it('web_fetch 大页走既有归档通道：当轮全文投递，滑出后成占位符且指引 archive_read 回读', async () => {
+    // 模拟 web_fetch 的返回格式（大页正文超过当轮归档阈值 2048 token ≈ 8K 字符）
+    const body = `URL：https://docs.example.com/guide
+状态：新抓取
+
+正文：
+${'文档内容行。'.repeat(2500)}`
+    const original: ChatMessage = { role: 'tool', toolCallId: 'wf1', content: body }
+    let archiveCalls = 0
+    const input = {
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => {
+        archiveCalls++
+        return { artifactId: 'wf-art' }
+      }
+    }
+
+    // 当轮（defer）：模型先完整看一遍全文，归档通道不动
+    const current = await projectRequestMessages({
+      ...input,
+      messages: [original],
+      deferToolCallIds: new Set(['wf1'])
+    })
+    expect(current.messages[0].content).toBe(body)
+    expect(archiveCalls).toBe(0)
+
+    // 下一轮（滑出工作窗口）：体积归档为占位符，原文可在 archive_store 回读
+    const next = await projectRequestMessages({ ...input, messages: [original] })
+    const placeholder = String(next.messages[0].content)
+    expect(isArchivedPlaceholder(placeholder)).toBe(true)
+    expect(archiveCalls).toBe(1)
+    expect(placeholder).toContain('archive_read')
+    // 权威上下文保留全文（工具侧零截断的另一半保证）
+    expect(original.content).toBe(body)
+  })
+
   it('阈值以下的输出不归档', async () => {
     const messages: ChatMessage[] = [
       { role: 'tool', content: 'x'.repeat(100), toolCallId: 'tc1' }

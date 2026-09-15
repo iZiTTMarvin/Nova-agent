@@ -268,6 +268,21 @@ export interface IpcCommands {
     params: void
     result: Session[]
   }
+  'session:export-markdown': {
+    params: { sessionId: string; target: 'clipboard' | 'file' }
+    result:
+      | { status: 'copied' }
+      | { status: 'saved'; filePath: string }
+      | { status: 'cancelled' }
+      | { status: 'failed'; error: string }
+  }
+  'diagnostics:export': {
+    params: void
+    result:
+      | { status: 'saved'; filePath: string }
+      | { status: 'cancelled' }
+      | { status: 'failed'; error: string }
+  }
   'load-session': {
     params: { sessionId: string }
     result: SessionDetail
@@ -397,6 +412,10 @@ export interface IpcCommands {
     result: void
   }
   // ── Workspace 单一事实源（PRD §5.1） ──
+  'workspace:search-files': {
+    params: { workspaceRoot: string; query: string }
+    result: { files: string[]; source: 'git' | 'recursive' }
+  }
   'workspace:get': {
     params: void
     result: WorkspaceState
@@ -721,6 +740,9 @@ export interface IpcEvents {
   'agent:error': {
     messageId: string
     error: string
+  }
+  'notifications:navigate': {
+    sessionId: string
   }
   'agent:message-end': {
     messageId: string

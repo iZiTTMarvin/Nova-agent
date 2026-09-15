@@ -22,12 +22,14 @@ import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
 import { useChatStore } from '../../stores/useChatStore'
-import { RegenerateIcon, EditIcon } from '../../components/Icons'
+import { useSettingsStore } from '../../stores/useSettingsStore'
+import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
+import type { TerminalErrorAction } from '../../../shared/session/terminalErrorBlocks'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageRenderMode } from './messageRenderTier'
 
@@ -332,6 +334,27 @@ function MessageItemInner({
     ? msg.blocks?.filter((b): b is { type: 'image'; fileName: string; dataUrl: string; mimeType: string } => b.type === 'image') ?? []
     : []
 
+  const [copied, setCopied] = useState(false)
+  const handleCopyMessage = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard) return
+    const text = typeof textContent === 'string' ? textContent : msg.content || ''
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    }, () => {})
+  }, [textContent, msg.content])
+
+  const copyButton = (
+    <IconButton
+      label={copied ? '已复制' : '复制此消息'}
+      icon={copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+      variant="ghost"
+      size="sm"
+      onClick={handleCopyMessage}
+      tooltip="复制此消息"
+    />
+  )
+
   /* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出。
      按钮几何全部交给 Astryx（IconButton size/variant），不再有 .astryx-* 几何覆盖。 */
   const actionsBar =
@@ -352,6 +375,7 @@ function MessageItemInner({
                 : '重新生成此回答（保留原分支）'
           }
         />
+        {copyButton}
       </div>
     ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
       /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
@@ -368,7 +392,11 @@ function MessageItemInner({
           isDisabled={!!rollbackError}
           tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
         />
+        {copyButton}
       </div>
+    ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && (userImageBlocks.length > 0 || !onEditResend) ? (
+      /* 含图片或不可编辑的用户消息：只给复制 */
+      <div className="chat-msg__actions">{copyButton}</div>
     ) : null
 
   /* 兄弟分支翻页器：‹ k/n › */
@@ -538,6 +566,9 @@ function MessageItemInner({
       {actionsBar}
       {branchFlipper}
       <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>{messageBody}</div>
+      {msg.isError && msg.errorActions && msg.errorActions.length > 0 ? (
+        <ErrorActionRow message={msg} onRegenerate={onRegenerate} />
+      ) : null}
     </>
   )
 
@@ -557,6 +588,57 @@ function MessageItemInner({
         </div>
       )}
     </ChatMessage>
+  )
+}
+
+// ── 终态错误动作按钮：把分类错误翻译成用户能点的下一步 ──────────────────
+
+const ERROR_ACTION_LABELS: Record<TerminalErrorAction, string> = {
+  'open-settings': '去设置检查',
+  'switch-model': '换模型',
+  retry: '重试',
+  'new-session': '开新会话',
+  'export-diagnostics': '导出诊断包'
+}
+
+function ErrorActionRow({
+  message,
+  onRegenerate
+}: {
+  message: ExtendedMessage
+  onRegenerate: (messageId: string) => void
+}) {
+  const handleAction = (action: TerminalErrorAction) => {
+    switch (action) {
+      case 'retry':
+        onRegenerate(message.id)
+        break
+      case 'open-settings':
+      case 'switch-model':
+        useSettingsStore.getState().setConfigModalOpen(true)
+        break
+      case 'new-session':
+        void useChatStore.getState().createNewSession(useSettingsStore.getState().currentProject ?? undefined)
+        break
+      case 'export-diagnostics':
+        void window.api.invoke('diagnostics:export')
+        break
+    }
+  }
+  return (
+    <div className="chat-msg__error-actions">
+      {message.errorActions!.map(action => (
+        <Button
+          key={action}
+          label={ERROR_ACTION_LABELS[action]}
+          size="sm"
+          variant="secondary"
+          onClick={() => handleAction(action)}
+        >
+          {ERROR_ACTION_LABELS[action]}
+        </Button>
+      ))}
+    </div>
   )
 }
 

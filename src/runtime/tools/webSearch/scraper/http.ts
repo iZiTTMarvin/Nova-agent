@@ -1,5 +1,5 @@
 /**
- * 共享 HTTP GET 客户端（Bing / DuckDuckGo 爬虫共用）
+ * 共享 HTTP GET 客户端（搜索爬虫与 web_fetch 共用）
  * 使用浏览器 UA，禁止 gzip 编码（避免 Bing 返回空骨架页）
  */
 
@@ -18,14 +18,14 @@ export interface ScraperFetchOptions {
 }
 
 /**
- * 对目标 URL 发起 GET 请求，返回 HTML 文本。
- * 超时或网络错误时抛出 Error。
+ * 单跳 GET：返回原始 Response，不跟随重定向（redirect: manual）。
+ * web_fetch 用它逐跳校验目标后再跟随；scraperFetch 是这里的 follow 封装。
+ * 超时或网络错误时抛 Error；非 2xx/3xx 状态由调用方裁决。
  */
-export async function scraperFetch(
+export async function scraperFetchResponse(
   url: string,
   options: ScraperFetchOptions = {}
-): Promise<string> {
-  // 调用前已中止的外部 signal 不应再发起请求
+): Promise<Response> {
   if (options.signal?.aborted) {
     throw new Error('请求已取消')
   }
@@ -33,15 +33,15 @@ export async function scraperFetch(
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const controller = new AbortController()
 
-  // 合并外部 signal 与内部超时 signal
   const onAbort = (): void => controller.abort()
   options.signal?.addEventListener('abort', onAbort)
 
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const response = await fetch(url, {
+    return await fetch(url, {
       method: 'GET',
+      redirect: 'manual',
       headers: {
         'User-Agent': BROWSER_USER_AGENT,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -51,12 +51,6 @@ export async function scraperFetch(
       },
       signal: controller.signal
     })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-    }
-
-    return await response.text()
   } catch (err) {
     if (controller.signal.aborted) {
       if (options.signal?.aborted) {
@@ -69,4 +63,19 @@ export async function scraperFetch(
     clearTimeout(timeoutId)
     options.signal?.removeEventListener('abort', onAbort)
   }
+}
+
+/**
+ * 对目标 URL 发起 GET 请求（自动跟随重定向），返回 HTML 文本。
+ * 超时或网络错误时抛出 Error。
+ */
+export async function scraperFetch(
+  url: string,
+  options: ScraperFetchOptions = {}
+): Promise<string> {
+  const response = await scraperFetchResponse(url, options)
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  }
+  return await response.text()
 }

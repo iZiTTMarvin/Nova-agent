@@ -18,6 +18,7 @@ import type { AgentContext } from '../../../../src/runtime/agent/core/AgentConte
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { ModelClient, ChatOptions } from '../../../../src/runtime/model/ModelClient'
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
+import { parseModelFailureError } from '../../../../src/shared/model/failureKinds'
 
 /** 产出持续 context_overflow 事件的 mock ModelClient */
 function createAlwaysOverflowClient(rawError = 'context overflow token limit'): ModelClient {
@@ -133,7 +134,11 @@ describe('StreamProcessor C3：上下文溢出重试上限', () => {
     // 直接返回 error，不再触发压缩，透传原始错误
     const r4 = await runOnce(processor)
     expect(r4.kind).toBe('error')
-    expect((r4 as { error: string }).error).toBe('context overflow token limit')
+    // 终态错误带分类前缀，展示侧据此翻译与给动作按钮
+    expect(parseModelFailureError((r4 as { error: string }).error)).toEqual({
+      kind: 'context_overflow',
+      message: 'context overflow token limit'
+    })
   })
 
   it('压缩成功后立即重置计数器（新消息开始），上限不跨轮次累积', async () => {
@@ -158,7 +163,10 @@ describe('StreamProcessor C3：上下文溢出重试上限', () => {
 
     const r = await runOnce(processor)
     expect(r.kind).toBe('error')
-    expect((r as { error: string }).error).toBe('context overflow token limit')
+    expect(parseModelFailureError((r as { error: string }).error)).toEqual({
+      kind: 'context_overflow',
+      message: 'context overflow token limit'
+    })
   })
 })
 
@@ -259,7 +267,10 @@ describe('StreamProcessor 溢出恢复：分类为 failed 的文案', () => {
     // 压缩链已试过仍溢出 → 终止
     const r = await runOnce(processor, { requestOverflowImageDegradation: () => false })
     expect(r.kind).toBe('error')
-    expect((r as { error: string }).error).toBe(failedOverflow)
+    expect(parseModelFailureError((r as { error: string }).error)).toEqual({
+      kind: 'context_overflow',
+      message: failedOverflow
+    })
   })
 
   it('无可降级对象时维持既有语义：首次即压缩、二次终止', async () => {

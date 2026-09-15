@@ -13,6 +13,7 @@ import {
 import type { RunEventRecord, RunSnapshot } from '../../shared/run/types'
 import { toRendererRunSnapshot } from '../../shared/run/rendererProjection'
 import { SnapshotBroadcastCoalescer } from './runSnapshotBroadcast'
+import { initNotifications, notifyOnSnapshot } from '../notifications'
 
 let coordinator: RunCoordinator | null = null
 let executionRegistry: RunExecutionRegistry | null = null
@@ -48,6 +49,7 @@ function guardWindowLifetime(win: BrowserWindow): void {
 }
 
 function broadcastSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
+  notifyOnSnapshot(snapshot)
   const win = getMainWindowRef?.()
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
     snapshotBroadcast.cancel()
@@ -62,9 +64,11 @@ function broadcastSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
  * 启动时扫描未终态 run → interrupted。
  */
 export function initRunCoordinatorHost(
-  getMainWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null,
+  lookupSessionTitle?: (sessionId: string) => string | undefined
 ): { coordinator: RunCoordinator; interrupted: RunSnapshot[] } {
   getMainWindowRef = getMainWindow
+  initNotifications(getMainWindow, lookupSessionTitle ?? (() => undefined))
   let interrupted: RunSnapshot[] = []
   if (!coordinator) {
     const runsRoot = join(app.getPath('userData'), 'runs')

@@ -176,6 +176,16 @@
 
 /* 回到底部：绝对悬浮在 composer 栈顶上方；实心底 + 边框 + 阴影，
    叠在深色/浅色代码块上都能读清，且不占文档流。 */
+/* 会话导出入口：贴输入区上方右缘，与回底部箭头同层不打架 */
+.chat-session-export {
+  position: absolute;
+  right: 16px;
+  bottom: 100%;
+  margin-bottom: 8px;
+  z-index: 5;
+  pointer-events: auto;
+}
+
 .chat-scroll-to-bottom {
   position: absolute;
   left: 50%;
@@ -303,6 +313,13 @@
   border-color: var(--color-error);
   background-color: rgba(181, 51, 51, 0.03);
   color: var(--color-error);
+}
+
+/* 终态错误的动作按钮行：紧贴错误文案下方 */
+.chat-msg__error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 /* ── 过程轨与正文间距：工具行之间紧凑，与 Markdown 文字之间留白 ── */

@@ -24,6 +24,12 @@ export const SKILL_PICK_IMPORT = 'skill:pick-import' as const
 /** 应用设置 */
 export const SETTINGS_GET = 'settings:get' as const
 export const SETTINGS_SET = 'settings:set' as const
+/** 诊断包导出（保存对话框由主进程负责） */
+export const DIAGNOSTICS_EXPORT = 'diagnostics:export' as const
+/** 工作区文件搜索（@ 引用候选） */
+export const WORKSPACE_SEARCH_FILES = 'workspace:search-files' as const
+/** 会话导出 Markdown（剪贴板或存文件） */
+export const SESSION_EXPORT_MARKDOWN = 'session:export-markdown' as const
 /** 代码索引状态与用户控制 */
 export const CODEINDEX_GET_STATUS = 'codeindex:get-status' as const
 export const CODEINDEX_REBUILD = 'codeindex:rebuild' as const

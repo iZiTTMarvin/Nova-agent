@@ -159,13 +159,13 @@ describe('SettingsModal 设置导航与视觉样式', () => {
     expect(container.querySelector('.settings-nav__item--selected')?.textContent).toContain('模型')
     expect(container.querySelector('.settings-shell__title')?.textContent).toBe('模型')
 
-    // 按 End 键应该切换到最后一个条目（数据与存储）
+    // 按 End 键应该切换到最后一个条目（诊断）
     await act(async () => {
       generalButton.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))
     })
 
-    expect(container.querySelector('.settings-nav__item--selected')?.textContent).toContain('数据与存储')
-    expect(container.querySelector('.settings-shell__title')?.textContent).toBe('数据与存储')
+    expect(container.querySelector('.settings-nav__item--selected')?.textContent).toContain('诊断')
+    expect(container.querySelector('.settings-shell__title')?.textContent).toBe('诊断')
 
     unmount()
   })

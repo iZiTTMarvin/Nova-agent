@@ -29,6 +29,9 @@ function decisionForEffect(
       return 'allow'
     case 'network.read':
       return permissionMode === 'request_approval' ? 'ask' : 'allow'
+    case 'network.private_read':
+      // 私网读取与外部路径同构：开发机上的内网服务值得一次显式确认
+      return permissionMode === 'full_access' ? 'allow' : 'ask'
     case 'network.write':
       return permissionMode === 'full_access' ? 'allow' : 'ask'
     case 'mode.transition':

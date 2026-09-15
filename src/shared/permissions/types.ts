@@ -12,6 +12,7 @@ export type ToolEffect =
   | 'shell.execute'
   | 'process.control'
   | 'network.read'
+  | 'network.private_read'
   | 'network.write'
   | 'session.write'
   | 'orchestration'

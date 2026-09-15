@@ -14,6 +14,7 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   { name: 'bash', capability: 'shell', exposure: 'always', codeMode: 'direct-only' },
   { name: 'shell_session', capability: 'shell', exposure: 'always', codeMode: 'direct-only' },
   { name: 'web_search', capability: 'web', exposure: 'always', codeMode: 'direct-only' },
+  { name: 'web_fetch', capability: 'web', exposure: 'always', codeMode: 'direct-only' },
   {
     name: 'memory_search',
     capability: 'memory',

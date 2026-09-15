@@ -45,6 +45,7 @@ import { getSessionStore } from '../services/SessionStoreHost'
 import { recoverInterruptedTurnDraftsOnStartup } from '../../runtime/sessions/turnDraftRecovery'
 import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
+import { registerDiagnosticsHandler } from './diagnosticsHandler'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 /**
@@ -62,6 +63,8 @@ export function registerIpcHandlers(): ImageStore {
 
   // 开发环境诊断（event-loop lag 等）
   registerDevDiagnosticsHandlers()
+  // 诊断包导出（日志脱敏打包，供用户反馈问题）
+  registerDiagnosticsHandler()
   // 注册异步对话框 IPC（替代阻塞的 window.confirm）
   registerDialogHandler()
   registerUpdaterHandler()
@@ -143,7 +146,11 @@ export function registerIpcHandlers(): ImageStore {
   registerPermissionHandler()
 
   // RunCoordinator：权威运行快照 / Interaction Inbox / 启动对账
-  const { coordinator, interrupted } = initRunCoordinatorHost(getMainWindow)
+  // 通知用会话标题查询：SessionStore 摘要不含消息内容
+  const { coordinator, interrupted } = initRunCoordinatorHost(
+    getMainWindow,
+    sessionId => getSessionStore().list().find(session => session.id === sessionId)?.title
+  )
   recoverInterruptedTurnDraftsOnStartup(interrupted, getSessionStore(), coordinator)
   registerRunHandler()
   initSubagentProjectionServiceHost()

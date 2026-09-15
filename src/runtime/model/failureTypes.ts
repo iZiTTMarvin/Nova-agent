@@ -10,16 +10,10 @@
  * 但它不是重试决策的依据——决策只读 retryable / retryAfterMs / kind。
  */
 
-/** 失败大类。按同一形态归一化各 provider 差异，供重试决策消费。 */
-export type ModelFailureKind =
-  | 'network'
-  | 'rate_limit'
-  | 'timeout'
-  | 'auth'
-  | 'context_overflow'
-  | 'provider_unavailable'
-  | 'provider_billing'
-  | 'unknown'
+import type { ModelFailureKind } from '../../shared/model/failureKinds'
+
+/** 失败大类。按同一形态归一化各 provider 差异，供重试决策消费；权威定义在 shared/model/failureKinds。 */
+export type { ModelFailureKind }
 
 /**
  * 单次模型尝试的结构化失败。

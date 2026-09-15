@@ -39,6 +39,8 @@ export function getToolDisplayName(toolName: string): string {
       return '更新任务列表 (todo_write)'
     case 'web_search':
       return '联网搜索 (web_search)'
+    case 'web_fetch':
+      return '读取网页 (web_fetch)'
     case 'archive_read':
       return '读取归档内容 (archive_read)'
     case 'history_read':
@@ -195,6 +197,11 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const query = (args.query as string) || ''
       const display = query.length > 60 ? query.slice(0, 57) + '...' : query
       return display ? `搜索 "${display}"` : '联网搜索'
+    }
+    case 'web_fetch': {
+      const url = (args.url as string) || ''
+      const display = url.length > 60 ? url.slice(0, 57) + '...' : url
+      return display ? `读取网页 ${display}` : '读取网页'
     }
     case 'askQuestion': {
       // 取首题问题文本作摘要；多题时附带题数，便于不展开卡片就知道在问什么

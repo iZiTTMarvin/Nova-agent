@@ -114,6 +114,15 @@ function App(): React.ReactNode {
     }
   }, [])
 
+  // 系统通知点击后跳转到对应会话（通知由主进程弹出，会话选择是 renderer 状态）
+  useEffect(() => {
+    const unsubscribe = window.api.on('notifications:navigate', ({ sessionId }) => {
+      const store = useChatStore.getState()
+      if (store.currentSessionId !== sessionId) void store.selectSession(sessionId)
+    })
+    return unsubscribe
+  }, [])
+
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
   useEffect(() => {
     // ── 装配流式缓冲（直连 store，已移除 rAF 调度层） ──

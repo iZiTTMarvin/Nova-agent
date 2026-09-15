@@ -39,6 +39,7 @@ import type { ContentBlock } from '../../../runtime/model/types'
 import { loadNovaSettings } from '../../../runtime/settings/novaSettings'
 import { syncTavilyApiKeyFromSettings } from '../../../runtime/settings/syncTavilyApiKey'
 import { subscribeObservationCapture } from '../../../runtime/memory/MemoryObservationBridge'
+import { buildFileReferencePrefix, extractFileReferences } from '../../../shared/chat/fileReferences'
 import { getSessionStore } from '../../services/SessionStoreHost'
 import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
@@ -525,9 +526,16 @@ export async function sendAgentMessage(
   // 不同会话允许并发持有各自执行句柄，此处不再做全局互斥。
 
   try {
+    // @ 文件引用：模型侧任务注入提示行（用户消息落盘保持纯净）
+    let modelTask: string | ContentBlock[] = sendContent
+    if (typeof modelTask === 'string') {
+      const refs = extractFileReferences(modelTask)
+      if (refs.length > 0) modelTask = buildFileReferencePrefix(refs) + modelTask
+    }
+
     await turnExecutor.execute({
       agentLoop: loopForRun,
-      task: sendContent,
+      task: modelTask,
       route: turnRoute,
       sessionId: params.sessionId,
       workingDirectory: projectPath,

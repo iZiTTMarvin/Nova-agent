@@ -24,7 +24,7 @@ function buildDescription(year: number): string {
 - recency (string, 可选): 时间范围过滤，取值 day | week | month | year，表示只返回指定时间内的结果（仅 Tavily 支持）。
 
 **结果格式**
-返回摘要（answer，爬虫结果通常无 answer）和 URL 来源列表（sources）。**注意：当前 read 工具只支持本地文件路径，不支持读取 HTTP URL**——v1 依赖 sources 中的 snippet 与 answer 作答。
+返回摘要（answer，爬虫结果通常无 answer）和 URL 来源列表（sources）。**多数问题靠 snippet + answer 就够；确需全文时用 web_fetch 读取来源链接**（同一链接 2 天内重读走缓存，零成本）。
 
 **使用示例**
 当用户问 "React 最新版本是多少" 时，搜索 "React ${year} latest version"，参考返回的 sources 摘要作答。`

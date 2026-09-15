@@ -43,7 +43,6 @@ import type { PlanReviewResolution } from '../../shared/planReview'
 import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 import { isToolDirectlyPresented } from '../code-mode'
-import { formatTerminalErrorMessage } from '../../shared/session/terminalErrorBlocks'
 
 import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
@@ -1008,10 +1007,13 @@ export class AgentLoop {
     }
 
     if (outcome.status === 'failed') {
+      // 发原始文本（可含 ModelFailure:<kind>: / ContextBudgetExceeded: 前缀）；
+      // 翻译统一发生在展示边界（renderer 与主进程落盘共用 formatTerminalErrorMessage），
+      // 在这里预翻译会让前缀到不了动作解析。
       this.eventBus.emit({
         type: 'error',
         messageId,
-        error: formatTerminalErrorMessage(outcome.error.message)
+        error: outcome.error.message
       })
     } else {
       // incomplete 与 completed 一样发 message_end 且不带 interrupted：

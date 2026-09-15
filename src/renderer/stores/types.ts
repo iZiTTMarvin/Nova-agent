@@ -16,6 +16,7 @@ import type {
 } from '../../shared/session/types'
 import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../shared/diff/types'
 import type { AgentToolProcessHandle } from '../../shared/ipc/types'
+import type { TerminalErrorAction } from '../../shared/session/terminalErrorBlocks'
 
 /**
  * 嵌套工具活动（run_code 沙箱内的 tools.* 调用）：瞬态观测信息，
@@ -89,6 +90,11 @@ export interface ExtendedMessage {
   turnStartedAt?: number
   /** L1 计时终点；终态由 renderer 写入并随消息持久化 */
   turnEndedAt?: number
+  /**
+   * 终态错误的恢复动作（从 ModelFailure 前缀解析），驱动错误消息下方的
+   * 行动按钮。仅运行期存在：历史会话从落盘文案重建时无原始前缀，按钮不显示。
+   */
+  errorActions?: TerminalErrorAction[]
 }
 
 /** 等待用户决策的权限请求 */

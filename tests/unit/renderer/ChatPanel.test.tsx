@@ -51,6 +51,7 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
   ImageIcon: () => null,
   ChevronIcon: () => null,
+  CopyIcon: () => null,
   ShieldIcon: () => null,
   CheckSmallIcon: () => null
 }))

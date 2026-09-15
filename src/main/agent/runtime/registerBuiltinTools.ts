@@ -8,6 +8,7 @@ import { readTool } from '../../../runtime/tools/readTool'
 import { createGrepTool } from '../../../runtime/tools/grepTool'
 import { findTool } from '../../../runtime/tools/findTool'
 import { webSearchTool } from '../../../runtime/tools/webSearch'
+import { webFetchTool } from '../../../runtime/tools/webFetch'
 import { createMemorySearchTool } from '../../../runtime/tools/memorySearch'
 import { createCodeContextTool } from '../../../runtime/tools/codeContext'
 import { editTool } from '../../../runtime/tools/editTool'
@@ -94,6 +95,7 @@ export function registerBuiltinTools(
   toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
   toolRegistry.register(findTool)
   toolRegistry.register(webSearchTool)
+  toolRegistry.register(webFetchTool)
   if (deps.memoryEnabled) {
     toolRegistry.register(
       createMemorySearchTool({
