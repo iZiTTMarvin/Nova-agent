@@ -10,6 +10,7 @@ import { findTool } from '../../../runtime/tools/findTool'
 import { webSearchTool } from '../../../runtime/tools/webSearch'
 import { webFetchTool } from '../../../runtime/tools/webFetch'
 import { createMemorySearchTool } from '../../../runtime/tools/memorySearch'
+import { createMemoryManageTool } from '../../../runtime/tools/memoryManage/memoryManageTool'
 import { createCodeContextTool } from '../../../runtime/tools/codeContext'
 import { editTool } from '../../../runtime/tools/editTool'
 import { writeTool } from '../../../runtime/tools/writeTool'
@@ -65,7 +66,7 @@ export interface BuiltinToolRegistrationDeps {
   /** run_code 的沙箱 Code Runtime 构建产物路径；缺省仅用于测试的进程内执行 */
   codeModeWorkerPath?: string
   /**
-   * 是否注册 memory_search。由装配方按本轮设置快照决定（与 memoryContext /
+   * 是否注册 memory_search / memory_manage。由装配方按本轮设置快照决定（与 memoryContext /
    * prefetch 接线同源）；每轮装配重新注册，开关变化下一轮即生效。
    */
   memoryEnabled: boolean
@@ -102,6 +103,16 @@ export function registerBuiltinTools(
       createMemorySearchTool({
         getMemoryRetrievalService: deps.getMemoryRetrievalService,
         loadSettings: deps.loadSettings
+      })
+    )
+    toolRegistry.register(
+      createMemoryManageTool({
+        loadSettings: deps.loadSettings,
+        // 延迟加载 owner：避免仅枚举工具的单测/启动路径提前载入 better-sqlite3 原生绑定。
+        getMemoryCandidateProcessor: async () => {
+          const { getMemoryCandidateProcessor } = await import('../../services/MemoryServiceHost')
+          return getMemoryCandidateProcessor()
+        }
       })
     )
   }
