@@ -184,6 +184,29 @@ describe('subagent_read', () => {
     expect(payload.artifactId).toBe(artifact.id)
     expect(payload.content).toContain('FULL_CHILD_ARTIFACT_EVIDENCE')
 
+    // 从 0 沿 nextOffset 读穿全文，证明 spill 原文完整可回读而非只有局部抽查
+    let cursor = 0
+    let collected = ''
+    for (let page = 0; page < 10; page++) {
+      const pageResult = await subagentReadTool.execute(
+        {
+          child_session_id: child.id,
+          operation: 'artifact_read',
+          artifact_id: artifact.id,
+          offset: cursor,
+          limit: 16_000
+        },
+        context(store, parent.id, artifactStore)
+      )
+      const pagePayload = JSON.parse(pageResult.output)
+      expect(pagePayload.totalChars).toBe(rawEvidence.length)
+      collected += pagePayload.content
+      if (!pagePayload.hasMore) break
+      cursor = pagePayload.nextOffset
+    }
+    expect(collected.length).toBe(rawEvidence.length)
+    expect(collected.endsWith('FULL_CHILD_ARTIFACT_EVIDENCE')).toBe(true)
+
     const denied = await subagentReadTool.execute(
       {
         child_session_id: child.id,
