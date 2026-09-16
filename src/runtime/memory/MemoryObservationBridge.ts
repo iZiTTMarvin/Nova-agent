@@ -5,9 +5,12 @@ import type { AgentEvent } from '../agent/types'
 import type { EventBus } from '../agent/EventBus'
 import { getObservationCaptureForSession, type ObservationCapture } from './ObservationCapture'
 
+const MEMORY_TOOL_NAMES = new Set(['memory_search', 'memory_manage'])
+
 /**
  * 订阅 tool_call / tool_result / message_end，将轨迹写入 working buffer。
  * memoryCaptureEnabled=false 时不应调用（零开销）。
+ * memory 工具自身不作为新 observation，避免检索/写入结果反过来强化同一条记忆。
  */
 export function subscribeObservationCapture(
   eventBus: EventBus,
@@ -17,6 +20,7 @@ export function subscribeObservationCapture(
   return eventBus.on((event: AgentEvent) => {
     switch (event.type) {
       case 'tool_call':
+        if (MEMORY_TOOL_NAMES.has(event.toolName)) break
         capture.onToolCall({
           sessionId,
           messageId: event.messageId,
@@ -26,6 +30,7 @@ export function subscribeObservationCapture(
         })
         break
       case 'tool_result':
+        if (MEMORY_TOOL_NAMES.has(event.toolName)) break
         capture.onToolResult({
           sessionId,
           messageId: event.messageId,
