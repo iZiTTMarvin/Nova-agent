@@ -18,7 +18,7 @@ import type { MemoryCandidateProcessor } from '../../memory/policy/MemoryCandida
 import {
   MEMORY_KINDS,
   type MemoryCandidate,
-  type MemoryEvidence,
+  type MemoryCandidateEvidence,
   type MemoryKind,
   type ScopeHint
 } from '../../memory/types'
@@ -197,11 +197,10 @@ function buildCandidate(parsed: ParsedArgs, match: EvidenceMatch): MemoryCandida
     match.type === 'tool_result' &&
     Boolean(match.toolName && WORKSPACE_EVIDENCE_TOOLS.has(match.toolName))
 
-  const evidence: MemoryEvidence = {
+  const evidence: MemoryCandidateEvidence = {
     type: match.type,
     excerpt: match.excerpt.slice(0, MEMORY_EVIDENCE_EXCERPT_MAX_CHARS),
-    messageId: match.messageId,
-    sourcePath: null
+    messageId: match.messageId
   }
 
   return {
