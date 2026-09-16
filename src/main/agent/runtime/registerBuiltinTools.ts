@@ -20,6 +20,7 @@ import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
 import { createTaskFollowupTool } from '../../../runtime/tools/task_followup'
+import { subagentReadTool } from '../../../runtime/tools/subagentRead'
 import { createBatchTaskTool } from '../../../runtime/tools/batch_task'
 import { createAgentListTool } from '../../../runtime/tools/agent_list'
 import { createModelListTool } from '../../../runtime/tools/model_list'
@@ -145,6 +146,7 @@ export function registerBuiltinTools(
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
     })
   )
+  toolRegistry.register(subagentReadTool)
   toolRegistry.register(
     createBatchTaskTool({
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined),

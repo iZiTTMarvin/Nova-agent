@@ -16,6 +16,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   find: FILESYSTEM_READ,
   archive_read: { effects: ['filesystem.read'], pathScope: 'none' },
   history_read: { effects: ['filesystem.read'], pathScope: 'none' },
+  subagent_read: { effects: ['filesystem.read'], pathScope: 'none' },
   memory_search: { effects: ['filesystem.read'], pathScope: 'none' },
   code_context: { effects: ['filesystem.read'], pathScope: 'none' },
   write: { effects: ['filesystem.write'], pathScope: 'dynamic' },

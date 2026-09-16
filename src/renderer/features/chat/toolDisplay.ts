@@ -27,6 +27,8 @@ export function getToolDisplayName(toolName: string): string {
       return '调度子代理 (task)'
     case 'task_followup':
       return '继续既有子代理 (task_followup)'
+    case 'subagent_read':
+      return '回读子代理证据 (subagent_read)'
     case 'batch_task':
       return '并行调度子代理批次 (batch_task)'
     case 'agent_list':
@@ -177,6 +179,14 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (childDisplay && display) return `续跑子代理 ${childDisplay}：${display}`
       if (childDisplay) return `续跑子代理 ${childDisplay}`
       return display || '继续既有子代理'
+    }
+    case 'subagent_read': {
+      const child = (args.child_session_id as string) || ''
+      const childDisplay = child.length > 12 ? `${child.slice(0, 12)}...` : child
+      const operation = (args.operation as string) || 'inspect'
+      return childDisplay
+        ? `回读子代理 ${childDisplay}（${operation}）`
+        : `回读子代理证据（${operation}）`
     }
     case 'batch_task': {
       const items = Array.isArray(args.items) ? args.items : []
