@@ -26,6 +26,9 @@ export const MEMORY_EXTRACT_WINDOW_SIZE = 50
 /** 单条 evidence 摘录硬上限（先过 PrivacyFilter 再截断） */
 export const MEMORY_EVIDENCE_EXCERPT_MAX_CHARS = 240
 
+/** evidence 摘录长度下限（空白归一后）：过短摘录能挂靠任意消息，不构成有效证据 */
+export const MEMORY_EVIDENCE_EXCERPT_MIN_CHARS = 12
+
 /** 候选 content 长度上限 */
 export const MEMORY_CANDIDATE_CONTENT_MAX_CHARS = 400
 

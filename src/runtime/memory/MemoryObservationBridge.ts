@@ -4,8 +4,7 @@
 import type { AgentEvent } from '../agent/types'
 import type { EventBus } from '../agent/EventBus'
 import { getObservationCaptureForSession, type ObservationCapture } from './ObservationCapture'
-
-const MEMORY_TOOL_NAMES = new Set(['memory_search', 'memory_manage'])
+import { MEMORY_TOOL_NAMES } from './memoryTools'
 
 /**
  * 订阅 tool_call / tool_result / message_end，将轨迹写入 working buffer。

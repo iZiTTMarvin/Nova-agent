@@ -10,7 +10,6 @@
 import { app } from 'electron'
 import type { ChatMessage } from '../../runtime/model/types'
 import type { ModelClient } from '../../runtime/model/ModelClient'
-import type { ModelClientPool } from '../../runtime/model/ModelClientPool'
 import { createModelClient } from './createModelClient'
 import { loadModelConfig } from '../../runtime/model/config'
 import {
@@ -24,6 +23,7 @@ import {
   type MemoryObservation
 } from '../../runtime/memory/ObservationCapture'
 import { computeWorkspaceHash } from '../../runtime/memory/MemoryPaths'
+import { MEMORY_TOOL_NAMES } from '../../runtime/memory/memoryTools'
 import type { MemoryCandidate } from '../../runtime/memory/types'
 import {
   MEMORY_EXTRACT_INTERVAL_TURNS,
@@ -52,19 +52,10 @@ export function resetExtractTurnCountersForTests(): void {
  * 用户回合结束：仍沿用 N-turn cadence，但只做零 LLM episodic 落盘。
  * 结构化长期记忆由当前主 Agent 在工作过程中按需调用 memory_manage，不再后台二次判断。
  */
-export function onUserTurnCompleteForExtract(
-  sessionId: string,
-  workspaceRoot: string,
-  sessionStore: SessionStore,
-  modelPool: ModelClient | ModelClientPool
-): void {
+export function onUserTurnCompleteForExtract(sessionId: string, workspaceRoot: string): void {
   if (!isMemoryExtractEnabled()) {
     return
   }
-
-  // 兼容既有生命周期签名；正常路径不再使用独立 extractor 的会话/模型依赖。
-  void sessionStore
-  void modelPool
 
   const next = (userTurnsSinceExtract.get(sessionId) ?? 0) + 1
   if (next < MEMORY_EXTRACT_INTERVAL_TURNS) {
@@ -77,32 +68,27 @@ export function onUserTurnCompleteForExtract(
 }
 
 /** 会话退出：同步固化剩余 observation；禁止退出时额外启动 LLM。 */
-export function extractOnSessionLeave(
-  sessionId: string,
-  workspaceRoot: string,
-  sessionStore: SessionStore
-): void {
+export function extractOnSessionLeave(sessionId: string, workspaceRoot: string): void {
   userTurnsSinceExtract.delete(sessionId)
   if (!isMemoryExtractEnabled()) {
     return
   }
-  void sessionStore
   drainAndPersistSync(sessionId, workspaceRoot)
 }
 
 /**
  * 显式 fire-and-forget LLM 提炼入口。
- * 正常 Agent turn / session leave 不再调用；保留给测试、评测与手动维护场景。
+ * 正常 Agent turn / session leave 不再调用；保留给测试、评测与手动维护场景，
+ * 删除条件：agent-managed 写入与后台提炼的 A/B 对比评测结论落定后移除。
  */
 export function scheduleMemoryExtract(
   sessionId: string,
   workspaceRoot: string,
   sessionStore: SessionStore,
-  modelPool: ModelClient | ModelClientPool,
   options: { sync?: boolean } = {}
 ): void {
   const run = () => {
-    void runMemoryExtract(sessionId, workspaceRoot, sessionStore, modelPool).catch((err) => {
+    void runMemoryExtract(sessionId, workspaceRoot, sessionStore).catch((err) => {
       console.error('[MemoryExtract] 提炼失败，已降级：', err)
     })
   }
@@ -121,8 +107,7 @@ export function scheduleMemoryExtract(
 export async function runMemoryExtract(
   sessionId: string,
   workspaceRoot: string,
-  sessionStore: SessionStore,
-  modelPool: ModelClient | ModelClientPool
+  sessionStore: SessionStore
 ): Promise<void> {
   if (!isMemoryExtractEnabled()) {
     return
@@ -132,7 +117,7 @@ export async function runMemoryExtract(
   // 进入提炼即视为本轮消费：无论后续成败，buffer 都已取出，避免下一轮重复处理同一批 observations。
   const observations = capture.drainForExtract(sessionId)
   const session = sessionStore.load(sessionId)
-  const recentMessages = excludeMemoryManageMessages(
+  const recentMessages = excludeMemoryToolMessages(
     projectExtractionMessages(
       session ? buildConversationContext(session, session.mode) : []
     )
@@ -144,7 +129,7 @@ export async function runMemoryExtract(
   }
 
   const scopeId = computeWorkspaceHash(workspaceRoot)
-  const extractor = new MemoryExtractor({ chat: createExtractChatFn(modelPool) })
+  const extractor = new MemoryExtractor({ chat: createExtractChatFn() })
   const candidates = await extractor.extract({ sessionId, recentMessages, observations })
 
   if (candidates && candidates.length > 0) {
@@ -154,15 +139,15 @@ export async function runMemoryExtract(
 }
 
 /**
- * legacy extractor 自身已排除 memory_search；这里额外剥离 memory_manage 调用及对应结果，
- * 防止「刚写入的记忆」再次成为 extractor 的新证据而自我强化。
+ * 剥离记忆工具调用及对应结果，防止「刚检索/写入的记忆」再次成为 extractor 的
+ * 新证据而自我强化；名单见 memoryTools 单一来源。
  */
-function excludeMemoryManageMessages(messages: readonly ChatMessage[]): ChatMessage[] {
+function excludeMemoryToolMessages(messages: readonly ChatMessage[]): ChatMessage[] {
   const excludedToolCallIds = new Set<string>()
   const projected = messages.map((message) => {
     if (message.role !== 'assistant' || !message.toolCalls?.length) return message
     const toolCalls = message.toolCalls.filter((call) => {
-      if (call.name !== 'memory_manage') return true
+      if (!MEMORY_TOOL_NAMES.has(call.name)) return true
       excludedToolCallIds.add(call.id)
       return false
     })
@@ -223,11 +208,8 @@ async function persistFallback(
  * （哪怕 finally 改回），主对话那一轮的 reasoningEffort 会被悄悄降级，构成静默竞态。
  *
  * 因此每次调用都新建独立 client（带 reasoningEffort=low）。
- * modelPool 参数仅保留以兼容既有显式调用签名，实际不使用。
  */
-export function createExtractChatFn(
-  _modelPool: ModelClient | ModelClientPool
-): MemoryExtractorDeps['chat'] {
+export function createExtractChatFn(): MemoryExtractorDeps['chat'] {
   return async (messages, opts) => {
     const effort = opts?.reasoningEffort ?? 'low'
     const client = buildExtractModelClient(effort)

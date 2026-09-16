@@ -8,9 +8,11 @@
  * - 只允许当前 primary session 的 user / 非 memory 工具结果作为证据，阻断自我引用。
  */
 import { computeWorkspaceHash } from '../../memory/MemoryPaths'
+import { MEMORY_TOOL_NAMES } from '../../memory/memoryTools'
 import {
   MEMORY_CANDIDATE_CONTENT_MAX_CHARS,
   MEMORY_EVIDENCE_EXCERPT_MAX_CHARS,
+  MEMORY_EVIDENCE_EXCERPT_MIN_CHARS,
   MEMORY_KEY_MAX_CHARS
 } from '../../memory/memoryConfig'
 import { filterPrivacyText } from '../../memory/PrivacyFilter'
@@ -34,14 +36,17 @@ import {
 } from '../types'
 
 const TOOL_NAME = 'memory_manage'
-const MEMORY_TOOL_NAMES = new Set(['memory_search', 'memory_manage'])
+/**
+ * 结果由环境产生、可作为 workspace_verified 强证据的工具。
+ * 只收读取/搜索与真实执行的命令类：write/edit 的结果回显模型自己写的内容，
+ * 属于自供证据，只能算 observed；bash/shell_session 保留是因为测试、构建等
+ * 命令输出是「经验证结论」的主要来源。
+ */
 const WORKSPACE_EVIDENCE_TOOLS = new Set([
   'ls',
   'read',
   'grep',
   'find',
-  'edit',
-  'write',
   'bash',
   'shell_session',
   'code_context',
@@ -142,6 +147,10 @@ function parseArgs(args: Record<string, unknown>): ParsedArgs | string {
   if (evidenceFiltered.shouldDiscard || evidenceFiltered.hadSensitive || !evidenceFiltered.text.trim()) {
     return 'evidence.excerpt 含敏感信息或无法安全保存，已拒绝写入记忆'
   }
+  // 过短摘录几乎能挂靠任意消息，不构成有效证据
+  if (normalizeForMatch(evidenceFiltered.text).length < MEMORY_EVIDENCE_EXCERPT_MIN_CHARS) {
+    return `证据摘录过短，请复制一段有实际信息量的原文（至少 ${MEMORY_EVIDENCE_EXCERPT_MIN_CHARS} 个字符）`
+  }
 
   return {
     action,
@@ -229,9 +238,6 @@ function formatResult(action: MemoryManageAction, counts: ReturnType<MemoryCandi
   if (counts.failed > 0) {
     return '记忆处理失败，未可靠写入。不要反复重试；继续当前任务即可。'
   }
-  if (counts.ignored > 0) {
-    return '没有产生新的长期记忆变更；现有记忆已足够或该候选未达到持久化条件。不要重复写入。'
-  }
   if (action === 'forget') {
     return counts.retracted > 0 || counts.superseded > 0
       ? '长期记忆已撤回或更新。'
@@ -240,7 +246,7 @@ function formatResult(action: MemoryManageAction, counts: ReturnType<MemoryCandi
   if (counts.added > 0 || counts.merged > 0 || counts.superseded > 0 || counts.promoted > 0) {
     return '长期记忆已记录或更新。'
   }
-  return '没有产生新的长期记忆变更；不要重复写入。'
+  return '没有产生新的长期记忆变更；现有记忆已足够或该候选未达到持久化条件。不要重复写入。'
 }
 
 export function createMemoryManageTool(deps: MemoryManageToolDeps): ToolExecutor {

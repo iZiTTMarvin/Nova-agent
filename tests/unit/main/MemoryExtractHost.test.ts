@@ -88,10 +88,9 @@ describe('MemoryExtractHost', () => {
 
   it('正常 turn cadence 只调度零 LLM episodic 落盘，不启动 extractor', async () => {
     const { onUserTurnCompleteForExtract } = await loadHost()
-    const store = fakeSessionStore([{ role: 'user', content: '优化构建' }])
 
     for (let i = 0; i < 5; i++) {
-      onUserTurnCompleteForExtract('s1', '/tmp/ws', store, {} as never)
+      onUserTurnCompleteForExtract('s1', '/tmp/ws')
     }
 
     expect(drainAndSchedulePersistMock).toHaveBeenCalledTimes(1)
@@ -101,9 +100,8 @@ describe('MemoryExtractHost', () => {
 
   it('会话退出只同步固化 observation，不启动 extractor', async () => {
     const { extractOnSessionLeave } = await loadHost()
-    const store = fakeSessionStore([{ role: 'user', content: '优化构建' }])
 
-    extractOnSessionLeave('s1', '/tmp/ws', store)
+    extractOnSessionLeave('s1', '/tmp/ws')
 
     expect(drainAndPersistSyncMock).toHaveBeenCalledTimes(1)
     expect(drainAndPersistSyncMock).toHaveBeenCalledWith('s1', '/tmp/ws')
@@ -116,7 +114,7 @@ describe('MemoryExtractHost', () => {
     for (let i = 0; i < 55; i++) messages.push({ id: `memory${i}`, timestamp: i + 1, role: 'assistant', content: '',
       blocks: [{ type: 'tool', toolCallId: `call${i}`, toolName: 'memory_search', arguments: { query: '导出' }, status: 'success', result: '旧记忆正文' }] } as SessionMessage)
     const { runMemoryExtract } = await loadHost()
-    await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore(messages), {} as never)
+    await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore(messages))
     expect(extractMock.mock.calls[0][0].recentMessages).toEqual([
       expect.objectContaining({ role: 'user', content: '以后导出必须使用 UTF8 BOM' })
     ])
@@ -140,7 +138,7 @@ describe('MemoryExtractHost', () => {
     const { runMemoryExtract } = await loadHost()
     await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore([
       { role: 'user', content: '优化构建' }
-    ]), {} as never)
+    ]))
 
     expect(extractMock).toHaveBeenCalledTimes(1)
     expect(processMock).toHaveBeenCalledTimes(1)
@@ -160,7 +158,7 @@ describe('MemoryExtractHost', () => {
     const { runMemoryExtract } = await loadHost()
     await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore([
       { role: 'user', content: '优化构建' }
-    ]), {} as never)
+    ]))
 
     expect(processMock).not.toHaveBeenCalled()
     expect(appendEpisodicMock).toHaveBeenCalledTimes(1)
@@ -187,7 +185,7 @@ describe('MemoryExtractHost', () => {
     const { runMemoryExtract } = await loadHost()
     await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore([
       { role: 'user', content: '优化构建' }
-    ]), {} as never)
+    ]))
 
     expect(appendEpisodicMock).toHaveBeenCalledTimes(1)
   })

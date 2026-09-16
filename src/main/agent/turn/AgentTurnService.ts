@@ -546,14 +546,9 @@ export async function sendAgentMessage(
         agentLoopsByRunId.set(context.runId, loopForRun)
       },
       afterOutcome: (outcome) => {
-        // incomplete 轮次同样已结束（被停止策略截断），对话内容照样值得提炼
+        // incomplete 轮次同样已结束（被停止策略截断），对话内容照样值得固化
         if (outcome.status === 'completed' || outcome.status === 'incomplete') {
-          onUserTurnCompleteForExtract(
-            params.sessionId,
-            projectPath,
-            sessionStore,
-            modelPool
-          )
+          onUserTurnCompleteForExtract(params.sessionId, projectPath)
         }
       },
       onCleanup: (context) => {

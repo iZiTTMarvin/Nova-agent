@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createMemoryManageTool,
   findMemoryEvidence
-} from '../../../../src/runtime/tools/memoryManage/memoryManageTool'
+} from '../../../../src/runtime/tools/memoryManage'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
@@ -155,13 +155,45 @@ describe('memory_manage tool', () => {
     })
   })
 
+  it('write/edit 等写入工具的回显是模型自供内容，只算 observed 弱证据', async () => {
+    const u1 = userMessage('u1', '把部署说明写进 DEPLOY.md')
+    const a1 = assistantWithTool('a1', 'u1', 'write', '已写入 DEPLOY.md：部署前必须先跑 pnpm rebuild')
+    const session = primarySession([u1, a1])
+
+    await tool.execute({
+      action: 'remember',
+      kind: 'gotcha',
+      content: '部署前必须先跑 pnpm rebuild。',
+      evidence: { type: 'tool_result', excerpt: '部署前必须先跑 pnpm rebuild' }
+    }, buildContext(session))
+
+    expect(process.mock.calls[0][0].candidates[0]).toMatchObject({
+      explicitness: 'observed',
+      confidence: 0.75
+    })
+  })
+
+  it('过短摘录能挂靠任意消息，不构成有效证据，直接拒绝', async () => {
+    const session = primarySession([userMessage('u1', '以后统一使用 pnpm 管理依赖')])
+    const result = await tool.execute({
+      action: 'remember',
+      kind: 'convention',
+      content: '项目使用 pnpm。',
+      evidence: { type: 'user_message', excerpt: 'pnpm' }
+    }, buildContext(session))
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('证据摘录过短')
+    expect(process).not.toHaveBeenCalled()
+  })
+
   it('找不到原始证据时 fail closed，不调用 processor', async () => {
     const session = primarySession([userMessage('u1', '优化上下文')])
     const result = await tool.execute({
       action: 'remember',
       kind: 'decision',
       content: '以后永远禁止压缩。',
-      evidence: { type: 'user_message', excerpt: '用户从未说过的内容' }
+      evidence: { type: 'user_message', excerpt: '用户从未在会话里说过的整段内容' }
     }, buildContext(session))
 
     expect(result.success).toBe(false)
@@ -171,13 +203,13 @@ describe('memory_manage tool', () => {
 
   it('memory_search / memory_manage 输出不能反过来作为新记忆证据', async () => {
     const u1 = userMessage('u1', '查记忆')
-    const a1 = assistantWithTool('a1', 'u1', 'memory_manage', '长期记忆已记录或更新。')
+    const a1 = assistantWithTool('a1', 'u1', 'memory_manage', '长期记忆已记录或更新。相关结论已合并入库。')
     const session = primarySession([u1, a1])
     const result = await tool.execute({
       action: 'remember',
       kind: 'gotcha',
       content: '记忆系统已经记录了某个结论。',
-      evidence: { type: 'tool_result', excerpt: '长期记忆已记录' }
+      evidence: { type: 'tool_result', excerpt: '长期记忆已记录或更新。相关结论' }
     }, buildContext(session))
 
     expect(result.success).toBe(false)
@@ -185,7 +217,7 @@ describe('memory_manage tool', () => {
   })
 
   it('子代理不能直接写长期记忆', async () => {
-    const primary = primarySession([userMessage('u1', '记住这个约束')])
+    const primary = primarySession([userMessage('u1', '主代理请记住这个跨会话的长期约束')])
     const child = {
       ...primary,
       kind: 'subagent',
@@ -194,8 +226,8 @@ describe('memory_manage tool', () => {
     const result = await tool.execute({
       action: 'remember',
       kind: 'convention',
-      content: '记住这个约束。',
-      evidence: { type: 'user_message', excerpt: '记住这个约束' }
+      content: '记住这个长期约束。',
+      evidence: { type: 'user_message', excerpt: '记住这个跨会话的长期约束' }
     }, buildContext(child))
 
     expect(result.success).toBe(false)
@@ -204,12 +236,12 @@ describe('memory_manage tool', () => {
   })
 
   it('敏感信息 fail closed，不进入 processor', async () => {
-    const session = primarySession([userMessage('u1', '不要保存密钥')])
+    const session = primarySession([userMessage('u1', '用户明确说过不要保存密钥')])
     const result = await tool.execute({
       action: 'remember',
       kind: 'project_fact',
       content: 'token=super-secret-value-123456',
-      evidence: { type: 'user_message', excerpt: '不要保存密钥' }
+      evidence: { type: 'user_message', excerpt: '用户明确说过不要保存密钥' }
     }, buildContext(session))
 
     expect(result.success).toBe(false)
@@ -219,13 +251,13 @@ describe('memory_manage tool', () => {
 
   it('forget 只表达 negate 语义，最终撤回/替换仍交给 policy', async () => {
     process.mockReturnValue({ ...baseCounts, added: 0, retracted: 1 })
-    const session = primarySession([userMessage('u1', '以后不再强制使用 npm')])
+    const session = primarySession([userMessage('u1', '以后不再强制使用 npm，改用 pnpm 管理')])
     const result = await tool.execute({
       action: 'forget',
       kind: 'convention',
       key: 'package.manager',
       content: '项目必须使用 npm。',
-      evidence: { type: 'user_message', excerpt: '不再强制使用 npm' }
+      evidence: { type: 'user_message', excerpt: '以后不再强制使用 npm' }
     }, buildContext(session))
 
     expect(result.success).toBe(true)
