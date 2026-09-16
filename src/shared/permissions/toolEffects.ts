@@ -18,6 +18,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   history_read: { effects: ['filesystem.read'], pathScope: 'none' },
   subagent_read: { effects: ['filesystem.read'], pathScope: 'none' },
   memory_search: { effects: ['filesystem.read'], pathScope: 'none' },
+  memory_manage: { effects: ['session.write'], pathScope: 'none' },
   code_context: { effects: ['filesystem.read'], pathScope: 'none' },
   write: { effects: ['filesystem.write'], pathScope: 'dynamic' },
   edit: {

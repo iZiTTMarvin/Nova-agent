@@ -99,7 +99,7 @@ export function registerIpcHandlers(): ImageStore {
     getRunCoordinator,
     onSessionLeaving: (sessionId, workspaceRoot) => {
       if (isMemoryExtractEnabled()) {
-        extractOnSessionLeave(sessionId, workspaceRoot, getSessionStore())
+        extractOnSessionLeave(sessionId, workspaceRoot)
       } else {
         drainAndSchedulePersist(sessionId, workspaceRoot)
       }

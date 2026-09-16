@@ -51,6 +51,8 @@ export function getToolDisplayName(toolName: string): string {
       return '运行探索代码 (run_code)'
     case 'memory_search':
       return '检索记忆 (memory_search)'
+    case 'memory_manage':
+      return '更新长期记忆 (memory_manage)'
     case 'code_context':
       return '查询代码上下文 (code_context)'
     case 'askQuestion':
@@ -155,6 +157,9 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const description = (args.description as string) || ''
       const display = description.length > 60 ? description.slice(0, 57) + '...' : description
       return display ? `运行探索代码：${display}` : '运行探索代码'
+    }
+    case 'memory_manage': {
+      return args.action === 'forget' ? '正在撤回长期记忆' : '正在记录长期记忆'
     }
     case 'code_context': {
       const query = typeof args.query === 'string' ? args.query : ''

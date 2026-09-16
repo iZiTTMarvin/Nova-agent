@@ -1,5 +1,5 @@
 /**
- * MemoryExtractHost 单测：新候选管线接线、提炼失败降级、MEMORY.md 不再被自动追加。
+ * MemoryExtractHost 单测：显式候选提炼接线，以及正常生命周期保持零 LLM 落盘。
  * 提炼器与仓储均 mock（宿主编排是测试对象），行为级断言见集成测试。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -11,6 +11,8 @@ const extractMock = vi.fn()
 const processMock = vi.fn()
 const appendEpisodicMock = vi.fn()
 const drainWorkingBufferMock = vi.fn()
+const drainAndPersistSyncMock = vi.fn()
+const drainAndSchedulePersistMock = vi.fn()
 const loadNovaSettingsMock = vi.fn()
 
 vi.mock('electron', () => ({
@@ -54,7 +56,8 @@ vi.mock('../../../src/main/services/MemoryServiceHost', () => ({
 }))
 
 vi.mock('../../../src/main/services/MemoryConsolidationHost', () => ({
-  drainAndPersistSync: vi.fn()
+  drainAndPersistSync: drainAndPersistSyncMock,
+  drainAndSchedulePersist: drainAndSchedulePersistMock
 }))
 
 vi.mock('../../../src/runtime/memory/extraction/MemoryExtractor', async (importOriginal) => {
@@ -74,26 +77,50 @@ function fakeSessionStore(messages: Array<ChatMessage | SessionMessage>): Sessio
   return { load: () => ({ mode: 'default', messages: messages.map((message, i) => ({ id: `m${i}`, timestamp: i, ...message })) }) } as unknown as SessionStore
 }
 
-describe('MemoryExtractHost 候选管线', () => {
-  beforeEach(() => {
+describe('MemoryExtractHost', () => {
+  beforeEach(async () => {
     vi.clearAllMocks()
     loadNovaSettingsMock.mockReturnValue({ memoryEnabled: true })
     extractMock.mockReset()
+    const { resetExtractTurnCountersForTests } = await loadHost()
+    resetExtractTurnCountersForTests()
+  })
+
+  it('正常 turn cadence 只调度零 LLM episodic 落盘，不启动 extractor', async () => {
+    const { onUserTurnCompleteForExtract } = await loadHost()
+
+    for (let i = 0; i < 5; i++) {
+      onUserTurnCompleteForExtract('s1', '/tmp/ws')
+    }
+
+    expect(drainAndSchedulePersistMock).toHaveBeenCalledTimes(1)
+    expect(drainAndSchedulePersistMock).toHaveBeenCalledWith('s1', '/tmp/ws')
+    expect(extractMock).not.toHaveBeenCalled()
+  })
+
+  it('会话退出只同步固化 observation，不启动 extractor', async () => {
+    const { extractOnSessionLeave } = await loadHost()
+
+    extractOnSessionLeave('s1', '/tmp/ws')
+
+    expect(drainAndPersistSyncMock).toHaveBeenCalledTimes(1)
+    expect(drainAndPersistSyncMock).toHaveBeenCalledWith('s1', '/tmp/ws')
+    expect(extractMock).not.toHaveBeenCalled()
   })
 
   it('持久化记忆查询先展平过滤再截窗，保留真实用户证据', async () => {
     extractMock.mockResolvedValue([])
-    const messages: SessionMessage[] = [{ id: 'user', timestamp: 0, role: 'user', content: '以后导出必须使用 UTF8 BOM' }]
+    const messages: SessionMessage[] = [{ id: 'user', timestamp: 0, role: 'user', content: '以后导出必须使用 UTF8 BOM' } as SessionMessage]
     for (let i = 0; i < 55; i++) messages.push({ id: `memory${i}`, timestamp: i + 1, role: 'assistant', content: '',
-      blocks: [{ type: 'tool', toolCallId: `call${i}`, toolName: 'memory_search', arguments: { query: '导出' }, status: 'success', result: '旧记忆正文' }] })
+      blocks: [{ type: 'tool', toolCallId: `call${i}`, toolName: 'memory_search', arguments: { query: '导出' }, status: 'success', result: '旧记忆正文' }] } as SessionMessage)
     const { runMemoryExtract } = await loadHost()
-    await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore(messages), {} as never)
+    await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore(messages))
     expect(extractMock.mock.calls[0][0].recentMessages).toEqual([
       expect.objectContaining({ role: 'user', content: '以后导出必须使用 UTF8 BOM' })
     ])
   })
 
-  it('提炼成功：候选交给 processor 落库，episodic 走零 LLM 观测格式化', async () => {
+  it('显式提炼成功：候选交给 processor 落库，episodic 走零 LLM 观测格式化', async () => {
     extractMock.mockResolvedValue([
       {
         kind: 'workflow',
@@ -111,7 +138,7 @@ describe('MemoryExtractHost 候选管线', () => {
     const { runMemoryExtract } = await loadHost()
     await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore([
       { role: 'user', content: '优化构建' }
-    ]), {} as never)
+    ]))
 
     expect(extractMock).toHaveBeenCalledTimes(1)
     expect(processMock).toHaveBeenCalledTimes(1)
@@ -125,13 +152,13 @@ describe('MemoryExtractHost 候选管线', () => {
     expect(drainWorkingBufferMock).toHaveBeenCalledWith('s1')
   })
 
-  it('提炼失败：只跳过结构化落库，episodic 降级路径不变', async () => {
+  it('显式提炼失败：只跳过结构化落库，episodic 降级路径不变', async () => {
     extractMock.mockResolvedValue(null)
 
     const { runMemoryExtract } = await loadHost()
     await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore([
       { role: 'user', content: '优化构建' }
-    ]), {} as never)
+    ]))
 
     expect(processMock).not.toHaveBeenCalled()
     expect(appendEpisodicMock).toHaveBeenCalledTimes(1)
@@ -158,7 +185,7 @@ describe('MemoryExtractHost 候选管线', () => {
     const { runMemoryExtract } = await loadHost()
     await runMemoryExtract('s1', '/tmp/ws', fakeSessionStore([
       { role: 'user', content: '优化构建' }
-    ]), {} as never)
+    ]))
 
     expect(appendEpisodicMock).toHaveBeenCalledTimes(1)
   })

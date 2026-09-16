@@ -23,6 +23,13 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
     registration: 'conditional'
   },
   {
+    name: 'memory_manage',
+    capability: 'memory',
+    exposure: 'always',
+    codeMode: 'direct-only',
+    registration: 'conditional'
+  },
+  {
     name: 'code_context',
     capability: 'filesystem-read',
     exposure: 'always',
@@ -85,10 +92,13 @@ const GROUP_ALIASES: Readonly<Record<string, string>> = {
 const entryByName = new Map<string, ToolCatalogEntry>(ENTRIES.map(entry => [entry.name, entry]))
 const groupById = new Map<string, DeferredToolGroupMeta>(GROUPS.map(group => [group.id, group]))
 
-/** Catalog 条目只读快照（校验与覆盖测试用），顺序即声明顺序 */
+/**
+ * Catalog 条目只读快照（校验与覆盖测试用），顺序即声明顺序。
+ */
 export function listCatalogEntries(): readonly ToolCatalogEntry[] {
   return ENTRIES
 }
+
 /** deferred 工具 → 所属组（仅 deferred exposure，非 deferred 一律 null） */
 const deferredToolGroup = new Map<string, string>()
 for (const entry of ENTRIES) {
