@@ -241,4 +241,48 @@ describe('subagent_read', () => {
     expect(read.success).toBe(true)
     expect(JSON.parse(read.output).content).toContain('EVIDENCE_TARGET')
   })
+
+  it('search 命中偏移与原文严格对齐，不受大小写折叠变长字符影响', async () => {
+    const store = new SessionStore(root)
+    const parent = store.create(resolve(root, 'workspace'))
+    const child = createChild(store, parent.id, 'task_tool:unicode')
+    store.appendMessageFast(child.id, {
+      id: 'msg-child-unicode',
+      role: 'assistant',
+      content: `${'İ'.repeat(40)}EVIDENCE_OFFSET_TARGET`,
+      timestamp: 2
+    })
+
+    const search = await subagentReadTool.execute(
+      {
+        child_session_id: child.id,
+        operation: 'search',
+        query: 'evidence_offset_target'
+      },
+      context(store, parent.id)
+    )
+    expect(search.success).toBe(true)
+    const hit = JSON.parse(search.output).matches[0]
+    // İ 在 toLowerCase 下从 1 个代码单元展开为 2 个；命中偏移若取自折叠副本，
+    // 这里会向右漂移 40 字符、读不到目标原文
+    const read = await subagentReadTool.execute(
+      {
+        child_session_id: child.id,
+        operation: 'read',
+        offset: hit.offset,
+        limit: 30
+      },
+      context(store, parent.id)
+    )
+    const payload = JSON.parse(read.output)
+    expect(payload.content.startsWith('EVIDENCE_OFFSET_TARGET')).toBe(true)
+    expect(payload.content).not.toContain('İ')
+  })
+
+  it('不声明通用截断上限，长分页结果在执行器路径保持完整 JSON', () => {
+    // 执行器对声明了 maxResultSizeChars 的结果按 1000 字符切长行；
+    // 本工具输出是单行 JSON，被切即不可解析。单测直连 execute 覆盖不到该路径，
+    // 在此钉住契约
+    expect(subagentReadTool.maxResultSizeChars).toBeUndefined()
+  })
 })

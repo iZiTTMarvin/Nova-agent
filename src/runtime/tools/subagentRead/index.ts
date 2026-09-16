@@ -38,6 +38,7 @@ function renderToolCall(messageId: string, toolCall: NonNullable<SessionMessage[
 /**
  * 直接从权威 Child Session 渲染证据 transcript。
  * 不走请求投影，因此 request archive/compaction 折叠掉的旧工具结果仍可回读。
+ * 按 active path 渲染；子代理会话没有编辑/重生成分支入口，线性路径即全部持久化记录。
  * 若工具结果自身曾经 spill 到 artifact，这里保留 artifactId，交给 artifact_read 续读全文。
  */
 function renderEvidenceTranscript(messages: readonly SessionMessage[]): string {
@@ -209,7 +210,8 @@ export const subagentReadTool: ToolExecutor = {
   },
   executionMode: 'parallel',
   isConcurrencySafe: () => true,
-  maxResultSizeChars: MAX_READ_CHARS + 4_000,
+  // 有意不声明 maxResultSizeChars：执行器的通用截断管线按 1000 字符切长行，
+  // 会把本工具的单行 JSON 拦腰截断成不可解析文本；输出已由 limit 分页在内部控量
 
   async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
     const childSessionId = typeof args.child_session_id === 'string'
@@ -282,24 +284,26 @@ export const subagentReadTool: ToolExecutor = {
     const query = typeof args.query === 'string' ? args.query.trim() : ''
     if (!query) return failure('search 操作需要 query 参数')
 
-    const haystack = transcript.toLowerCase()
-    const needle = query.toLowerCase()
+    // 正则 i 匹配的索引天然落在原文上；toLowerCase 部分字符会变长（如 İ→i̇），
+    // 在 lowercased 副本上取 offset 会与后续 read 的原文偏移漂移
+    const pattern = new RegExp(
+      query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      'gi'
+    )
     const matches: Array<{ offset: number; snippet: string }> = []
     let totalMatches = 0
-    let cursor = 0
-    while (cursor <= haystack.length - needle.length) {
-      const found = haystack.indexOf(needle, cursor)
-      if (found < 0) break
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(transcript)) !== null) {
       totalMatches += 1
       if (matches.length < MAX_SEARCH_MATCHES) {
-        const start = Math.max(0, found - SEARCH_CONTEXT_CHARS)
+        const start = Math.max(0, match.index - SEARCH_CONTEXT_CHARS)
         const end = Math.min(
           transcript.length,
-          found + needle.length + SEARCH_CONTEXT_CHARS
+          match.index + match[0].length + SEARCH_CONTEXT_CHARS
         )
-        matches.push({ offset: found, snippet: transcript.slice(start, end) })
+        matches.push({ offset: match.index, snippet: transcript.slice(start, end) })
       }
-      cursor = found + Math.max(needle.length, 1)
+      pattern.lastIndex = match.index + Math.max(match[0].length, 1)
     }
 
     return jsonResult({
