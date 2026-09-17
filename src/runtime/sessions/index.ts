@@ -66,4 +66,10 @@ export {
   findSubtreeLeaf
 } from './tree'
 export type { BranchMeta } from './tree'
-export { recoverSessionTurnDrafts, recoverInterruptedTurnDraftsOnStartup } from './turnDraftRecovery'
+export {
+  recoverSessionTurnDrafts,
+  recoverInterruptedTurnDraftsOnStartup,
+  type InterruptedToolSettlementInput,
+  type InterruptedToolSettlement,
+  type SettleInterruptedToolBlock
+} from './turnDraftRecovery'

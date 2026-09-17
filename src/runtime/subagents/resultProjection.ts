@@ -40,6 +40,7 @@ export function projectSubagentExecutionResult(input: {
     artifactIds,
     startedAt: input.runSnapshot.turnStartedAt ?? input.runSnapshot.createdAt,
     completedAt: input.runSnapshot.updatedAt,
+    hasResultMessage: !!finalMessage,
     ...(status === 'incomplete' && incompleteReason
       ? { incompleteReason }
       : {}),
@@ -58,13 +59,10 @@ export function projectSubagentExecutionResult(input: {
 }
 
 function findFinalMessage(session: SessionData, messageId: string): SessionMessage | undefined {
-  if (messageId) {
-    const exact = session.messages.find(
-      (message) => message.id === messageId && message.role === 'assistant'
-    )
-    if (exact) return exact
-  }
-  return [...session.messages].reverse().find((message) => message.role === 'assistant')
+  if (!messageId) return undefined
+  return session.messages.find(
+    (message) => message.id === messageId && message.role === 'assistant'
+  )
 }
 
 function extractSummary(message: SessionMessage): string {

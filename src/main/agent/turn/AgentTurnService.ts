@@ -3,6 +3,7 @@
  */
 import { BrowserWindow, app } from 'electron'
 import { recoverSessionTurnDrafts } from '../../../runtime/sessions'
+import { settleSubagentToolCall } from '../../../runtime/subagents/toolSettlement'
 import {
   AgentLoop,
   getSubAgentSpec,
@@ -32,6 +33,7 @@ import type { IpcCommands } from '../../../shared/ipc/types'
 import type { SkillSlashRejection } from '../../../shared/skills/types'
 import type { MessageBlock, Mode, PermissionMode } from '../../../shared/session/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
+import { isTerminalRunStatus } from '../../../shared/run/types'
 import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
 import { createEventStallDetector } from '../../../shared/diagnostics/stallDetector'
@@ -170,7 +172,9 @@ export async function sendAgentMessage(
   const { getMainWindow, getModelClient, getImageStore } = deps
 
   const sessionStore = getSessionStore()
-  recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
+  const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+    settleSubagentToolCall({ sessionStore, runCoordinator: getRunCoordinator() }, input)
+  recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator(), settle)
   const session = sessionStore.load(params.sessionId)
   if (!session) {
     throw new Error(`会话 ${params.sessionId} 不存在`)
@@ -467,7 +471,33 @@ export async function sendAgentMessage(
       timestamp: Date.now()
     }
     const userAppend = sessionStore.appendMessageFast(params.sessionId, userMessage)
-    if (!userAppend.ok) {
+    if (userAppend.ok && userAppend.status === 'already_exists') {
+      // 崩溃窗口：append 返回 already_exists 但 turn 未建 run 时，
+      // 按是否已绑定到既有 run 来决定是否跳过执行
+      const isBoundToRun = (): boolean => {
+        // (a) 已完成的 turn 在 assistant 消息上持久化了投递事实
+        const completedBound = session.messages.some((m): boolean => {
+          if (m.role !== 'assistant') return false
+          const msg = m as { userDelivery?: { userMessageId: string } }
+          return msg.userDelivery?.userMessageId === turnUserMessageId
+        })
+        if (completedBound) return true
+        // (b) 在途 turn 的 turnDraft.userDelivery
+        const activeSnapshots = runCoordinator.listSnapshotsForSession(params.sessionId)
+        const draftBound = activeSnapshots.some(
+          snap =>
+            !isTerminalRunStatus(snap.status) &&
+            snap.turnDraft?.userDelivery?.userMessageId === turnUserMessageId
+        )
+        return draftBound
+      }
+      if (isBoundToRun()) {
+        // 同一 userMessageId 已绑定既有 run（已完成或在途）：重复提交不再执行
+        console.info(`[AgentTurnService] already_exists 且已绑定，跳过重复执行: userMessageId=${turnUserMessageId}`)
+        return { accepted: true }
+      }
+      console.info(`[AgentTurnService] already_exists 但无绑定，复用既有消息继续: userMessageId=${turnUserMessageId}`)
+    } else if (!userAppend.ok) {
       throw new Error(`用户消息持久化失败: ${userAppend.error}`)
     }
 

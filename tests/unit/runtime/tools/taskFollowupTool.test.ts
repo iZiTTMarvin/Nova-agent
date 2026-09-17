@@ -32,6 +32,7 @@ function result(overrides: Record<string, unknown> = {}) {
     artifactIds: [],
     startedAt: 1,
     completedAt: 2,
+    hasResultMessage: true,
     ...overrides
   }
 }
@@ -49,18 +50,11 @@ describe('task_followup tool', () => {
   it('保持工具名、schema 严格性与串行执行契约', () => {
     const { tool } = setup()
     expect(tool.name).toBe('task_followup')
-    expect(tool.parameters).toEqual({
-      type: 'object',
-      properties: {
-        child_session_id: {
-          type: 'string',
-          description: '既有子代理的会话 ID，来自此前 task / batch_task 结果'
-        },
-        task: { type: 'string', description: '追加指令：说明要继续、纠正或追问什么' }
-      },
-      required: ['child_session_id', 'task'],
-      additionalProperties: false
-    })
+    expect(tool.parameters.properties).toHaveProperty('child_session_id')
+    expect(tool.parameters.properties).toHaveProperty('task')
+    expect(tool.parameters.properties).toHaveProperty('resume_run_id')
+    expect(tool.parameters.required).toEqual(['child_session_id', 'task'])
+    expect(tool.parameters.additionalProperties).toBe(false)
     expect(tool.executionMode).toBe('sequential')
   })
 
@@ -105,17 +99,17 @@ describe('task_followup tool', () => {
     )
 
     expect(followup).toHaveBeenCalledTimes(1)
-    expect(followup).toHaveBeenCalledWith(
-      {
-        parentSessionId: invocationRef.sessionId,
-        parentRunId: invocationRef.runId,
-        previousChildSessionId: 'sess_sub_5678',
-        parentMessageId: invocationRef.messageId,
-        parentToolCallId: invocationRef.toolCallId,
-        task: 'keep digging'
-      },
-      { invocationRef, abortSignal: controller.signal }
-    )
+    const call = followup.mock.calls[0]!
+    expect(call[0]).toMatchObject({
+      parentSessionId: invocationRef.sessionId,
+      parentRunId: invocationRef.runId,
+      previousChildSessionId: 'sess_sub_5678',
+      parentMessageId: invocationRef.messageId,
+      parentToolCallId: invocationRef.toolCallId,
+      task: 'keep digging'
+    })
+    expect(call[0]).not.toHaveProperty('resumeRunId')
+    expect(call[1]).toEqual({ invocationRef, abortSignal: controller.signal })
     expect(output).toEqual({
       success: true,
       output: '[子代理续跑 / 会话 sess_sub_5678 / run run-child-99]\ncontinued evidence'
@@ -181,5 +175,42 @@ describe('task_followup tool', () => {
     )
 
     expect(output).toEqual({ success: false, output: '', error: '子会话正忙' })
+  })
+
+  it('schema 接受 resume_run_id 并透传 command.resumeRunId', async () => {
+    const { tool, followup } = setup()
+    const controller = new AbortController()
+
+    const output = await tool.execute(
+      { child_session_id: 'sess_sub_5678', task: 'resume this', resume_run_id: 'run-old-42' },
+      context(controller.signal)
+    )
+
+    expect(followup).toHaveBeenCalledTimes(1)
+    const call = followup.mock.calls[0]!
+    expect(call[0]).toMatchObject({
+      parentSessionId: invocationRef.sessionId,
+      parentRunId: invocationRef.runId,
+      previousChildSessionId: 'sess_sub_5678',
+      parentMessageId: invocationRef.messageId,
+      parentToolCallId: invocationRef.toolCallId,
+      task: 'resume this',
+      resumeRunId: 'run-old-42'
+    })
+    expect(call[1]).toEqual({ invocationRef, abortSignal: controller.signal })
+    expect(output.success).toBe(true)
+  })
+
+  it('resume_run_id trim 后为空则忽略', async () => {
+    const { tool, followup } = setup()
+
+    await tool.execute(
+      { child_session_id: 'sess_sub_5678', task: 'go', resume_run_id: '   ' },
+      context()
+    )
+
+    expect(followup).toHaveBeenCalledTimes(1)
+    const call = followup.mock.calls[0]!
+    expect(call[0]).not.toHaveProperty('resumeRunId')
   })
 })

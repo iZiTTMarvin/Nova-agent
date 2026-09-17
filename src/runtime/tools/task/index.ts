@@ -1,8 +1,12 @@
 import type { ReasoningEffort } from '../../../shared/config'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../../subagents'
-import { buildSubagentToolResult, failure } from '../subagentResultText'
+import { buildSubagentToolResult } from '../../subagents/resultText'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
+
+function failure(error: string): ToolResult {
+  return { success: false, output: '', error }
+}
 
 const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'max'] as const
 

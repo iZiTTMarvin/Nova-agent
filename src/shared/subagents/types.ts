@@ -164,6 +164,8 @@ export interface FollowupSubagentCommand {
   readonly parentMessageId: string
   readonly parentToolCallId: string
   readonly task: string
+  /** 显式恢复来源；resume_run_id 透传。 */
+  readonly resumeRunId?: string
 }
 
 export type SubagentExecutionStatus =
@@ -199,4 +201,6 @@ export interface SubagentExecutionResult {
   readonly failure?: SubagentExecutionFailure
   /** status === 'incomplete' 时的截断原因（源自 durable run 记录） */
   readonly incompleteReason?: TurnTruncationReason
+  /** 精确结果消息是否存在；用于区分 completed 后的精确成功与降级摘要 */
+  readonly hasResultMessage: boolean
 }

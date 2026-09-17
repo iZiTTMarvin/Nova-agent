@@ -1,14 +1,18 @@
 export {
   SubagentExecutionService,
   SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
-  createSpawnIdentity,
-  createFollowupSpawnIdentity,
   type PreparedSubagentTurn,
   type PrepareSubagentTurnInput,
   type SubagentEventContext,
   type SubagentExecutionLifecycleContext,
   type SubagentExecutionServiceDeps
 } from './SubagentExecutionService'
+export {
+  createSpawnIdentity,
+  createFollowupSpawnIdentity,
+  computeBatchItemDigest,
+  deriveBatchItemToolCallId
+} from './identity'
 export {
   resolveSubagentProfileSnapshot,
   applyHostArchiveCapabilities
@@ -23,6 +27,17 @@ export {
   MAX_SUBAGENT_SUMMARY_CHARS,
   projectSubagentExecutionResult
 } from './resultProjection'
+export {
+  buildSubagentToolResult,
+  statusLabel,
+  describeIncompleteReason
+} from './resultText'
+export {
+  settleSubagentToolCall,
+  type SubagentToolSettlementInput,
+  type SubagentToolSettlement,
+  type SubagentToolSettlementDeps
+} from './toolSettlement'
 export type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
 export { buildSubagentCatalog } from './catalog'
 export {

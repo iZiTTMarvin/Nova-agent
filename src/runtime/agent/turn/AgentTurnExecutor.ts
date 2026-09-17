@@ -4,7 +4,8 @@ import type { SubagentProfileSnapshot } from '../../../shared/subagents'
 import {
   isTerminalRunStatus,
   type CommitTerminalParams,
-  type RunSnapshot
+  type RunSnapshot,
+  type SubagentRunDispatch
 } from '../../../shared/run/types'
 import type { ToolInvocationRef } from '../../tools/types'
 import type { RunCoordinator } from '../../run/RunCoordinator'
@@ -97,6 +98,7 @@ export interface AgentTurnExecutorInput {
   readonly resourceOwnerGeneration?: number
   readonly runRefs?: AgentTurnRunRefs
   readonly userMessageId: string
+  readonly dispatch?: SubagentRunDispatch
   readonly onStarted?: (context: AgentTurnExecutionContext) => void
   readonly afterOutcome?: (
     outcome: AgentTurnOutcome,
@@ -130,7 +132,8 @@ export class AgentTurnExecutor {
         kind: 'agent',
         workspaceId: input.workingDirectory,
         sessionId: input.sessionId,
-        ...(input.runId ? { runId: input.runId } : {})
+        ...(input.runId ? { runId: input.runId } : {}),
+        ...(input.dispatch ? { dispatch: input.dispatch } : {})
       })
       if (
         snapshot.sessionId !== input.sessionId ||

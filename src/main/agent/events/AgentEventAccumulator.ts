@@ -7,6 +7,7 @@ import { appendTerminalErrorToBlocks, formatTerminalErrorMessage } from '../../.
 import { retainCommittedBlocksForRetry } from '../../../shared/session/retainCommittedBlocksForRetry'
 import { getSessionStore } from '../../services/SessionStoreHost'
 import { getRunCoordinator } from '../../services/RunCoordinatorHost'
+import { settleSubagentToolCall } from '../../../runtime/subagents/toolSettlement'
 import type { MessageContext, StreamAccumulator } from './types'
 
 /** 当前正在累积的流式消息映射：messageId → 累积器（按 turn identity fencing） */
@@ -408,11 +409,30 @@ function saveAssistantMessage(
 /**
  * 终态前收敛残留 running 工具块：message_end / error 之后不会有该工具的结果事件，
  * 原样落盘会让重启后的 UI 把「已中断」渲染成永久执行中（计划审阅卡一直转圈）。
+ * running 块先尝试精确结算（子代理真实结果），回落通用文案。
  */
-function settleRunningBlocksAsInterrupted(blocks: MessageBlock[]): MessageBlock[] {
+function settleRunningBlocks(
+  sessionId: string,
+  runId: string | undefined,
+  messageId: string,
+  blocks: MessageBlock[]
+): MessageBlock[] {
   return blocks.map((block): MessageBlock => {
     if (block.type !== 'tool' || block.status !== 'running') return block
-    return { ...block, status: 'error', result: '工具执行被中断' }
+    if (!runId) return { ...block, status: 'error', result: '工具执行被中断' }
+    const settled = settleSubagentToolCall(
+      { sessionStore: getSessionStore(), runCoordinator: getRunCoordinator() },
+      {
+        sessionId,
+        parentRunId: runId,
+        parentMessageId: messageId,
+        toolCallId: block.toolCallId,
+        toolName: block.toolName,
+        args: block.arguments
+      }
+    )
+    if (settled === null) return { ...block, status: 'error', result: '工具执行被中断' }
+    return { ...block, status: settled.status, result: settled.result }
   })
 }
 
@@ -433,7 +453,7 @@ function finalizeAssistantTurn(
   if (runId && executionGeneration != null &&
       !getRunCoordinator().isExecutionCurrent(runId, executionGeneration)) return
   // 终态统一收口：SessionStore 消息与 turnDraft receipt 都只写无 running 态的 blocks
-  const settledBlocks = settleRunningBlocksAsInterrupted(blocks)
+  const settledBlocks = settleRunningBlocks(sessionId, runId, messageId, blocks)
   const turnEndedAt = Date.now()
   const resolvedTurnStartedAt =
     turnStartedAt ??

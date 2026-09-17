@@ -84,7 +84,7 @@ export class RunCoordinator {
     const runId = params.runId ?? randomUUID()
     const existing = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
     if (existing && !isTerminalRunStatus(existing.status)) {
-      // 幂等：同一 runId 未终态则返回现有
+      // 幂等：同一 runId 未终态则返回现有（dispatch 不覆盖；重试内容必然相同）
       this.runs.set(runId, existing)
       this.indexSession(existing.sessionId, runId)
       return existing
@@ -107,7 +107,8 @@ export class RunCoordinator {
       toolCommits: [],
       turnDraft: null,
       commandAcks: [],
-      terminalOutbox: []
+      terminalOutbox: [],
+      ...(params.dispatch ? { dispatch: params.dispatch } : {})
     }
     this.commit(snapshot, 'run_started', { kind: params.kind })
     return cloneSnapshot(snapshot)
@@ -192,6 +193,28 @@ export class RunCoordinator {
     return [...this.runs.values()]
       .filter(s => !isTerminalRunStatus(s.status))
       .map(cloneSnapshot)
+  }
+
+  /**
+   * 枚举所有终态且 turnDraft 存在且未 finalized 的 run 快照。
+   * 纯读、不写。快照可能落后 turn_draft_cleared 事件（届时 finalized=true，被过滤）。
+   */
+  listRecoverableTurnDraftRuns(): RunSnapshot[] {
+    const result: RunSnapshot[] = []
+    for (const runId of this.store.listRunIds()) {
+      const snap = this.runs.get(runId)
+      if (snap) {
+        if (isTerminalRunStatus(snap.status) && snap.turnDraft && !snap.turnDraft.finalized) {
+          result.push(cloneSnapshot(snap))
+        }
+      } else {
+        const disk = this.store.loadSnapshot(runId)
+        if (disk && isTerminalRunStatus(disk.status) && disk.turnDraft && !disk.turnDraft.finalized) {
+          result.push(cloneSnapshot(disk))
+        }
+      }
+    }
+    return result
   }
 
   /**

@@ -216,6 +216,8 @@ export interface RunSnapshot {
    * grace 超时 / 强制中断后递增或清零，使旧 continuation 失效。
    */
   executionGeneration?: number
+  /** 子 run 的版本化派遣关联；仅 SubagentExecutionService 写入。 */
+  dispatch?: SubagentRunDispatch
 }
 
 /** append-only 事件（落盘 events.jsonl） */
@@ -232,6 +234,7 @@ interface StartRunBase {
   workspaceId: string
   sessionId: string
   messageId?: string
+  dispatch?: SubagentRunDispatch
 }
 
 /** 启动 Run 的参数。 */
@@ -279,6 +282,90 @@ export type InteractionAnswerResult =
       firstApplied: boolean
       duplicate?: boolean
     }
+
+/** 每次子 run 的版本化派遣关联；SubagentExecutionService 是唯一写入方。 */
+export const SUBAGENT_RUN_DISPATCH_VERSION = 1
+
+export type SubagentRunDispatchCallKind = 'task' | 'batch_task' | 'task_followup' | 'skill_fork'
+
+export interface SubagentRunDispatch {
+  readonly version: 1
+  readonly callKind: SubagentRunDispatchCallKind
+  readonly parentSessionId: string
+  readonly parentRunId: string
+  readonly parentMessageId: string
+  readonly parentToolCallId?: string
+  readonly execution: 'sync' | 'background_read_only'
+  readonly topParentSessionId: string
+  readonly originUserMessageId?: string
+  /** 显式恢复来源；仅 resume 时携带。 */
+  readonly sourceChildRunId?: string
+}
+
+/**
+ * 失败关闭的 dispatch decoder。
+ * raw == null → undefined；损坏/格式错误 → throw。
+ */
+export function decodeSubagentRunDispatch(
+  raw: unknown
+): SubagentRunDispatch | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('dispatch: not an object')
+  const d = raw as Record<string, unknown>
+  if (typeof d.version !== 'number' || d.version !== 1) {
+    throw new Error(`dispatch: unsupported version ${d.version}`)
+  }
+  const required: Array<keyof SubagentRunDispatch> = [
+    'callKind',
+    'parentSessionId',
+    'parentRunId',
+    'parentMessageId',
+    'execution',
+    'topParentSessionId'
+  ]
+  for (const key of required) {
+    const v = d[key]
+    if (typeof v !== 'string' || v.trim() === '') {
+      throw new Error(`dispatch: missing or empty required field "${String(key)}"`)
+    }
+  }
+  const callKind = d.callKind as string
+  if (
+    callKind !== 'task' &&
+    callKind !== 'batch_task' &&
+    callKind !== 'task_followup' &&
+    callKind !== 'skill_fork'
+  ) {
+    throw new Error(`dispatch: invalid callKind "${callKind}"`)
+  }
+  const execution = d.execution as string
+  if (execution !== 'sync' && execution !== 'background_read_only') {
+    throw new Error(`dispatch: invalid execution "${execution}"`)
+  }
+  const strFields: Array<keyof SubagentRunDispatch> = [
+    'parentToolCallId',
+    'originUserMessageId',
+    'sourceChildRunId'
+  ]
+  for (const key of strFields) {
+    const v = d[key]
+    if (v !== undefined && v !== null && typeof v !== 'string') {
+      throw new Error(`dispatch: "${String(key)}" must be a string if present`)
+    }
+  }
+  return {
+    version: 1,
+    callKind: callKind as SubagentRunDispatch['callKind'],
+    parentSessionId: d.parentSessionId as string,
+    parentRunId: d.parentRunId as string,
+    parentMessageId: d.parentMessageId as string,
+    parentToolCallId: d.parentToolCallId as string | undefined,
+    execution: execution as SubagentRunDispatch['execution'],
+    topParentSessionId: d.topParentSessionId as string,
+    originUserMessageId: d.originUserMessageId as string | undefined,
+    sourceChildRunId: d.sourceChildRunId as string | undefined
+  }
+}
 
 /** 允许的状态转换表 */
 export const RUN_STATUS_TRANSITIONS: Readonly<Record<RunStatus, ReadonlyArray<RunStatus>>> = {

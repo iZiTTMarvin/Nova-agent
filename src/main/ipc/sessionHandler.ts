@@ -8,6 +8,7 @@
  */
 import { app, clipboard, dialog } from 'electron'
 import { recoverSessionTurnDrafts } from '../../runtime/sessions'
+import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
 import { getRunCoordinator } from '../services/RunCoordinatorHost'
 import { handle } from './secureIpc'
 import {
@@ -165,7 +166,10 @@ export function registerSessionHandler(): void {
 
   // 加载单个会话的展示页（尾部消息）；上下文拆分延后全量计算后推送
   handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
-    recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
+    // 与启动归档、sendAgentMessage 注入同一结算闭包：打开会话触发的归档同样要精确结算
+    const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+      settleSubagentToolCall({ sessionStore, runCoordinator: getRunCoordinator() }, input)
+    recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator(), settle)
     const display = sessionStore.loadForDisplay(params.sessionId, {
       tailLimit: INITIAL_SESSION_DISPLAY_PAGE_SIZE
     })

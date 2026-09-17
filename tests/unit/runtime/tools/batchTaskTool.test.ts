@@ -41,7 +41,8 @@ describe('batch_task tool', () => {
       summary: 'done',
       artifactIds: [],
       startedAt: 1,
-      completedAt: 2
+      completedAt: 2,
+      hasResultMessage: true
     }))
     const tool = createBatchTaskTool({
       getSpawnSubagentPort: () => ({ spawn } as SpawnSubagentPort),
@@ -80,7 +81,8 @@ describe('batch_task tool', () => {
       summary: 'partial',
       artifactIds: [],
       startedAt: 1,
-      completedAt: 2
+      completedAt: 2,
+      hasResultMessage: true
     }))
     const tool = createBatchTaskTool({
       getSpawnSubagentPort: () => ({ spawn } as SpawnSubagentPort),
@@ -116,7 +118,8 @@ describe('batch_task tool', () => {
           summary: 'done',
           artifactIds: [],
           startedAt: 1,
-          completedAt: 2
+          completedAt: 2,
+          hasResultMessage: true
         }
       }
       return await new Promise((resolve) => {
@@ -127,7 +130,8 @@ describe('batch_task tool', () => {
           summary: 'cancelled',
           artifactIds: [],
           startedAt: 1,
-          completedAt: 3
+          completedAt: 3,
+          hasResultMessage: true
         }), { once: true })
       })
     })

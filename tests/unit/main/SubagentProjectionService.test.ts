@@ -778,4 +778,51 @@ describe('SubagentProjectionService', () => {
       vi.useRealTimers()
     }
   })
+
+  it('run 带 dispatch.sourceChildRunId 时投影出 resumedFromRunId', () => {
+    vi.useFakeTimers()
+    try {
+      const child = createChild('call-resume', 'run-resume-birth')
+      vi.setSystemTime(1_000)
+      coordinator.startRun({
+        kind: 'agent',
+        runId: 'run-resume-birth',
+        workspaceId: workspace,
+        sessionId: child.id
+      })
+      coordinator.markRunning('run-resume-birth', 'msg-birth')
+      coordinator.commitTerminal({ runId: 'run-resume-birth', status: 'interrupted' })
+
+      vi.setSystemTime(2_000)
+      const resumedRunId = 'run-resumed-new'
+      coordinator.startRun({
+        kind: 'agent',
+        runId: resumedRunId,
+        workspaceId: workspace,
+        sessionId: child.id,
+        dispatch: {
+          version: 1,
+          callKind: 'task_followup',
+          parentSessionId,
+          parentRunId: 'run-parent',
+          parentMessageId: 'msg-parent',
+          parentToolCallId: 'call-resume-followup',
+          execution: 'sync',
+          topParentSessionId: parentSessionId,
+          sourceChildRunId: 'run-resume-birth'
+        }
+      })
+      coordinator.markRunning(resumedRunId, 'msg-resumed')
+      coordinator.commitTerminal({ runId: resumedRunId, status: 'completed' })
+
+      const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+      const projections = service.listByParentSessionId(parentSessionId)
+      const birthProj = projections.find(p => p.childRunId === 'run-resume-birth')
+      const resumedProj = projections.find(p => p.childRunId === resumedRunId)
+      expect(resumedProj?.resumedFromRunId).toBe('run-resume-birth')
+      expect(birthProj?.resumedFromRunId).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

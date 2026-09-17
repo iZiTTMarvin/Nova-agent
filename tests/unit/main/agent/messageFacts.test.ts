@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { createHash } from 'crypto'
-import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { deriveChildSessionId, SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
 import { RunStore } from '../../../../src/runtime/run/RunStore'
@@ -30,9 +30,11 @@ import {
   CHARS_PER_TOKEN,
   isArchivedPlaceholder
 } from '../../../../src/runtime/request-projection'
+import { createSpawnIdentity } from '../../../../src/runtime/subagents/identity'
 
 let sessionStore: SessionStore
 let coordinator: RunCoordinator
+
 vi.mock('electron', () => ({ app: { getPath: () => '' }, BrowserWindow: class {} }))
 vi.mock('../../../../src/main/services/SessionStoreHost', () => ({ getSessionStore: () => sessionStore }))
 vi.mock('../../../../src/main/services/RunCoordinatorHost', () => ({ getRunCoordinator: () => coordinator }))
@@ -386,4 +388,105 @@ it('草稿提交回调失效 generation 后不追加或清除事实', () => {
   feed({ type: 'message_end', messageId: 'a' })
   expect(sessionStore.load(session.id)!.messages).toEqual([])
   expect(runStore.loadSnapshot(run.runId)!.turnDraft).not.toBeNull()
+})
+
+// ── 批次 3：live finalize 精确结算用例 ─────────────────────────────────
+
+/** 按真实身份派生建立 child 会话与 run：childSessionId 由 spawnKey 哈希，child runId 即 spawnRunId。 */
+function setupChildForFinalize(opts: {
+  parentSessionId: string
+  parentRunId: string
+  workspaceRoot: string
+  childAssistantText?: string
+  status: 'completed' | 'running'
+}) {
+  const identity = createSpawnIdentity({
+    parentRunId: opts.parentRunId,
+    invocation: { kind: 'task_tool', parentMessageId: 'assistant-1', parentToolCallId: 'task-1' }
+  })
+  const childSessionId = deriveChildSessionId(identity.spawnKey)
+  sessionStore.createChildIfAbsent({
+    childSessionId,
+    workspaceRoot: opts.workspaceRoot,
+    mode: 'default',
+    permissionMode: 'full_access',
+    task: opts.childAssistantText ?? '子代理任务',
+    subagent: {
+      lineage: {
+        parentSessionId: opts.parentSessionId,
+        parentRunId: opts.parentRunId,
+        rootRunId: opts.parentRunId,
+        depth: 1,
+        spawnKey: identity.spawnKey,
+        spawnRunId: identity.spawnRunId,
+        origin: { kind: 'task_tool', parentMessageId: 'assistant-1', parentToolCallId: 'task-1' }
+      },
+      profile: { profileId: 'test', name: 'test', description: 'test', systemPrompt: 'test', toolNames: [], permissionCeiling: 'read_only', maxToolRounds: 10, configHash: 'hash' }
+    },
+    codeIndexEnabled: false
+  })
+  const childRun = coordinator.startRun({
+    kind: 'agent',
+    runId: identity.spawnRunId,
+    sessionId: childSessionId,
+    workspaceId: opts.workspaceRoot
+  })
+  coordinator.markRunning(childRun.runId, 'child-assistant')
+  if (opts.status === 'completed') {
+    sessionStore.appendMessageFast(childSessionId, {
+      id: 'child-assistant',
+      role: 'assistant',
+      content: opts.childAssistantText ?? '',
+      timestamp: 2
+    })
+    coordinator.commitTerminal({ runId: childRun.runId, status: 'completed', reason: 'done' })
+  }
+  return { identity, childSessionId, childRun }
+}
+
+it('f) live finalize：child completed 时 running task 块落盘为 success 含精确摘要', () => {
+  const { feed, run, session, ctx } = setup()
+  feed({ type: 'message_start', messageId: 'assistant-1' })
+  feed({ type: 'text_delta', messageId: 'assistant-1', delta: '正在派遣子代理' })
+  feed({ type: 'tool_call', messageId: 'assistant-1', toolCallId: 'task-1', toolName: 'task', args: {} })
+
+  const { childSessionId } = setupChildForFinalize({
+    parentSessionId: session.id,
+    parentRunId: run.runId,
+    workspaceRoot: ctx.workspaceRoot,
+    childAssistantText: '子代理完成：任务已执行',
+    status: 'completed'
+  })
+
+  feed({ type: 'message_end', messageId: 'assistant-1', finishReason: 'stop', interrupted: true })
+
+  const msg = sessionStore.load(session.id)!.messages.find(m => m.id === 'assistant-1')!
+  const taskBlock = (msg.blocks ?? []).find(b => b.type === 'tool' && b.toolCallId === 'task-1')
+  expect(taskBlock).toMatchObject({ status: 'success' })
+  const result = taskBlock && taskBlock.type === 'tool' ? String(taskBlock.result) : ''
+  expect(result).toContain('子代理')
+  expect(result).toContain(childSessionId)
+  expect(result).toContain('任务已执行')
+})
+
+it('f 变体) live finalize：child 仍 running 时 running task 块落盘为 error 且文案含"尚未收到终态"', () => {
+  const { feed, run, session, ctx } = setup()
+  feed({ type: 'message_start', messageId: 'assistant-1' })
+  feed({ type: 'text_delta', messageId: 'assistant-1', delta: '正在派遣子代理' })
+  feed({ type: 'tool_call', messageId: 'assistant-1', toolCallId: 'task-1', toolName: 'task', args: {} })
+
+  setupChildForFinalize({
+    parentSessionId: session.id,
+    parentRunId: run.runId,
+    workspaceRoot: ctx.workspaceRoot,
+    status: 'running'
+  })
+
+  feed({ type: 'message_end', messageId: 'assistant-1', finishReason: 'stop', interrupted: true })
+
+  const msg = sessionStore.load(session.id)!.messages.find(m => m.id === 'assistant-1')!
+  const taskBlock = (msg.blocks ?? []).find(b => b.type === 'tool' && b.toolCallId === 'task-1')
+  expect(taskBlock).toMatchObject({ status: 'error' })
+  const result = taskBlock && taskBlock.type === 'tool' ? String(taskBlock.result) : ''
+  expect(result).toContain('尚未收到终态')
 })

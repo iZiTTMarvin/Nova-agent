@@ -1,4 +1,3 @@
-import { createHash } from 'crypto'
 import * as path from 'path'
 import { isDeepStrictEqual } from 'util'
 import type { AgentEvent, AgentLoop, EventBus } from '../agent'
@@ -18,6 +17,12 @@ import {
   type SessionStore,
   type SubagentSessionData
 } from '../sessions'
+import {
+  createFollowupSpawnIdentity,
+  createSpawnIdentity,
+  deriveFollowupUserMessageId
+} from './identity'
+import { settleSubagentToolCall } from './toolSettlement'
 import type {
   FollowupSubagentCommand,
   SpawnSubagentCommand,
@@ -28,7 +33,14 @@ import type {
   SubagentOrigin,
   SubagentProfileSnapshot
 } from '../../shared/subagents'
-import { isHardTerminalRunStatus, isTerminalRunStatus, type RunSnapshot } from '../../shared/run/types'
+import {
+  isHardTerminalRunStatus,
+  isTerminalRunStatus,
+  type RunSnapshot,
+  type SubagentRunDispatch,
+  type SubagentRunDispatchCallKind,
+  type ToolCommitRecord
+} from '../../shared/run/types'
 import type { ToolInvocationRef } from '../tools/types'
 import type { Mode } from '../../shared/session'
 import type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
@@ -129,6 +141,7 @@ interface ResolvedExecutionPlan {
   readonly timeoutMs?: number
   readonly parentSessionId: string
   readonly parentRunId: string
+  readonly dispatch?: SubagentRunDispatch
 }
 
 /**
@@ -299,6 +312,27 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     const childSession = childResult.session
     this.deps.onLinked?.({ childSession, created: childResult.created })
 
+    // 计算 callKind
+    let callKind: SubagentRunDispatchCallKind = 'task'
+    if (command.invocation.kind === 'task_tool') {
+      const toolCallId = command.invocation.parentToolCallId
+      callKind = toolCallId?.includes(':batch:') ? 'batch_task' : 'task'
+    } else if (command.invocation.kind === 'skill_fork') {
+      callKind = 'skill_fork'
+    }
+    const topParentSessionId = resolveTopParentSessionId(
+      this.deps.sessionStore,
+      command.parentSessionId
+    )
+    const dispatch = buildDispatch({
+      callKind,
+      parentSessionId: command.parentSessionId,
+      parentRunId: command.parentRunId,
+      parentMessageId: command.invocation.parentMessageId,
+      parentToolCallId: command.invocation.parentToolCallId,
+      topParentSessionId
+    })
+
     return this.runResolvedExecution(
       {
         task: command.task,
@@ -306,7 +340,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         isolation: command.isolation,
         ...(command.timeoutMs !== undefined ? { timeoutMs: command.timeoutMs } : {}),
         parentSessionId: command.parentSessionId,
-        parentRunId: command.parentRunId
+        parentRunId: command.parentRunId,
+        dispatch
       },
       context,
       identity,
@@ -371,11 +406,58 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       throw new Error('历史子会话缺少模型 header，无法 followup；请重新派遣子代理')
     }
 
+    // resume 校验链：仅当显式 resumeRunId 存在时执行
+    let resumeSource: RunSnapshot | undefined
+    if (command.resumeRunId) {
+      const resumeTarget = this.deps.runCoordinator.getSnapshot(command.resumeRunId)
+      if (!resumeTarget) {
+        throw new Error(`指定的恢复 run ${command.resumeRunId} 不存在`)
+      }
+      if (resumeTarget.sessionId !== command.previousChildSessionId) {
+        throw new Error(
+          `指定的恢复 run ${command.resumeRunId} 不属于该子会话 ${command.previousChildSessionId}`
+        )
+      }
+      if (resumeTarget.status !== 'interrupted') {
+        throw new Error(
+          `只能恢复 interrupted 状态的子 run（当前 ${resumeTarget.status}）`
+        )
+      }
+      if (this.deps.isRunExecutionActive?.(command.resumeRunId)) {
+        throw new Error(`指定的恢复 run ${command.resumeRunId} 仍有活跃执行句柄`)
+      }
+      if (
+        resumeTarget.pendingInteractions.some(
+          (i) => i.status === 'pending' || i.status === 'submitting'
+        )
+      ) {
+        throw new Error(
+          `指定的恢复 run ${command.resumeRunId} 有待处理交互，需先回答或忽略`
+        )
+      }
+      resumeSource = resumeTarget
+    }
+
     const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
     if (!existingRun || !isHardTerminalRunStatus(existingRun.status)) {
       this.deps.resolveExecutionTarget({ header })
     }
     const lineageBase = resolveLineageBase(parentSession, command.parentRunId)
+
+    // 构造 dispatch
+    const topParentSessionId = resolveTopParentSessionId(
+      this.deps.sessionStore,
+      command.parentSessionId
+    )
+    const dispatch = buildDispatch({
+      callKind: 'task_followup',
+      parentSessionId: command.parentSessionId,
+      parentRunId: command.parentRunId,
+      parentMessageId: command.parentMessageId,
+      parentToolCallId: command.parentToolCallId,
+      topParentSessionId,
+      ...(resumeSource ? { sourceChildRunId: resumeSource.runId } : {})
+    })
 
     // 指令先落子会话历史再执行：后续 followup 恢复上下文与详情弹窗都要看到
     // 当初的追加指令。硬终态重放路径不写——重放的是旧执行，不引入新指令。
@@ -394,14 +476,16 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         isolation: profile.permissionCeiling === 'read_only' ? 'readonly' : 'shared',
         timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
         parentSessionId: command.parentSessionId,
-        parentRunId: command.parentRunId
+        parentRunId: command.parentRunId,
+        dispatch
       },
       context,
       identity,
       childSession,
       profile,
       existingRun,
-      lineageBase.rootRunId
+      lineageBase.rootRunId,
+      resumeSource
     )
   }
 
@@ -414,7 +498,12 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     command: FollowupSubagentCommand,
     identity: SpawnIdentity
   ): SubagentSessionData | null {
-    recoverSessionTurnDrafts(command.previousChildSessionId, this.deps.sessionStore, this.deps.runCoordinator)
+    const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+      settleSubagentToolCall(
+        { sessionStore: this.deps.sessionStore, runCoordinator: this.deps.runCoordinator },
+        input
+      )
+    recoverSessionTurnDrafts(command.previousChildSessionId, this.deps.sessionStore, this.deps.runCoordinator, settle)
     const messageId = deriveFollowupUserMessageId(identity.spawnKey)
     const append = this.deps.sessionStore.appendMessageFast(command.previousChildSessionId, {
       id: messageId,
@@ -449,7 +538,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     childSession: SubagentSessionData,
     profile: SubagentProfileSnapshot,
     existingRun: RunSnapshot | null,
-    rootRunId: string
+    rootRunId: string,
+    resumeSource?: RunSnapshot
   ): Promise<SubagentExecutionResult> {
     let recoverySnapshot: RunSnapshot | null = null
     if (existingRun) {
@@ -518,7 +608,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         kind: 'agent',
         runId: identity.spawnRunId,
         workspaceId: childSession.workspaceRoot,
-        sessionId: childSession.id
+        sessionId: childSession.id,
+        ...(plan.dispatch ? { dispatch: plan.dispatch } : {})
       })
       assertChildRunIdentity(queued, childSession, identity.spawnRunId)
     }
@@ -528,7 +619,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         childSession,
         identity.spawnRunId,
         'cancelled',
-        '父执行已取消'
+        '父执行已取消',
+        plan.dispatch
       )
       return this.projectResult(childSession, identity.spawnRunId)
     }
@@ -552,7 +644,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         childSession,
         identity.spawnRunId,
         permitResult.code === 'aborted' ? 'cancelled' : 'failed',
-        `scheduler:${permitResult.code}:${permitResult.message}`
+        `scheduler:${permitResult.code}:${permitResult.message}`,
+        plan.dispatch
       )
       return this.projectResult(
         childSession,
@@ -580,7 +673,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         profile,
         rootRunId,
         rootRun.executionGeneration,
-        recoverySnapshot
+        recoverySnapshot,
+        resumeSource
       )
     } finally {
       permitResult.permit.release()
@@ -595,7 +689,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     profile: SubagentProfileSnapshot,
     rootRunId: string,
     rootExecutionGeneration: number,
-    recoverySnapshot: RunSnapshot | null
+    recoverySnapshot: RunSnapshot | null,
+    resumeSource?: RunSnapshot
   ): Promise<SubagentExecutionResult> {
 
     let prepared: PreparedSubagentTurn
@@ -624,7 +719,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         childSession,
         identity.spawnRunId,
         'failed',
-        error instanceof Error ? error.message : String(error)
+        error instanceof Error ? error.message : String(error),
+        plan.dispatch
       )
       return this.projectResult(childSession, identity.spawnRunId, 'host')
     }
@@ -686,9 +782,11 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         : null
 
     try {
-      const executionTask = recoverySnapshot
-        ? buildRecoveryTask(plan.task, recoverySnapshot)
-        : plan.task
+      const recoverySnapshots = [resumeSource, recoverySnapshot].filter(Boolean) as readonly RunSnapshot[]
+      const executionTask =
+        recoverySnapshots.length > 0
+          ? buildRecoveryTask(plan.task, recoverySnapshots)
+          : plan.task
       await this.deps.turnExecutor.execute({
         agentLoop: prepared.agentLoop,
         task: executionTask,
@@ -703,6 +801,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         resourceOwnerGeneration: rootExecutionGeneration,
         runRefs,
         userMessageId: executionUserMessage.id,
+        ...(plan.dispatch ? { dispatch: plan.dispatch } : {}),
         onStarted: () => this.deps.onExecutionStarted?.(eventContext()),
         afterOutcome: () => {
           if (!timedOut) return
@@ -766,13 +865,15 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     childSession: SubagentSessionData,
     runId: string,
     status: 'failed' | 'cancelled' | 'interrupted',
-    reason: string
+    reason: string,
+    dispatch?: SubagentRunDispatch
   ): void {
     const snapshot = this.deps.runCoordinator.startRun({
       kind: 'agent',
       runId,
       workspaceId: childSession.workspaceRoot,
-      sessionId: childSession.id
+      sessionId: childSession.id,
+      ...(dispatch ? { dispatch } : {})
     })
     assertChildRunIdentity(snapshot, childSession, runId)
     if (!isTerminalRunStatus(snapshot.status)) {
@@ -848,82 +949,6 @@ function assertFollowupInvocationIdentity(
   if (!invocationRefMatches(ref, command)) {
     throw new Error('followup 调用身份与 FollowupSubagentCommand 不匹配')
   }
-}
-
-function deriveSpawnRunId(spawnKey: string): string {
-  const digest = createHash('sha256')
-    .update(`spawn-run\0${spawnKey}`, 'utf8')
-    .digest('hex')
-  return [
-    digest.slice(0, 8),
-    digest.slice(8, 12),
-    digest.slice(12, 16),
-    digest.slice(16, 20),
-    digest.slice(20, 32)
-  ].join('-')
-}
-
-function hashStableFields(stableFields: readonly string[]): string {
-  return createHash('sha256')
-    .update(stableFields.join('\0'), 'utf8')
-    .digest('hex')
-}
-
-export function createSpawnIdentity(command: SpawnSubagentCommand): SpawnIdentity {
-  const spawnKey = createStableSpawnKey(command)
-  return { spawnKey, spawnRunId: deriveSpawnRunId(spawnKey) }
-}
-
-/**
- * followup 的稳定身份：同一次 followup 工具调用幂等，不同调用得到不同 run；
- * 与 task_tool 分支同构，previousChildSessionId 保证不同子会话的 followup 互不冲突。
- */
-export function createFollowupSpawnIdentity(
-  command: FollowupSubagentCommand
-): SpawnIdentity {
-  const spawnKey = `task_followup:${hashStableFields([
-    'task_followup',
-    command.parentRunId,
-    command.parentMessageId,
-    command.parentToolCallId,
-    command.previousChildSessionId
-  ])}`
-  return { spawnKey, spawnRunId: deriveSpawnRunId(spawnKey) }
-}
-
-/** followup 指令在子会话中的持久化消息 id；同一次调用重试不产生第二条指令。 */
-function deriveFollowupUserMessageId(spawnKey: string): string {
-  const digest = createHash('sha256')
-    .update(`followup-task\0${spawnKey}`, 'utf8')
-    .digest('hex')
-  return `msg_sub_user_${digest.slice(0, 32)}`
-}
-
-function createStableSpawnKey(command: SpawnSubagentCommand): string {
-  const origin = command.invocation
-  const stableFields = (() => {
-    if (origin.kind === 'task_tool') {
-      return ['task_tool', command.parentRunId, origin.parentMessageId, origin.parentToolCallId]
-    }
-    if (origin.kind === 'skill_fork') {
-      return [
-        'skill_fork',
-        command.parentRunId,
-        origin.parentMessageId,
-        origin.parentToolCallId ?? '',
-        origin.skillName
-      ]
-    }
-    return [
-      'workflow',
-      origin.workflowRunId,
-      origin.phase,
-      origin.taskId ?? '',
-      origin.batchId ?? '',
-      String(origin.occurrence ?? 0)
-    ]
-  })()
-  return `${origin.kind}:${hashStableFields(stableFields)}`
 }
 
 function validateSkillRoots(
@@ -1020,16 +1045,33 @@ function assertChildRunIdentity(
   }
 }
 
-function buildRecoveryTask(originalTask: string, snapshot: RunSnapshot): string {
-  const committed = (snapshot.toolCommits ?? [])
+function buildRecoveryTask(originalTask: string, snapshots: readonly RunSnapshot[]): string {
+  const allCommits = new Map<string, ToolCommitRecord>()
+  for (const snap of snapshots) {
+    for (const record of snap.toolCommits ?? []) {
+      const existing = allCommits.get(record.toolCallId)
+      // later snapshot wins for a given toolCallId
+      if (!existing || record.phase === 'committed') {
+        allCommits.set(record.toolCallId, record)
+      }
+    }
+  }
+  const committed = [...allCommits.values()]
     .filter((record) => record.phase === 'committed')
     .map((record) => `${record.toolName}:${record.toolCallId}`)
-  const blockedReplay = (snapshot.toolCommits ?? [])
-    .filter((record) => record.phase === 'failed' && !record.idempotent)
+  const blockedReplay = [...allCommits.values()]
+    .filter((record) => record.phase !== 'committed' && !record.idempotent)
     .map((record) => `${record.toolName}:${record.toolCallId}`)
-  const interactionDecisions = snapshot.pendingInteractions
+  const allInteractions = new Map<string, { status: string }>()
+  for (const snap of snapshots) {
+    for (const interaction of snap.pendingInteractions) {
+      // later snapshot wins
+      allInteractions.set(interaction.interactionId, interaction)
+    }
+  }
+  const interactionDecisions = [...allInteractions.values()]
     .filter((interaction) => interaction.status === 'answered' || interaction.status === 'dismissed')
-    .map((interaction) => `${interaction.type}:${interaction.status}`)
+    .map((interaction) => `${interaction.status}`)
   return [
     '继续此前因进程退出而中断的子任务。基于 Child Session 现有历史重新规划，不重新派生会话。',
     `原始任务：${originalTask}`,
@@ -1038,4 +1080,52 @@ function buildRecoveryTask(originalTask: string, snapshot: RunSnapshot): string 
     `已持久化交互决定：${interactionDecisions.join(', ') || '无'}`,
     '如果仍需等价副作用，先重新读取当前状态并选择新的、安全且可审计的操作。'
   ].join('\n')
+}
+
+/**
+ * 沿 lineage 上溯到顶层父会话（有界）。
+ * 遇到 kind='primary' 或路径断裂时回落为当前 sessionId。
+ */
+function resolveTopParentSessionId(
+  sessionStore: SessionStore,
+  sessionId: string,
+  maxDepth = 20
+): string {
+  let current = sessionId
+  let depth = 0
+  while (depth < maxDepth) {
+    const session = sessionStore.load(current)
+    if (!session || session.kind === 'primary') break
+    const parentId = session.subagent?.lineage?.parentSessionId
+    if (!parentId) break
+    current = parentId
+    depth++
+  }
+  return current
+}
+
+/**
+ * 构造子 run 的派遣关联。
+ * originUserMessageId 本批不填（后续批次由接纳路径补齐）。
+ */
+function buildDispatch(opts: {
+  callKind: SubagentRunDispatchCallKind
+  parentSessionId: string
+  parentRunId: string
+  parentMessageId: string
+  parentToolCallId?: string
+  topParentSessionId: string
+  sourceChildRunId?: string
+}): SubagentRunDispatch {
+  return {
+    version: 1,
+    callKind: opts.callKind,
+    parentSessionId: opts.parentSessionId,
+    parentRunId: opts.parentRunId,
+    parentMessageId: opts.parentMessageId,
+    ...(opts.parentToolCallId ? { parentToolCallId: opts.parentToolCallId } : {}),
+    execution: 'sync',
+    topParentSessionId: opts.topParentSessionId,
+    ...(opts.sourceChildRunId ? { sourceChildRunId: opts.sourceChildRunId } : {})
+  }
 }

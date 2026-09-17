@@ -15,7 +15,8 @@ import {
   isTerminalRunStatus,
   isTurnTruncationReason,
   type RunEventRecord,
-  type RunSnapshot
+  type RunSnapshot,
+  decodeSubagentRunDispatch
 } from '../../shared/run/types'
 
 export interface RunStoreOptions {
@@ -162,7 +163,17 @@ export class RunStore {
     if (!fs.existsSync(filePath)) return null
     try {
       const raw = fs.readFileSync(filePath, 'utf8')
-      return JSON.parse(raw) as RunSnapshot
+      const parsed = JSON.parse(raw) as RunSnapshot
+      // Apply dispatch decoder to normalize/validate the dispatch field
+      if (parsed && typeof parsed === 'object' && 'dispatch' in parsed) {
+        try {
+          parsed.dispatch = decodeSubagentRunDispatch(parsed.dispatch) ?? undefined
+        } catch {
+          console.error(`[RunStore] dispatch decode 失败 runId=${runId}，跳过字段`)
+          delete parsed.dispatch
+        }
+      }
+      return parsed
     } catch (err) {
       console.error(`[RunStore] 读取 snapshot 失败 runId=${runId}:`, err)
       return null

@@ -1,16 +1,17 @@
-import { createHash } from 'node:crypto'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 import {
   assertBatchInputReadonlyEligibility,
   BatchReadonlyEligibilityError,
+  computeBatchItemDigest,
+  deriveBatchItemToolCallId,
   SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
   type SpawnSubagentPort
 } from '../../subagents'
 import {
   decodeBatchInput,
+  formatBatchSubagentOutput,
   SubagentBatchDecodeError,
   type BatchSubagentItemResult,
-  type BatchSubagentOutput,
   type SpawnSubagentCommand
 } from '../../../shared/subagents'
 
@@ -105,13 +106,10 @@ export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
       const inputOrder = decoded.items.map((item) => item.itemId)
       const resultById = new Map<string, Omit<BatchSubagentItemResult, 'itemId'>>()
       // 批次同 toolCall 内的多项需可区分：spawnKey 按 parentToolCallId + batch 派生，保证每项有独立 child 身份
-      const batchDigest = createHash('sha256')
-        .update(decoded.items.map((entry) => `${entry.itemId}\0${entry.profileId}\0${entry.task}`).join('\0'))
-        .digest('hex')
-        .slice(0, 8)
+      const batchDigest = computeBatchItemDigest(decoded.items)
 
       const promises = resolvedItems.map(async ({ item, profile }) => {
-        const perItemToolCallId = `${invocationRef.toolCallId}:batch:${batchDigest}:${item.itemId}`
+        const perItemToolCallId = deriveBatchItemToolCallId(invocationRef.toolCallId, batchDigest, item.itemId)
         const perItemInvocationRef = { ...invocationRef, toolCallId: perItemToolCallId }
         const command: SpawnSubagentCommand = {
           parentSessionId: invocationRef.sessionId,
@@ -165,12 +163,9 @@ export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
         return { itemId, ...entry }
       })
 
-      const hasFailure = ordered.some((entry) => entry.status !== 'completed')
-      const payload: BatchSubagentOutput = { results: ordered }
-      const output = JSON.stringify(payload, null, 2)
+      const { output, hasFailure, error } = formatBatchSubagentOutput(ordered)
       if (hasFailure) {
-        // 默认 all-settled：部分失败不取消兄弟，已完成结果保留；整体标记失败但仍返回汇总
-        return { success: false, output, error: `批次部分失败：${ordered.filter((e) => e.status !== 'completed').map((e) => `${e.itemId}:${e.status}`).join(', ')}` }
+        return { success: false, output, error: `工具执行失败: ${error}` }
       }
       return { success: true, output }
     }

@@ -428,4 +428,59 @@ describe('sendAgentMessage 路由行为级集成', () => {
     ])
     expect(eventPipeline.accumulated.mock.calls.every((call) => call[0] === 'sess-1')).toBe(true)
   })
+
+  it('appendMessageFast 返回 already_exists 且已绑定到既有 run 时跳过重复执行', async () => {
+    // 会话中已有 assistant 消息持久化了该 userMessageId 的投递事实 → 已绑定
+    const boundSession = {
+      ...makeSession(),
+      messages: [
+        { id: 'msg-repeat', role: 'user', content: 'repeat', timestamp: 1 },
+        { id: 'msg-assistant-done', role: 'assistant', content: 'done', timestamp: 2, userDelivery: { userMessageId: 'msg-repeat', modeInstruction: '', sessionPrefix: null } }
+      ]
+    }
+    sessionStore.load.mockReturnValueOnce(boundSession as any)
+    sessionStore.appendMessageFast.mockReturnValueOnce({ ok: true, status: 'already_exists', meta: {} as any })
+
+    const result = await sendAgentMessage({ sessionId: 'sess-1', content: 'repeat', userMessageId: 'msg-repeat' }, deps)
+
+    expect(result).toEqual({ accepted: true })
+    expect(stubAgentLoop.sendMessage).not.toHaveBeenCalled()
+    expect(coordinator.startRun).not.toHaveBeenCalled()
+  })
+
+  it('appendMessageFast 返回 already_exists 但无绑定时复用既有消息继续后续 turn 流程', async () => {
+    sessionStore.appendMessageFast.mockReturnValueOnce({ ok: true, status: 'already_exists', meta: {} as any })
+    coordinator.listSnapshotsForSession.mockReturnValueOnce([])
+    stubAgentLoop.sendMessage.mockImplementationOnce(async () => ({ status: 'completed' }))
+
+    const result = await sendAgentMessage({ sessionId: 'sess-1', content: 'continue after crash', userMessageId: 'msg-crash' }, deps)
+
+    expect(result).toEqual({ accepted: true })
+    expect(stubAgentLoop.sendMessage).toHaveBeenCalled()
+  })
+
+  it('同 userMessageId 两次发送：appendMessageFast 返回 already_exists 时第二次被跳过', async () => {
+    // 第一次：正常追加并完成；此后会话内出现该 userMessageId 的绑定 assistant 消息
+    let bound = false
+    sessionStore.load.mockImplementation(() => bound
+      ? ({
+          ...makeSession(),
+          messages: [
+            { id: 'msg-identical', role: 'user', content: 'first send', timestamp: 1 },
+            { id: 'msg-assistant-1', role: 'assistant', content: 'done', timestamp: 2, userDelivery: { userMessageId: 'msg-identical', modeInstruction: '', sessionPrefix: null } }
+          ]
+        })
+      : makeSession())
+    sessionStore.appendMessageFast.mockImplementation((_sid: string, msg: { id?: string }) => {
+      if (msg.id === 'msg-identical' && bound) return { ok: true, status: 'already_exists', meta: {} }
+      if (msg.id === 'msg-identical') bound = true
+      return { ok: true }
+    })
+
+    await sendAgentMessage({ sessionId: 'sess-1', content: 'first send', userMessageId: 'msg-identical' }, deps)
+    expect(stubAgentLoop.sendMessage).toHaveBeenCalledTimes(1)
+    await sendAgentMessage({ sessionId: 'sess-1', content: 'second send', userMessageId: 'msg-identical' }, deps)
+
+    expect(stubAgentLoop.sendMessage).toHaveBeenCalledTimes(1)
+  })
 })

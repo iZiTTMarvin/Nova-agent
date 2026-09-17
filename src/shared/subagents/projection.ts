@@ -89,4 +89,6 @@ export interface SubagentActivityProjection {
    * 只读子代理无写入工具，恒缺省；UI 据此不渲染 diff 卡。
    */
   readonly fileChanges?: readonly SubagentFileChange[]
+  /** 来自显式 resume 的恢复来源 runId；仅 resume 目标 run 携带。 */
+  readonly resumedFromRunId?: string
 }

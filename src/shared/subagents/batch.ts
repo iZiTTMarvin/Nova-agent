@@ -29,7 +29,7 @@ export interface BatchSubagentItemResult {
   readonly itemId: string
   readonly childSessionId?: string
   readonly childRunId?: string
-  readonly status: SubagentExecutionStatus | 'rejected'
+  readonly status: SubagentExecutionStatus | 'rejected' | 'unsettled'
   readonly summary?: string
   readonly failure?: SubagentExecutionFailure
   readonly incompleteReason?: SubagentExecutionResult['incompleteReason']
@@ -49,6 +49,27 @@ export class SubagentBatchDecodeError extends Error {
   constructor(readonly issues: BatchDecodeIssue[]) {
     super(issues.map((issue) => issue.message).join('；'))
   }
+}
+
+export interface BatchSubagentOutputResult {
+  readonly output: string
+  readonly hasFailure: boolean
+  readonly error?: string
+}
+
+/**
+ * Format batch results for tool output.
+ * Matches the live path behavior in batch_task/index.ts (byte-for-byte on output JSON).
+ */
+export function formatBatchSubagentOutput(
+  results: readonly BatchSubagentItemResult[]
+): BatchSubagentOutputResult {
+  const output = JSON.stringify({ results }, null, 2)
+  const hasFailure = results.some(e => e.status !== 'completed')
+  const error = hasFailure
+    ? `批次部分失败：${results.filter(e => e.status !== 'completed').map(e => `${e.itemId}:${e.status}`).join(', ')}`
+    : undefined
+  return { output, hasFailure, error }
 }
 
 const REASONING_EFFORT_VALUES = ['auto', 'low', 'medium', 'high', 'max'] as const

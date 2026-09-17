@@ -6,7 +6,7 @@ import {
   createFollowupSpawnIdentity,
   projectSubagentExecutionResult
 } from '../../../runtime/subagents'
-import { parseFollowupArguments } from '../../../runtime/tools/task_followup'
+import { parseFollowupArguments } from '../../../shared/subagents'
 import { buildSessionDiffState } from '../../../runtime/checkpoints/sessionDiffState'
 import { countEntryChanges } from '../../../shared/diff/compute'
 import { isTerminalRunStatus, type RunSnapshot } from '../../../shared/run/types'
@@ -221,7 +221,10 @@ export class SubagentProjectionService {
       taskLabel: options.taskLabel?.trim() || session.title?.trim() || '未命名子任务',
       artifactCount: 0,
       ...(effectiveModel ? { model: effectiveModel } : {}),
-      ...(header ? { reasoningEffort: header.reasoningEffort } : {})
+      ...(header ? { reasoningEffort: header.reasoningEffort } : {}),
+      ...(snapshot?.dispatch?.sourceChildRunId
+        ? { resumedFromRunId: snapshot.dispatch.sourceChildRunId }
+        : {})
     }
 
     if (!snapshot) {
@@ -351,12 +354,10 @@ export class SubagentProjectionService {
         const args = parseFollowupArguments(call.arguments)
         if (!args) continue
         const identity = createFollowupSpawnIdentity({
-          parentSessionId,
           parentRunId,
-          previousChildSessionId: args.childSessionId,
           parentMessageId: message.id,
           parentToolCallId: call.id,
-          task: args.task
+          previousChildSessionId: args.childSessionId
         })
         index.set(identity.spawnRunId, {
           parentToolCallId: call.id,

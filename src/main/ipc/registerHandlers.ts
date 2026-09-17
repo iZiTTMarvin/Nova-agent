@@ -43,6 +43,7 @@ import {
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
 import { recoverInterruptedTurnDraftsOnStartup } from '../../runtime/sessions/turnDraftRecovery'
+import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
 import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 import { registerDiagnosticsHandler } from './diagnosticsHandler'
@@ -151,7 +152,11 @@ export function registerIpcHandlers(): ImageStore {
     getMainWindow,
     sessionId => getSessionStore().list().find(session => session.id === sessionId)?.title
   )
-  recoverInterruptedTurnDraftsOnStartup(interrupted, getSessionStore(), coordinator)
+  // 用 listRecoverableTurnDraftRuns 枚举所有终态遗留草稿，注入精确结算闭包
+  const recoverableRuns = coordinator.listRecoverableTurnDraftRuns()
+  const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+    settleSubagentToolCall({ sessionStore: getSessionStore(), runCoordinator: coordinator }, input)
+  recoverInterruptedTurnDraftsOnStartup(recoverableRuns, getSessionStore(), coordinator, settle)
   registerRunHandler()
   initSubagentProjectionServiceHost()
   registerSubagentProjectionHandler()

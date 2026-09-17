@@ -7,7 +7,7 @@
  *
  * 点击整块在视口锚定的悬浮详情（SubagentDetailPopover）展开，不再跳转子会话。
  */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
@@ -15,11 +15,13 @@ import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { useAgentStore } from '../../stores/useAgentStore'
 import {
   selectSubagentByParentToolCallId,
+  selectLatestSubagentByChildSessionId,
   useSubagentProjectionStore
 } from './projection'
 import { SubagentDetailPopover } from './SubagentDetailPopover'
 import { SubagentDiffCard } from './SubagentDiffCard'
 import { formatSubagentModelLine } from './modelLine'
+import { requestSubagentResume } from './resumeSubagentExecution'
 import './SubagentActivityRow.css'
 
 interface StatusPresentation {
@@ -89,11 +91,57 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
   projection,
   fallbackResult
 }) => {
+  type ResumeState = 'idle' | 'submitting' | 'waiting' | 'started' | 'failed'
+
   const active = isActive(projection.status)
   const [open, setOpen] = useState(false)
   const [anchor, setAnchor] = useState<PopoverAnchor | null>(null)
   const [now, setNow] = useState(Date.now())
   const containerRef = React.useRef<HTMLElement>(null)
+
+  const [resumeState, setResumeState] = useState<ResumeState>('idle')
+  const [resumeRejection, setResumeRejection] = useState<string>('')
+  const unsubscribeRef = useRef<(() => void) | null>(null)
+
+  const latestProjection = useSubagentProjectionStore((state) =>
+    selectLatestSubagentByChildSessionId(state, projection.childSessionId)
+  )
+  const isLatest = latestProjection?.childRunId === projection.childRunId
+
+  const subscribeResumed = useCallback(() => {
+    if (!projection.childRunId) return
+    unsubscribeRef.current?.()
+    const unsub = useSubagentProjectionStore.subscribe((state) => {
+      // 续跑产生新 childRunId，通过 resumedFromRunId 反向定位旧 run 的接替者
+      const updated = Object.values(state.byChildRunId).find(
+        item => item.resumedFromRunId === projection.childRunId && item.status !== 'interrupted'
+      )
+      if (updated) setResumeState('started')
+    })
+    unsubscribeRef.current = unsub
+  }, [projection.childRunId])
+
+  useEffect(() => {
+    return () => unsubscribeRef.current?.()
+  }, [])
+
+  const handleResume = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setResumeState('submitting')
+    setResumeRejection('')
+    const result = await requestSubagentResume({
+      parentSessionId: projection.parentSessionId,
+      childSessionId: projection.childSessionId,
+      childRunId: projection.childRunId
+    })
+    if (result.ok) {
+      setResumeState('waiting')
+      subscribeResumed()
+    } else {
+      setResumeState('failed')
+      setResumeRejection(result.rejection ?? '提交失败')
+    }
+  }, [projection, subscribeResumed])
 
   useEffect(() => {
     if (!active || !projection.startedAt) return
@@ -187,6 +235,37 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
             </pre>
           )}
           <InlinePermissionBar request={anchoredPermissionRequest} />
+        </div>
+      )}
+      {((projection.status === 'interrupted' && isLatest) || resumeState !== 'idle') && (
+        <div className="subagent-activity-row__resume">
+          {resumeState === 'idle' && (
+            <button
+              type="button"
+              className="subagent-activity-row__resume-btn"
+              onClick={handleResume}
+            >
+              继续此子任务
+            </button>
+          )}
+          {resumeState === 'submitting' && (
+            <span className="subagent-activity-row__resume-status">提交中…</span>
+          )}
+          {resumeState === 'waiting' && (
+            <span className="subagent-activity-row__resume-status">已提交，等待父会话处理</span>
+          )}
+          {resumeState === 'failed' && (
+            <button
+              type="button"
+              className="subagent-activity-row__resume-btn subagent-activity-row__resume-btn--danger"
+              onClick={handleResume}
+            >
+              {`重试${resumeRejection ? ` (${resumeRejection})` : ''}`}
+            </button>
+          )}
+          {resumeState === 'started' && (
+            <span className="subagent-activity-row__resume-status">已开始</span>
+          )}
         </div>
       )}
 
