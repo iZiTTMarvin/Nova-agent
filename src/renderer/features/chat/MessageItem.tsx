@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -25,7 +25,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
-import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
+import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
@@ -273,6 +273,13 @@ function MessageItemInner({
     },
     [msg.id, onTurnProcessOpenChange]
   )
+  // timeline 增量缓存：流式 tick 只浅拷贝尾部 blocks，前缀段（含工具组数组）
+  // 引用稳定，下游 React.memo 不再级联失效。缓存随组件实例存活。
+  const turnBuildCacheRef = useRef<TurnBuildCache | undefined>(undefined)
+  turnBuildCacheRef.current ??= {
+    blocks: [], mode: currentMode, answerIndex: -1, lastSavePlanIndex: -1,
+    timeline: [], segmentEndBlockIndex: []
+  }
   const turnModel = useMemo(
     () =>
       isAssistant
@@ -284,7 +291,8 @@ function MessageItemInner({
             turnStartedAt: msg.turnStartedAt,
             turnEndedAt: msg.turnEndedAt,
             thinking: thinkingContent || undefined,
-            content: textContent || undefined
+            content: textContent || undefined,
+            cache: turnBuildCacheRef.current
           })
         : null,
     [

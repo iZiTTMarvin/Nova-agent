@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildTurnRenderModel,
-  normalizeThinkingForDisplay
+  normalizeThinkingForDisplay,
+  type TurnBuildCache
 } from '../../../src/renderer/features/chat/turnProcessModel'
 import type { RendererMessageBlock, RendererToolBlock } from '../../../src/renderer/stores/types'
 import type { ExtendedToolCall } from '../../../src/renderer/stores/types'
@@ -282,6 +283,136 @@ describe('buildTurnRenderModel', () => {
         phase: 'completed'
       }).durationMs
     ).toBeUndefined()
+  })
+})
+
+
+describe('buildTurnRenderModel 增量缓存', () => {
+  function freshCache(mode: 'default' | 'plan' = 'default'): TurnBuildCache {
+    return { blocks: [], mode, answerIndex: -1, lastSavePlanIndex: -1, timeline: [], segmentEndBlockIndex: [] }
+  }
+  function build(blocks: RendererMessageBlock[], cache?: TurnBuildCache) {
+    return buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'live', cache })
+  }
+
+  it('live 文本尾段增长：增量结果与全量一致，前缀段引用稳定', () => {
+    const blocks1: RendererMessageBlock[] = [
+      { type: 'thinking', content: '思考' },
+      toolBlock('r1', 'read'),
+      toolBlock('r2', 'read'),
+      { type: 'text', content: '答案第一' }
+    ]
+    const cache = freshCache()
+    const first = build(blocks1, cache)
+
+    const blocks2 = [...blocks1.slice(0, 3), { type: 'text', content: '答案第一段继续增长' }]
+    const incremental = build(blocks2, cache)
+    const full = build(blocks2)
+
+    expect(incremental.timeline).toEqual(full.timeline)
+    // thinking 段与工具组段为同一对象：下游 React.memo 不失效
+    expect(incremental.timeline[0]).toBe(first.timeline[0])
+    expect(incremental.timeline[1]).toBe(first.timeline[1])
+  })
+
+  it('同族工具追加（尾部 toolRun 生长）：增量结果与全量一致', () => {
+    const blocks1: RendererMessageBlock[] = [
+      { type: 'thinking', content: '思考' },
+      toolBlock('r1', 'read'),
+      toolBlock('r2', 'read')
+    ]
+    const cache = freshCache()
+    const first = build(blocks1, cache)
+
+    const blocks2 = [...blocks1, toolBlock('r3', 'read')]
+    const incremental = build(blocks2, cache)
+    const full = build(blocks2)
+
+    expect(incremental.timeline).toEqual(full.timeline)
+    if (incremental.timeline[1].kind === 'toolGroup' && full.timeline[1].kind === 'toolGroup') {
+      expect(incremental.timeline[1].blocks).toHaveLength(3)
+    } else {
+      throw new Error('toolGroup 段缺失')
+    }
+    expect(incremental.timeline[0]).toBe(first.timeline[0])
+  })
+
+  it('尾部工具状态更新：增量结果与全量一致', () => {
+    const blocks1: RendererMessageBlock[] = [
+      toolBlock('r1', 'read'),
+      { ...toolBlock('r2', 'read'), status: 'running' }
+    ]
+    const cache = freshCache()
+    build(blocks1, cache)
+
+    const blocks2 = [blocks1[0], { ...toolBlock('r2', 'read'), status: 'success' }]
+    const incremental = build(blocks2, cache)
+    const full = build(blocks2)
+    expect(incremental.timeline).toEqual(full.timeline)
+  })
+
+  it('新增 save_plan 使前缀计划卡隐藏：增量必须与全量一致（不残留旧段）', () => {
+    const blocks1: RendererMessageBlock[] = [
+      { ...toolBlock('sp1', 'save_plan'), status: 'success' },
+      { type: 'text', content: '中间说明' }
+    ]
+    const cache = freshCache()
+    build(blocks1, cache)
+
+    const blocks2 = [...blocks1, toolBlock('sp2', 'save_plan')]
+    const incremental = build(blocks2, cache)
+    const full = build(blocks2)
+    expect(incremental.timeline).toEqual(full.timeline)
+  })
+
+  it('尾部 save_plan 失败回退到前缀成功计划卡：增量必须让前缀卡重新可见', () => {
+    // sp1 成功 → sp2 进行中（隐藏 sp1）→ sp2 失败（sp1 应恢复展示）
+    const blocks1: RendererMessageBlock[] = [
+      { ...toolBlock('sp1', 'save_plan'), status: 'success' },
+      { type: 'text', content: '中间说明' }
+    ]
+    const cache = freshCache()
+    build(blocks1, cache)
+
+    const blocks2 = [...blocks1, { ...toolBlock('sp2', 'save_plan'), status: 'running' }]
+    build(blocks2, cache)
+
+    const blocks3 = [...blocks1, { ...toolBlock('sp2', 'save_plan'), status: 'error' }]
+    const incremental = build(blocks3, cache)
+    const full = build(blocks3)
+
+    expect(incremental.timeline).toEqual(full.timeline)
+    const savePlanSegments = full.timeline.filter(
+      s => s.kind === 'tool' && s.block.toolName === 'save_plan'
+    )
+    expect(savePlanSegments).toHaveLength(1)
+  })
+
+  it('追加可见工具剥夺前缀 text 答案资格：display 变化正确传播', () => {
+    const blocks1: RendererMessageBlock[] = [
+      { type: 'text', content: '先给结论' }
+    ]
+    const cache = freshCache()
+    build(blocks1, cache)
+
+    const blocks2 = [...blocks1, toolBlock('r1', 'read')]
+    const incremental = build(blocks2, cache)
+    const full = build(blocks2)
+    expect(incremental.timeline).toEqual(full.timeline)
+    expect(displays(incremental)).toEqual(['process', 'process'])
+  })
+
+  it('mode 变化不跨缓存复用', () => {
+    const blocks1: RendererMessageBlock[] = [
+      toolBlock('w1', 'write'),
+      { type: 'text', content: '完成' }
+    ]
+    const cache = freshCache()
+    build(blocks1, cache)
+
+    const incremental = buildTurnRenderModel({ blocks: blocks1, toolCalls: [], mode: 'plan', phase: 'live', cache })
+    const full = buildTurnRenderModel({ blocks: blocks1, toolCalls: [], mode: 'plan', phase: 'live' })
+    expect(incremental.timeline).toEqual(full.timeline)
   })
 })
 
