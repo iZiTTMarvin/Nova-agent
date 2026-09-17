@@ -2,6 +2,7 @@ import { createHash } from 'crypto'
 import type { UsageSource } from '../../shared/model/types'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
 import { estimateImageBlockBudgetTokens } from './imageTokens'
+import type { RequestSerializationMemo } from './requestFingerprint'
 
 export const REQUEST_ESTIMATOR_VERSION = 5
 
@@ -50,14 +51,23 @@ export function parseRequestBudgetAnchor(value: unknown): RequestBudgetAnchor | 
   return a as RequestBudgetAnchor
 }
 
-export function measureRequestBudget(body: Record<string, unknown>, routeId: string, contextWindow: number): RequestBudgetMeasurement {
+export function measureRequestBudget(
+  body: Record<string, unknown>,
+  routeId: string,
+  contextWindow: number,
+  memo?: RequestSerializationMemo
+): RequestBudgetMeasurement {
   if (!Array.isArray(body.messages)) throw new Error('Request messages must be an array')
+  const messageJsons = memo?.messageJsons
   let prefix = ''
-  const prefixHashes = body.messages.map((message: unknown) => {
-    prefix = hash(prefix + JSON.stringify(message))
+  const prefixHashes = body.messages.map((message: unknown, index: number) => {
+    const messageJson = messageJsons?.[index] ?? JSON.stringify(message)
+    if (messageJsons !== undefined) messageJsons[index] = messageJson
+    prefix = hash(prefix + messageJson)
     return prefix
   })
-  const serialized = JSON.stringify(body)
+  const serialized =
+    memo?.bodyJson !== undefined ? memo.bodyJson : JSON.stringify(body)
   const serializedBytes = Buffer.byteLength(serialized, 'utf8')
   let budgetUnits = estimateTextTokens(serialized)
   // 图片块先按 URL 文本计入，再按模型族规则替换成有界视觉预留（未实测型号走通用硬帽）；

@@ -14,10 +14,8 @@ import { getCacheProfileCatalog } from './cacheProfile'
  *
  * - Anthropic 档案：剥离所有消息与工具定义中的 cache_control 字段
  *   （滚动双缓冲每轮给最后 2 条非 system 消息打标记，上一轮倒数第 2 条
- *   本轮失去 marker，属正常行为而非语义变化）
- * - 其余档案：保留影响前缀缓存的全部字段（reasoning_content、tool_calls、工具顺序）
- *
- * 不修改入参，返回深拷贝后的新对象。
+ *   本轮失去 marker，属正常行为而非语义变化），返回剥离后的深拷贝
+ * - 其余档案：保留影响前缀缓存的全部字段，直接返回原引用（调用方只读）
  */
 export function canonicalizeForCacheComparison(
   body: Record<string, unknown>,
@@ -26,13 +24,11 @@ export function canonicalizeForCacheComparison(
   const resolved: CacheProfile =
     typeof profile === 'string' ? getCacheProfileCatalog()[profile] : profile
 
+  if (resolved.marker !== 'cache_control') return body
+
   const canonical = JSON.parse(JSON.stringify(body)) as Record<string, unknown>
-
-  if (resolved.marker === 'cache_control') {
-    stripCacheControlFromMessages(canonical)
-    stripCacheControlFromTools(canonical)
-  }
-
+  stripCacheControlFromMessages(canonical)
+  stripCacheControlFromTools(canonical)
   return canonical
 }
 
