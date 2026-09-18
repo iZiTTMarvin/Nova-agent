@@ -205,6 +205,11 @@ export interface AgentLoopConfig {
   onToolResultCommitted?: (
     content: import('../model/types').ChatMessage['content']
   ) => void
+  /** 宿主在完整模型/工具边界提交并返回可追加的运行时输入。 */
+  receiveRuntimeInputs?: (input: {
+    messageId: string
+    afterStep: number
+  }) => Promise<readonly import('../model/types').ChatMessage[]>
   /**
    * 工具调用方言用户覆盖（来自 ModelConfig.toolDialect）。
    * 'auto'/未设置时走 preferredToolDialect 自动判定。

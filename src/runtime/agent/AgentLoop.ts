@@ -188,6 +188,12 @@ export class AgentLoop {
   /** 本轮构造时捕获的 active plan；计划正文仍以工作区文件为真源。 */
   private activePlanPath?: string
 
+  setRuntimeInputReceiver(
+    receiver: NonNullable<AgentLoopConfig['receiveRuntimeInputs']>
+  ): void {
+    this.config.receiveRuntimeInputs = receiver
+  }
+
   constructor(
     modelClient: ModelClient | ModelClientPool,
     eventBus: EventBus,
@@ -237,6 +243,7 @@ export class AgentLoop {
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
       onToolResultCommitted: config?.onToolResultCommitted,
+      receiveRuntimeInputs: config?.receiveRuntimeInputs,
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
       promptCacheKey: config?.promptCacheKey,
@@ -903,6 +910,7 @@ export class AgentLoop {
       abortSignal: () => this.abortController?.signal,
       executeBatch,
       onToolResultCommitted: this.config.onToolResultCommitted,
+      receiveRuntimeInputs: this.config.receiveRuntimeInputs,
       prepareMainRequest: async (messages, tools, projection) => {
         try {
           return await this.compactionService.prepareMainRequest(messages, tools, projection, this.abortController?.signal)

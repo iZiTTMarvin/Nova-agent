@@ -48,6 +48,7 @@ const eventPipeline = vi.hoisted(() => ({
 // 捕获 sendAgentMessage 实际传给 AgentLoop.sendMessage 的 route
 const sentRoutes = vi.hoisted(() => [] as any[])
 const stubAgentLoop = vi.hoisted(() => ({
+  setRuntimeInputReceiver: vi.fn(),
   setRunRef: vi.fn(),
   setExecutionIdentity: vi.fn(),
   setExecutionFence: vi.fn(),
@@ -85,6 +86,13 @@ vi.mock('electron', () => ({
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
   getRunExecutionRegistry: () => executionRegistry
+}))
+
+vi.mock('../../../src/main/services/SubagentDeliveryCoordinatorHost', () => ({
+  getSubagentDeliveryCoordinator: () => ({
+    createActiveTurnReceiver: () => ({ receive: vi.fn(async () => []) }),
+    noteExecutionSettled: vi.fn()
+  })
 }))
 
 vi.mock('../../../src/main/services/WorkspaceService', () => ({

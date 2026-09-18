@@ -56,6 +56,12 @@ export {
   type ControlIntentReplayResult
 } from './SubagentLifecycleCoordinator'
 export {
+  SubagentDeliveryCoordinator,
+  type ActiveSubagentDeliveryReceiver,
+  type RuntimeInputPersistencePort,
+  type SubagentDeliveryCoordinatorDeps
+} from './SubagentDeliveryCoordinator'
+export {
   createPreset,
   deletePreset,
   getPresetFilePath,

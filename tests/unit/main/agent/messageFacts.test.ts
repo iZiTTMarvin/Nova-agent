@@ -31,6 +31,7 @@ import {
   isArchivedPlaceholder
 } from '../../../../src/runtime/request-projection'
 import { createSpawnIdentity } from '../../../../src/runtime/subagents/identity'
+import { SubagentDeliveryCoordinator } from '../../../../src/runtime/subagents'
 
 let sessionStore: SessionStore
 let coordinator: RunCoordinator
@@ -76,6 +77,83 @@ function setup() {
 }
 
 describe('消息事实提交往返', () => {
+  it('真实存储中的后台终态在首次请求前提交为 runtime_input 再交给受控模型', async () => {
+    const { root, session, run, bus, ctx } = setup()
+    sessionStore.appendMessageFast(session.id, {
+      id: 'parent-user', role: 'user', content: '继续处理', timestamp: 1
+    })
+    const child = sessionStore.create(root)
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'child-background',
+      workspaceId: root,
+      sessionId: child.id,
+      dispatch: {
+        version: 1,
+        callKind: 'task',
+        parentSessionId: session.id,
+        parentRunId: run.runId,
+        parentMessageId: 'parent-message',
+        execution: 'background_read_only',
+        topParentSessionId: session.id,
+        originUserMessageId: 'parent-user'
+      }
+    })
+    coordinator.markRunning('child-background', 'child-message')
+    sessionStore.appendMessageFast(child.id, {
+      id: 'child-message', role: 'assistant', content: '后台检查完成', timestamp: 2
+    })
+    coordinator.commitTerminal({
+      runId: 'child-background',
+      status: 'completed',
+      terminalTransitionId: 'terminal-background'
+    })
+
+    const delivery = new SubagentDeliveryCoordinator({
+      runCoordinator: coordinator,
+      sessionStore,
+      isRunExecutionActive: () => false
+    })
+    const receiver = delivery.createActiveTurnReceiver({
+      sessionId: session.id,
+      runId: () => run.runId,
+      persistence: {
+        persist: (messageId, input) => persistRuntimeInputFact({ messageId, input }, ctx)
+      }
+    })
+    const client = new MockModelClient().addResponse({ events: [
+      { type: 'message_start' },
+      { type: 'text_delta', delta: '已吸收后台结果' },
+      { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const loop = new AgentLoop(client, bus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access',
+      receiveRuntimeInputs: input => receiver.receive(input)
+    })
+    loop.setSessionContext(sessionStore, session.id)
+    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+
+    expect((await loop.sendMessage('继续处理', agentRoute(), { userMessageId: 'parent-user' })).status)
+      .toBe('completed')
+
+    const request = client.getCalls()[0]!.messages
+    expect(request.some(message =>
+      message.role === 'user' &&
+      typeof message.content === 'string' &&
+      message.content.includes('child_run_id: child-background')
+    )).toBe(true)
+    const fact = sessionStore.findRuntimeInputFact(
+      session.id,
+      'ntf_child-background_terminal-background'
+    )
+    expect(fact?.input.content).toContain('后台检查完成')
+    expect(coordinator.getSnapshot('child-background')?.deliveryBinding).toMatchObject({
+      boundRunId: run.runId,
+      boundSessionId: session.id
+    })
+    loop.dispose()
+  })
   it('重复失败后的恢复指令在重启后仍保留于已发送的请求前缀', async () => {
     const { session, bus, ctx } = setup()
     sessionStore.appendMessageFast(session.id, { id: 'u', role: 'user', content: '继续实现', timestamp: 1 })

@@ -74,6 +74,11 @@ export interface RunAgentLoopParams {
   /** 执行工具批次；门面负责注入权限与截断策略。 */
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
   onToolResultCommitted?: (content: ChatMessage['content']) => void
+  /** 在完整协议边界接收已持久化的运行时输入；空结果必须是无副作用快路径。 */
+  receiveRuntimeInputs?: (input: {
+    messageId: string
+    afterStep: number
+  }) => Promise<readonly ChatMessage[]>
   prepareMainRequest: (messages: ChatMessage[], tools: import('../../model/types').ToolDefinition[] | undefined, projection: SummaryProjection) => Promise<{ status: 'within' | 'compacted'; revision: number }>
   observeMainRequest: (inputTokens: number, request: RequestBudgetMeasurement, source: UsageSource, revision: number) => void
   /** 上下文变化后更新压缩 token 簿记 */
@@ -154,6 +159,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   const { messageId, userText, context, config, streamProcessor, hookManager, emit } = p
   let toolRound = 0
   let responseStep = 0
+  let safeAfterStep = -1
   let turnCompletedByControl = false
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
@@ -176,6 +182,15 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
     deferToolCallIds: () => deferredToolCallIds,
     omittedImages: () => omittedImages
   })
+
+  const receiveRuntimeInputs = async (afterStep: number): Promise<number> => {
+    if (!p.receiveRuntimeInputs || p.signal() || p.abortSignal()?.aborted) return 0
+    const received = await p.receiveRuntimeInputs({ messageId, afterStep })
+    if (received.length === 0) return 0
+    context.messages.push(...received)
+    p.updateTokenEstimate()
+    return received.length
+  }
 
   /** 首次归档的冻结投递写回权威上下文（唯一写入 Owner 是本循环）并通知持久化。 */
   const applyFrozenDeliveries = (frozen: readonly FrozenToolDelivery[]): void => {
@@ -240,6 +255,10 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   try {
     while (toolRound < config.maxToolRounds) {
       if (p.signal()) break
+
+      // 只在请求投影与预算许可之前接收；已发出的 HTTP 请求永不被中途改写。
+      await receiveRuntimeInputs(safeAfterStep)
+      if (p.signal() || p.abortSignal()?.aborted) break
 
       // beforeAgentStart 可在每次模型调用前改写 messages 或 systemPrompt。
       const beforeAgent = await hookManager.trigger({
@@ -372,6 +391,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
 
       if (toolCalls.length === 0) {
         commitResponse()
+        safeAfterStep = stepOrigin.step
         const continuation = await config.assistantCompletionPolicy?.({
           messageId,
           toolRound,
@@ -380,7 +400,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           ...(reasoningContent ? { reasoningContent } : {})
         })
         const instruction = continuation?.instruction.trim()
-        if (!instruction) break
+        if (!instruction) {
+          // 最终无工具回答也是安全边界；收到输入才延长当前 turn。
+          if (await receiveRuntimeInputs(safeAfterStep)) continue
+          break
+        }
         appendContinuation(instruction)
         continue
       }
@@ -434,6 +458,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             .filter(outcome => !outcome.skippedByAbort)
             .map(outcome => outcome.toolCall.id)
         )
+        safeAfterStep = stepOrigin.step
         p.updateTokenEstimate()
         if (batchResult.outcomes.some(outcome => outcome.control?.type === 'turn_complete')) {
           turnCompletedByControl = true

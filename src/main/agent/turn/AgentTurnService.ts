@@ -58,7 +58,8 @@ import {
 import {
   accumulateStreamEvent,
   disposeTurnStreams,
-  forwardEventToRenderer
+  forwardEventToRenderer,
+  persistRuntimeInputFact
 } from '../events'
 import {
   prepareAgentRuntime,
@@ -85,6 +86,7 @@ import {
 } from '../subagents/childModelRouting'
 import { getSubagentScheduler } from '../../services/SubagentSchedulerHost'
 import { isSubagentsShuttingDown } from '../../services/SubagentLifecycleHost'
+import { getSubagentDeliveryCoordinator } from '../../services/SubagentDeliveryCoordinatorHost'
 import {
   ensureCodeGraphForWorkspace,
   getCodeContextQueryPort
@@ -297,6 +299,29 @@ export async function sendAgentMessage(
   // 本 turn 专属 AgentLoop（局部变量，不污染模块级状态，并发 turn 各自独立）
   const loopForRun = prepared.agentLoop
   const { eventBus, modelPool, runRefs, frozenPrompt } = prepared
+  const deliveryCoordinator = getSubagentDeliveryCoordinator()
+  const deliveryReceiver = deliveryCoordinator.createActiveTurnReceiver({
+    sessionId: capturedSessionId,
+    runId: () => runRefs.runId,
+    persistence: {
+      persist: (messageId, input) => {
+        return persistRuntimeInputFact(
+          { messageId, input },
+          {
+            mode: capturedMode,
+            permissionMode: capturedPermissionMode,
+            workspaceRoot: capturedWorkspaceRoot,
+            sessionsDir: capturedSessionsDir,
+            eventBus,
+            getMainWindow,
+            runId: runRefs.runId,
+            executionGeneration: runRefs.executionGeneration
+          }
+        )
+      }
+    }
+  })
+  loopForRun.setRuntimeInputReceiver(input => deliveryReceiver.receive(input))
   const turnExecutor = new AgentTurnExecutor(runCoordinator, executionRegistry)
   spawnSubagentPort = new SubagentExecutionHost({
     sessionStore,
@@ -370,6 +395,7 @@ export async function sendAgentMessage(
       dismissPendingAskQuestionsForRun(context.runId)
       disposeTurnStreams(context.runId, context.executionGeneration)
       writerLeaseRegistry.release(context.resourceOwnerRunId)
+      deliveryCoordinator.noteExecutionSettled(context.runId)
     },
     getMainWindow,
     refreshAvailableSessions: () => {

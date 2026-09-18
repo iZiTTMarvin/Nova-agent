@@ -3,6 +3,7 @@ export {
   activeStreams,
   markActiveStreamsCancelled,
   disposeTurnStreams,
-  accumulateStreamEvent
+  accumulateStreamEvent,
+  persistRuntimeInputFact
 } from './AgentEventAccumulator'
 export { forwardEventToRenderer } from './AgentEventForwarder'

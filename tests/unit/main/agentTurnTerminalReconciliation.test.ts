@@ -41,6 +41,7 @@ const extractSpy = vi.hoisted(() => vi.fn())
 const registryHolder = vi.hoisted(() => ({ current: null as any }))
 
 const stubAgentLoop = vi.hoisted(() => ({
+  setRuntimeInputReceiver: vi.fn(),
   setRunRef: vi.fn(),
   setExecutionIdentity: vi.fn(),
   setExecutionFence: vi.fn(),
@@ -58,6 +59,13 @@ vi.mock('electron', () => ({
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
   getRunExecutionRegistry: () => executionRegistry
+}))
+
+vi.mock('../../../src/main/services/SubagentDeliveryCoordinatorHost', () => ({
+  getSubagentDeliveryCoordinator: () => ({
+    createActiveTurnReceiver: () => ({ receive: vi.fn(async () => []) }),
+    noteExecutionSettled: vi.fn()
+  })
 }))
 
 vi.mock('../../../src/main/services/WorkspaceService', () => ({
