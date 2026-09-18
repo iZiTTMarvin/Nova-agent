@@ -23,6 +23,7 @@ export function getSubagentLifecycleCoordinator(): SubagentLifecycleCoordinator 
   )
 }
 
-export function interruptActiveSubagentsOnShutdown(): number {
-  return getSubagentLifecycleCoordinator().interruptActiveChildrenOnShutdown().length
+export async function interruptActiveSubagentsOnShutdown(): Promise<number> {
+  const interrupted = await getSubagentLifecycleCoordinator().interruptActiveChildrenOnShutdown()
+  return interrupted.length
 }

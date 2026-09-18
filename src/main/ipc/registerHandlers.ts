@@ -113,6 +113,9 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
     },
     settleQueuedRelayReservations: (sessionIds) => {
       getSubagentDeliveryCoordinator().settleQueuedRelayReservationsForSessions(sessionIds)
+    },
+    invalidateBranchDelivery: (sessionId, discardedAnchorMessageIds) => {
+      getSubagentLifecycleCoordinator().invalidateBranchDelivery(sessionId, discardedAnchorMessageIds)
     }
   })
   registerCodeIndexHandler(workspaceService, getSessionStore, getMainWindow)

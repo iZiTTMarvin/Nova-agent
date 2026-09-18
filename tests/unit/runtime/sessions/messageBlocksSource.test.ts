@@ -184,4 +184,69 @@ describe('消息 block 单一事实源', () => {
       content: '', timestamp: 1, messageSchemaVersion: 2, ...invalid }))
     expect(() => serializeMessageForDisk(message)).toThrow(/Invalid|runtime_input/)
   })
+
+  it('旧 tool block 缺省 subagentNotificationIds 可正常加载', () => {
+    const message: SessionMessage = {
+      id: 'old', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{ type: 'tool', toolCallId: 't1', toolName: 'task_wait', arguments: {}, status: 'success', result: 'ok' }]
+    }
+    const disk = serializeMessageForDisk(message)
+    const restored = normalizeMessageToBlocksSource(JSON.parse(JSON.stringify(disk)))
+    const block = restored.blocks![0] as Extract<MessageBlock, { type: 'tool' }>
+    expect(block.subagentNotificationIds).toBeUndefined()
+  })
+
+  it('合法 subagentNotificationIds 序列化与校验后保留', () => {
+    const message: SessionMessage = {
+      id: 'tw', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{
+        type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: 'success',
+        result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1', 'ntf_run-2_t-2']
+      }]
+    }
+    const disk = serializeMessageForDisk(message)
+    const restored = normalizeMessageToBlocksSource(JSON.parse(JSON.stringify(disk)))
+    const block = restored.blocks![0] as Extract<MessageBlock, { type: 'tool' }>
+    expect(block.subagentNotificationIds).toEqual(['ntf_run-1_t-1', 'ntf_run-2_t-2'])
+  })
+
+  it.each([
+    { label: '空数组', ids: [] },
+    { label: '空字符串', ids: [''] },
+    { label: '重复 ID', ids: ['ntf_x_t-1', 'ntf_x_t-1'] }
+  ])('损坏的 subagentNotificationIds 拒绝提交：$label', ({ ids }) => {
+    const message: SessionMessage = {
+      id: 'bad', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{
+        type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: 'success',
+        result: 'ok', subagentNotificationIds: ids
+      }]
+    }
+    expect(() => serializeMessageForDisk(message)).toThrow(/Invalid|Duplicate/)
+  })
+
+  it('非 task_wait 工具携带 subagentNotificationIds 拒绝提交', () => {
+    const message: SessionMessage = {
+      id: 'other', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{
+        type: 'tool', toolCallId: 'r1', toolName: 'read', arguments: {}, status: 'success',
+        result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+      }]
+    }
+    expect(() => serializeMessageForDisk(message)).toThrow('subagentNotificationIds only allowed on task_wait success')
+  })
+
+  it.each([
+    { label: 'running', status: 'running' },
+    { label: 'error', status: 'error' }
+  ])('task_wait $label 状态携带 subagentNotificationIds 拒绝提交', ({ status }) => {
+    const message: SessionMessage = {
+      id: `tw-${status}`, role: 'assistant', content: '', timestamp: 1,
+      blocks: [{
+        type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: status as 'running' | 'error',
+        result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+      }]
+    }
+    expect(() => serializeMessageForDisk(message)).toThrow('subagentNotificationIds only allowed on task_wait success')
+  })
 })

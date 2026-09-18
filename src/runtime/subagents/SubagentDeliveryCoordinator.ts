@@ -43,10 +43,12 @@ export interface SubagentDeliveryCoordinatorDeps {
   readonly runCoordinator: Pick<RunCoordinator,
     | 'getSnapshot' | 'listDispatchSnapshots' | 'listRelayTriggerSnapshots'
     | 'listSnapshotsForSession' | 'updateDeliveryBinding' | 'startRun' | 'commitTerminal'>
-  readonly sessionStore: Pick<SessionStore, 'findRuntimeInputFact' | 'load' | 'appendMessageFast'>
+  readonly sessionStore: Pick<SessionStore, 'findRuntimeInputFact' | 'findSubagentNotificationReceipt' | 'load' | 'appendMessageFast' | 'getControlIntent'>
   readonly isRunExecutionActive: (runId: string) => boolean
   /** 空闲会话收到新通知时的回调，用于触发自动接力。 */
   readonly onIdleRelayAvailable?: (sessionId: string) => void
+  /** 返回 true 时关闭新接力接纳（应用退出等）；已持久预约不受影响。 */
+  readonly isRelayAdmissionClosed?: () => boolean
 }
 
 /** srcRunId 的投递分类：接收凭据 / 被接力预约占用 / 不再接纳 / 可投递。 */
@@ -69,7 +71,7 @@ export class SubagentDeliveryCoordinator {
   }
 
   noteTerminal(snapshot: RunSnapshot): void {
-    if (!isEligibleSource(snapshot)) return
+    if (!isSubagentNotificationEligible(snapshot)) return
     const sessionId = snapshot.dispatch!.parentSessionId
     let pending = this.pendingBySession.get(sessionId)
     if (!pending) {
@@ -151,6 +153,10 @@ export class SubagentDeliveryCoordinator {
    * 全同步短临界区，不发起 run 执行（执行由主进程接管）。
    */
   admitIdleRelay(sessionId: string): SubagentRelayAdmission | null {
+    if (this.deps.isRelayAdmissionClosed?.()) return null
+    // 会话存在控制意图（停止/分支失效化/删除）时冻结接力入场：
+    // 意图窗口内接纳的预约会逃出冻结集合，也无法再被失效化覆盖
+    if (this.deps.sessionStore.getControlIntent(sessionId)) return null
     const live = this.findLiveReservation(sessionId)
     if (live) return this.materializeReservation(live)
     const candidates = this.selectRelayCandidates(sessionId)
@@ -315,7 +321,7 @@ export class SubagentDeliveryCoordinator {
     acceptedIds: ReadonlySet<string>
   ): RunSnapshot[] {
     const result: RunSnapshot[] = []
-    this.scanPending(sessionId, acceptedIds, ({ snapshot, sourceRunId, classification }) => {
+    this.scanPending(sessionId, acceptedIds, runId, ({ snapshot, sourceRunId, classification }) => {
       if (classification === 'received') {
         this.deps.runCoordinator.updateDeliveryBinding(sourceRunId, {
           boundRunId: snapshot.deliveryBinding?.boundRunId ?? runId,
@@ -337,7 +343,8 @@ export class SubagentDeliveryCoordinator {
 
   private selectRelayCandidates(sessionId: string): RunSnapshot[] {
     const result: RunSnapshot[] = []
-    this.scanPending(sessionId, EMPTY_ACCEPTED_IDS, ({ sourceRunId, classification, snapshot }) => {
+    // idle relay 不传 receivingRunId：只通过正式 SessionStore receipt 消重。
+    this.scanPending(sessionId, EMPTY_ACCEPTED_IDS, undefined, ({ sourceRunId, classification, snapshot }) => {
       if (classification === 'received') {
         this.removePending(sessionId, sourceRunId)
         return
@@ -355,6 +362,7 @@ export class SubagentDeliveryCoordinator {
   private scanPending(
     sessionId: string,
     acceptedIds: ReadonlySet<string>,
+    receivingRunId: string | undefined,
     visit: (input: {
       snapshot: RunSnapshot
       sourceRunId: string
@@ -365,7 +373,7 @@ export class SubagentDeliveryCoordinator {
     if (!pending || pending.size === 0) return
     for (const sourceRunId of [...pending]) {
       const snapshot = this.deps.runCoordinator.getSnapshot(sourceRunId)
-      if (!snapshot || !isEligibleSource(snapshot)) {
+      if (!snapshot || !isSubagentNotificationEligible(snapshot)) {
         this.removePending(sessionId, sourceRunId)
         continue
       }
@@ -375,18 +383,38 @@ export class SubagentDeliveryCoordinator {
       visit({
         snapshot,
         sourceRunId,
-        classification: this.classifySource(sessionId, snapshot, notificationId)
+        classification: this.classifySource(sessionId, snapshot, notificationId, receivingRunId)
       })
     }
+  }
+
+  /**
+   * 读当前接收 run 的 turnDraft tool blocks：仅 task_wait success 且字段包含目标 ID 才算 receipt。
+   * 必须是已经由 RunCoordinator fsync 成功后的 snapshot。
+   */
+  private findTurnDraftReceipt(receivingRunId: string, notificationId: string): boolean {
+    const snapshot = this.deps.runCoordinator.getSnapshot(receivingRunId)
+    if (!snapshot?.turnDraft?.blocks) return false
+    for (const block of snapshot.turnDraft.blocks) {
+      if (block.type !== 'tool') continue
+      if (block.toolName !== 'task_wait') continue
+      if (block.status !== 'success') continue
+      if (block.subagentNotificationIds?.includes(notificationId)) return true
+    }
+    return false
   }
 
   /** 纯读分类，不写状态；绑定目标丢失留给调用方解绑后重新接纳。 */
   private classifySource(
     sessionId: string,
     sourceSnapshot: RunSnapshot,
-    notificationId: string
+    notificationId: string,
+    receivingRunId?: string
   ): SourceClassification {
     if (this.deps.sessionStore.findRuntimeInputFact(sessionId, notificationId)) return 'received'
+    // active 路径：当前接收 run 的已持久 turnDraft receipt 也视为已消费。
+    if (receivingRunId && this.findTurnDraftReceipt(receivingRunId, notificationId)) return 'received'
+    if (this.deps.sessionStore.findSubagentNotificationReceipt(sessionId, notificationId)) return 'received'
     const binding = sourceSnapshot.deliveryBinding
     const boundRunId = binding?.boundRunId
     if (!boundRunId) {
@@ -542,7 +570,8 @@ function sortCandidates(candidates: RunSnapshot[]): RunSnapshot[] {
   )
 }
 
-function isEligibleSource(snapshot: RunSnapshot): boolean {
+/** 通知资格：后台只读、终态且非 interrupted、有 terminalTransitionId、未暂停、未失效。 */
+export function isSubagentNotificationEligible(snapshot: RunSnapshot): boolean {
   return Boolean(
     snapshot.dispatch?.execution === 'background_read_only' &&
     snapshot.terminalTransitionId &&

@@ -164,6 +164,9 @@ function createHarness(): Harness {
         ? {
             findRuntimeInputFact: (sessionId, notificationId) =>
               sessionStore.findRuntimeInputFact(sessionId, notificationId),
+            findSubagentNotificationReceipt: (sessionId, notificationId) =>
+              sessionStore.findSubagentNotificationReceipt(sessionId, notificationId),
+            getControlIntent: id => sessionStore.getControlIntent(id),
             load: id => sessionStore.load(id),
             appendMessageFast: () => {
               throw new Error('process exited before relay message persisted')
@@ -705,5 +708,141 @@ describe('SubagentDeliveryCoordinator 接力预约断电恢复', () => {
     // 通知事实已在接力消息中，用户的新 turn 自行接管：不得双开预约
     expect(fixture.delivery.admitIdleRelay(fixture.parent.id)).toBeNull()
     expect(relayRuns(fixture.coordinator, fixture.parent.id)).toHaveLength(1)
+  })
+})
+
+describe('SubagentDeliveryCoordinator task_wait receipt 消重', () => {
+  it('当前 receiving run 的已持久 turnDraft receipt 阻止 runtime_input 注入', async () => {
+    const fixture = createHarness()
+    const runId = fixture.addSource(1)
+    fixture.delivery.noteTerminal(fixture.coordinator.getSnapshot(runId)!)
+    const notificationId = deriveSubagentNotificationId(runId, 'terminal-1')
+
+    // 在 parent run 的 turnDraft 中写入 task_wait success block 携带该 notificationId
+    fixture.coordinator.upsertTurnDraft(fixture.parentRunId, {
+      messageId: 'parent-message',
+      attemptId: 'attempt',
+      blocks: [{
+        type: 'tool',
+        toolCallId: 'tw-1',
+        toolName: 'task_wait',
+        arguments: {},
+        status: 'success',
+        result: 'ok',
+        subagentNotificationIds: [notificationId]
+      }],
+      finalized: false
+    })
+
+    // receiver 应因 turnDraft receipt 而不注入该通知
+    const messages = await fixture.receiver.receive({ messageId: 'parent-message', afterStep: -1 })
+    expect(messages).toEqual([])
+    expect(fixture.persisted).toHaveLength(0)
+  })
+
+  it('只有内存 ToolResult、未写 turnDraft 不阻止注入', async () => {
+    const fixture = createHarness()
+    const runId = fixture.addSource(1)
+    fixture.delivery.noteTerminal(fixture.coordinator.getSnapshot(runId)!)
+    // 不写 turnDraft，仅内存中存在 ToolResult 概念——delivery 应正常注入
+    const messages = await fixture.receiver.receive({ messageId: 'parent-message', afterStep: -1 })
+    expect(messages).toHaveLength(1)
+    expect(fixture.persisted).toHaveLength(1)
+  })
+
+  it('正式 assistant task_wait receipt 在重建 DeliveryCoordinator 后仍消重', async () => {
+    const fixture = createHarness()
+    const runId = fixture.addSource(1)
+    fixture.delivery.noteTerminal(fixture.coordinator.getSnapshot(runId)!)
+    const notificationId = deriveSubagentNotificationId(runId, 'terminal-1')
+
+    // 持久化正式 assistant 消息含 task_wait success block
+    const r1 = fixture.sessionStore.appendMessageFast(fixture.parent.id, {
+      id: 'assistant-receipt', role: 'assistant', content: '', timestamp: 5,
+      blocks: [{
+        type: 'tool', toolCallId: 'tw-1', toolName: 'task_wait', arguments: {},
+        status: 'success', result: 'ok', subagentNotificationIds: [notificationId]
+      }]
+    })
+    expect(r1.ok).toBe(true)
+
+    // 重建 coordinator + delivery（模拟重启）
+    const reborn = fixture.reboot()
+    reborn.delivery.noteTerminal(reborn.coordinator.getSnapshot(runId)!)
+    const rebornReceiver = reborn.delivery.createActiveTurnReceiver({
+      sessionId: fixture.parent.id,
+      runId: () => reborn.coordinator.listSnapshotsForSession(fixture.parent.id)[0]?.runId ?? '',
+      persistence: {
+        persist: () => ({ notificationId })
+      }
+    })
+    const messages = await rebornReceiver.receive({ messageId: 'parent-message', afterStep: -1 })
+    expect(messages).toEqual([])
+  })
+
+  it('receipt 位于非激活分支不消重', async () => {
+    const fixture = createHarness()
+    const runId = fixture.addSource(1)
+    fixture.delivery.noteTerminal(fixture.coordinator.getSnapshot(runId)!)
+    const notificationId = deriveSubagentNotificationId(runId, 'terminal-1')
+
+    // 在旧分支写 task_wait receipt，然后切 leaf 到新分支
+    const ru1 = fixture.sessionStore.appendMessage(fixture.parent.id, { id: 'u1', role: 'user', content: 'q', timestamp: 1 })
+    expect(ru1).not.toBeNull()
+    const raOld = fixture.sessionStore.appendMessageFast(fixture.parent.id, {
+      id: 'a-old', role: 'assistant', content: '', timestamp: 2,
+      blocks: [{
+        type: 'tool', toolCallId: 'tw-old', toolName: 'task_wait', arguments: {},
+        status: 'success', result: 'ok', subagentNotificationIds: [notificationId]
+      }]
+    })
+    expect(raOld.ok).toBe(true)
+    // 倒回到 u1，新分支挂为其子节点
+    const leaf = fixture.sessionStore.setCurrentLeaf(fixture.parent.id, 'u1')
+    expect(leaf).not.toBeNull()
+    const raNew = fixture.sessionStore.appendMessageFast(fixture.parent.id, {
+      id: 'a-new', role: 'assistant', content: '', timestamp: 3
+    })
+    expect(raNew.ok).toBe(true)
+
+    // 旧分支 receipt 不在激活路径，应正常注入
+    const messages = await fixture.receiver.receive({ messageId: 'parent-message', afterStep: -1 })
+    expect(messages).toHaveLength(1)
+    expect(fixture.persisted).toHaveLength(1)
+  })
+
+  it('会话存在控制意图时冻结接力接纳，意图清除后恢复', () => {
+    const fixture = createHarness()
+    const runId = fixture.addSource(1)
+    fixture.delivery.noteTerminal(fixture.coordinator.getSnapshot(runId)!)
+    fixture.sessionStore.setControlIntent(fixture.parent.id, {
+      version: 1,
+      operationId: 'op_stop',
+      kind: 'stop',
+      targetRunIds: ['some-run'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+
+    expect(fixture.delivery.admitIdleRelay(fixture.parent.id)).toBeNull()
+
+    fixture.sessionStore.clearControlIntent(fixture.parent.id, 'op_stop')
+    expect(fixture.delivery.admitIdleRelay(fixture.parent.id)).not.toBeNull()
+  })
+
+  it('接力接纳关闭时即使有候选通知也不接纳', () => {
+    const fixture = createHarness()
+    const runId = fixture.addSource(1)
+    fixture.delivery.noteTerminal(fixture.coordinator.getSnapshot(runId)!)
+    const closed = new SubagentDeliveryCoordinator({
+      runCoordinator: fixture.coordinator,
+      sessionStore: fixture.sessionStore,
+      isRunExecutionActive: () => false,
+      isRelayAdmissionClosed: () => true
+    })
+
+    expect(closed.admitIdleRelay(fixture.parent.id)).toBeNull()
+    // 关闭只影响新接纳：另一实例不受污染仍可正常接纳
+    expect(fixture.delivery.admitIdleRelay(fixture.parent.id)).not.toBeNull()
   })
 })

@@ -174,6 +174,66 @@ describe('WorkspaceService subagent deletion', () => {
     expect(service.getState().currentSessionId).toBe(other.id)
   })
 
+  it('删除会话先持久化 delete 意图，意图随父元数据移除', async () => {
+    const parent = store.create(path.join(tempRoot, 'workspace'))
+    const child = createChild(parent.id, 'one')
+    const { service, coordinator } = createService()
+    coordinator.startRun({
+      runId: 'done-run', kind: 'agent', sessionId: child.id, workspaceId: tempRoot
+    })
+    coordinator.commitTerminal({ runId: 'done-run', status: 'completed' })
+    const spy = vi.spyOn(store, 'setControlIntent')
+
+    await service.deleteSession(parent.id)
+
+    expect(spy).toHaveBeenCalledWith(parent.id, expect.objectContaining({
+      kind: 'delete',
+      operationId: `delete:${parent.id}`,
+      targetRunIds: ['done-run'],
+      targetSessionIds: [child.id, parent.id]
+    }))
+    expect(store.getControlIntent(parent.id)).toBeNull()
+    expect(coordinator.getSnapshot('done-run')).toBeNull()
+  })
+
+  it('部分删除后重试沿用既有意图的冻结目标', async () => {
+    const parent = store.create(path.join(tempRoot, 'workspace'))
+    const child = createChild(parent.id, 'one')
+    // 模拟崩溃残留：同操作删除意图已落盘，冻结目标以此为准
+    store.setControlIntent(parent.id, {
+      version: 1,
+      kind: 'delete',
+      operationId: `delete:${parent.id}`,
+      targetRunIds: ['gone-run'],
+      targetSessionIds: [child.id, parent.id],
+      requestedAt: Date.now()
+    })
+    const { service } = createService()
+
+    await service.deleteSession(parent.id)
+
+    expect(store.load(parent.id)).toBeNull()
+    expect(store.load(child.id)).toBeNull()
+  })
+
+  it('存在其他控制意图时拒绝删除且无副作用', async () => {
+    const parent = store.create(path.join(tempRoot, 'workspace'))
+    store.setControlIntent(parent.id, {
+      version: 1,
+      kind: 'stop',
+      operationId: 'op_stop',
+      targetRunIds: ['run-x'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    const { service } = createService()
+
+    await expect(service.deleteSession(parent.id)).rejects.toThrow(/未完成的控制操作/)
+
+    expect(store.load(parent.id)).not.toBeNull()
+    expect(store.getControlIntent(parent.id)?.operationId).toBe('op_stop')
+  })
+
   it('禁止绕过父会话单独删除 Child Session', async () => {
     const parent = store.create(path.join(tempRoot, 'workspace'))
     const child = createChild(parent.id, 'one')

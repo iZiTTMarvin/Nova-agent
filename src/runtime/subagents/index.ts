@@ -58,6 +58,7 @@ export {
 export {
   SubagentDeliveryCoordinator,
   MAX_RELAY_TURNS_PER_CHAIN,
+  isSubagentNotificationEligible,
   type ActiveSubagentDeliveryReceiver,
   type RuntimeInputPersistencePort,
   type SubagentDeliveryCoordinatorDeps,

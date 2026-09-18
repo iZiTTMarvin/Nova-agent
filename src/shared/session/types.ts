@@ -84,6 +84,8 @@ export interface ToolBlock {
   processOutcome?: import('../tools/types').ToolProcessOutcome
   artifactId?: string
   truncationMeta?: ToolTruncationMeta
+  /** 当前工具结果已显式读取的后台通知 ID；只用于持久消费消重，不进入模型 wire 正文。 */
+  subagentNotificationIds?: string[]
 }
 
 /** 图片块（用户消息中携带的图片，用于 UI 流式渲染） */

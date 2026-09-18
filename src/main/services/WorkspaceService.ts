@@ -12,7 +12,7 @@
  */
 import { dialog, BrowserWindow } from 'electron'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
-import type { SessionData, SessionSummary } from '../../runtime/sessions/types'
+import type { SessionControlIntent, SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
@@ -63,8 +63,16 @@ export interface WorkspaceServiceDeps {
   /** Run 删除由 RunCoordinator 完成；延迟获取避免启动装配顺序耦合。 */
   getRunCoordinator: () => Pick<
     RunCoordinator,
-    'assertNoNonTerminalRunsForSessions' | 'deleteRunsForSessions'
+    'assertNoNonTerminalRunsForSessions' | 'deleteRunsForSessions' | 'listSnapshotsForSessions'
   >
+  /**
+   * 分支变化前的投递失效化临界区（由生命周期协调器实现）：
+   * 持久 branch_invalidate 意图并逐项完成失效化后才返回；抛错时调用方不得改 leaf。
+   */
+  invalidateBranchDelivery?: (
+    sessionId: string,
+    discardedAnchorMessageIds: ReadonlySet<string>
+  ) => void
   /**
    * 离开会话前回调（切走/删除/新建前）：主进程 sync drain + fire-and-forget 落盘。
    * 须在 SessionStore 删除会话之前调用，以便拿到 workspaceRoot。
@@ -354,6 +362,7 @@ export class WorkspaceService {
       }
       runCoordinator.assertNoNonTerminalRunsForSessions(deletingIdSet)
     }
+
     // 未执行的接力预约也是非终态 run：先结算为 cancelled 再走门禁（失败仍由 assert 兜底 fail-closed）
     try {
       this.deps.settleQueuedRelayReservations?.(deletingIdSet)
@@ -366,9 +375,53 @@ export class WorkspaceService {
     const cleanup = await Promise.allSettled(deletingIds.map(id => processRegistry.terminateForSession(id)))
     const failures: unknown[] = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
     if (failures.length > 0) throw new AggregateError(failures, '会话进程清理失败，未删除会话')
+    // await 窗口内可能新接纳了接力预约：再结算一轮后才做最终空闲门禁
+    try {
+      this.deps.settleQueuedRelayReservations?.(deletingIdSet)
+    } catch (error) {
+      console.error('[WorkspaceService] 接力预约结算失败:', error)
+    }
     assertDeletionIdle()
+
+    // 全部空闲门禁通过后才落盘删除意图：被门禁拒绝的删除绝不能留下意图，
+    // 否则启动重放会补完一次用户并未成功的删除。意图同时冻结派遣/接力接纳。
+    // 同 operationId 的部分删除重试沿用已持久意图的冻结目标；其他意图冲突则拒绝。
+    const deleteIntent: SessionControlIntent = {
+      version: 1,
+      kind: 'delete',
+      operationId: `delete:${sessionId}`,
+      targetRunIds: runCoordinator
+        .listSnapshotsForSessions(deletingIdSet)
+        .map((snapshot) => snapshot.runId),
+      targetSessionIds: deletingIds,
+      requestedAt: Date.now()
+    }
+    let effectiveIntent = deleteIntent
+    if (requested) {
+      const intentResult = store.setControlIntent(sessionId, deleteIntent)
+      if (!intentResult.ok) {
+        const existing = intentResult.code === 'conflict' ? intentResult.current : undefined
+        if (existing?.kind === 'delete' && existing.operationId === deleteIntent.operationId) {
+          effectiveIntent = existing
+        } else if (intentResult.code === 'conflict') {
+          throw new Error('该会话存在未完成的控制操作，请等待其完成或稍后重试')
+        } else {
+          throw new Error(`会话 ${sessionId} 不存在`)
+        }
+      }
+    }
+    // 会话不存在时维持既有的空操作语义：意图宿主缺失不写意图，仅刷新列表
+    // 保持子先父后：后序遍历顺序处理意图冻结的会话集合
+    const orderedDeletingIds = deletingIds.filter(
+      (id) => effectiveIntent.targetSessionIds.includes(id)
+    )
+    const effectiveDeletingIdSet = new Set(orderedDeletingIds)
+
+    // run 先于会话元数据删除；会话按后序遍历子先父后，父元数据（含删除意图）最后移除。
+    // 中途失败保留删除意图，启动重放按同一冻结目标补完剩余删除。
+    runCoordinator.deleteRunsForSessions(effectiveDeletingIdSet)
     this.clearTier1View()
-    for (const id of deletingIds) {
+    for (const id of orderedDeletingIds) {
       const detail = store.load(id)
       if (detail) this.leaveSession(id, detail.workspaceRoot)
       store.delete(id)
@@ -377,9 +430,10 @@ export class WorkspaceService {
       this.deps.disposeIdleLoopForSession(id)
       clearSteeringQueue(id)
     }
-    runCoordinator.deleteRunsForSessions(deletingIdSet)
+    // 意图随父元数据删除而消失；幂等清除防御「父会话删除失败但意图已读旧值」的边角
+    store.clearControlIntent(sessionId, deleteIntent.operationId)
 
-    for (const id of deletingIds) {
+    for (const id of orderedDeletingIds) {
       planReviewWaiters.cancelForSession(id)
     }
 
@@ -727,10 +781,11 @@ export class WorkspaceService {
       throw new Error('重新生成失败：用户消息链不一致')
     }
 
-    this.revertFileChangesForMessageIds(
-      session,
-      new Set(activePath.slice(targetIdx).map(m => m.id))
-    )
+    // 失效化先于 leaf 变更：锚点离开激活路径的派遣通知与接力预约先持久作废
+    const discardedIds = new Set(activePath.slice(targetIdx).map(m => m.id))
+    this.deps.invalidateBranchDelivery?.(sessionId, discardedIds)
+
+    this.revertFileChangesForMessageIds(session, discardedIds)
 
     store.setCurrentLeaf(sessionId, userParentId)
     store.clearContextSnapshot(sessionId)
@@ -786,6 +841,8 @@ export class WorkspaceService {
           ? currentPath.map(m => m.id)
           : currentPath.slice(lcaIdx + 1).map(m => m.id)
       )
+      // 失效化先于 leaf 变更：锚点离开激活路径的派遣通知与接力预约先持久作废
+      this.deps.invalidateBranchDelivery?.(sessionId, toRevertIds)
       this.revertFileChangesForMessageIds(session, toRevertIds)
     }
 
@@ -892,11 +949,12 @@ export class WorkspaceService {
       throw new Error('编辑重发失败：只能编辑用户消息')
     }
 
+    // 失效化先于 leaf 变更：锚点离开激活路径的派遣通知与接力预约先持久作废
+    const discardedIds = new Set(activePath.slice(targetIdx).map(m => m.id))
+    this.deps.invalidateBranchDelivery?.(sessionId, discardedIds)
+
     // 2. 文件 undo：恢复「目标消息及其之后」区间内仍 active 的 checkpoint
-    this.revertFileChangesForMessageIds(
-      session,
-      new Set(activePath.slice(targetIdx).map(m => m.id))
-    )
+    this.revertFileChangesForMessageIds(session, discardedIds)
 
     // 3. 倒回 currentLeafId 到分叉点（目标用户消息的父；首条消息时为 null）
     store.setCurrentLeaf(sessionId, target.parentId)

@@ -275,39 +275,41 @@ async function bootstrap(): Promise<void> {
     event.preventDefault()
     quitInProgress = true
 
-    try {
-      markSubagentsShuttingDown()
-      const interrupted = interruptActiveSubagentsOnShutdown()
-      if (interrupted > 0) {
-        console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+    void (async () => {
+      try {
+        markSubagentsShuttingDown()
+        const interrupted = await interruptActiveSubagentsOnShutdown()
+        if (interrupted > 0) {
+          console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+        }
+      } catch {
+        // 运行态服务未初始化时无需对账。
       }
-    } catch {
-      // 运行态服务未初始化时无需对账。
-    }
 
-    try {
-      const ws = getWorkspaceService().getState()
-      if (ws.currentSessionId && ws.currentProjectPath) {
-        // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
-        flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+      try {
+        const ws = getWorkspaceService().getState()
+        if (ws.currentSessionId && ws.currentProjectPath) {
+          // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
+          flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+        }
+      } catch {
+        // WorkspaceService 未初始化时跳过
       }
-    } catch {
-      // WorkspaceService 未初始化时跳过
-    }
-    closeMemoryService()
-    // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
-    closeAllSessionIndexes()
-    // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
-    void Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll()])
-      .then(([graphs, processes]) => {
-        if (graphs.status === 'rejected') {
-          console.error('[CodeGraphHost] 退出前释放失败:', graphs.reason)
-        }
-        if (processes.status === 'rejected') {
-          console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
-        }
-      })
-      .finally(() => app.exit(requestedExitCode))
+      closeMemoryService()
+      // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
+      closeAllSessionIndexes()
+      // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
+      await Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll()])
+        .then(([graphs, processes]) => {
+          if (graphs.status === 'rejected') {
+            console.error('[CodeGraphHost] 退出前释放失败:', graphs.reason)
+          }
+          if (processes.status === 'rejected') {
+            console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
+          }
+        })
+      app.exit(requestedExitCode)
+    })()
   })
 }
 

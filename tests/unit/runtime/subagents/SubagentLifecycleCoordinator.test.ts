@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
+import { createHash } from 'crypto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRunCoordinator, RunExecutionRegistry } from '../../../../src/runtime/run'
 import { SessionStore, deriveChildSessionId } from '../../../../src/runtime/sessions'
@@ -61,7 +62,8 @@ describe('SubagentLifecycleCoordinator', () => {
     parentRunId: string,
     childRunId: string,
     depth: number,
-    execution: SubagentRunDispatch['execution'] = 'sync'
+    execution: SubagentRunDispatch['execution'] = 'sync',
+    parentMessageId = `msg-${parentRunId}`
   ) {
     const child = store.createChildIfAbsent({
       childSessionId: deriveChildSessionId(`key-${childRunId}`),
@@ -79,7 +81,7 @@ describe('SubagentLifecycleCoordinator', () => {
           spawnRunId: childRunId,
           origin: {
             kind: 'task_tool',
-            parentMessageId: `msg-${parentRunId}`,
+            parentMessageId,
             parentToolCallId: `call-${childRunId}`
           }
         },
@@ -102,13 +104,36 @@ describe('SubagentLifecycleCoordinator', () => {
             callKind: 'task',
             parentSessionId: parentId,
             parentRunId,
-            parentMessageId: `msg-${parentRunId}`,
+            parentMessageId,
             parentToolCallId: `call-${childRunId}`,
             execution,
             topParentSessionId: parentSessionId
           }
     )
     return child
+  }
+
+  /** 落一个 queued 接力预约（无 turnStartedAt），等价于已持久化未接管的状态。 */
+  function createQueuedRelay(
+    runId: string,
+    sessionId: string,
+    anchorMessageId: string | null
+  ): void {
+    coordinator.startRun({
+      kind: 'agent',
+      runId,
+      workspaceId: workspace,
+      sessionId,
+      relayTrigger: {
+        version: 1,
+        requestId: runId,
+        receiveMessageId: `msg-${runId}`,
+        originUserMessageId: 'user-1',
+        anchorMessageId,
+        items: [{ notificationId: `n-${runId}`, sourceRunId: 'src', content: 'x' }],
+        createdAt: Date.now()
+      }
+    })
   }
 
   function registerSettlingHandle(runId: string) {
@@ -235,7 +260,7 @@ describe('SubagentLifecycleCoordinator', () => {
     await writerLeaseRegistry.acquire(workspace, 'run-child')
     const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
 
-    const interrupted = lifecycle.interruptActiveChildrenOnShutdown()
+    const interrupted = await lifecycle.interruptActiveChildrenOnShutdown()
 
     expect(interrupted.map((run) => run.runId)).toEqual(['run-child'])
     expect(coordinator.getSnapshot('run-child')?.status).toBe('interrupted')
@@ -537,5 +562,252 @@ describe('SubagentLifecycleCoordinator', () => {
     expect(result.cancelledRunIds).toContain('run-fu')
     expect(coordinator.getSnapshot('run-fu')?.status).toBe('cancelled')
     expect(coordinator.getSnapshot('run-birth')?.status).toBe('running')
+  })
+
+  it('父会话停止覆盖此前轮次的后台 child、可投递通知源与排队接力', async () => {
+    // 已终态的上一父轮：其派出的后台 child 仍在运行
+    createRun('run-parent-old', parentSessionId)
+    coordinator.commitTerminal({ runId: 'run-parent-old', status: 'completed' })
+    createChild(parentSessionId, 'run-parent-old', 'run-bg-old', 1, 'background_read_only')
+    // 当前父轮派出的已完成可投递 child
+    createChild(parentSessionId, 'run-parent', 'run-bg-done', 1, 'background_read_only')
+    coordinator.commitTerminal({
+      runId: 'run-bg-done',
+      status: 'completed',
+      terminalTransitionId: 'tt-done'
+    })
+    // 父会话上的排队接力预约（非终态 run）
+    createQueuedRelay('run-relay', parentSessionId, 'msg-run-parent')
+    registerSettlingHandle('run-parent')
+    registerSettlingHandle('run-bg-old')
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    const result = await lifecycle.stopRunTree('run-parent', 'cancel_execution')
+
+    // 冻结集合覆盖全部目标；requestedRunIds 只含需要取消的非终态项
+    expect(new Set(result.requestedRunIds)).toEqual(new Set([
+      'run-parent', 'run-bg-old', 'run-relay'
+    ]))
+    expect(coordinator.getSnapshot('run-parent')?.status).toBe('cancelled')
+    expect(coordinator.getSnapshot('run-bg-old')?.status).toBe('cancelled')
+    expect(coordinator.getSnapshot('run-relay')?.status).toBe('cancelled')
+    // 已终态可投递源不改终态但补失效化，完成通知不再唤醒父级
+    expect(coordinator.getSnapshot('run-bg-done')).toEqual(expect.objectContaining({
+      status: 'completed',
+      deliveryBinding: expect.objectContaining({
+        invalidatedReason: 'control_intent:stop:run-parent'
+      })
+    }))
+    // 已终态的上一父轮不进冻结集合
+    expect(coordinator.getSnapshot('run-parent-old')?.status).toBe('completed')
+    expect(store.getControlIntent(parentSessionId)).toBeNull()
+  })
+
+  it('单独停止 child 只覆盖该 child 会话子树，不影响父会话其他分支', async () => {
+    const childA = createChild(parentSessionId, 'run-parent', 'run-child-a', 1)
+    createChild(parentSessionId, 'run-parent', 'run-child-b', 1)
+    // child-a 会话内由已终态旧轮派出的后台 grandchild：只经会话级扩展覆盖
+    createRun('run-child-a-old', childA.id)
+    coordinator.commitTerminal({ runId: 'run-child-a-old', status: 'completed' })
+    createChild(childA.id, 'run-child-a-old', 'run-bg-gc', 2, 'background_read_only')
+    registerSettlingHandle('run-child-a')
+    registerSettlingHandle('run-bg-gc')
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    await lifecycle.stopRunTree('run-child-a', 'cancel_execution')
+
+    expect(coordinator.getSnapshot('run-child-a')?.status).toBe('cancelled')
+    expect(coordinator.getSnapshot('run-bg-gc')?.status).toBe('cancelled')
+    expect(coordinator.getSnapshot('run-child-b')?.status).toBe('running')
+    expect(coordinator.getSnapshot('run-parent')?.status).toBe('running')
+    expect(coordinator.getSnapshot('run-child-a-old')?.status).toBe('completed')
+  })
+
+  it('停止在意图落盘后才释放交互等待', async () => {
+    createChild(parentSessionId, 'run-parent', 'run-child-rel', 1)
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+    const observed: string[] = []
+
+    await lifecycle.stopRunTree('run-parent', 'cancel_execution', {
+      releaseInteractions: (targetRunIds) => {
+        observed.push(
+          `${store.getControlIntent(parentSessionId)?.operationId ?? 'none'}:${targetRunIds.length}`
+        )
+      }
+    })
+
+    expect(observed).toEqual(['stop:run-parent:2'])
+    expect(store.getControlIntent(parentSessionId)).toBeNull()
+  })
+
+  it('退出收敛先 abort 真实句柄：grace 内自行终态的保留结果，未收敛标 interrupted', async () => {
+    createChild(parentSessionId, 'run-parent', 'run-child-ok', 1)
+    createChild(parentSessionId, 'run-parent', 'run-child-stuck', 1)
+    const abortOk = vi.fn(() => {
+      coordinator.commitTerminal({ runId: 'run-child-ok', status: 'completed' })
+      settleOk()
+    })
+    let settleOk!: () => void
+    registry.register({
+      runId: 'run-child-ok',
+      generation: 1,
+      kind: 'agent',
+      abort: abortOk,
+      settled: new Promise<void>((resolve) => { settleOk = resolve })
+    })
+    const abortStuck = vi.fn()
+    registry.register({
+      runId: 'run-child-stuck',
+      generation: 1,
+      kind: 'agent',
+      abort: abortStuck,
+      settled: new Promise<void>(() => {})
+    })
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    const interrupted = await lifecycle.interruptActiveChildrenOnShutdown(20)
+
+    expect(abortOk).toHaveBeenCalledWith('process_exit')
+    expect(abortStuck).toHaveBeenCalledWith('process_exit')
+    // abort 后 grace 内自行提交终态：保留其自身结果，不覆写为 interrupted
+    expect(interrupted.map((run) => run.runId)).toEqual(['run-child-stuck'])
+    expect(coordinator.getSnapshot('run-child-ok')?.status).toBe('completed')
+    expect(coordinator.getSnapshot('run-child-stuck')).toEqual(expect.objectContaining({
+      status: 'interrupted',
+      executionGeneration: 0
+    }))
+    // lingering 句柄保留在 registry，不伪装已结束
+    expect(registry.get('run-child-stuck')).not.toBeNull()
+  })
+
+  it('分支失效化先持久意图再逐项失效化，锚点保留的源与接力不受影响', () => {
+    createChild(parentSessionId, 'run-parent', 'run-bg-drop', 1, 'background_read_only', 'msg-drop')
+    coordinator.commitTerminal({
+      runId: 'run-bg-drop',
+      status: 'completed',
+      terminalTransitionId: 'tt-drop'
+    })
+    createChild(parentSessionId, 'run-parent', 'run-bg-keep', 1, 'background_read_only', 'msg-keep')
+    coordinator.commitTerminal({
+      runId: 'run-bg-keep',
+      status: 'completed',
+      terminalTransitionId: 'tt-keep'
+    })
+    createQueuedRelay('run-relay-drop', parentSessionId, 'msg-drop')
+    createQueuedRelay('run-relay-keep', parentSessionId, 'msg-keep')
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    lifecycle.invalidateBranchDelivery(parentSessionId, new Set(['msg-drop']))
+
+    expect(coordinator.getSnapshot('run-bg-drop')?.deliveryBinding?.invalidatedReason)
+      .toMatch(/^branch_invalidate:branch:/)
+    expect(coordinator.getSnapshot('run-bg-keep')?.deliveryBinding).toBeUndefined()
+    expect(coordinator.getSnapshot('run-relay-drop')?.status).toBe('cancelled')
+    expect(coordinator.getSnapshot('run-relay-keep')?.status).toBe('queued')
+    expect(coordinator.getSnapshot('run-parent')?.status).toBe('running')
+    expect(store.getControlIntent(parentSessionId)).toBeNull()
+  })
+
+  it('分支失效化意图重放只补完失效化，不执行分支切换', async () => {
+    createChild(parentSessionId, 'run-parent', 'run-bg-half', 1, 'background_read_only', 'msg-drop')
+    coordinator.commitTerminal({
+      runId: 'run-bg-half',
+      status: 'completed',
+      terminalTransitionId: 'tt-half'
+    })
+    createQueuedRelay('run-relay-half', parentSessionId, 'msg-drop')
+    store.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'op_branch',
+      kind: 'branch_invalidate',
+      targetRunIds: ['run-bg-half', 'run-relay-half'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    const result = await lifecycle.replayControlIntents()
+
+    expect(result.retained).toEqual([])
+    expect(coordinator.getSnapshot('run-bg-half')?.deliveryBinding?.invalidatedReason)
+      .toBe('branch_invalidate:op_branch')
+    expect(coordinator.getSnapshot('run-relay-half')?.status).toBe('cancelled')
+    expect(store.getControlIntent(parentSessionId)).toBeNull()
+  })
+
+  it('已有其他控制意图时分支失效化拒绝，不写任何失效化记录', () => {
+    store.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'op_stop_x',
+      kind: 'stop',
+      targetRunIds: ['run-parent'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    createChild(parentSessionId, 'run-parent', 'run-bg-x', 1, 'background_read_only', 'msg-drop')
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    expect(() => lifecycle.invalidateBranchDelivery(parentSessionId, new Set(['msg-drop'])))
+      .toThrow(/已有未完成的控制意图/)
+    expect(coordinator.getSnapshot('run-bg-x')?.deliveryBinding).toBeUndefined()
+    expect(store.getControlIntent(parentSessionId)?.operationId).toBe('op_stop_x')
+  })
+
+  it('同一切换中断后重试分支失效化：补完旧冻结目标并清除，不因目标收缩死锁', () => {
+    createChild(parentSessionId, 'run-parent', 'run-bg-drop', 1, 'background_read_only', 'msg-drop')
+    coordinator.commitTerminal({
+      runId: 'run-bg-drop',
+      status: 'completed',
+      terminalTransitionId: 'tt-drop'
+    })
+    createQueuedRelay('run-relay-drop', parentSessionId, 'msg-drop')
+    // 首次尝试中断于「意图已持久化 + 接力已取消」：重试时重算集合只剩派遣源，与冻结目标不再一致
+    coordinator.commitTerminal({ runId: 'run-relay-drop', status: 'cancelled', reason: 'first_attempt' })
+    const operationId = `branch:${parentSessionId}:${
+      createHash('sha1').update('msg-drop').digest('hex').slice(0, 16)
+    }`
+    store.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId,
+      kind: 'branch_invalidate',
+      targetRunIds: ['run-bg-drop', 'run-relay-drop'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    expect(() => lifecycle.invalidateBranchDelivery(parentSessionId, new Set(['msg-drop'])))
+      .not.toThrow()
+
+    expect(coordinator.getSnapshot('run-bg-drop')?.deliveryBinding?.invalidatedReason)
+      .toBe(`branch_invalidate:${operationId}`)
+    expect(store.getControlIntent(parentSessionId)).toBeNull()
+  })
+
+  it('停止意图同操作中断后重试：补完旧冻结目标并清除，不因集合收缩死锁', async () => {
+    createChild(parentSessionId, 'run-parent', 'run-bg-old', 1, 'background_read_only', 'msg-old')
+    coordinator.commitTerminal({
+      runId: 'run-bg-old',
+      status: 'completed',
+      terminalTransitionId: 'tt-old'
+    })
+    // 首次停止已写失效化但未清意图：重算冻结集合时该源已不可投递、被排除
+    coordinator.updateDeliveryBinding('run-bg-old', {
+      invalidatedReason: 'control_intent:stop:run-parent'
+    })
+    store.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'stop:run-parent',
+      kind: 'stop',
+      targetRunIds: ['run-parent', 'run-bg-old'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    const lifecycle = new SubagentLifecycleCoordinator(store, coordinator, registry, scheduler)
+
+    await expect(lifecycle.stopRunTree('run-parent', 'retry_stop')).resolves.toBeDefined()
+
+    expect(coordinator.getSnapshot('run-parent')?.status).toBe('cancelled')
+    expect(store.getControlIntent(parentSessionId)).toBeNull()
   })
 })

@@ -7,6 +7,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { RunStore } from '../../../../src/runtime/run/RunStore'
 import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
+import type { RunSnapshot } from '../../../../src/shared/run/types'
 import * as atomicFile from '../../../../src/runtime/storage/atomicFile'
 import { applyAgentEventToRun } from '../../../../src/runtime/agent/turn'
 import {
@@ -921,6 +922,68 @@ describe('RunCoordinator', () => {
     expect(cold.getSnapshot('run_plain_queued')?.status).toBe('interrupted')
     // 保留的预约仍不占用 turn：用户消息可以正常进入该会话
     expect(cold.hasActiveRunForSession('s-relay')).toBe(false)
+  })
+
+  it('subscribe 在成功落盘后发布 clone，监听器异常隔离且不影响 commit', () => {
+    const snapshots: RunSnapshot[] = []
+    const listener = (snap: RunSnapshot): void => {
+      snapshots.push(snap)
+    }
+    coord.subscribe(listener)
+
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-sub' })
+    coord.markRunning(snap.runId, 'msg-sub')
+    expect(snapshots.length).toBeGreaterThanOrEqual(2)
+    // 发布的是 clone，修改不影响权威状态
+    const first = snapshots[0]!
+    first.status = 'failed'
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('running')
+
+    // 监听器抛错时隔离记录，不破坏后续提交
+    const errorListener = vi.fn(() => {
+      throw new Error('listener boom')
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    coord.subscribe(errorListener)
+    coord.commitTerminal({ runId: snap.runId, status: 'completed' })
+    expect(errorListener).toHaveBeenCalled()
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('completed')
+    errorSpy.mockRestore()
+  })
+
+  it('subscribe 返回的 unsubscribe 幂等，调用后不再收到通知', () => {
+    const received: string[] = []
+    const unsubscribe = coord.subscribe((snap) => {
+      received.push(snap.runId)
+    })
+
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-unsub' })
+    const before = received.length
+    unsubscribe()
+    unsubscribe() // 幂等
+
+    coord.markRunning(snap.runId, 'msg-unsub')
+    expect(received.length).toBe(before)
+  })
+
+  it('每个通用 subscriber 各自收到独立 clone，互不污染', () => {
+    const firstSeen: RunStatus[] = []
+    const secondSeen: RunStatus[] = []
+    coord.subscribe((snap) => {
+      // 第一个 listener 篡改收到的快照，不应影响第二个 listener
+      firstSeen.push(snap.status)
+      snap.status = 'failed'
+    })
+    coord.subscribe((snap) => {
+      secondSeen.push(snap.status)
+    })
+
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-clone' })
+    coord.markRunning(snap.runId, 'msg-clone')
+    // 第二个 listener 看到的是 running，不是被第一个篡改后的 failed
+    expect(secondSeen.every(status => status !== 'failed')).toBe(true)
+    expect(firstSeen.length).toBeGreaterThanOrEqual(2)
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('running')
   })
 })
 

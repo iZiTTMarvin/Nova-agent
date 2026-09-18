@@ -1,6 +1,7 @@
 import { SubagentDeliveryCoordinator } from '../../runtime/subagents'
 import { getRunCoordinator, getRunExecutionRegistry } from './RunCoordinatorHost'
 import { getSessionStore } from './SessionStoreHost'
+import { isSubagentsShuttingDown } from './SubagentLifecycleHost'
 
 let coordinator: SubagentDeliveryCoordinator | null = null
 let owner: ReturnType<typeof getRunCoordinator> | null = null
@@ -16,7 +17,8 @@ export function getSubagentDeliveryCoordinator(): SubagentDeliveryCoordinator {
     runCoordinator,
     sessionStore: getSessionStore(),
     isRunExecutionActive: runId => getRunExecutionRegistry().get(runId) !== null,
-    onIdleRelayAvailable: (sessionId) => idleRelayCallback?.(sessionId)
+    onIdleRelayAvailable: (sessionId) => idleRelayCallback?.(sessionId),
+    isRelayAdmissionClosed: isSubagentsShuttingDown
   })
   owner = runCoordinator
   const note = (context: { snapshot: Parameters<SubagentDeliveryCoordinator['noteTerminal']>[0] }) => {

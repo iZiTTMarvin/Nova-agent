@@ -728,3 +728,58 @@ it('f 变体) live finalize：child 仍 running 时 running task 块落盘为 er
   const result = taskBlock && taskBlock.type === 'tool' ? String(taskBlock.result) : ''
   expect(result).toContain('尚未收到终态')
 })
+
+describe('task_wait 消费事实持久化', () => {
+  it('tool_call 后 tool_result 携带 IDs，turnDraft 同一 ToolBlock 为 success+result+IDs', () => {
+    const { feed, run, runStore } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait', args: {} })
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait',
+      result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1', 'ntf_run-2_t-2']
+    })
+
+    const draft = runStore.loadSnapshot(run.runId)!.turnDraft!
+    const block = draft.blocks.find(b => b.type === 'tool' && b.toolCallId === 'tw1')!
+    expect(block.type).toBe('tool')
+    expect(block.status).toBe('success')
+    expect(block.result).toBe('ok')
+    expect(block.subagentNotificationIds).toEqual(['ntf_run-1_t-1', 'ntf_run-2_t-2'])
+  })
+
+  it('error tool_result 不保留旧 IDs：先 success 再 error 时 IDs 被清除', () => {
+    const { feed, run, runStore } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait', args: {} })
+    // 先 success 携带 IDs
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait',
+      result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+    })
+    // 同一 toolCallId 再来 error 结果（hook 改写场景）
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait',
+      result: 'hook 改为失败', failed: true
+    })
+
+    const draft = runStore.loadSnapshot(run.runId)!.turnDraft!
+    const block = draft.blocks.find(b => b.type === 'tool' && b.toolCallId === 'tw1')!
+    expect(block.status).toBe('error')
+    expect(block.subagentNotificationIds).toBeUndefined()
+  })
+
+  it('非 task_wait 工具的 tool_result 即使携带 IDs 也不写入 ToolBlock', () => {
+    const { feed, run, runStore } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'r1', toolName: 'read', args: {} })
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'r1', toolName: 'read',
+      result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+    })
+
+    const draft = runStore.loadSnapshot(run.runId)!.turnDraft!
+    const block = draft.blocks.find(b => b.type === 'tool' && b.toolCallId === 'r1')!
+    expect(block.status).toBe('success')
+    expect(block.subagentNotificationIds).toBeUndefined()
+  })
+})

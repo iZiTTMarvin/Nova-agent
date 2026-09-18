@@ -66,6 +66,8 @@ export class RunCoordinator {
   /** terminal hook 去重：`${runId}|${transitionId}|${hookName}` */
   private readonly firedTerminalHooks = new Set<string>()
   private readonly terminalHookHandlers = new Map<TerminalHookName, Set<TerminalHookHandler>>()
+  /** 通用 snapshot 订阅：每次成功落盘后向监听器发布 clone。 */
+  private readonly snapshotListeners = new Set<RunSnapshotListener>()
   readonly inbox: InteractionInbox
   /** 嵌套 batch 合并到外层；depth=0 时才落盘。 */
   private readonly batchDepthByRun = new Map<string, number>()
@@ -75,6 +77,14 @@ export class RunCoordinator {
     this.store = opts.store
     this.onSnapshot = opts.onSnapshot
     this.inbox = new InteractionInbox(this)
+  }
+
+  /** 通用状态订阅：成功落盘后发布 clone；监听器异常隔离，unsubscribe 幂等。 */
+  subscribe(listener: RunSnapshotListener): () => void {
+    this.snapshotListeners.add(listener)
+    return () => {
+      this.snapshotListeners.delete(listener)
+    }
   }
 
   // ── 启动 / 查询 ──────────────────────────────────────────
@@ -1103,7 +1113,21 @@ export class RunCoordinator {
       this.runs.delete(snapshot.runId)
       throw error
     }
+    this.publishSnapshot(snapshot, event)
+  }
+
+  private publishSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
+    // onSnapshot 保持现有调用顺序与错误语义，不擅自改变。
     this.onSnapshot?.(cloneSnapshot(snapshot), event)
+    if (this.snapshotListeners.size === 0) return
+    // 每个 subscriber 各自 clone，避免一个 listener 修改后污染后续 listener 观察。
+    for (const listener of this.snapshotListeners) {
+      try {
+        listener(cloneSnapshot(snapshot), event)
+      } catch (err) {
+        console.error('[RunCoordinator] snapshot listener 抛错:', err)
+      }
+    }
   }
 
   private enterBatch(runId: string): void {
@@ -1130,7 +1154,7 @@ export class RunCoordinator {
       throw error
     }
     const last = records[records.length - 1]
-    if (last) this.onSnapshot?.(cloneSnapshot(snap), last)
+    if (last) this.publishSnapshot(snap, last)
   }
 
   /**

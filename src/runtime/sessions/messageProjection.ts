@@ -262,6 +262,20 @@ function validateMessageFacts(message: SessionMessage): void {
           !block.arguments || typeof block.arguments !== 'object' || Array.isArray(block.arguments) ||
           !['running', 'success', 'error'].includes(block.status) ||
           (block.result !== undefined && typeof block.result !== 'string')) throw new Error('Invalid tool facts')
+      // subagentNotificationIds：缺省兼容旧格式；存在时仅 task_wait success 允许携带，其他一律 fail closed。
+      if (block.subagentNotificationIds !== undefined) {
+        if (block.toolName !== 'task_wait' || block.status !== 'success') {
+          throw new Error('subagentNotificationIds only allowed on task_wait success')
+        }
+        const ids = block.subagentNotificationIds
+        if (!Array.isArray(ids) || ids.length === 0) throw new Error('Invalid subagent notification ids')
+        const seen = new Set<string>()
+        for (const id of ids) {
+          if (typeof id !== 'string' || id.trim() === '') throw new Error('Invalid subagent notification id')
+          if (seen.has(id)) throw new Error('Duplicate subagent notification id')
+          seen.add(id)
+        }
+      }
     } else if (typeof block.content !== 'string') throw new Error('Invalid response content')
     if (block.type === 'text' && block.continuation !== undefined &&
         (typeof block.continuation !== 'string' || !block.continuation.trim() || block.responseStep === undefined)) {

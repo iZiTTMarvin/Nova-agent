@@ -211,6 +211,8 @@ export async function sendAgentMessage(
   let relayRunId: string | undefined
   let relayTrigger: SubagentRelayTrigger | null = null
   if (params.internalRelay !== undefined) {
+    // 退出期间不再接管接力执行；queued 预约由原状保留，下次启动对账后接管
+    if (isSubagentsShuttingDown()) return { accepted: true }
     // 预约已消失/已取代/已执行/身份不符时静默 no-op，避免对同一通知重复接力或误占他人 turn
     const reservation = runCoordinator.getSnapshot(params.internalRelay.relayRunId)
     if (
@@ -800,6 +802,8 @@ export function configureIdleRelay(deps: SendAgentMessageDeps): void {
  * 是否接力、接力几次、批次内容由投递协调器的持久预约决定；此处只负责接管。
  */
 function fireIdleRelay(sessionId: string): void {
+  // 退出流程关闭新接力接纳；已持久预约留给下次启动接管，不随进程退出硬跑
+  if (isSubagentsShuttingDown()) return
   // 活跃 turn 的接收边界自会交付，turn finally 会再检查；此处直接返回避免同一通知双触发
   if (isSessionTurnInProgress(sessionId)) return
   let admission: SubagentRelayAdmission | null

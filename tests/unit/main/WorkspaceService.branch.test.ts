@@ -322,4 +322,69 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     })
     expect(loadSpy).not.toHaveBeenCalled()
   })
+
+  function createTwoBranchSession() {
+    const session = store.create('/ws', 'default')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: 'q1', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'a1', role: 'assistant', content: 'a1', timestamp: 2 })
+    store.setCurrentLeaf(session.id, null)
+    store.appendMessage(session.id, { id: 'u2', role: 'user', content: 'q2', timestamp: 3 })
+    store.appendMessage(session.id, { id: 'a2', role: 'assistant', content: 'a2', timestamp: 4 })
+    return session
+  }
+
+  it('switchBranch 先失效化丢弃路径的投递再切 leaf', () => {
+    const session = createTwoBranchSession()
+    const calls: Array<{ discarded: string[]; leafAtCall: string | null }> = []
+    const svc = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
+      getSessionStore: () => store,
+      getMainWindow: () => null,
+      invalidateBranchDelivery: (sessionId, discarded) => {
+        calls.push({
+          discarded: [...discarded],
+          leafAtCall: store.load(sessionId)?.currentLeafId ?? null
+        })
+      }
+    })
+
+    svc.switchBranch({ sessionId: session.id, targetMessageId: 'u1' })
+
+    // 丢弃集合 = 离开激活路径的旧分支节点；调用时 leaf 尚未变更
+    expect(calls).toEqual([{ discarded: ['u2', 'a2'], leafAtCall: 'a2' }])
+    expect(store.load(session.id)?.currentLeafId).toBe('a1')
+  })
+
+  it('失效化失败时不切 leaf 也不回报成功', () => {
+    const session = createTwoBranchSession()
+    const svc = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
+      getSessionStore: () => store,
+      getMainWindow: () => null,
+      invalidateBranchDelivery: () => {
+        throw new Error('意图写盘失败')
+      }
+    })
+
+    expect(() => svc.switchBranch({ sessionId: session.id, targetMessageId: 'u1' }))
+      .toThrow('意图写盘失败')
+    expect(store.load(session.id)?.currentLeafId).toBe('a2')
+  })
+
+  it('prepareEditResend 失效化覆盖目标消息及其之后', () => {
+    const session = createTwoBranchSession()
+    const calls: string[][] = []
+    const svc = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
+      getSessionStore: () => store,
+      getMainWindow: () => null,
+      invalidateBranchDelivery: (_sessionId, discarded) => {
+        calls.push([...discarded])
+      }
+    })
+
+    svc.prepareEditResend({ sessionId: session.id, messageId: 'u2' })
+
+    expect(calls).toEqual([['u2', 'a2']])
+  })
 })

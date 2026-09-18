@@ -899,6 +899,31 @@ export class SessionStore {
   }
 
   /**
+   * 查询当前激活路径上是否有 task_wait 结果已显式消费某后台通知。
+   * 仅扫 task_wait success ToolBlock 且 subagentNotificationIds 包含目标 ID；
+   * 不扫旧分支，不另建索引，不从 result 文本反推。
+   */
+  findSubagentNotificationReceipt(
+    sessionId: string,
+    notificationId: string
+  ): { messageId: string; toolCallId: string } | null {
+    if (!notificationId) return null
+    const session = this.load(sessionId)
+    if (!session) return null
+    for (const message of getSessionActiveMessages(session)) {
+      for (const block of message.blocks ?? []) {
+        if (block.type !== 'tool') continue
+        if (block.toolName !== 'task_wait') continue
+        if (block.status !== 'success') continue
+        if (block.subagentNotificationIds?.includes(notificationId)) {
+          return { messageId: message.id, toolCallId: block.toolCallId }
+        }
+      }
+    }
+    return null
+  }
+
+  /**
    * O(1) 热追加：写 jsonl 一行 + 更新小体积元数据 + 增量索引。
    * 不扫全图、不全量重读 messages.jsonl。
    *

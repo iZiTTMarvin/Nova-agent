@@ -302,14 +302,22 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         const blockIdx = stream.blocks.findIndex(b => b.type === 'tool' && b.toolCallId === event.toolCallId)
         if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
           const block = stream.blocks[blockIdx]
+          // 重建前明确丢弃旧消费事实，避免 error/无字段时残留。
+          const { subagentNotificationIds: _discardedReceipt, ...baseBlock } = block
+          void _discardedReceipt
+          // 仅 task_wait 非 error 结果接纳 IDs；其他工具/error 不携带。
+          const subagentNotificationIds = event.toolName === 'task_wait' && !isError && event.subagentNotificationIds?.length
+            ? [...event.subagentNotificationIds]
+            : undefined
           stream.blocks[blockIdx] = {
-            ...block,
+            ...baseBlock,
             status: isError ? 'error' : 'success',
             result: event.result,
             ...(event.processOutcome ? { processOutcome: { ...event.processOutcome } } : {}),
             ...(event.resultImages?.length ? { resultImages: event.resultImages.map(image => ({ ...image })) } : {}),
             ...(event.artifactId ? { artifactId: event.artifactId } : {}),
-            ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
+            ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {}),
+            ...(subagentNotificationIds ? { subagentNotificationIds } : {})
           }
         }
         // 工具结果边界：turnDraft 是执行中唯一事实源（fsync via RunStore）
