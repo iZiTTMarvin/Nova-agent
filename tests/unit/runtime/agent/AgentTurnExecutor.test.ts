@@ -271,4 +271,49 @@ describe('AgentTurnExecutor', () => {
     release()
     await execution
   })
+
+  it('onUnregistered 触发时句柄已注销', async () => {
+    const coordinator = createRunCoordinator(tempRoot)
+    const registry = new RunExecutionRegistry()
+    const executor = new AgentTurnExecutor(coordinator, registry)
+    const fake = fakeLoop(async () => ({ status: 'completed' }))
+    let observedRegistered = true
+
+    await executor.execute({
+      agentLoop: fake.loop,
+      task: 'hello',
+      route: agentRoute(),
+      sessionId: 'sess-1',
+      workingDirectory: tempRoot,
+      isolation: 'shared',
+      userMessageId: 'user-1',
+      onUnregistered: (context) => {
+        observedRegistered = registry.get(context.runId) !== null
+      }
+    })
+
+    expect(observedRegistered).toBe(false)
+  })
+
+  it('onCleanup 抛错时 onUnregistered 仍执行', async () => {
+    const coordinator = createRunCoordinator(tempRoot)
+    const registry = new RunExecutionRegistry()
+    const executor = new AgentTurnExecutor(coordinator, registry)
+    const fake = fakeLoop(async () => ({ status: 'completed' }))
+    let unregisteredCalled = false
+
+    await executor.execute({
+      agentLoop: fake.loop,
+      task: 'hello',
+      route: agentRoute(),
+      sessionId: 'sess-1',
+      workingDirectory: tempRoot,
+      isolation: 'shared',
+      userMessageId: 'user-1',
+      onCleanup: () => { throw new Error('cleanup boom') },
+      onUnregistered: () => { unregisteredCalled = true }
+    })
+
+    expect(unregisteredCalled).toBe(true)
+  })
 })

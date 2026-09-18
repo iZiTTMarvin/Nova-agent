@@ -27,6 +27,7 @@ import { initWorkspaceService } from '../services/WorkspaceService'
 import { disposeIdleLoopForSession } from '../agent/turn'
 import { getRunCoordinator, initRunCoordinatorHost, convergeRunProtocolTailsOnStartup, reconcileRunCoordinatorOnStartup } from '../services/RunCoordinatorHost'
 import { getSubagentLifecycleCoordinator } from '../services/SubagentLifecycleHost'
+import { getSubagentDeliveryCoordinator } from '../services/SubagentDeliveryCoordinatorHost'
 import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
 import {
@@ -109,6 +110,9 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
     },
     onSessionCaptureCleanup: (sessionId) => {
       cleanupObservationCaptureSession(sessionId)
+    },
+    settleQueuedRelayReservations: (sessionIds) => {
+      getSubagentDeliveryCoordinator().settleQueuedRelayReservationsForSessions(sessionIds)
     }
   })
   registerCodeIndexHandler(workspaceService, getSessionStore, getMainWindow)

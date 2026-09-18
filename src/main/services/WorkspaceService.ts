@@ -72,6 +72,8 @@ export interface WorkspaceServiceDeps {
   onSessionLeaving?: (sessionId: string, workspaceRoot: string) => void
   /** 会话采集收尾：清 pending/buffer 注册表 */
   onSessionCaptureCleanup?: (sessionId: string) => void
+  /** 删除前把会话的 queued 接力预约结算为 cancelled 并解绑源，保证 durable 删除门禁通过。 */
+  settleQueuedRelayReservations?: (sessionIds: ReadonlySet<string>) => void
 }
 
 export interface WorkspaceRootChange {
@@ -351,6 +353,12 @@ export class WorkspaceService {
         throw new Error('该会话或其子任务的 Agent 正在运行，请先停止再删除')
       }
       runCoordinator.assertNoNonTerminalRunsForSessions(deletingIdSet)
+    }
+    // 未执行的接力预约也是非终态 run：先结算为 cancelled 再走门禁（失败仍由 assert 兜底 fail-closed）
+    try {
+      this.deps.settleQueuedRelayReservations?.(deletingIdSet)
+    } catch (error) {
+      console.error('[WorkspaceService] 接力预约结算失败:', error)
     }
     assertDeletionIdle()
 

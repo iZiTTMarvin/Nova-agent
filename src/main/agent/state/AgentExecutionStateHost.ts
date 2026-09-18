@@ -72,14 +72,21 @@ export function isAgentTurnInProgress(): boolean {
  * 并发模型：不同会话允许同时跑；同一会话同时最多一个 active run。
  * 当该会话存在占用 turn 的 run，或该会话对应的执行句柄尚未收敛时，返回 true，
  * 入口锁据此把同会话的新消息推入 steering queue，而不是直接开新 turn。
+ *
+ * excludeRunId 指定的 run 不计入占用：接力预约接管自身 run 时要排除自身占位，
+ * 否则接管入口会把自己当成并发 turn 而永久入队。
  */
-export function isSessionTurnInProgress(sessionId: string): boolean {
+export function isSessionTurnInProgress(
+  sessionId: string,
+  options?: { readonly excludeRunId?: string }
+): boolean {
   try {
     const coord = getRunCoordinator()
-    if (coord.hasActiveRunForSession(sessionId)) return true
+    if (coord.hasActiveRunForSession(sessionId, options)) return true
     // 句柄尚未 settled 的 run 中，若任一归属该会话，也视为占用
     const registry = getRunExecutionRegistry()
     for (const runId of registry.listActiveRunIds()) {
+      if (runId === options?.excludeRunId) continue
       const snap = coord.getSnapshot(runId)
       if (snap && snap.sessionId === sessionId) return true
     }

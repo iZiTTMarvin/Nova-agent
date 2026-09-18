@@ -1530,6 +1530,78 @@ describe('SubagentExecutionService', () => {
     ).rejects.toThrow(/workflow 子代理入口已移除/)
   })
 
+  it('接力轮派遣的 child 把来源归一到最近的真实用户消息，而不是接力消息', async () => {
+    // 真实用户消息 U → 上一轮 assistant A → 内部接力消息 R（role user 但非用户输入）
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-user-origin', role: 'user', content: '继续推进', timestamp: 1
+    })
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-assistant-prev', role: 'assistant', content: '上一轮回答', timestamp: 2
+    })
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-relay-internal',
+      role: 'user',
+      content: '',
+      blocks: [{
+        type: 'runtime_input',
+        version: 1,
+        inputKind: 'subagent_notification',
+        notificationId: 'ntf_child_origin',
+        sourceRunId: 'run-child-origin',
+        afterStep: -1,
+        order: 0,
+        content: '后台子任务通知正文'
+      }],
+      internalSource: 'runtime_input',
+      timestamp: 3
+    })
+
+    // 活跃接力轮：turnDraft 的投递事实指向接力消息，派遣发生在该轮内
+    const relayRunId = 'run-parent-relay'
+    coordinator.startRun({
+      kind: 'agent',
+      runId: relayRunId,
+      workspaceId: workspace,
+      sessionId: parentSessionId,
+      messageId: 'msg-relay-internal'
+    })
+    coordinator.markRunning(relayRunId, 'msg-relay-internal')
+    // 派遣要求 root run 有可用的执行栅栏
+    coordinator.bindExecutionGeneration(relayRunId, 77)
+    coordinator.upsertTurnDraft(relayRunId, {
+      messageId: 'msg-relay-internal',
+      userDelivery: {
+        userMessageId: 'msg-relay-internal',
+        modeInstruction: '',
+        sessionPrefix: null
+      },
+      blocks: []
+    })
+
+    const { service } = createService()
+    const spawnCommand = command({
+      parentRunId: relayRunId,
+      invocation: {
+        kind: 'task_tool',
+        parentMessageId: 'msg-relay-internal',
+        parentToolCallId: 'call-relay-task'
+      }
+    })
+    const result = await service.spawn(spawnCommand, {
+      invocationRef: invocationRef({
+        runId: relayRunId,
+        messageId: 'msg-relay-internal',
+        toolCallId: 'call-relay-task'
+      })
+    })
+
+    const dispatch = coordinator.getSnapshot(result.childRunId)?.dispatch
+    // 接力消息不是用户授权来源：预算链必须归到真实用户消息，否则每轮接力都会新开一条链
+    expect(dispatch?.originUserMessageId).toBe('msg-user-origin')
+    expect(dispatch?.originUserMessageId).not.toBe('msg-relay-internal')
+    expect(dispatch?.parentMessageId).toBe('msg-relay-internal')
+  })
+
   describe('followup', () => {
     function createTargetChild(options: {
       readonly parentId?: string

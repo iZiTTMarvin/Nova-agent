@@ -220,6 +220,8 @@ export interface RunSnapshot {
   dispatch?: SubagentRunDispatch
   /** 源 run 投递控制（绑定/暂停/失效），终态后仍可更新，不是执行状态。 */
   deliveryBinding?: SubagentDeliveryBinding
+  /** 空闲接力预约：仅内部接力父 run 携带，随 queued run 同次提交且此后冻结。 */
+  relayTrigger?: SubagentRelayTrigger
 }
 
 /** append-only 事件（落盘 events.jsonl） */
@@ -237,6 +239,8 @@ interface StartRunBase {
   sessionId: string
   messageId?: string
   dispatch?: SubagentRunDispatch
+  /** 内部接力预约：与 queued run 同次持久提交；仅接力入场携带。 */
+  relayTrigger?: SubagentRelayTrigger
 }
 
 /** 启动 Run 的参数。 */
@@ -435,6 +439,86 @@ export function deriveSubagentNotificationId(
     throw new Error('notificationId: terminalTransitionId 必须为非空字符串')
   }
   return `ntf_${childRunId}_${terminalTransitionId}`
+}
+
+export const SUBAGENT_RELAY_TRIGGER_VERSION = 1
+
+/** 接力预约的冻结批次项：通知身份与正文一经持久不再重算。 */
+export interface SubagentRelayTriggerItem {
+  readonly notificationId: string
+  readonly sourceRunId: string
+  readonly content: string
+}
+
+/**
+ * 空闲自动接力的持久预约：随 queued 父 run 同次提交。
+ * 重复接纳复用同一 run（requestId === runId）；预算计数从已持久 trigger 派生。
+ */
+export interface SubagentRelayTrigger {
+  readonly version: 1
+  /** 预约 id，与所属 relay run 的 runId 相同。 */
+  readonly requestId: string
+  /** 接收消息身份：携带冻结 runtime_input 块的内部接力消息 id。 */
+  readonly receiveMessageId: string
+  /** 发起用户消息 id：接力预算链的归属。 */
+  readonly originUserMessageId: string
+  /** 入场时的消息锚点（激活叶子），供分支资格对账；无叶子时为 null。 */
+  readonly anchorMessageId: string | null
+  /** 冻结批次：成员、正文与顺序在首次持久后冻结。 */
+  readonly items: readonly SubagentRelayTriggerItem[]
+  readonly createdAt: number
+}
+
+/**
+ * 失败关闭的 relayTrigger decoder。
+ * raw == null → undefined；损坏/未知版本 → throw。
+ */
+export function decodeSubagentRelayTrigger(raw: unknown): SubagentRelayTrigger | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('relayTrigger: not an object')
+  const t = raw as Record<string, unknown>
+  if (t.version !== SUBAGENT_RELAY_TRIGGER_VERSION) {
+    throw new Error(`relayTrigger: unsupported version ${String(t.version)}`)
+  }
+  for (const key of ['requestId', 'receiveMessageId', 'originUserMessageId'] as const) {
+    if (typeof t[key] !== 'string' || (t[key] as string).trim() === '') {
+      throw new Error(`relayTrigger: "${key}" must be a non-empty string`)
+    }
+  }
+  if (t.anchorMessageId !== null && typeof t.anchorMessageId !== 'string') {
+    throw new Error('relayTrigger: "anchorMessageId" must be a string or null')
+  }
+  if (!Array.isArray(t.items) || t.items.length === 0) {
+    throw new Error('relayTrigger: "items" must be a non-empty array')
+  }
+  const items: SubagentRelayTriggerItem[] = t.items.map((item, index) => {
+    if (!item || typeof item !== 'object') {
+      throw new Error(`relayTrigger: item[${index}] is not an object`)
+    }
+    const it = item as Record<string, unknown>
+    for (const key of ['notificationId', 'sourceRunId', 'content'] as const) {
+      if (typeof it[key] !== 'string' || (it[key] as string).trim() === '') {
+        throw new Error(`relayTrigger: item[${index}]."${key}" must be a non-empty string`)
+      }
+    }
+    return {
+      notificationId: it.notificationId as string,
+      sourceRunId: it.sourceRunId as string,
+      content: it.content as string
+    }
+  })
+  if (typeof t.createdAt !== 'number' || !Number.isFinite(t.createdAt)) {
+    throw new Error('relayTrigger: "createdAt" must be a finite number')
+  }
+  return {
+    version: 1,
+    requestId: t.requestId as string,
+    receiveMessageId: t.receiveMessageId as string,
+    originUserMessageId: t.originUserMessageId as string,
+    anchorMessageId: (t.anchorMessageId ?? null) as string | null,
+    items,
+    createdAt: t.createdAt
+  }
 }
 
 /** 无 dispatch 的旧记录归一化为同步执行。 */

@@ -4,15 +4,18 @@
  * 用真实 RunCoordinator + RunExecutionRegistry（tmp dir），验证：
  * - 同会话有 running run 时该会话占用 turn；
  * - 不同会话互不影响；
- * - 终态后释放。
+ * - 终态后释放；
+ * - excludeRunId 排除自身执行身份后不再把自己当成并发 turn。
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { RunCoordinator } from '../../../src/runtime/run/RunCoordinator'
 import { RunStore } from '../../../src/runtime/run/RunStore'
 import { RunExecutionRegistry } from '../../../src/runtime/run/RunExecutionRegistry'
+import type * as AgentState from '../../../src/main/agent/state'
+import { resetRunCoordinatorHostForTests } from '../../../src/main/services/RunCoordinatorHost'
 
 describe('按会话 turn 占用判断', () => {
   let tmpDir: string
@@ -84,5 +87,52 @@ describe('按会话 turn 占用判断', () => {
     })
     expect(registry.listActiveRunIds()).toEqual(['run1'])
     resolveSettled()
+  })
+})
+
+describe('isSessionTurnInProgress 的 excludeRunId', () => {
+  let tmpDir: string
+  let coord: RunCoordinator
+  let registry: RunExecutionRegistry
+  let state: typeof AgentState
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'nova-session-turn-exclude-'))
+    coord = new RunCoordinator({ store: new RunStore({ runsRoot: tmpDir }) })
+    registry = new RunExecutionRegistry()
+    // 只替换宿主单例的取值，真实 RunCoordinator / Registry 仍是权威状态源
+    vi.doMock('../../../src/main/services/RunCoordinatorHost', () => ({
+      getRunCoordinator: () => coord,
+      getRunExecutionRegistry: () => registry
+    }))
+    state = await import('../../../src/main/agent/state')
+
+    const mine = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1', runId: 'run-mine' })
+    coord.markRunning(mine.runId)
+    registry.register({
+      runId: mine.runId,
+      generation: 1,
+      kind: 'agent',
+      abort: () => {},
+      settled: new Promise<void>(() => {})
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetRunCoordinatorHostForTests()
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('排除自身 run 后该会话不再算占用，排除其它 run 仍为占用', () => {
+    expect(state.isSessionTurnInProgress('s1')).toBe(true)
+
+    // 接力接管会先建自身 queued run 再入场：不排除自身会把自己当成并发 turn 而永久入队
+    expect(state.isSessionTurnInProgress('s1', { excludeRunId: 'run-mine' })).toBe(false)
+    expect(state.isSessionTurnInProgress('s1', { excludeRunId: 'run-other' })).toBe(true)
+
+    const other = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1', runId: 'run-other' })
+    coord.markRunning(other.runId)
+    expect(state.isSessionTurnInProgress('s1', { excludeRunId: 'run-mine' })).toBe(true)
   })
 })

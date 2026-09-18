@@ -17,7 +17,8 @@ import {
   type RunEventRecord,
   type RunSnapshot,
   decodeSubagentRunDispatch,
-  decodeSubagentDeliveryBinding
+  decodeSubagentDeliveryBinding,
+  decodeSubagentRelayTrigger
 } from '../../shared/run/types'
 
 export interface RunStoreOptions {
@@ -194,6 +195,9 @@ export class RunStore {
     }
     if (parsed && typeof parsed === 'object' && 'deliveryBinding' in parsed) {
       parsed.deliveryBinding = decodeSubagentDeliveryBinding(parsed.deliveryBinding) ?? undefined
+    }
+    if (parsed && typeof parsed === 'object' && 'relayTrigger' in parsed) {
+      parsed.relayTrigger = decodeSubagentRelayTrigger(parsed.relayTrigger) ?? undefined
     }
     return parsed
   }

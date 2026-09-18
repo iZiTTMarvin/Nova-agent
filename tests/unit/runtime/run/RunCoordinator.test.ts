@@ -13,6 +13,7 @@ import {
   decodeSubagentDeliveryBinding,
   deriveSubagentNotificationId,
   resolveDispatchExecution,
+  type SubagentRelayTrigger,
   type SubagentRunDispatch
 } from '../../../../src/shared/run/types'
 
@@ -880,4 +881,57 @@ describe('RunCoordinator', () => {
     expect(decodeSubagentDeliveryBinding(null)).toBeUndefined()
     expect(() => decodeSubagentDeliveryBinding({ version: 2 })).toThrow()
   })
+
+  it('启动对账保留未执行的有效接力预约，其余非终态一律 interrupted', () => {
+    const trigger = relayTriggerOf('run_relay_queued')
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-relay',
+      runId: 'run_relay_queued',
+      relayTrigger: trigger
+    })
+    // 接力预约已进入执行：不再有效，按崩溃残留收敛
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-relay',
+      runId: 'run_relay_running',
+      relayTrigger: relayTriggerOf('run_relay_running')
+    })
+    coord.markRunning('run_relay_running')
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-plain',
+      runId: 'run_plain_queued'
+    })
+
+    const cold = new RunCoordinator({ store })
+    const interrupted = cold.reconcileOnStartup()
+
+    expect(interrupted.map(snapshot => snapshot.runId).sort()).toEqual([
+      'run_plain_queued',
+      'run_relay_running'
+    ])
+    expect(cold.getSnapshot('run_relay_queued')?.status).toBe('queued')
+    expect(cold.getSnapshot('run_relay_queued')?.terminalTransitionId).toBeUndefined()
+    expect(store.loadSnapshot('run_relay_queued')?.status).toBe('queued')
+    expect(cold.getSnapshot('run_relay_running')?.status).toBe('interrupted')
+    expect(cold.getSnapshot('run_plain_queued')?.status).toBe('interrupted')
+    // 保留的预约仍不占用 turn：用户消息可以正常进入该会话
+    expect(cold.hasActiveRunForSession('s-relay')).toBe(false)
+  })
 })
+
+function relayTriggerOf(runId: string): SubagentRelayTrigger {
+  return {
+    version: 1,
+    requestId: runId,
+    receiveMessageId: `msg_relay_${runId}`,
+    originUserMessageId: 'user-origin',
+    anchorMessageId: null,
+    items: [{ notificationId: 'ntf_x', sourceRunId: 'run_child', content: 'frozen' }],
+    createdAt: 1
+  }
+}

@@ -5,6 +5,7 @@ import { getSessionStore } from './SessionStoreHost'
 let coordinator: SubagentDeliveryCoordinator | null = null
 let owner: ReturnType<typeof getRunCoordinator> | null = null
 let unsubscribe: Array<() => void> = []
+let idleRelayCallback: ((sessionId: string) => void) | null = null
 
 export function getSubagentDeliveryCoordinator(): SubagentDeliveryCoordinator {
   const runCoordinator = getRunCoordinator()
@@ -14,7 +15,8 @@ export function getSubagentDeliveryCoordinator(): SubagentDeliveryCoordinator {
   coordinator = new SubagentDeliveryCoordinator({
     runCoordinator,
     sessionStore: getSessionStore(),
-    isRunExecutionActive: runId => getRunExecutionRegistry().get(runId) !== null
+    isRunExecutionActive: runId => getRunExecutionRegistry().get(runId) !== null,
+    onIdleRelayAvailable: (sessionId) => idleRelayCallback?.(sessionId)
   })
   owner = runCoordinator
   const note = (context: { snapshot: Parameters<SubagentDeliveryCoordinator['noteTerminal']>[0] }) => {
@@ -27,6 +29,10 @@ export function getSubagentDeliveryCoordinator(): SubagentDeliveryCoordinator {
     runCoordinator.onTerminalHook('onInterrupt', note)
   ]
   return coordinator
+}
+
+export function setIdleRelayCallback(callback: ((sessionId: string) => void) | null): void {
+  idleRelayCallback = callback
 }
 
 export function resetSubagentDeliveryCoordinatorHostForTests(): void {

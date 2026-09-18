@@ -109,7 +109,8 @@ export class RunCoordinator {
       turnDraft: null,
       commandAcks: [],
       terminalOutbox: [],
-      ...(params.dispatch ? { dispatch: params.dispatch } : {})
+      ...(params.dispatch ? { dispatch: params.dispatch } : {}),
+      ...(params.relayTrigger ? { relayTrigger: params.relayTrigger } : {})
     }
     this.commit(snapshot, 'run_started', { kind: params.kind })
     return cloneSnapshot(snapshot)
@@ -233,6 +234,20 @@ export class RunCoordinator {
       try {
         const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
         if (snap?.dispatch) result.push(cloneSnapshot(snap))
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
+      }
+    }
+    return result
+  }
+
+  /** 枚举带接力预约的快照（内存优先于磁盘；腐坏记录隔离跳过）：供接力接管与启动对账。 */
+  listRelayTriggerSnapshots(): RunSnapshot[] {
+    const result: RunSnapshot[] = []
+    for (const runId of this.store.listRunIds()) {
+      try {
+        const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+        if (snap?.relayTrigger) result.push(cloneSnapshot(snap))
       } catch (err) {
         console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
       }
@@ -822,6 +837,10 @@ export class RunCoordinator {
 
       if (isTerminalRunStatus(snap.status)) continue
 
+      // 唯一例外：有效内部接力预约（queued 且从未进入执行）保留原 runId，
+      // 由启动接管流程执行或带原因结算；普通 queued run 一律按中断收敛。
+      if (snap.relayTrigger && snap.status === 'queued' && !snap.turnStartedAt) continue
+
       const commits = snap.toolCommits ?? []
       for (const c of commits) {
         if ((c.phase === 'prepared' || c.phase === 'executing') && !c.idempotent) {
@@ -1196,7 +1215,10 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
       : snap.turnDraft,
     commandAcks: snap.commandAcks?.map(a => ({ ...a })),
     terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e })),
-    deliveryBinding: snap.deliveryBinding ? { ...snap.deliveryBinding } : snap.deliveryBinding
+    deliveryBinding: snap.deliveryBinding ? { ...snap.deliveryBinding } : snap.deliveryBinding,
+    relayTrigger: snap.relayTrigger
+      ? { ...snap.relayTrigger, items: snap.relayTrigger.items.map(item => ({ ...item })) }
+      : snap.relayTrigger
   }
 }
 

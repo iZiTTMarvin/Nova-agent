@@ -105,6 +105,8 @@ export interface AgentTurnExecutorInput {
     context: AgentTurnExecutionContext
   ) => void | Promise<void>
   readonly onCleanup?: (context: AgentTurnExecutionContext) => void | Promise<void>
+  /** 句柄注销后触发；自身抛错只吞 console.error，不影响 settled/注销。 */
+  readonly onUnregistered?: (context: AgentTurnExecutionContext) => void | Promise<void>
 }
 
 export interface AgentTurnExecutorResult extends AgentTurnExecutionContext {
@@ -227,10 +229,12 @@ export class AgentTurnExecutor {
     } finally {
       // 收尾完成前不得 settled/注销：Registry 以句柄存在表达「尚未完整收尾」，
       // live drain 见到空 Registry 即代表终态已提交、资源已释放、结果可安全读取；
-      // 先到的 terminal snapshot 不构成收尾完成。onCleanup 抛错也必须照常 settled，
-      // 避免 grace 后句柄永久滞留。
+      // 先到的 terminal snapshot 不构成收尾完成。onCleanup 抛错也必须照常 settled
+      // 并继续 onUnregistered，避免 grace 后句柄永久滞留或唤醒丢失。
       try {
         if (context) await input.onCleanup?.(context)
+      } catch (error) {
+        console.error('[AgentTurnExecutor] onCleanup 回调失败:', error)
       } finally {
         resolveSettled()
         if (registered && context) {
@@ -238,6 +242,12 @@ export class AgentTurnExecutor {
             context.runId,
             context.executionGeneration
           )
+        }
+        // 句柄注销后才触发：投递协调器需要看见 isRunExecutionActive=false
+        try {
+          if (context) await input.onUnregistered?.(context)
+        } catch (error) {
+          console.error('[AgentTurnExecutor] onUnregistered 回调失败:', error)
         }
       }
     }

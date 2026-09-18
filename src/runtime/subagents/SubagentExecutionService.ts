@@ -112,6 +112,8 @@ export interface SubagentExecutionServiceDeps {
   readonly onEvent?: (event: AgentEvent, context: SubagentEventContext) => void
   readonly onExecutionStarted?: (context: SubagentExecutionLifecycleContext) => void
   readonly onExecutionSettled?: (context: SubagentExecutionLifecycleContext) => void
+  /** 句柄注销后触发，用于需要 isRunExecutionActive=false 的后续动作。 */
+  readonly onUnregistered?: (context: SubagentExecutionLifecycleContext) => void | Promise<void>
   /** Child relation 已持久化后的失效通知；不得成为第二份状态。 */
   readonly onLinked?: (input: {
     readonly childSession: SubagentSessionData
@@ -997,7 +999,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
           cleanupOnce()
           // 返回值传回执行器：完成唤醒（含其异步收尾）全部结束才算收尾完成
           return this.deps.onExecutionSettled?.(eventContext())
-        }
+        },
+        onUnregistered: () => this.deps.onUnregistered?.(eventContext())
       })
     } catch {
       cleanupOnce()
@@ -1040,7 +1043,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
   }
 
-  /** 活跃轮的发起用户消息在 turnDraft 投递事实中；已归档轮回退消息树沿 parentId 上溯。 */
+  /** 活跃轮的发起用户消息在 turnDraft 投递事实中；已归档轮回退消息树沿 parentId 上溯。接力消息不算用户来源，继续上溯。 */
   private resolveOriginUserMessageId(
     parentRunId: string,
     parentSessionId: string,
@@ -1048,20 +1051,20 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   ): string | undefined {
     const fromDraft =
       this.deps.runCoordinator.getSnapshot(parentRunId)?.turnDraft?.userDelivery?.userMessageId
-    if (fromDraft) return fromDraft
     const session = this.deps.sessionStore.load(parentSessionId)
-    if (!session) return undefined
-    const byId = new Map(session.messages.map(m => [m.id, m]))
-    const seen = new Set<string>()
-    let current = byId.get(parentMessageId)
-    // 有界上溯，seen 防环
-    for (let hop = 0; current && hop < 64; hop++) {
-      if (seen.has(current.id)) return undefined
-      seen.add(current.id)
-      if (current.role === 'user') return current.id
-      current = current.parentId ? byId.get(current.parentId) : undefined
+    if (session) {
+      const byId = new Map(session.messages.map(m => [m.id, m]))
+      const seen = new Set<string>()
+      let current = byId.get(fromDraft ?? parentMessageId)
+      // 有界上溯，seen 防环；跳过接力消息（internalSource），归一到真实用户消息
+      for (let hop = 0; current && hop < 64; hop++) {
+        if (seen.has(current.id)) break
+        seen.add(current.id)
+        if (current.role === 'user' && current.internalSource === undefined) return current.id
+        current = current.parentId ? byId.get(current.parentId) : undefined
+      }
     }
-    return undefined
+    return fromDraft
   }
 
   private commitWithoutExecution(

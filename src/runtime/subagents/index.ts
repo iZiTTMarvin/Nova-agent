@@ -57,9 +57,11 @@ export {
 } from './SubagentLifecycleCoordinator'
 export {
   SubagentDeliveryCoordinator,
+  MAX_RELAY_TURNS_PER_CHAIN,
   type ActiveSubagentDeliveryReceiver,
   type RuntimeInputPersistencePort,
-  type SubagentDeliveryCoordinatorDeps
+  type SubagentDeliveryCoordinatorDeps,
+  type SubagentRelayAdmission
 } from './SubagentDeliveryCoordinator'
 export {
   createPreset,
