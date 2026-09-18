@@ -11,6 +11,7 @@ import type {
   ThinkingBlock,
   ToolBlock,
   ImageBlock,
+  RuntimeInputBlock,
   ToolCall,
   BranchMeta
 } from '../../shared/session/types'
@@ -43,6 +44,7 @@ export type RendererMessageBlock =
   | TextBlock
   | RendererToolBlock
   | ImageBlock
+  | RuntimeInputBlock
 
 /**
  * 流式「活跃回合」的未封存尾部块：text 或 thinking 之一。只活在 liveTurn 瞬态里，
@@ -66,6 +68,7 @@ export interface ExtendedMessage {
   sessionId: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
+  internalSource?: 'runtime_input'
   toolCalls?: ExtendedToolCall[]
   timestamp: number
   isError?: boolean

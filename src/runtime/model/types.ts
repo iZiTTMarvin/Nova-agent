@@ -99,6 +99,20 @@ export interface ChatMessage {
 export interface MessageOrigin {
   messageId: string
   step: number
+  /** 同一 assistant 子轮之后的运行时输入坐标；避免旧压缩把新输入并入旧 origin。 */
+  runtimeInputId?: string
+}
+
+export function isSameMessageOrigin(
+  left: MessageOrigin | null | undefined,
+  right: MessageOrigin | null | undefined
+): boolean {
+  return Boolean(
+    left && right &&
+    left.messageId === right.messageId &&
+    left.step === right.step &&
+    left.runtimeInputId === right.runtimeInputId
+  )
 }
 
 /** 模型返回的工具调用 */

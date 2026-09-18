@@ -137,7 +137,9 @@ export async function cancelExecution(params: { runId: string }): Promise<{ runI
     throw new Error(`取消执行的 run ${runId} 不存在`)
   }
   dismissRunTreeInteractions(runId)
-  await getSubagentLifecycleCoordinator().cancelRunTree(runId, 'cancel_execution')
+  // 停止链路：先冻结目标并提交持久控制意图，再逐项收敛取消与投递失效化；
+  // 处理途中崩溃由启动重放补完，不得只靠进程内取消树假装已持久停止
+  await getSubagentLifecycleCoordinator().stopRunTree(runId, 'cancel_execution')
 
   const snap = coord.getSnapshot(runId)
   return { runId, status: snap?.status ?? beforeCancel.status }

@@ -21,8 +21,11 @@ export type {
 export {
   CONTEXT_SNAPSHOT_VERSION,
   SESSION_DATA_FILE,
+  SESSION_CONTROL_INTENT_VERSION,
+  decodeSessionControlIntent,
   extractTextFromSerializableContent
 } from './types'
+export type { SessionControlIntent, SessionControlIntentKind } from './types'
 export {
   buildConversationContext,
   projectAssistantWithReasoningReplay,

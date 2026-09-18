@@ -61,26 +61,51 @@ function broadcastSnapshot(snapshot: RunSnapshot, event: RunEventRecord): void {
 
 /**
  * 初始化（应在 registerIpcHandlers / registerAgentHandler 时调用一次）。
- * 启动时扫描未终态 run → interrupted。
+ * 只创建 coordinator 并装配通知；启动对账由 reconcileRunCoordinatorOnStartup
+ * 在会话控制意图重放之后单独执行。
  */
 export function initRunCoordinatorHost(
   getMainWindow: () => BrowserWindow | null,
   lookupSessionTitle?: (sessionId: string) => string | undefined
-): { coordinator: RunCoordinator; interrupted: RunSnapshot[] } {
+): { coordinator: RunCoordinator } {
   getMainWindowRef = getMainWindow
   initNotifications(getMainWindow, lookupSessionTitle ?? (() => undefined))
-  let interrupted: RunSnapshot[] = []
   if (!coordinator) {
     const runsRoot = join(app.getPath('userData'), 'runs')
     coordinator = createRunCoordinator(runsRoot, broadcastSnapshot)
-    interrupted = coordinator.reconcileOnStartup()
-    if (interrupted.length > 0) {
-      console.info(
-        `[RunCoordinator] 启动对账：${interrupted.length} 个未终态 run 已标记为 interrupted`
-      )
-    }
   }
-  return { coordinator, interrupted }
+  return { coordinator }
+}
+
+let reconciled = false
+let protocolTailsConverged = false
+
+/**
+ * 启动尾部事件收敛（进程内一次）：把事件领先快照的 run 先收敛进内存。
+ * 必须在会话控制意图重放之前执行：意图重放的绑定更新基于旧快照提交会在
+ * 事件日志产生重复 sequence 并掩埋已落盘的绑定事实。
+ */
+export function convergeRunProtocolTailsOnStartup(): void {
+  if (protocolTailsConverged) return
+  protocolTailsConverged = true
+  getRunCoordinator().convergeProtocolTailsOnStartup()
+}
+
+/**
+ * 启动对账（进程内一次）：扫描未终态 run → interrupted。
+ * 必须在尾部收敛与控制意图重放之后执行：停止意图要先把崩溃残留 running
+ * 收敛为 cancelled；对账先行会把它标成 interrupted，颠倒用户停止语义。
+ */
+export function reconcileRunCoordinatorOnStartup(): RunSnapshot[] {
+  if (reconciled) return []
+  reconciled = true
+  const interrupted = getRunCoordinator().reconcileOnStartup()
+  if (interrupted.length > 0) {
+    console.info(
+      `[RunCoordinator] 启动对账：${interrupted.length} 个未终态 run 已标记为 interrupted`
+    )
+  }
+  return interrupted
 }
 
 export function getRunCoordinator(): RunCoordinator {
@@ -104,4 +129,6 @@ export function resetRunCoordinatorHostForTests(): void {
   coordinator = null
   executionRegistry = null
   getMainWindowRef = null
+  reconciled = false
+  protocolTailsConverged = false
 }

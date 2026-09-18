@@ -29,7 +29,10 @@ import { initMainLogger, mainLog } from './logger'
 import { initAutoUpdater } from './updater'
 import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
 import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeyStorage'
-import { interruptActiveSubagentsOnShutdown } from './services/SubagentLifecycleHost'
+import {
+  interruptActiveSubagentsOnShutdown,
+  markSubagentsShuttingDown
+} from './services/SubagentLifecycleHost'
 import { resetChromiumDiskCaches } from './cacheReset'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
@@ -221,7 +224,8 @@ async function bootstrap(): Promise<void> {
   //    必须在 createMainWindow 之前完成：renderer mount 即发 workspace:get / window-is-maximized 等
   //    invoke，handler 未注册会 reject；且 initOnStartup 不 broadcast，延后会让侧边栏永久空。
   //    返回 ImageStore 实例：nova-image:// 协议 handler 需复用它读盘。
-  const imageStore = registerIpcHandlers()
+  //    await：控制意图重放与 run 对账须在窗口诞生前收敛。
+  const imageStore = await registerIpcHandlers()
 
   // 4. 注册 Agent 运行时专属事件与通道（复用 imageStore，用于历史图片 URL→base64 转换）
   registerAgentHandler(getMainWindow, getModelClient, () => imageStore)
@@ -272,6 +276,7 @@ async function bootstrap(): Promise<void> {
     quitInProgress = true
 
     try {
+      markSubagentsShuttingDown()
       const interrupted = interruptActiveSubagentsOnShutdown()
       if (interrupted > 0) {
         console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)

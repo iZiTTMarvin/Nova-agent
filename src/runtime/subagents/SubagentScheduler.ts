@@ -15,7 +15,7 @@ export interface SubagentSchedulerLimits {
 
 export interface SubagentPermit {
   readonly runId: string
-  readonly rootRunId: string
+  readonly capacityKey: string
   readonly requestKey: string
   release(): void
 }
@@ -31,7 +31,7 @@ export type SubagentPermitResult =
 
 export interface AcquireSubagentPermitInput {
   readonly runId: string
-  readonly rootRunId: string
+  readonly capacityKey: string
   readonly requestKey: string
   /** 默认立即返回结构化拒绝；批处理可显式进入有界 FIFO 队列。 */
   readonly wait?: boolean
@@ -59,7 +59,7 @@ const DEFAULT_LIMITS: SubagentSchedulerLimits = {
 export class SubagentScheduler {
   private readonly limits: SubagentSchedulerLimits
   private activeGlobal = 0
-  private readonly activeByRoot = new Map<string, number>()
+  private readonly activeByCapacityKey = new Map<string, number>()
   private readonly activeByRun = new Map<string, SubagentPermit>()
   private readonly queue: Waiter[] = []
 
@@ -90,7 +90,7 @@ export class SubagentScheduler {
         this.reject('run_active', `child run ${input.runId} 已持有或正在等待执行名额`, false)
       )
     }
-    const capacity = this.capacityRejection(input.rootRunId)
+    const capacity = this.capacityRejection(input.capacityKey)
     if (!capacity) return Promise.resolve(this.grant(input))
     if (!input.wait) return Promise.resolve(capacity)
     if (this.queue.length >= this.limits.maxQueued) {
@@ -123,10 +123,14 @@ export class SubagentScheduler {
     })
   }
 
-  snapshot(): { activeGlobal: number; activeByRoot: ReadonlyMap<string, number>; queued: number } {
+  snapshot(): {
+    activeGlobal: number
+    activeByCapacityKey: ReadonlyMap<string, number>
+    queued: number
+  } {
     return {
       activeGlobal: this.activeGlobal,
-      activeByRoot: new Map(this.activeByRoot),
+      activeByCapacityKey: new Map(this.activeByCapacityKey),
       queued: this.queue.length
     }
   }
@@ -145,11 +149,11 @@ export class SubagentScheduler {
     return true
   }
 
-  private capacityRejection(rootRunId: string): SubagentPermitResult | null {
+  private capacityRejection(capacityKey: string): SubagentPermitResult | null {
     if (this.activeGlobal >= this.limits.globalLimit) {
       return this.reject('global_limit', '已达到全局子代理并发上限', true)
     }
-    if ((this.activeByRoot.get(rootRunId) ?? 0) >= this.limits.perRootLimit) {
+    if ((this.activeByCapacityKey.get(capacityKey) ?? 0) >= this.limits.perRootLimit) {
       return this.reject('root_limit', '已达到当前根任务的子代理并发上限', true)
     }
     return null
@@ -157,12 +161,15 @@ export class SubagentScheduler {
 
   private grant(input: AcquireSubagentPermitInput): SubagentPermitResult {
     this.activeGlobal += 1
-    this.activeByRoot.set(input.rootRunId, (this.activeByRoot.get(input.rootRunId) ?? 0) + 1)
+    this.activeByCapacityKey.set(
+      input.capacityKey,
+      (this.activeByCapacityKey.get(input.capacityKey) ?? 0) + 1
+    )
     let released = false
     let permit!: SubagentPermit
     permit = {
       runId: input.runId,
-      rootRunId: input.rootRunId,
+      capacityKey: input.capacityKey,
       requestKey: input.requestKey,
       release: () => {
         if (released) return
@@ -171,9 +178,9 @@ export class SubagentScheduler {
           this.activeByRun.delete(input.runId)
         }
         this.activeGlobal = Math.max(0, this.activeGlobal - 1)
-        const next = Math.max(0, (this.activeByRoot.get(input.rootRunId) ?? 1) - 1)
-        if (next === 0) this.activeByRoot.delete(input.rootRunId)
-        else this.activeByRoot.set(input.rootRunId, next)
+        const next = Math.max(0, (this.activeByCapacityKey.get(input.capacityKey) ?? 1) - 1)
+        if (next === 0) this.activeByCapacityKey.delete(input.capacityKey)
+        else this.activeByCapacityKey.set(input.capacityKey, next)
         this.drain()
       }
     }
@@ -187,7 +194,7 @@ export class SubagentScheduler {
   private drain(): void {
     while (this.queue.length > 0) {
       const waiter = this.queue[0]
-      if (this.capacityRejection(waiter.input.rootRunId)) return
+      if (this.capacityRejection(waiter.input.capacityKey)) return
       this.queue.shift()
       this.cleanupWaiter(waiter)
       waiter.resolve(this.grant(waiter.input))

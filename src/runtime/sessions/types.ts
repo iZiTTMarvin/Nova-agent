@@ -81,6 +81,61 @@ export type InternalSessionSummary =
       }
     })
 
+export const SESSION_CONTROL_INTENT_VERSION = 1
+
+/** 控制意图种类：用户停止 / 分支失效化 / 删除。 */
+export type SessionControlIntentKind = 'stop' | 'branch_invalidate' | 'delete'
+
+/**
+ * 会话冷窗口的控制意图：同一会话至多一个，只覆盖停止/分支失效化/删除的
+ * 多记录提交窗口。它是操作日志，不是第二份任务状态或长期队列。
+ * 只有 SessionStore 写；目标全部提交成功后清除；启动先重放未完成意图。
+ */
+export interface SessionControlIntent {
+  readonly version: 1
+  /** 稳定命令身份：重放按它幂等去重。 */
+  readonly operationId: string
+  readonly kind: SessionControlIntentKind
+  /** 冻结目标 run 集合：意图提交后的新派遣不加入。 */
+  readonly targetRunIds: readonly string[]
+  /** 冻结目标会话集合；删除时父元数据最后移除。 */
+  readonly targetSessionIds: readonly string[]
+  readonly requestedAt: number
+}
+
+/** 失败关闭 decoder：raw==null→undefined；未知版本/非法字段→throw。 */
+export function decodeSessionControlIntent(raw: unknown): SessionControlIntent | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('controlIntent: not an object')
+  const d = raw as Record<string, unknown>
+  if (typeof d.version !== 'number' || d.version !== SESSION_CONTROL_INTENT_VERSION) {
+    throw new Error(`controlIntent: unsupported version ${d.version}`)
+  }
+  if (typeof d.operationId !== 'string' || d.operationId.trim() === '') {
+    throw new Error('controlIntent: operationId 必须为非空字符串')
+  }
+  if (d.kind !== 'stop' && d.kind !== 'branch_invalidate' && d.kind !== 'delete') {
+    throw new Error(`controlIntent: invalid kind "${String(d.kind)}"`)
+  }
+  for (const key of ['targetRunIds', 'targetSessionIds'] as const) {
+    const list = d[key]
+    if (!Array.isArray(list) || list.some(v => typeof v !== 'string' || v.trim() === '')) {
+      throw new Error(`controlIntent: "${key}" 必须为非空字符串数组`)
+    }
+  }
+  if (typeof d.requestedAt !== 'number') {
+    throw new Error('controlIntent: requestedAt must be a number')
+  }
+  return {
+    version: 1,
+    operationId: d.operationId,
+    kind: d.kind,
+    targetRunIds: [...(d.targetRunIds as string[])],
+    targetSessionIds: [...(d.targetSessionIds as string[])],
+    requestedAt: d.requestedAt
+  }
+}
+
 /** 所有 Session kind 共有的持久化字段。 */
 interface SessionDataBase {
   /**
@@ -175,6 +230,8 @@ interface SessionDataBase {
   toolAvailability?: SessionToolAvailabilityState
   /** 会话创建时的代码索引功能快照；之后的设置变更不得改写。 */
   codeIndexEnabled: boolean
+  /** 会话冷窗口控制意图（至多一个）；旧会话缺省即无意图。 */
+  controlIntent?: SessionControlIntent
 }
 
 /** 会话持久化的工具组激活态；形状由可用性 Owner 的持久化契约唯一决定 */
@@ -261,6 +318,8 @@ export interface SessionMessage {
    * 1 = 旧 blocks；2 = 完成响应和投递事实。缺省按旧格式读取，不补造丢失信息。
    */
   messageSchemaVersion?: number
+  /** 该 user 消息由运行时接力创建，不代表用户输入或授权。 */
+  internalSource?: 'runtime_input'
   /** 工具消息关联的 toolCallId */
   toolCallId?: string
   /**

@@ -38,7 +38,7 @@ let coordinator: RunCoordinator
 vi.mock('electron', () => ({ app: { getPath: () => '' }, BrowserWindow: class {} }))
 vi.mock('../../../../src/main/services/SessionStoreHost', () => ({ getSessionStore: () => sessionStore }))
 vi.mock('../../../../src/main/services/RunCoordinatorHost', () => ({ getRunCoordinator: () => coordinator }))
-import { accumulateStreamEvent, activeStreams, markActiveStreamsCancelled } from '../../../../src/main/agent/events/AgentEventAccumulator'
+import { accumulateStreamEvent, activeStreams, markActiveStreamsCancelled, persistRuntimeInputFact } from '../../../../src/main/agent/events/AgentEventAccumulator'
 
 const roots: string[] = []
 afterEach(() => {
@@ -246,7 +246,7 @@ describe('消息事实提交往返', () => {
     expect(restored.filter(m => m.toolCalls).map(m => m.toolCalls)).toEqual(sent.map(m => m.toolCalls))
     expect(coordinator.getSnapshot(run.runId)?.turnDraft).toBeNull()
     const assistant = loaded.messages.find(m => m.role === 'assistant')!
-    expect(assistant.messageSchemaVersion).toBe(5)
+    expect(assistant.messageSchemaVersion).toBe(6)
     expect(assistant.userDelivery).toMatchObject({ userMessageId: 'user', modeInstruction: '当时的模式指令' })
     const delivery = assistant.userDelivery!
     expect(client.getCalls()[0].messages.find(m => m.origin?.messageId === 'user')?.content)
@@ -353,6 +353,166 @@ describe('消息事实提交往返', () => {
     writeFileSync(path, raw)
     expect(sessionStore.load(session.id)).toBeNull()
     expect(readFileSync(path, 'utf8')).toBe(raw)
+  })
+
+  it('运行时通知先提交草稿，重建 assistant_step 与正式归档后保持冻结次序', () => {
+    const { root, feed, run, session, ctx } = setup()
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'child-run',
+      sessionId: session.id,
+      workspaceId: root
+    })
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({
+      type: 'assistant_step',
+      messageId: 'a',
+      step: 0,
+      content: '先完成工具',
+      toolCalls: [{ id: 'tool-1', name: 'read', arguments: { path: 'a.ts' } }]
+    })
+    feed({
+      type: 'tool_result',
+      messageId: 'a',
+      toolCallId: 'tool-1',
+      toolName: 'read',
+      result: 'ok'
+    })
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-child-terminal',
+      sourceRunId: 'child-run',
+      afterStep: 0,
+      order: 0,
+      content: '子代理已完成：冻结正文'
+    }
+
+    expect(persistRuntimeInputFact({ messageId: 'a', input }, ctx))
+      .toMatchObject({ status: 'committed', notificationId: input.notificationId })
+    activeStreams.get('a')!.blocks = activeStreams.get('a')!.blocks.filter(
+      block => block.type !== 'runtime_input'
+    )
+    expect(persistRuntimeInputFact({ messageId: 'a', input }, ctx).status)
+      .toBe('already_committed')
+    expect(coordinator.getSnapshot(input.sourceRunId)?.deliveryBinding).toMatchObject({
+      boundRunId: run.runId,
+      boundSessionId: session.id
+    })
+
+    feed({ type: 'assistant_step', messageId: 'a', step: 1, content: '继续处理', toolCalls: [] })
+    expect(coordinator.getSnapshot(run.runId)?.turnDraft?.blocks.filter(block => block.type === 'runtime_input'))
+      .toEqual([input])
+    feed({ type: 'message_end', messageId: 'a' })
+
+    const loaded = sessionStore.load(session.id)!
+    const archivedInput = loaded.messages[0].blocks?.find(block => block.type === 'runtime_input')
+    expect(archivedInput).toEqual(input)
+    expect(sessionStore.findRuntimeInputFact(session.id, input.notificationId)).toEqual({
+      messageId: 'a',
+      input
+    })
+    const context = buildConversationContext(loaded, 'default', { reasoningReplay: 'all-history' })
+    const toolIndex = context.findIndex(message => message.role === 'tool')
+    const inputIndex = context.findIndex(message => message.contextInstruction && message.content === input.content)
+    expect(toolIndex).toBeGreaterThanOrEqual(0)
+    expect(inputIndex).toBeGreaterThan(toolIndex)
+    expect(context.filter(message => message.content === input.content)).toHaveLength(1)
+  })
+
+  it('运行时通知落盘失败时不进入活动上下文且不返回 ACK', () => {
+    const { feed, run, ctx } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'assistant_step', messageId: 'a', step: 0, content: '完成一步', toolCalls: [] })
+    vi.spyOn(coordinator, 'upsertTurnDraft').mockImplementationOnce(() => {
+      throw new Error('disk_failure')
+    })
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-failed',
+      sourceRunId: 'child-run',
+      afterStep: 0,
+      order: 0,
+      content: '不得发送'
+    }
+
+    expect(() => persistRuntimeInputFact({ messageId: 'a', input }, ctx))
+      .toThrow('disk_failure')
+    expect(activeStreams.get('a')?.blocks.some(block => block.type === 'runtime_input')).toBe(false)
+    expect(coordinator.getSnapshot(run.runId)?.turnDraft?.blocks.some(block => block.type === 'runtime_input'))
+      .toBe(false)
+  })
+
+  it('首次请求前只有源端绑定时仍提交父接收事实，不把预约误当成已接收', () => {
+    const { root, feed, run, session, ctx } = setup()
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'child-reserved',
+      sessionId: session.id,
+      workspaceId: root
+    })
+    coordinator.updateDeliveryBinding('child-reserved', {
+      boundRunId: run.runId,
+      boundSessionId: session.id
+    })
+    feed({ type: 'message_start', messageId: 'a' })
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-reserved',
+      sourceRunId: 'child-reserved',
+      afterStep: -1,
+      order: 0,
+      content: '预约恢复正文'
+    }
+
+    expect(persistRuntimeInputFact({ messageId: 'a', input }, ctx).status).toBe('committed')
+    expect(coordinator.getSnapshot(run.runId)?.turnDraft?.blocks).toContainEqual(input)
+  })
+
+  it('内部接力消息重载后仍投影为运行时输入而非普通用户约束', () => {
+    const { session } = setup()
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-idle',
+      sourceRunId: 'child-idle',
+      afterStep: -1,
+      order: 0,
+      content: '空闲接力的冻结正文'
+    }
+    expect(sessionStore.appendMessageFast(session.id, {
+      id: 'relay',
+      role: 'user',
+      internalSource: 'runtime_input',
+      content: '',
+      blocks: [input],
+      messageSchemaVersion: 6,
+      timestamp: 1
+    }).ok).toBe(true)
+
+    const loaded = sessionStore.load(session.id)!
+    const context = buildConversationContext(loaded, 'default')
+    expect(context).toEqual([{
+      role: 'user',
+      content: input.content,
+      origin: { messageId: 'relay', step: 0, runtimeInputId: 'ntf-idle' },
+      contextInstruction: true
+    }])
+    expect(toSharedMessage(loaded.messages[0])).toMatchObject({
+      role: 'user',
+      internalSource: 'runtime_input',
+      blocks: [input]
+    })
+    expect(sessionStore.findRuntimeInputFact(session.id, input.notificationId)).toEqual({
+      messageId: 'relay',
+      input
+    })
   })
 })
 

@@ -34,7 +34,7 @@ vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
 const lifecycle = vi.hoisted(() => ({
   getRootRunId: vi.fn(),
   listDescendantRunIds: vi.fn(() => []),
-  cancelRunTree: vi.fn()
+  stopRunTree: vi.fn()
 }))
 vi.mock('../../../src/main/services/SubagentLifecycleHost', () => ({ getSubagentLifecycleCoordinator: () => lifecycle }))
 
@@ -79,14 +79,14 @@ describe('AgentInteractionController 契约', () => {
     executionRegistry.isCurrent.mockReturnValue(true)
     loopLookup.byRun.mockReturnValue({ hasPendingPermission: () => true, respondPermission: vi.fn() })
     lifecycle.getRootRunId.mockReturnValue('root')
-    lifecycle.cancelRunTree.mockResolvedValue({ requestedRunIds: ['root', 'child'] })
+    lifecycle.stopRunTree.mockResolvedValue({ requestedRunIds: ['root', 'child'] })
     coordinator.inbox.answer.mockReturnValueOnce({ ok: true, firstApplied: true })
       .mockReturnValueOnce({ ok: true, firstApplied: false })
     const command = { requestId: 'permission', decision: 'deny' as const, commandId: 'reject', expectedVersion: 1 }
     await respondPermission(command)
     await respondPermission(command)
-    expect(lifecycle.cancelRunTree).toHaveBeenCalledTimes(1)
-    expect(lifecycle.cancelRunTree).toHaveBeenCalledWith('root', 'cancel_execution')
+    expect(lifecycle.stopRunTree).toHaveBeenCalledTimes(1)
+    expect(lifecycle.stopRunTree).toHaveBeenCalledWith('root', 'cancel_execution')
   })
 
   it('permission requestId 与 durable payload 错配时拒绝，不唤醒 AgentLoop', async () => {

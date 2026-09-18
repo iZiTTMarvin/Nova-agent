@@ -24,6 +24,7 @@ import {
   type RunSnapshot,
   type RunStatus,
   type StartRunParams,
+  type SubagentDeliveryBinding,
   type TerminalOutboxEntry,
   type ToolCommitPhase,
   type ToolCommitRecord
@@ -198,20 +199,42 @@ export class RunCoordinator {
   /**
    * 枚举所有终态且 turnDraft 存在且未 finalized 的 run 快照。
    * 纯读、不写。快照可能落后 turn_draft_cleared 事件（届时 finalized=true，被过滤）。
+   * 腐坏记录隔离跳过，不瘫痪无关恢复。
    */
   listRecoverableTurnDraftRuns(): RunSnapshot[] {
     const result: RunSnapshot[] = []
     for (const runId of this.store.listRunIds()) {
-      const snap = this.runs.get(runId)
-      if (snap) {
-        if (isTerminalRunStatus(snap.status) && snap.turnDraft && !snap.turnDraft.finalized) {
-          result.push(cloneSnapshot(snap))
+      try {
+        const snap = this.runs.get(runId)
+        if (snap) {
+          if (isTerminalRunStatus(snap.status) && snap.turnDraft && !snap.turnDraft.finalized) {
+            result.push(cloneSnapshot(snap))
+          }
+        } else {
+          const disk = this.store.loadSnapshot(runId)
+          if (disk && isTerminalRunStatus(disk.status) && disk.turnDraft && !disk.turnDraft.finalized) {
+            result.push(cloneSnapshot(disk))
+          }
         }
-      } else {
-        const disk = this.store.loadSnapshot(runId)
-        if (disk && isTerminalRunStatus(disk.status) && disk.turnDraft && !disk.turnDraft.finalized) {
-          result.push(cloneSnapshot(disk))
-        }
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
+      }
+    }
+    return result
+  }
+
+  /**
+   * 枚举带派遣关联的快照（内存优先于磁盘；腐坏记录隔离跳过）：
+   * 供按 per-run 派遣关联做范围查询。
+   */
+  listDispatchSnapshots(): RunSnapshot[] {
+    const result: RunSnapshot[] = []
+    for (const runId of this.store.listRunIds()) {
+      try {
+        const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+        if (snap?.dispatch) result.push(cloneSnapshot(snap))
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
       }
     }
     return result
@@ -252,7 +275,10 @@ export class RunCoordinator {
 
   // ── 状态转换 ─────────────────────────────────────────────
 
-  /** 会话删除前的 durable run 门禁：任何非终态都必须 fail closed。 */
+  /**
+   * 会话删除前的 durable run 门禁：任何非终态都必须 fail closed。
+   * 腐坏记录不隔离：删除是破坏性操作，无法证明终态就必须失败关闭。
+   */
   assertNoNonTerminalRunsForSessions(sessionIds: ReadonlySet<string>): void {
     for (const runId of this.store.listRunIds()) {
       const snapshot = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
@@ -266,12 +292,21 @@ export class RunCoordinator {
     }
   }
 
-  /** 删除会话子树后，由 Run Owner 回收对应终态快照与内存索引。 */
+  /**
+   * 删除会话子树后，由 Run Owner 回收对应终态快照与内存索引。
+   * 删除循环对腐坏记录隔离跳过（终态门禁已先行失败关闭）。
+   */
   deleteRunsForSessions(sessionIds: ReadonlySet<string>): number {
     this.assertNoNonTerminalRunsForSessions(sessionIds)
     let deleted = 0
     for (const runId of this.store.listRunIds()) {
-      const snapshot = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      let snapshot: RunSnapshot | null
+      try {
+        snapshot = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
+        continue
+      }
       if (!snapshot || !sessionIds.has(snapshot.sessionId)) continue
       this.store.deleteRun(runId)
       this.runs.delete(runId)
@@ -670,6 +705,44 @@ export class RunCoordinator {
     this.commit(snap, 'turn_draft_cleared', {})
   }
 
+  /**
+   * 更新源 run 的投递控制（绑定/暂停/失效原因）。终态后允许更新：绕过 requireMutable，
+   * 但走统一 commit；只写 deliveryBinding，不动 executionGeneration，不提交业务终态。
+   * 幂等：除 updatedAt 外内容一致时不重复落盘。
+   * 候选快照单独提交；失败后丢弃内存，由 Store 恢复可能已落盘的事件再重试。
+   */
+  updateDeliveryBinding(
+    runId: string,
+    patch: {
+      boundRunId?: string
+      boundSessionId?: string
+      paused?: boolean
+      invalidatedReason?: string
+    }
+  ): RunSnapshot | null {
+    const current = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+    if (!current) return null
+    const next: SubagentDeliveryBinding = {
+      ...current.deliveryBinding,
+      ...patch,
+      version: 1,
+      updatedAt: Date.now()
+    }
+    if (current.deliveryBinding && deliveryBindingContentEquals(current.deliveryBinding, next)) {
+      return cloneSnapshot(current)
+    }
+    const candidate = cloneSnapshot(current)
+    candidate.deliveryBinding = next
+    try {
+      this.commit(candidate, 'delivery_binding', { binding: { ...next } })
+    } catch (err) {
+      // 事件可能已 fsync；下一次访问必须由 Store 恢复，不能退回旧序号重写。
+      this.runs.delete(runId)
+      throw err
+    }
+    return cloneSnapshot(candidate)
+  }
+
   /** 持久化 interaction command 回执（跨重启幂等） */
   rememberCommandAck(runId: string, ack: InteractionCommandAck): void {
     const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
@@ -692,9 +765,15 @@ export class RunCoordinator {
       const hit = snap.commandAcks?.find(a => a.commandId === commandId)
       if (hit) return hit
     }
-    // 磁盘扫描（冷启动后内存未热加载时）
+    // 磁盘扫描（冷启动后内存未热加载时）；腐坏记录隔离跳过
     for (const runId of this.store.listRunIds()) {
-      const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      let snap: RunSnapshot | null
+      try {
+        snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
+        continue
+      }
       if (!snap) continue
       this.runs.set(runId, snap)
       const hit = snap.commandAcks?.find(a => a.commandId === commandId)
@@ -706,10 +785,35 @@ export class RunCoordinator {
   // ── 启动扫描 / 中断对账 ──────────────────────────────────
 
   /**
+   * 启动专用：先于会话控制意图重放，把尾部事件领先快照的 run 收敛进内存。
+   * 不标记任何状态、不写新事件；对账（interrupted 标记）仍由 reconcileOnStartup 负责。
+   * 意图重放的绑定更新若基于旧快照提交，会以旧序号覆盖事件日志、掩埋已落盘的
+   * 绑定事实并产生重复 sequence，必须先在这里收敛读取基线。
+   */
+  convergeProtocolTailsOnStartup(): void {
+    // 终态新协议记录的尾部投递事件先收敛；普通历史终态不读事件日志
+    for (const snap of this.store.recoverTerminalProtocolTails()) {
+      this.runs.set(snap.runId, snap)
+      this.indexSession(snap.sessionId, snap.runId)
+    }
+    // 非终态 run 按事件尾部收敛入内存（含重放），意图重放可能取消或失效化它们
+    for (const snap of this.store.listNonTerminalSnapshots()) {
+      this.runs.set(snap.runId, snap)
+      this.indexSession(snap.sessionId, snap.runId)
+    }
+  }
+
+  /**
    * 启动时扫描未终态 run：标记 interrupted，不自动重放非幂等工具。
    * 返回被标记的 snapshot 列表，供 UI 提供「继续分析 / 回滚本轮 / 查看已执行步骤」。
    */
   reconcileOnStartup(): RunSnapshot[] {
+    // 终态新协议记录的尾部投递事件在启动收敛；普通历史不扫描事件日志。
+    for (const snap of this.store.recoverTerminalProtocolTails()) {
+      this.runs.set(snap.runId, snap)
+      this.indexSession(snap.sessionId, snap.runId)
+    }
+
     const interrupted: RunSnapshot[] = []
     for (const snap of this.store.listNonTerminalSnapshots()) {
       // 载入内存（listNonTerminal 已做事件尾部重放）
@@ -756,7 +860,13 @@ export class RunCoordinator {
   private collectPendingOutboxKeys(): string[] {
     const keys: string[] = []
     for (const runId of this.store.listRunIds()) {
-      const snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      let snap: RunSnapshot | null
+      try {
+        snap = this.runs.get(runId) ?? this.store.loadSnapshot(runId)
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
+        continue
+      }
       if (!snap?.terminalOutbox) continue
       this.runs.set(runId, snap)
       for (const e of snap.terminalOutbox) {
@@ -967,7 +1077,13 @@ export class RunCoordinator {
       this.pendingBatchEvents.set(snapshot.runId, pending)
       return
     }
-    const event = this.store.commitTransaction(snapshot, eventType, payload)
+    let event: RunEventRecord
+    try {
+      event = this.store.commitTransaction(snapshot, eventType, payload)
+    } catch (error) {
+      this.runs.delete(snapshot.runId)
+      throw error
+    }
     this.onSnapshot?.(cloneSnapshot(snapshot), event)
   }
 
@@ -987,7 +1103,13 @@ export class RunCoordinator {
     if (!events || events.length === 0) return
     const snap = this.runs.get(runId)
     if (!snap) return
-    const records = this.store.commitTransactionBatch(snap, events)
+    let records: RunEventRecord[]
+    try {
+      records = this.store.commitTransactionBatch(snap, events)
+    } catch (error) {
+      this.runs.delete(runId)
+      throw error
+    }
     const last = records[records.length - 1]
     if (last) this.onSnapshot?.(cloneSnapshot(snap), last)
   }
@@ -1073,8 +1195,22 @@ function cloneSnapshot(snap: RunSnapshot): RunSnapshot {
         }
       : snap.turnDraft,
     commandAcks: snap.commandAcks?.map(a => ({ ...a })),
-    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e }))
+    terminalOutbox: snap.terminalOutbox?.map(e => ({ ...e })),
+    deliveryBinding: snap.deliveryBinding ? { ...snap.deliveryBinding } : snap.deliveryBinding
   }
+}
+
+/** 投递绑定内容等价（忽略 updatedAt，undefined 归一化）；用于幂等落盘判断。 */
+function deliveryBindingContentEquals(
+  a: SubagentDeliveryBinding,
+  b: SubagentDeliveryBinding
+): boolean {
+  return (
+    (a.boundRunId ?? undefined) === (b.boundRunId ?? undefined) &&
+    (a.boundSessionId ?? undefined) === (b.boundSessionId ?? undefined) &&
+    (a.paused ?? undefined) === (b.paused ?? undefined) &&
+    (a.invalidatedReason ?? undefined) === (b.invalidatedReason ?? undefined)
+  )
 }
 
 function mapTerminalToHook(status: RunStatus): TerminalHookName | null {

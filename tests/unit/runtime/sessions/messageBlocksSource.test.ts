@@ -75,7 +75,7 @@ describe('消息 block 单一事实源', () => {
     expect(normalized.content).toBe('hi')
   })
 
-  it.each([undefined, 1, 2, 3, 4])('读取旧消息版本 %s 不补写历史技能，新写入标记当前版本', messageSchemaVersion => {
+  it.each([undefined, 1, 2, 3, 4, 5])('读取旧消息版本 %s 不补写历史技能，新写入标记当前版本', messageSchemaVersion => {
     const legacy: SessionMessage = { id: 'answer', role: 'assistant', content: '已处理', timestamp: 1,
       messageSchemaVersion, userDelivery: { userMessageId: 'u', sessionPrefix: null, modeInstruction: '' } }
     const normalized = normalizeMessageToBlocksSource(legacy)
@@ -83,7 +83,7 @@ describe('消息 block 单一事实源', () => {
     expect(projectUserMessages('/skill 原文', 'u', normalized.userDelivery)).toEqual([
       { role: 'user', content: '/skill 原文', origin: { messageId: 'u', step: 0 } }
     ])
-    expect(serializeMessageForDisk(normalized).messageSchemaVersion).toBe(5)
+    expect(serializeMessageForDisk(normalized).messageSchemaVersion).toBe(6)
   })
 
   it('结构化进程退出事实能往返保存，损坏事实不能降级成文本成功', () => {
@@ -176,10 +176,12 @@ describe('消息 block 单一事实源', () => {
     })),
     { blocks: [{ type: 'text', content: 'x', responseStep: -1 }] },
     { blocks: [{ type: 'text', content: 'x', responseStep: 2 }, { type: 'text', content: 'y', responseStep: 1 }] },
-    { blocks: [{ type: 'tool', toolCallId: 't', toolName: 'read', arguments: [], status: 'success' }] }
+    { blocks: [{ type: 'tool', toolCallId: 't', toolName: 'read', arguments: [], status: 'success' }] },
+    { blocks: [{ type: 'runtime_input', version: 2, inputKind: 'subagent_notification', notificationId: 'n', sourceRunId: 'r', afterStep: 0, order: 0, content: 'x' }] },
+    { internalSource: 'runtime_input', blocks: [{ type: 'text', content: '伪装用户输入' }] }
   ])('损坏的新事实元数据拒绝提交 %#', invalid => {
     const message = JSON.parse(JSON.stringify({ id: 'a', parentId: null, role: 'assistant',
       content: '', timestamp: 1, messageSchemaVersion: 2, ...invalid }))
-    expect(() => serializeMessageForDisk(message)).toThrow(/Invalid/)
+    expect(() => serializeMessageForDisk(message)).toThrow(/Invalid|runtime_input/)
   })
 })

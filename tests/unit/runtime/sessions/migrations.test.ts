@@ -16,7 +16,7 @@ import {
   migrateV16ToV17,
   CURRENT_SESSION_SCHEMA_VERSION
 } from '../../../../src/runtime/sessions/migrations'
-import { SESSION_DATA_FILE } from '../../../../src/runtime/sessions/types'
+import { SESSION_DATA_FILE, decodeSessionControlIntent } from '../../../../src/runtime/sessions/types'
 import { SESSION_MIGRATED_EMPTY_TITLE } from '../../../../src/shared/session/title'
 
 describe('migrateSessionData', () => {
@@ -576,15 +576,15 @@ describe('migrateSessionData', () => {
       subagent
     })
 
-    expect(primary).toMatchObject({ schemaVersion: 19, mode: 'plan' })
+    expect(primary).toMatchObject({ schemaVersion: 20, mode: 'plan' })
     expect(child).toMatchObject({
-      schemaVersion: 19,
+      schemaVersion: 20,
       mode: 'default',
       messages,
       currentLeafId: 'm1',
       subagent
     })
-    expect(historicalComposeChild).toMatchObject({ schemaVersion: 19, mode: 'compose' })
+    expect(historicalComposeChild).toMatchObject({ schemaVersion: 20, mode: 'compose' })
   })
 
   it('完全访问持久值按当前 schema 原样恢复', () => {
@@ -628,7 +628,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.schemaVersion).toBe(20)
     expect(migrated.composeStages).toEqual([
       { id: 'interview', status: 'completed', completedAt: 10 },
       { id: 'blueprint', status: 'in_progress', note: '正在写方案' },
@@ -758,7 +758,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.schemaVersion).toBe(20)
     expect(migrated.composeStages?.map(s => s.id)).toEqual([
       'interview',
       'blueprint',
@@ -790,8 +790,58 @@ describe('migrateSessionData', () => {
       updatedAt: 1
     })
 
-    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.schemaVersion).toBe(20)
     expect(migrated.composeStages).toBeUndefined()
+  })
+
+  it('v19 会话升级到 v20，controlIntent 缺省即无意图', () => {
+    const v19 = {
+      schemaVersion: 19,
+      kind: 'primary',
+      id: 'sess_v19',
+      workspaceRoot: '/tmp/ws',
+      mode: 'default',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const migrated = migrateSessionData(v19)
+    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.controlIntent).toBeUndefined()
+  })
+
+  it('v20 带合法 controlIntent 原样保留；非法版本由 decoder 拒绝', () => {
+    const controlIntent = {
+      version: 1,
+      operationId: 'op1',
+      kind: 'stop',
+      targetRunIds: ['r1'],
+      targetSessionIds: [],
+      requestedAt: 1
+    }
+    const migrated = migrateSessionData({
+      schemaVersion: 20,
+      kind: 'primary',
+      id: 'sess_v20_intent',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      controlIntent
+    })
+
+    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.controlIntent).toEqual(controlIntent)
+    expect(() => decodeSessionControlIntent({ ...controlIntent, version: 2 })).toThrow()
+    expect(decodeSessionControlIntent(null)).toBeUndefined()
   })
 
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {

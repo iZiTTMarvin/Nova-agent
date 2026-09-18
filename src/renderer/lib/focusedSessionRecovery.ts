@@ -1,5 +1,5 @@
 import type { RunSnapshot } from '../../shared/run/types'
-import type { MessageBlock } from '../../shared/session/types'
+import { decodeRuntimeInputBlock, type MessageBlock } from '../../shared/session/types'
 import { sanitizeToolInput, sanitizeToolOutput } from '../../shared/tool-input-sanitizer'
 import type { ExtendedMessage } from '../stores/types'
 
@@ -53,6 +53,15 @@ function parseTurnDraftBlock(input: unknown): MessageBlock | null {
       arguments: value.arguments as Record<string, unknown>,
       status: value.status,
       ...(typeof value.result === 'string' ? { result: value.result } : {})
+    }
+  }
+  if (
+    value.type === 'runtime_input'
+  ) {
+    try {
+      return decodeRuntimeInputBlock(value)
+    } catch {
+      return null
     }
   }
   if (

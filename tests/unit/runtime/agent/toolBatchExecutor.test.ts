@@ -1031,6 +1031,68 @@ describe('executeToolBatch', () => {
     expect(availability.isToolAvailable('task')).toBe(true)
   })
 
+  it('run_code 的嵌套派发重新经过权限校验，读写上限拒绝后不执行写工具', async () => {
+    const registry = new ToolRegistry()
+    let writeExecuted = false
+    registerTool(registry, 'write', async () => {
+      writeExecuted = true
+      return { success: true, output: 'should-not-run' }
+    })
+    registry.register({
+      name: 'run_code',
+      description: 'run code',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: {} },
+      execute: async (_args, context) => {
+        const dispatch = context.dispatchNestedToolCall
+        if (!dispatch) {
+          return { success: false, output: '', error: 'missing nested dispatcher' }
+        }
+        const nested = await dispatch({
+          toolName: 'write',
+          args: { path: 'a.ts', content: 'blocked' }
+        })
+        return nested.success
+          ? { success: true, output: nested.output }
+          : {
+              success: false,
+              output: nested.output,
+              error: nested.error ?? 'nested permission denied'
+            }
+      }
+    })
+
+    const checkedTools: string[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'tc_run_code', name: 'run_code', arguments: '{}' }],
+      messageId: 'msg_nested_ceiling',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async toolName => {
+        checkedTools.push(toolName)
+        return toolName === 'write'
+          ? { allowed: false, reason: '只读上限禁止写入' }
+          : { allowed: true, reason: '' }
+      },
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 1,
+      toolExecution: 'parallel',
+      allowNestedToolDispatch: true
+    })
+
+    expect(checkedTools).toEqual(['run_code', 'write'])
+    expect(writeExecuted).toBe(false)
+    expect(result.outcomes[0]).toMatchObject({ failed: true })
+    expect(result.outcomes[0]?.resultText).toContain('只读上限禁止写入')
+  })
+
   it('工具失败回传超过 4000 字符时保留尾部并如实标注省略字符数', async () => {
     const registry = new ToolRegistry()
     const tail = 'ERROR_TAIL_END'

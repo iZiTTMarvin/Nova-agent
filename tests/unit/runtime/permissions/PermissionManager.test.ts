@@ -378,6 +378,14 @@ describe('PermissionManager', () => {
       readonlyQuery('task', { subagent_type: 'explore', task: 'x' }),
       'default'
     ).decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('task_followup', { child_session_id: 'sess-child', task: 'continue' }),
+      'default'
+    ).decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('shell_session', { action: 'unknown', ref: 'p' }),
+      'default'
+    ).decision).toBe('deny')
     // 只读观察不受上限影响
     expect(manager.check(readonlyQuery('read', { path: 'a.ts' }), 'default').decision).toBe('allow')
     expect(manager.check(readonlyQuery('web_search', { query: 'nova' }), 'default').decision).toBe('allow')

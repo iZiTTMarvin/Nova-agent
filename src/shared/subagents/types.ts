@@ -147,6 +147,8 @@ export interface SpawnSubagentCommand {
   readonly task: string
   readonly workingDirectory: string
   readonly isolation: 'shared' | 'readonly'
+  /** 首版仅内部链路使用；task 工具参数在后续公开批次注册，默认同步。 */
+  readonly background?: boolean
   readonly timeoutMs?: number
   /** 可选 canonical 模型覆盖；只影响模型路由，不改变 profile prompt/工具/权限/isolation。 */
   readonly modelOverride?: {
@@ -169,6 +171,7 @@ export interface FollowupSubagentCommand {
 }
 
 export type SubagentExecutionStatus =
+  | 'accepted'
   | 'completed'
   | 'incomplete'
   | 'failed'

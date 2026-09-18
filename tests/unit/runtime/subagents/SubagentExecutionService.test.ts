@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'fs'
+import fs, { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
@@ -26,12 +26,14 @@ import {
   type SubagentToolSettlement
 } from '../../../../src/runtime/subagents/toolSettlement'
 import { buildSubagentToolResult } from '../../../../src/runtime/subagents/resultText'
+import { writerLeaseRegistry } from '../../../../src/runtime/workspace'
 import type {
   FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentSessionHeader
 } from '../../../../src/shared/subagents'
 import type { PrepareSubagentTurnInput } from '../../../../src/runtime/subagents'
+import * as atomicFile from '../../../../src/runtime/storage/atomicFile'
 
 const profile = {
   id: 'explore',
@@ -57,6 +59,7 @@ describe('SubagentExecutionService', () => {
   let parentSessionId: string
 
   beforeEach(() => {
+    writerLeaseRegistry.resetForTests()
     tempRoot = mkdtempSync(join(tmpdir(), 'nova-subagent-service-'))
     workspace = resolve(tempRoot, 'workspace')
     sessionStore = new SessionStore(tempRoot)
@@ -75,6 +78,8 @@ describe('SubagentExecutionService', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
+    writerLeaseRegistry.resetForTests()
     rmSync(tempRoot, { recursive: true, force: true })
   })
 
@@ -116,6 +121,9 @@ describe('SubagentExecutionService', () => {
     childFinalText?: string
     resolveExecutionTarget?: SubagentExecutionServiceDeps['resolveExecutionTarget']
     hasSessionExecutionHandle?: (sessionId: string) => boolean
+    isShuttingDown?: () => boolean
+    emitPermissionRequest?: boolean
+    onExecutionSettled?: SubagentExecutionServiceDeps['onExecutionSettled']
   } = {}) {
     const prepareTurn = vi.fn((input: PrepareSubagentTurnInput) => {
       const eventBus = new EventBus()
@@ -136,6 +144,17 @@ describe('SubagentExecutionService', () => {
         sendMessage: vi.fn(async () => {
           expect(fence()).toBe(true)
           eventBus.emit({ type: 'message_start', messageId: 'msg-child-final' })
+          if (options.emitPermissionRequest) {
+            eventBus.emit({
+              type: 'permission_request',
+              messageId: 'msg-child-final',
+              requestId: 'request-child',
+              toolName: 'write',
+              args: { path: 'a.ts' },
+              riskLevel: 'low',
+              reason: 'test permission'
+            })
+          }
           if (options.wait) {
             if (options.cancelReleasesWait) {
               await Promise.race([options.wait, cancellation])
@@ -201,6 +220,12 @@ describe('SubagentExecutionService', () => {
         : {}),
       ...(options.hasSessionExecutionHandle
         ? { hasSessionExecutionHandle: options.hasSessionExecutionHandle }
+        : {}),
+      ...(options.isShuttingDown
+        ? { isShuttingDown: options.isShuttingDown }
+        : {}),
+      ...(options.onExecutionSettled
+        ? { onExecutionSettled: options.onExecutionSettled }
         : {}),
       ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
@@ -596,6 +621,418 @@ describe('SubagentExecutionService', () => {
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('cancelled')
     expect(prepareTurn).not.toHaveBeenCalled()
     expect(sessionStore.load(execution.childSessionId)?.kind).toBe('subagent')
+  })
+
+  it('后台只读任务先返回 accepted，持久 run 关联后再等待执行完成', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, prepareTurn } = createService({ wait })
+
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    expect(accepted.status).toBe('accepted')
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
+    expect(coordinator.getSnapshot(accepted.childRunId)).toEqual(expect.objectContaining({
+      status: 'running',
+      dispatch: expect.objectContaining({
+        execution: 'background_read_only',
+        topParentSessionId: parentSessionId
+      })
+    }))
+    expect(sessionStore.load(accepted.childSessionId)?.messages).toHaveLength(1)
+
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+  })
+
+  it('父 run 在后台接纳后终止，child 仍用自身栅栏完成', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, prepareTurn } = createService({ wait })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    coordinator.invalidateExecutionGeneration('run-parent')
+    const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
+    const fence = (prepared.agentLoop.setExecutionFence as Mock).mock.calls[0]?.[0] as () => boolean
+    expect(fence()).toBe(true)
+    expect(prepared.agentLoop.setExecutionIdentity).toHaveBeenCalledWith({
+      runId: accepted.childRunId,
+      resourceOwnerRunId: accepted.childRunId
+    })
+
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+    const child = sessionStore.load(accepted.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(projectSubagentExecutionResult({
+      childSession: child,
+      runSnapshot: coordinator.getSnapshot(accepted.childRunId)!
+    }).status).toBe('completed')
+  })
+
+  it('workspace_write profile 使用 shared isolation 时在持久化前拒绝后台任务', async () => {
+    const background = command({
+      background: true,
+      profileId: 'code',
+      isolation: 'shared'
+    })
+    const identity = createSpawnIdentity(background)
+    const { service, prepareTurn } = createService()
+
+    await expect(service.spawn(background, { invocationRef: invocationRef() }))
+      .rejects.toThrow('拒绝后台：首版仅支持只读后台任务')
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('可写 profile 使用 readonly isolation 时生效上限为只读，允许后台接纳', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service } = createService({ wait })
+
+    const accepted = await service.spawn(
+      command({ background: true, profileId: 'code', isolation: 'readonly' }),
+      { invocationRef: invocationRef() }
+    )
+
+    expect(accepted.status).toBe('accepted')
+    expect(coordinator.getSnapshot(accepted.childRunId)).toEqual(expect.objectContaining({
+      dispatch: expect.objectContaining({ execution: 'background_read_only' })
+    }))
+
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+  })
+
+  it('后台排队超时后收敛为 failed，完成管线释放 Scheduler 计数', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 20
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: parentSessionId,
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('failed')
+    )
+    occupied.permit.release()
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(scheduler.snapshot()).toEqual(expect.objectContaining({
+      activeGlobal: 0,
+      queued: 0
+    }))
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason)
+      .toContain('scheduler:wait_timeout:')
+  })
+
+  it('排队中的后台 child 无执行句柄也可取消，迟到 permit 不会启动模型', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn, registry } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('queued')
+
+    const lifecycle = new SubagentLifecycleCoordinator(
+      sessionStore,
+      coordinator,
+      registry,
+      scheduler
+    )
+    await lifecycle.cancelRunTree(accepted.childRunId, 'cancel_queued_background')
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+    )
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(scheduler.snapshot().queued).toBe(0)
+    occupied.permit.release()
+  })
+
+  it('后台 child 取得 permit 后再次检查控制意图并取消', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    const child = sessionStore.load(accepted.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(sessionStore.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'stop-background-child',
+      kind: 'stop',
+      targetRunIds: [accepted.childRunId],
+      targetSessionIds: [child.id],
+      requestedAt: Date.now()
+    })).toEqual({ ok: true })
+
+    occupied.permit.release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason)
+      .toBe('control_intent:stop-background-child')
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('单独停止 child 的绑定写入失败时，迟到 permit 仍受 child 会话意图约束', async () => {
+    const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied', capacityKey: 'other-tree', requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn, registry } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), { invocationRef: invocationRef() })
+    sessionStore.setControlIntent(accepted.childSessionId, {
+      version: 1, operationId: `stop:${accepted.childRunId}`, kind: 'stop',
+      targetRunIds: [accepted.childRunId], targetSessionIds: [], requestedAt: Date.now()
+    })
+    const eventsPath = join(tempRoot, accepted.childRunId, 'events.jsonl')
+    const savedEventsPath = `${eventsPath}.saved`
+    fs.renameSync(eventsPath, savedEventsPath)
+    fs.mkdirSync(eventsPath)
+    try {
+      expect(() => coordinator.updateDeliveryBinding(accepted.childRunId, {
+        invalidatedReason: `control_intent:stop:${accepted.childRunId}`
+      })).toThrow()
+    } finally {
+      fs.rmdirSync(eventsPath)
+      fs.renameSync(savedEventsPath, eventsPath)
+      occupied.permit.release()
+    }
+
+    await vi.waitFor(() => expect(scheduler.snapshot().activeGlobal).toBe(0))
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(registry.get(accepted.childRunId)).toBeNull()
+    expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+  })
+
+  it('投递绑定已失效化的后台 child 取得 permit 后收敛为 cancelled', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('queued')
+    // 分支失效化的持久事实写在源 run（child）自身的投递控制上
+    coordinator.updateDeliveryBinding(accepted.childRunId, {
+      invalidatedReason: 'branch_invalidate:op_branch'
+    })
+
+    occupied.permit.release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason)
+      .toContain('branch_invalidate:op_branch')
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('覆盖本派遣的停止意图存在时，后台接纳在持久化 child 前被冻结拒绝', async () => {
+    sessionStore.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'op_stop',
+      kind: 'stop',
+      targetRunIds: ['run-parent'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    const { service, prepareTurn } = createService()
+    const spawnCommand = command({ background: true })
+
+    await expect(
+      service.spawn(spawnCommand, { invocationRef: invocationRef() })
+    ).rejects.toThrow(/control_intent:op_stop/)
+
+    // 不留半套 child 会话与 run：拒绝发生在持久接纳之前
+    const identity = createSpawnIdentity(spawnCommand)
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('意图未写盘也冻结后台接纳，重试提交并清除后恢复接纳', async () => {
+    const intent = {
+      version: 1 as const, operationId: 'failed-stop', kind: 'stop' as const,
+      targetRunIds: ['run-parent'], targetSessionIds: [], requestedAt: Date.now()
+    }
+    const write = atomicFile.atomicWriteFileSync
+    const fault = vi.spyOn(atomicFile, 'atomicWriteFileSync').mockImplementation((file, content, encoding) => {
+      if (file === join(tempRoot, 'sessions', parentSessionId, 'session.json')) {
+        throw new Error('intent disk full')
+      }
+      write(file, content, encoding)
+    })
+    try {
+      expect(() => sessionStore.setControlIntent(parentSessionId, intent)).toThrow(/intent disk full/)
+    } finally {
+      fault.mockRestore()
+    }
+    const { service, prepareTurn } = createService()
+    const background = command({ background: true })
+    const identity = createSpawnIdentity(background)
+    await expect(service.spawn(background, { invocationRef: invocationRef() }))
+      .rejects.toThrow(/控制意图冻结/)
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(sessionStore.clearControlIntent(parentSessionId, intent.operationId)).toBe(false)
+
+    expect(sessionStore.setControlIntent(parentSessionId, intent)).toEqual({ ok: true })
+    expect(new SessionStore(tempRoot).getControlIntent(parentSessionId)?.operationId).toBe(intent.operationId)
+    expect(sessionStore.clearControlIntent(parentSessionId, intent.operationId)).toBe(true)
+    const accepted = await service.spawn(background, { invocationRef: invocationRef() })
+    expect(accepted.status).toBe('accepted')
+    await vi.waitFor(() => expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed'))
+  })
+
+  it('终态已提交但收尾未完成时 Registry 句柄仍在；空 Registry 代表完成唤醒已发出', async () => {
+    // 受控清理屏障：onExecutionSettled 完成前执行段不得 settled
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve })
+    const onExecutionSettled = vi.fn(() => cleanupGate)
+    const { service, registry } = createService({ onExecutionSettled })
+
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    // 模型已完成、durable 终态已提交，但收尾被屏障挡住
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+    expect(onExecutionSettled).toHaveBeenCalledTimes(1)
+    // 先到的 terminal snapshot 不构成收尾完成：live drain 门槛必须仍看见句柄
+    expect(registry.get(accepted.childRunId)).not.toBeNull()
+
+    releaseCleanup()
+    await vi.waitFor(() => expect(registry.get(accepted.childRunId)).toBeNull())
+  })
+
+  it('关闭流程开始后，后台 child 取得 permit 也只收敛为 interrupted', async () => {
+    let shuttingDown = false
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({
+      scheduler,
+      isShuttingDown: () => shuttingDown
+    })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    shuttingDown = true
+    occupied.permit.release()
+
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('interrupted')
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason).toBe('process_exit')
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('相同后台 spawn 在全生命周期去重，不同 metadata 的并发调用被拒绝', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, prepareTurn } = createService({ wait })
+    const background = command({ background: true })
+    const first = service.spawn(background, { invocationRef: invocationRef() })
+    const second = service.spawn(background, { invocationRef: invocationRef() })
+    expect(first).toBe(second)
+    await expect(service.spawn(
+      { ...background, task: 'different background task' },
+      { invocationRef: invocationRef() }
+    )).rejects.toThrow(/metadata 冲突/)
+
+    const accepted = await first
+    expect(accepted.status).toBe('accepted')
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('后台 child 的提问/拒权清理只释放自身，不会抢走父 writer lease', async () => {
+    await expect(writerLeaseRegistry.acquire(workspace, 'run-parent')).resolves.toEqual({ ok: true })
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, registry } = createService({
+      wait,
+      cancelReleasesWait: true,
+      emitPermissionRequest: true
+    })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    await vi.waitFor(() => expect(registry.get(accepted.childRunId)).not.toBeNull())
+    expect(writerLeaseRegistry.holder(workspace)).toBe('run-parent')
+
+    const lifecycle = new SubagentLifecycleCoordinator(
+      sessionStore,
+      coordinator,
+      registry,
+      new SubagentScheduler()
+    )
+    await lifecycle.cancelRunTree(accepted.childRunId, 'cancel_background_lease')
+    release()
+    expect(writerLeaseRegistry.holder(workspace)).toBe('run-parent')
   })
 
   it('depth 超限与 read_only 父级权限提升请求均被服务拒绝', async () => {
@@ -996,7 +1433,7 @@ describe('SubagentExecutionService', () => {
     const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
     const occupied = await scheduler.acquire({
       runId: 'run-occupied',
-      rootRunId: 'run-parent',
+      capacityKey: parentSessionId,
       requestKey: 'occupied'
     })
     const { service } = createService({ scheduler })
@@ -1014,7 +1451,7 @@ describe('SubagentExecutionService', () => {
     const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
     const occupied = await scheduler.acquire({
       runId: 'run-occupied',
-      rootRunId: 'run-parent',
+      capacityKey: parentSessionId,
       requestKey: 'occupied'
     })
     const spawnCommand = command()
@@ -1038,7 +1475,7 @@ describe('SubagentExecutionService', () => {
     const identity = createSpawnIdentity(spawnCommand)
     const authoritative = await scheduler.acquire({
       runId: identity.spawnRunId,
-      rootRunId: 'run-parent',
+      capacityKey: parentSessionId,
       requestKey: 'authoritative-service'
     })
     if (!authoritative.ok) throw new Error('expected permit')

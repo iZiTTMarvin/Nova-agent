@@ -8,14 +8,14 @@ import { serializeToolArguments } from '../request-projection'
  * 旧会话：加载时 normalizeMessageToBlocksSource 按需构造 blocks，不强制启动全量重写。
  * 迁移器骨架：migrations.migrateV7ToV8 + 本模块；保留至少一个发布周期。
  */
-import type { MessageBlock, ToolCall } from '../../shared/session'
+import { decodeRuntimeInputBlock, type MessageBlock, type ToolCall } from '../../shared/session'
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from './types'
 import { extractTextFromSerializableContent } from './types'
 import { isToolFailureText } from '../../shared/toolResultStatus'
 import { isToolProcessOutcome } from '../../shared/tools/processOutcome'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
-export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 5
+export const MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE = 6
 
 /**
  * 从 blocks 投影出 content 文本（仅 text 块拼接）。
@@ -135,7 +135,7 @@ export function buildBlocksFromLegacyFields(message: {
  * 不强制写盘；调用方决定是否持久化。
  */
 export function normalizeMessageToBlocksSource(message: SessionMessage): SessionMessage {
-  if (message.messageSchemaVersion !== undefined && ![1, 2, 3, 4, 5].includes(message.messageSchemaVersion)) {
+  if (message.messageSchemaVersion !== undefined && ![1, 2, 3, 4, 5, 6].includes(message.messageSchemaVersion)) {
     throw new Error('Unsupported message schema version')
   }
   if (message.userDelivery !== undefined || (message.messageSchemaVersion !== undefined && message.messageSchemaVersion >= 2)) validateMessageFacts(message)
@@ -206,6 +206,14 @@ export function serializeMessageForDisk(message: SessionMessage): SessionMessage
 }
 
 function validateMessageFacts(message: SessionMessage): void {
+  if (message.internalSource !== undefined && message.internalSource !== 'runtime_input') {
+    throw new Error('Invalid internal message source')
+  }
+  if (message.internalSource === 'runtime_input' &&
+      (message.role !== 'user' || !message.blocks?.length ||
+        message.blocks.some(block => block.type !== 'runtime_input'))) {
+    throw new Error('Invalid internal runtime input message')
+  }
   const delivery = message.userDelivery
   if (delivery !== undefined && (!delivery || typeof delivery.userMessageId !== 'string' ||
       !delivery.userMessageId || typeof delivery.modeInstruction !== 'string' ||
@@ -218,17 +226,28 @@ function validateMessageFacts(message: SessionMessage): void {
   }
   if (message.blocks !== undefined && !Array.isArray(message.blocks)) throw new Error('Invalid message blocks')
   let previousStep = -1
+  const notificationIds = new Set<string>()
+  const runtimeInputOrders = new Map<number, number>()
   for (const block of message.blocks ?? []) {
     if (!block || typeof block !== 'object') throw new Error('Invalid message block')
     if (block.type === 'image') continue
-    if (!['thinking', 'text', 'tool'].includes(block.type)) throw new Error('Invalid message block type')
-    if (block.responseStep !== undefined) {
+    if (!['thinking', 'text', 'tool', 'runtime_input'].includes(block.type)) throw new Error('Invalid message block type')
+    if (block.type !== 'runtime_input' && block.responseStep !== undefined) {
       if (!Number.isInteger(block.responseStep) || block.responseStep < 0 || block.responseStep < previousStep) {
         throw new Error('Invalid response step')
       }
       previousStep = block.responseStep
     }
-    if (block.type === 'tool') {
+    if (block.type === 'runtime_input') {
+      const decoded = decodeRuntimeInputBlock(block)
+      if (notificationIds.has(decoded.notificationId)) throw new Error('Duplicate runtime input notification')
+      notificationIds.add(decoded.notificationId)
+      const previousOrder = runtimeInputOrders.get(decoded.afterStep)
+      if (previousOrder !== undefined && decoded.order <= previousOrder) {
+        throw new Error('Invalid runtime input order')
+      }
+      runtimeInputOrders.set(decoded.afterStep, decoded.order)
+    } else if (block.type === 'tool') {
       if (block.resultImages !== undefined && (!Array.isArray(block.resultImages) || block.resultImages.some(image =>
         !image || typeof image.data !== 'string' || !image.data || typeof image.mimeType !== 'string' ||
         !/^image\/(png|jpeg|gif|webp)$/.test(image.mimeType)))) throw new Error('Invalid tool images')

@@ -70,6 +70,41 @@ describe('AgentTurnExecutor', () => {
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
+  it('onCleanup 完成前句柄保持登记：空 Registry 即代表已完整收尾', async () => {
+    const coordinator = createRunCoordinator(tempRoot)
+    const registry = new RunExecutionRegistry()
+    const executor = new AgentTurnExecutor(coordinator, registry)
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve })
+    const fake = fakeLoop(async () => ({ status: 'completed' }))
+    let childRunId = ''
+    let execution!: Promise<unknown>
+    const started = new Promise<void>((resolve) => {
+      execution = executor.execute({
+        agentLoop: fake.loop,
+        task: 'hello',
+        route: agentRoute(),
+        sessionId: 'sess-1',
+        workingDirectory: tempRoot,
+        isolation: 'shared',
+        userMessageId: 'user-1',
+        onStarted: (context) => { childRunId = context.runId; resolve() },
+        onCleanup: () => cleanupGate
+      })
+    })
+    await started
+
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(childRunId)?.status).toBe('completed')
+    )
+    // 先到的 terminal snapshot 不构成收尾完成：live drain 门槛必须仍看见句柄
+    expect(registry.get(childRunId)).not.toBeNull()
+
+    releaseCleanup()
+    await execution
+    expect(registry.get(childRunId)).toBeNull()
+  })
+
   it('sendMessage rejection 收敛为 interrupted，仍清 registry 与运行期资源', async () => {
     const coordinator = createRunCoordinator(tempRoot)
     const registry = new RunExecutionRegistry()
@@ -196,6 +231,41 @@ describe('AgentTurnExecutor', () => {
     expect(fake.getFence()()).toBe(true)
 
     coordinator.invalidateExecutionGeneration(childRunId)
+    expect(fake.getFence()()).toBe(false)
+
+    release()
+    await execution
+  })
+
+  it('self-owned fence 只依赖 child generation，不要求不存在的 parent run', async () => {
+    const coordinator = createRunCoordinator(tempRoot)
+    const registry = new RunExecutionRegistry()
+    const executor = new AgentTurnExecutor(coordinator, registry)
+    let release!: () => void
+    const waiting = new Promise<void>((resolve) => { release = resolve })
+    const fake = fakeLoop(async () => {
+      await waiting
+      return { status: 'completed' }
+    })
+    let execution!: Promise<unknown>
+    const started = new Promise<void>((resolve) => {
+      execution = executor.execute({
+        agentLoop: fake.loop,
+        task: 'background child',
+        route: agentRoute(),
+        sessionId: 'sess-child',
+        workingDirectory: tempRoot,
+        isolation: 'readonly',
+        runId: 'run-background-child',
+        resourceOwnerRunId: 'run-background-child',
+        userMessageId: 'user-background-child',
+        onStarted: () => resolve()
+      })
+    })
+    await started
+
+    expect(fake.getFence()()).toBe(true)
+    coordinator.invalidateExecutionGeneration('run-background-child')
     expect(fake.getFence()()).toBe(false)
 
     release()

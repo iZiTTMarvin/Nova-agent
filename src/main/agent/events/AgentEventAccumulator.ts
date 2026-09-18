@@ -2,7 +2,7 @@ import type { AgentEvent } from '../../../runtime/agent'
 import { readManifest } from '../../../runtime/checkpoints/manifest'
 import type { SessionMessageAppend, AppendMessageResult } from '../../../runtime/sessions/types'
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../../runtime/sessions/messageProjection'
-import type { MessageBlock, UserDeliveryFacts } from '../../../shared/session/types'
+import { decodeRuntimeInputBlock, type MessageBlock, type RuntimeInputBlock, type UserDeliveryFacts } from '../../../shared/session/types'
 import { appendTerminalErrorToBlocks, formatTerminalErrorMessage } from '../../../shared/session/terminalErrorBlocks'
 import { retainCommittedBlocksForRetry } from '../../../shared/session/retainCommittedBlocksForRetry'
 import { getSessionStore } from '../../services/SessionStoreHost'
@@ -12,6 +12,124 @@ import type { MessageContext, StreamAccumulator } from './types'
 
 /** 当前正在累积的流式消息映射：messageId → 累积器（按 turn identity fencing） */
 export const activeStreams = new Map<string, StreamAccumulator>()
+
+export interface RuntimeInputCommitReceipt {
+  status: 'committed' | 'already_committed'
+  notificationId: string
+  runId: string
+  messageId: string
+}
+
+export interface RuntimeInputCommitCommand {
+  messageId: string
+  input: RuntimeInputBlock
+}
+
+function bindRuntimeInputSource(
+  input: RuntimeInputBlock,
+  runId: string,
+  sessionId: string
+): void {
+  const coordinator = getRunCoordinator()
+  const source = coordinator.getSnapshot(input.sourceRunId)
+  if (!source) throw new Error(`runtime_input source run not found: ${input.sourceRunId}`)
+  if (source.deliveryBinding?.boundRunId && source.deliveryBinding.boundRunId !== runId) {
+    throw new Error('runtime_input source is bound to another run')
+  }
+  if (source.deliveryBinding?.boundSessionId && source.deliveryBinding.boundSessionId !== sessionId) {
+    throw new Error('runtime_input source is bound to another session')
+  }
+  const bound = coordinator.updateDeliveryBinding(input.sourceRunId, {
+    boundRunId: runId,
+    boundSessionId: sessionId
+  })
+  if (!bound) throw new Error('runtime_input source binding was not committed')
+}
+
+/**
+ * 将运行时输入先提交到 turnDraft，再加入活动上下文。调用方只可把返回回执视为 ACK。
+ */
+export function persistRuntimeInputFact(
+  command: RuntimeInputCommitCommand,
+  ctx: MessageContext
+): RuntimeInputCommitReceipt {
+  if (!ctx.runId) throw new Error('runtime_input requires an active run')
+  const stream = resolveStreamForEvent(command.messageId, ctx)
+  if (!stream) throw new Error('runtime_input has no matching active stream')
+  const input = decodeRuntimeInputBlock(command.input)
+  const durableDraft = getRunCoordinator().getSnapshot(ctx.runId)?.turnDraft
+  const durableInputs = durableDraft?.messageId === command.messageId
+    ? durableDraft.blocks.filter((block): block is RuntimeInputBlock => block.type === 'runtime_input')
+    : []
+  const durableExisting = durableInputs.find(block => block.notificationId === input.notificationId)
+  if (durableExisting) {
+    if (JSON.stringify(durableExisting) !== JSON.stringify(input)) {
+      throw new Error('runtime_input conflicts with committed notification')
+    }
+    bindRuntimeInputSource(input, ctx.runId, stream.sessionId)
+    if (!stream.blocks.some(block => block.type === 'runtime_input' && block.notificationId === input.notificationId)) {
+      stream.blocks = [...stream.blocks, structuredClone(durableExisting)]
+    }
+    return {
+      status: 'already_committed',
+      notificationId: input.notificationId,
+      runId: ctx.runId,
+      messageId: command.messageId
+    }
+  }
+  if (durableInputs.some(durable =>
+    !stream.blocks.some(block => block.type === 'runtime_input' && block.notificationId === durable.notificationId))) {
+    throw new Error('active stream is missing committed runtime input')
+  }
+  const existing = stream.blocks.find(
+    (block): block is RuntimeInputBlock =>
+      block.type === 'runtime_input' && block.notificationId === input.notificationId
+  )
+  if (existing) {
+    if (JSON.stringify(existing) !== JSON.stringify(input)) {
+      throw new Error('runtime_input conflicts with committed notification')
+    }
+  }
+
+  const hasCommittedStep = input.afterStep === -1 || stream.blocks.some(
+    block => block.type === 'text' && block.responseStep === input.afterStep
+  )
+  const hasRunningTool = stream.blocks.some(
+    block => block.type === 'tool' && block.responseStep === input.afterStep && block.status === 'running'
+  )
+  if (!hasCommittedStep || hasRunningTool) {
+    throw new Error('runtime_input must follow a complete assistant/tool step')
+  }
+  const samePosition = stream.blocks.filter(
+    (block): block is RuntimeInputBlock =>
+      block.type === 'runtime_input' && block.afterStep === input.afterStep
+  )
+  if (!existing && samePosition.some(block => block.order >= input.order)) {
+    throw new Error('runtime_input order must be strictly increasing')
+  }
+
+  const nextBlocks = existing ? [...stream.blocks] : [...stream.blocks, input]
+  const committed = persistTurnDraft(
+    ctx.runId,
+    command.messageId,
+    nextBlocks,
+    false,
+    ctx.executionGeneration,
+    stream.userDelivery
+  )
+  const persisted = committed?.turnDraft?.blocks.some(
+    block => block.type === 'runtime_input' && block.notificationId === input.notificationId
+  )
+  if (!persisted) throw new Error('runtime_input persistence was not confirmed')
+  bindRuntimeInputSource(input, ctx.runId, stream.sessionId)
+  stream.blocks = nextBlocks
+  return {
+    status: 'committed',
+    notificationId: input.notificationId,
+    runId: ctx.runId,
+    messageId: command.messageId
+  }
+}
 
 /** 把指定 run（或缺省全部）的 active stream 标记为 cancelled */
 export function markActiveStreamsCancelled(runId?: string): void {
@@ -100,7 +218,8 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       if (!stream) break
       stampThinkingDuration(stream)
       const thinking = [...stream.blocks].reverse().find(block => block.type === 'thinking' && block.responseStep === undefined)
-      stream.blocks = stream.blocks.filter(block => block.type !== 'image' && block.responseStep !== undefined)
+      stream.blocks = stream.blocks.filter(block =>
+        block.type === 'runtime_input' || (block.type !== 'image' && block.responseStep !== undefined))
       if (event.reasoningContent) stream.blocks.push({ type: 'thinking', content: event.reasoningContent,
         responseStep: event.step,
         ...(event.reasoningProviderId ? { providerId: event.reasoningProviderId } : {}),
@@ -503,8 +622,8 @@ function persistTurnDraft(
   finalized = false,
   executionGeneration?: number,
   userDelivery?: UserDeliveryFacts
-): void {
-  if (!runId) return
+): import('../../../shared/run/types').RunSnapshot | null {
+  if (!runId) return null
   const coord = getRunCoordinator()
   if (
     executionGeneration != null &&
@@ -513,10 +632,10 @@ function persistTurnDraft(
     console.warn(
       `[persistTurnDraft] generation 已失效，拒绝写入 runId=${runId} gen=${executionGeneration}`
     )
-    return
+    return null
   }
   // 落盘失败必须抛出，不得吞掉后继续宣称可恢复
-  coord.upsertTurnDraft(runId, {
+  return coord.upsertTurnDraft(runId, {
     messageId,
     blocks,
     userDelivery: userDelivery ?? activeStreams.get(messageId)?.userDelivery,

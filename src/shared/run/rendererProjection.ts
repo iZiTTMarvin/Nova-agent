@@ -10,6 +10,7 @@ export function toRendererRunSnapshot(snapshot: RunSnapshot | null): RunSnapshot
       const { continuation: _continuation, ...displayBlock } = block
       return displayBlock
     }
+    if (block.type === 'runtime_input') return { ...block }
     if (block.type !== 'tool') return block
     const { delivery: _toolDelivery, resultImages: _images, ...displayBlock } = block
     return { ...displayBlock, ...(block.result !== undefined ? { result: sanitizeToolOutput(block.toolName, block.result, block.status === 'error') } : {}) }

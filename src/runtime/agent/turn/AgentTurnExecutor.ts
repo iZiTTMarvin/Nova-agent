@@ -225,14 +225,21 @@ export class AgentTurnExecutor {
       }
       throw error
     } finally {
-      resolveSettled()
-      if (registered && context) {
-        this.executionRegistry.unregister(
-          context.runId,
-          context.executionGeneration
-        )
+      // 收尾完成前不得 settled/注销：Registry 以句柄存在表达「尚未完整收尾」，
+      // live drain 见到空 Registry 即代表终态已提交、资源已释放、结果可安全读取；
+      // 先到的 terminal snapshot 不构成收尾完成。onCleanup 抛错也必须照常 settled，
+      // 避免 grace 后句柄永久滞留。
+      try {
+        if (context) await input.onCleanup?.(context)
+      } finally {
+        resolveSettled()
+        if (registered && context) {
+          this.executionRegistry.unregister(
+            context.runId,
+            context.executionGeneration
+          )
+        }
       }
-      if (context) await input.onCleanup?.(context)
     }
   }
 }

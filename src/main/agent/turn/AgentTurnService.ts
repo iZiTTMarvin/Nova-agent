@@ -84,6 +84,7 @@ import {
   resolveChildModelFromProfile
 } from '../subagents/childModelRouting'
 import { getSubagentScheduler } from '../../services/SubagentSchedulerHost'
+import { isSubagentsShuttingDown } from '../../services/SubagentLifecycleHost'
 import {
   ensureCodeGraphForWorkspace,
   getCodeContextQueryPort
@@ -302,6 +303,7 @@ export async function sendAgentMessage(
     runCoordinator,
     turnExecutor,
     scheduler: getSubagentScheduler(),
+    isShuttingDown: isSubagentsShuttingDown,
     isRunExecutionActive: (runId) => executionRegistry.get(runId) !== null,
     hasSessionExecutionHandle: (sessionId) =>
       executionRegistry.listActiveRunIds().some(

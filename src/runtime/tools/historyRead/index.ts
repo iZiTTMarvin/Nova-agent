@@ -2,7 +2,7 @@
  * history_read — 只读被折叠区间的档案 transcript，形状对齐 archive_read。
  */
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
-import type { ChatMessage, MessageOrigin } from '../../model/types'
+import { isSameMessageOrigin, type ChatMessage, type MessageOrigin } from '../../model/types'
 import {
   buildConversationContext,
   renderMessagesAsTranscript,
@@ -24,11 +24,7 @@ const TOOL_DESCRIPTION =
   '读取已被压缩折叠的对话原文。按 checkpoint id（如 c3）inspect / search / read；缺省覆盖全部被折叠区间。大工具结果为占位符时再用 archive_read 读全文。'
 
 function sameOrigin(left: MessageOrigin | undefined, right: MessageOrigin): boolean {
-  return Boolean(
-    left
-    && left.messageId === right.messageId
-    && left.step === right.step
-  )
+  return isSameMessageOrigin(left, right)
 }
 
 function lastIndexWithOrigin(messages: ChatMessage[], origin: MessageOrigin): number {

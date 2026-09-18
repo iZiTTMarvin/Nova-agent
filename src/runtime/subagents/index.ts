@@ -25,6 +25,7 @@ export {
 } from './batchEligibility'
 export {
   MAX_SUBAGENT_SUMMARY_CHARS,
+  projectSubagentAcceptanceResult,
   projectSubagentExecutionResult
 } from './resultProjection'
 export {
@@ -51,7 +52,8 @@ export {
 } from './SubagentScheduler'
 export {
   SubagentLifecycleCoordinator,
-  type CancelSubagentTreeResult
+  type CancelSubagentTreeResult,
+  type ControlIntentReplayResult
 } from './SubagentLifecycleCoordinator'
 export {
   createPreset,

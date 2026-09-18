@@ -32,7 +32,7 @@ import {
 } from '../../shared/composeLifecycle'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 19
+export const CURRENT_SESSION_SCHEMA_VERSION = 20
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -464,6 +464,15 @@ export function migrateV18ToV19(data: unknown): SessionData {
   }
 }
 
+/** v19 → v20：引入可选 controlIntent；旧会话无此字段即无意图，无需数据重写。 */
+export function migrateV19ToV20(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 20
+  }
+}
+
 function loadDefaultPermissionMode(): PermissionMode {
   try {
     return loadNovaSettings().defaultPermissionMode
@@ -675,7 +684,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV15ToV16, // v15 → v16
   migrateV16ToV17, // v16 → v17
   migrateV17ToV18, // v17 → v18
-  migrateV18ToV19 // v18 → v19
+  migrateV18ToV19, // v18 → v19
+  migrateV19ToV20 // v19 → v20
 ]
 
 /**

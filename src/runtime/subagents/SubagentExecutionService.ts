@@ -42,13 +42,17 @@ import {
   type ToolCommitRecord
 } from '../../shared/run/types'
 import type { ToolInvocationRef } from '../tools/types'
+import type { SessionControlIntent } from '../sessions/types'
 import type { Mode } from '../../shared/session'
 import type { SpawnSubagentContext, SpawnSubagentPort } from './ports'
 import {
   applyHostArchiveCapabilities,
   resolveSubagentProfileSnapshot
 } from './profileResolver'
-import { projectSubagentExecutionResult } from './resultProjection'
+import {
+  projectSubagentAcceptanceResult,
+  projectSubagentExecutionResult
+} from './resultProjection'
 import {
   SubagentScheduleRejectedError,
   type SubagentScheduler
@@ -121,6 +125,8 @@ export interface SubagentExecutionServiceDeps {
   readonly hasSessionExecutionHandle?: (sessionId: string) => boolean
   /** 宿主是否具备 archive_read；用于子 Agent 能力继承与投影门控。 */
   readonly hostHasArchiveRead?: () => boolean
+  /** 应用进入退出阶段后关闭新的后台接纳。 */
+  readonly isShuttingDown?: () => boolean
 }
 
 export interface SpawnIdentity {
@@ -131,6 +137,12 @@ export interface SpawnIdentity {
 interface ActiveSubagentExecution {
   readonly command: SpawnSubagentCommand | FollowupSubagentCommand
   readonly promise: Promise<SubagentExecutionResult>
+  readonly acceptance?: Promise<SubagentExecutionResult>
+}
+
+interface StartedSubagentExecution {
+  readonly result: Promise<SubagentExecutionResult>
+  readonly completion: Promise<SubagentExecutionResult>
 }
 
 /** 已完成身份与归属校验的一次子代理执行的输入；spawn 与 followup 共用执行段。 */
@@ -193,7 +205,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   private runDeduplicated(
     spawnKey: string,
     command: SpawnSubagentCommand | FollowupSubagentCommand,
-    start: () => Promise<SubagentExecutionResult>
+    start: () => Promise<StartedSubagentExecution>
   ): Promise<SubagentExecutionResult> {
     const active = this.activeExecutions.get(spawnKey)
     if (active) {
@@ -202,29 +214,43 @@ export class SubagentExecutionService implements SpawnSubagentPort {
           new Error(`spawnKey ${spawnKey} 的并发命令 metadata 冲突`)
         )
       }
-      return active.promise
+      return active.acceptance ?? active.promise
     }
 
-    const execution = start()
-    this.activeExecutions.set(spawnKey, { command, promise: execution })
-    void execution.finally(() => {
-      if (this.activeExecutions.get(spawnKey)?.promise === execution) {
+    const started = start()
+    void started.catch(() => undefined)
+    const execution = started.then(({ result }) => result)
+    void execution.catch(() => undefined)
+    const completion = started.then(({ completion: settled }) => settled)
+    this.activeExecutions.set(spawnKey, {
+      command,
+      promise: completion,
+      ...(isBackgroundSpawnCommand(command) ? { acceptance: execution } : {})
+    })
+    void completion.finally(() => {
+      if (this.activeExecutions.get(spawnKey)?.promise === completion) {
         this.activeExecutions.delete(spawnKey)
       }
     }).catch(() => undefined)
-    return execution
+    return isBackgroundSpawnCommand(command) ? execution : completion
   }
 
   private async spawnOnce(
     command: SpawnSubagentCommand,
     context: SpawnSubagentContext,
     identity: SpawnIdentity
-  ): Promise<SubagentExecutionResult> {
+  ): Promise<StartedSubagentExecution> {
     const parentSession = this.deps.sessionStore.load(command.parentSessionId)
     if (!parentSession) {
       throw new Error(`父会话 ${command.parentSessionId} 不存在`)
     }
-    this.requireParentRun(command)
+    const childSessionId = deriveChildSessionId(identity.spawnKey)
+    const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
+    // 后台接纳之后，父 run 的正常收尾不能阻止 child 继续；没有既有 queued
+    // 记录时仍必须在接纳边界校验父 run。
+    if (command.background !== true || !existingRun) {
+      this.requireParentRun(command)
+    }
     const lineageBase = resolveLineageBase(parentSession, command.parentRunId)
     if (lineageBase.depth > this.maxDepth) {
       throw new Error(`子代理深度 ${lineageBase.depth} 超过上限 ${this.maxDepth}`)
@@ -232,9 +258,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     validateWorkingDirectory(command, parentSession.workspaceRoot)
     validateSpawnModelOverride(command)
 
-    const childSessionId = deriveChildSessionId(identity.spawnKey)
     const existingChild = this.deps.sessionStore.load(childSessionId)
-    const existingRun = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
     let profile: SubagentProfileSnapshot
     let header: SubagentSessionHeader | undefined
     if (existingChild) {
@@ -274,6 +298,24 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       throw new Error('read_only 父子代理不能派生 workspace_write 子代理')
     }
     validateSkillRoots(command, profile)
+    const callKind = resolveCallKind(command)
+    validateBackgroundSpawn(command, profile, callKind, this.deps.isShuttingDown)
+    if (command.background === true) {
+      // 剩余控制意图冻结该树接纳：覆盖本派遣的停止/分支/删除意图存在时，
+      // 后台接纳在持久化 child 前拒绝，不给停止窗口塞进新的排队目标
+      const intent = findCoveringControlIntent(this.deps.sessionStore, {
+        topParentSessionId: resolveTopParentSessionId(
+          this.deps.sessionStore,
+          command.parentSessionId
+        ),
+        parentSessionId: command.parentSessionId,
+        coverRunIds: new Set([identity.spawnRunId, command.parentRunId]),
+        coverSessionIds: new Set([childSessionId, command.parentSessionId])
+      })
+      if (intent) {
+        throw new Error(`后台接纳被控制意图冻结：control_intent:${intent.operationId}`)
+      }
+    }
     const lineage: SubagentLineage = {
       parentSessionId: command.parentSessionId,
       parentRunId: command.parentRunId,
@@ -312,17 +354,14 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     const childSession = childResult.session
     this.deps.onLinked?.({ childSession, created: childResult.created })
 
-    // 计算 callKind
-    let callKind: SubagentRunDispatchCallKind = 'task'
-    if (command.invocation.kind === 'task_tool') {
-      const toolCallId = command.invocation.parentToolCallId
-      callKind = toolCallId?.includes(':batch:') ? 'batch_task' : 'task'
-    } else if (command.invocation.kind === 'skill_fork') {
-      callKind = 'skill_fork'
-    }
     const topParentSessionId = resolveTopParentSessionId(
       this.deps.sessionStore,
       command.parentSessionId
+    )
+    const originUserMessageId = this.resolveOriginUserMessageId(
+      command.parentRunId,
+      command.parentSessionId,
+      command.invocation.parentMessageId
     )
     const dispatch = buildDispatch({
       callKind,
@@ -330,15 +369,21 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       parentRunId: command.parentRunId,
       parentMessageId: command.invocation.parentMessageId,
       parentToolCallId: command.invocation.parentToolCallId,
-      topParentSessionId
+      topParentSessionId,
+      execution: command.background === true ? 'background_read_only' : 'sync',
+      ...(originUserMessageId ? { originUserMessageId } : {})
     })
 
     return this.runResolvedExecution(
       {
         task: command.task,
         workingDirectory: command.workingDirectory,
-        isolation: command.isolation,
-        ...(command.timeoutMs !== undefined ? { timeoutMs: command.timeoutMs } : {}),
+        isolation: command.background === true ? 'readonly' : command.isolation,
+        ...(command.background === true
+          ? { timeoutMs: command.timeoutMs ?? SUBAGENT_WALL_CLOCK_TIMEOUT_MS }
+          : command.timeoutMs !== undefined
+            ? { timeoutMs: command.timeoutMs }
+            : {}),
         parentSessionId: command.parentSessionId,
         parentRunId: command.parentRunId,
         dispatch
@@ -356,7 +401,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     command: FollowupSubagentCommand,
     context: SpawnSubagentContext,
     identity: SpawnIdentity
-  ): Promise<SubagentExecutionResult> {
+  ): Promise<StartedSubagentExecution> {
     const parentSession = this.deps.sessionStore.load(command.parentSessionId)
     if (!parentSession) {
       throw new Error(`父会话 ${command.parentSessionId} 不存在`)
@@ -449,6 +494,11 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       this.deps.sessionStore,
       command.parentSessionId
     )
+    const originUserMessageId = this.resolveOriginUserMessageId(
+      command.parentRunId,
+      command.parentSessionId,
+      command.parentMessageId
+    )
     const dispatch = buildDispatch({
       callKind: 'task_followup',
       parentSessionId: command.parentSessionId,
@@ -456,6 +506,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       parentMessageId: command.parentMessageId,
       parentToolCallId: command.parentToolCallId,
       topParentSessionId,
+      execution: 'sync',
+      ...(originUserMessageId ? { originUserMessageId } : {}),
       ...(resumeSource ? { sourceChildRunId: resumeSource.runId } : {})
     })
 
@@ -540,7 +592,8 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     existingRun: RunSnapshot | null,
     rootRunId: string,
     resumeSource?: RunSnapshot
-  ): Promise<SubagentExecutionResult> {
+  ): Promise<StartedSubagentExecution> {
+    const isBackground = plan.dispatch?.execution === 'background_read_only'
     let recoverySnapshot: RunSnapshot | null = null
     if (existingRun) {
       try {
@@ -554,34 +607,49 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         throw error
       }
       if (existingRun.status === 'completed' || existingRun.status === 'failed' || existingRun.status === 'cancelled') {
-        return this.projectResult(childSession, identity.spawnRunId)
+        const result = Promise.resolve(this.projectResult(childSession, identity.spawnRunId))
+        return { result, completion: result }
       }
-      if (this.deps.isRunExecutionActive?.(existingRun.runId)) {
+      if (isBackground && existingRun.status === 'cancelling') {
+        this.deps.runCoordinator.commitTerminal({
+          runId: existingRun.runId,
+          status: 'cancelled',
+          reason: '后台 child 已取消'
+        })
+        const result = Promise.resolve(this.projectResult(childSession, identity.spawnRunId))
+        return { result, completion: result }
+      }
+      const unstartedBackgroundRun = isBackground && existingRun.status === 'queued'
+      if (!unstartedBackgroundRun && this.deps.isRunExecutionActive?.(existingRun.runId)) {
         throw new Error(`child run ${existingRun.runId} 已有活跃执行句柄`)
       }
-      if (existingRun.status !== 'interrupted') {
+      if (!unstartedBackgroundRun && existingRun.status !== 'interrupted') {
         this.deps.runCoordinator.commitTerminal({
           runId: existingRun.runId,
           status: 'interrupted',
           reason: 'child run 缺少当前进程执行句柄'
         })
       }
-      let interrupted = this.deps.runCoordinator.getSnapshot(existingRun.runId)
-      for (const record of interrupted?.toolCommits ?? []) {
-        if (
-          !record.idempotent &&
-          (record.phase === 'prepared' || record.phase === 'executing')
-        ) {
-          this.deps.runCoordinator.recordToolPhase(
-            existingRun.runId,
-            record.toolCallId,
-            record.toolName,
-            'failed',
-            { idempotent: false }
-          )
+      let interrupted = unstartedBackgroundRun
+        ? null
+        : this.deps.runCoordinator.getSnapshot(existingRun.runId)
+      if (!unstartedBackgroundRun) {
+        for (const record of interrupted?.toolCommits ?? []) {
+          if (
+            !record.idempotent &&
+            (record.phase === 'prepared' || record.phase === 'executing')
+          ) {
+            this.deps.runCoordinator.recordToolPhase(
+              existingRun.runId,
+              record.toolCallId,
+              record.toolName,
+              'failed',
+              { idempotent: false }
+            )
+          }
         }
+        interrupted = this.deps.runCoordinator.getSnapshot(existingRun.runId)
       }
-      interrupted = this.deps.runCoordinator.getSnapshot(existingRun.runId)
       const unresolved = interrupted?.pendingInteractions.some(
         (interaction) => interaction.status === 'pending' || interaction.status === 'submitting'
       )
@@ -592,18 +660,18 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
 
     const rootRun = this.deps.runCoordinator.getSnapshot(rootRunId)
-    if (
+    if (!isBackground && (
       !rootRun ||
       rootRun.executionGeneration === undefined ||
       !this.deps.runCoordinator.isExecutionCurrent(
         rootRunId,
         rootRun.executionGeneration
       )
-    ) {
+    )) {
       throw new Error(`root run ${rootRunId} 的 execution generation 不可用`)
     }
 
-    if (!existingRun && context.waitForCapacity === true) {
+    if (!existingRun && (isBackground || context.waitForCapacity === true)) {
       const queued = this.deps.runCoordinator.startRun({
         kind: 'agent',
         runId: identity.spawnRunId,
@@ -614,7 +682,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       assertChildRunIdentity(queued, childSession, identity.spawnRunId)
     }
 
-    if (context.abortSignal?.aborted) {
+    if (!isBackground && context.abortSignal?.aborted) {
       this.commitWithoutExecution(
         childSession,
         identity.spawnRunId,
@@ -622,19 +690,86 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         '父执行已取消',
         plan.dispatch
       )
-      return this.projectResult(childSession, identity.spawnRunId)
+      const result = Promise.resolve(this.projectResult(childSession, identity.spawnRunId))
+      return { result, completion: result }
     }
 
-    const permitResult = await this.deps.scheduler.acquire({
+    const capacityKey =
+      plan.dispatch?.topParentSessionId ??
+      resolveTopParentSessionId(this.deps.sessionStore, plan.parentSessionId)
+    const permitPromise = this.deps.scheduler.acquire({
       runId: identity.spawnRunId,
-      rootRunId,
+      capacityKey,
       requestKey: identity.spawnKey,
-      wait: context.waitForCapacity === true,
-      ...(context.abortSignal ? { abortSignal: context.abortSignal } : {})
+      wait: isBackground || context.waitForCapacity === true,
+      ...(!isBackground && context.abortSignal
+        ? { abortSignal: context.abortSignal }
+        : {})
     })
+    const completion = this.executeAfterPermit({
+      permitPromise,
+      plan,
+      context,
+      identity,
+      childSession,
+      profile,
+      rootRunId,
+      rootExecutionGeneration: rootRun?.executionGeneration,
+      recoverySnapshot,
+      resumeSource
+    })
+    if (!isBackground) return { result: completion, completion }
+
+    const acceptedSnapshot = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
+    if (!acceptedSnapshot) {
+      throw new Error(`后台 child run ${identity.spawnRunId} 接纳后不可见`)
+    }
+    const accepted = Promise.resolve(projectSubagentAcceptanceResult({
+      childSession,
+      runSnapshot: acceptedSnapshot
+    }))
+    const settled = completion.catch((error) => {
+      this.settleBackgroundFailure(childSession, identity.spawnRunId, plan.dispatch, error)
+      return this.projectResult(childSession, identity.spawnRunId, 'host')
+    })
+    return { result: accepted, completion: settled }
+  }
+
+  private async executeAfterPermit(input: {
+    readonly permitPromise: ReturnType<SubagentScheduler['acquire']>
+    readonly plan: ResolvedExecutionPlan
+    readonly context: SpawnSubagentContext
+    readonly identity: SpawnIdentity
+    readonly childSession: SubagentSessionData
+    readonly profile: SubagentProfileSnapshot
+    readonly rootRunId: string
+    readonly rootExecutionGeneration?: number
+    readonly recoverySnapshot: RunSnapshot | null
+    readonly resumeSource?: RunSnapshot
+  }): Promise<SubagentExecutionResult> {
+    const {
+      permitPromise,
+      plan,
+      context,
+      identity,
+      childSession,
+      profile,
+      rootRunId,
+      rootExecutionGeneration,
+      recoverySnapshot,
+      resumeSource
+    } = input
+    const isBackground = plan.dispatch?.execution === 'background_read_only'
+    const permitResult = await permitPromise
     if (!permitResult.ok) {
       const current = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
-      if (current && isHardTerminalRunStatus(current.status)) {
+      if (
+        current &&
+        (
+          isHardTerminalRunStatus(current.status) ||
+          (isBackground && isTerminalRunStatus(current.status))
+        )
+      ) {
         return this.projectResult(childSession, identity.spawnRunId)
       }
       if (recoverySnapshot || permitResult.code === 'run_active') {
@@ -655,6 +790,16 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
 
     try {
+      const current = this.deps.runCoordinator.getSnapshot(identity.spawnRunId)
+      if (
+        current &&
+        (
+          isHardTerminalRunStatus(current.status) ||
+          (isBackground && isTerminalRunStatus(current.status))
+        )
+      ) {
+        return this.projectResult(childSession, identity.spawnRunId)
+      }
       if (recoverySnapshot) {
         const resuming = this.deps.runCoordinator.transition(
           recoverySnapshot.runId,
@@ -665,6 +810,23 @@ export class SubagentExecutionService implements SpawnSubagentPort {
           throw new Error(`child run ${recoverySnapshot.runId} 无法进入 resuming`)
         }
       }
+      if (isBackground) {
+        const rejection = this.validateBackgroundAfterPermit(
+          plan,
+          identity.spawnRunId,
+          childSession.id
+        )
+        if (rejection) {
+          this.commitWithoutExecution(
+            childSession,
+            identity.spawnRunId,
+            rejection.status,
+            rejection.reason,
+            plan.dispatch
+          )
+          return this.projectResult(childSession, identity.spawnRunId)
+        }
+      }
       return await this.executePrepared(
         plan,
         context,
@@ -672,7 +834,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         childSession,
         profile,
         rootRunId,
-        rootRun.executionGeneration,
+        rootExecutionGeneration,
         recoverySnapshot,
         resumeSource
       )
@@ -688,10 +850,12 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     childSession: SubagentSessionData,
     profile: SubagentProfileSnapshot,
     rootRunId: string,
-    rootExecutionGeneration: number,
+    rootExecutionGeneration: number | undefined,
     recoverySnapshot: RunSnapshot | null,
     resumeSource?: RunSnapshot
   ): Promise<SubagentExecutionResult> {
+    const isBackground = plan.dispatch?.execution === 'background_read_only'
+    const abortSignal = isBackground ? undefined : context.abortSignal
 
     let prepared: PreparedSubagentTurn
     try {
@@ -727,7 +891,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
 
     const runRefs: AgentTurnRunRefs = {
       runId: identity.spawnRunId,
-      resourceOwnerRunId: rootRunId,
+      resourceOwnerRunId: isBackground ? identity.spawnRunId : rootRunId,
       executionGeneration: 0
     }
     const executionUserMessage = [...getSessionActiveMessages(childSession)]
@@ -771,7 +935,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       parentCancelled = true
       prepared.agentLoop.cancel()
     }
-    context.abortSignal?.addEventListener('abort', cancelChild, { once: true })
+    abortSignal?.addEventListener('abort', cancelChild, { once: true })
     const timeoutHandle =
       plan.timeoutMs !== undefined && plan.timeoutMs > 0
         ? setTimeout(() => {
@@ -781,6 +945,19 @@ export class SubagentExecutionService implements SpawnSubagentPort {
           }, plan.timeoutMs)
         : null
 
+    // 收尾必须在句柄 settled 前完成：Registry 句柄清空即代表订阅已释放、loop 已
+    // dispose、完成唤醒已发出。否则空 Registry 会误放行抢先读取结果的 live drain。
+    // 幂等保护：执行器 context 未建立（如 startRun 身份冲突）时不触发 onCleanup，
+    // catch 兜底一次；正常路径由执行器 finally 先 await onCleanup 再 settled。
+    let cleanedUp = false
+    const cleanupOnce = (): void => {
+      if (cleanedUp) return
+      cleanedUp = true
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle)
+      abortSignal?.removeEventListener('abort', cancelChild)
+      unsubscribe()
+      prepared.agentLoop.dispose()
+    }
     try {
       const recoverySnapshots = [resumeSource, recoverySnapshot].filter(Boolean) as readonly RunSnapshot[]
       const executionTask =
@@ -797,8 +974,10 @@ export class SubagentExecutionService implements SpawnSubagentPort {
         ...(context.invocationRef ? { invocationRef: context.invocationRef } : {}),
         profile,
         runId: identity.spawnRunId,
-        resourceOwnerRunId: rootRunId,
-        resourceOwnerGeneration: rootExecutionGeneration,
+        resourceOwnerRunId: isBackground ? identity.spawnRunId : rootRunId,
+        ...(!isBackground && rootExecutionGeneration !== undefined
+          ? { resourceOwnerGeneration: rootExecutionGeneration }
+          : {}),
         runRefs,
         userMessageId: executionUserMessage.id,
         ...(plan.dispatch ? { dispatch: plan.dispatch } : {}),
@@ -814,19 +993,19 @@ export class SubagentExecutionService implements SpawnSubagentPort {
             })
           }
         },
-        onCleanup: () => this.deps.onExecutionSettled?.(eventContext())
+        onCleanup: () => {
+          cleanupOnce()
+          // 返回值传回执行器：完成唤醒（含其异步收尾）全部结束才算收尾完成
+          return this.deps.onExecutionSettled?.(eventContext())
+        }
       })
     } catch {
+      cleanupOnce()
       return this.projectResult(
         childSession,
         identity.spawnRunId,
         timedOut ? 'timeout' : 'host'
       )
-    } finally {
-      if (timeoutHandle !== null) clearTimeout(timeoutHandle)
-      context.abortSignal?.removeEventListener('abort', cancelChild)
-      unsubscribe()
-      prepared.agentLoop.dispose()
     }
 
     return this.projectResult(
@@ -861,6 +1040,30 @@ export class SubagentExecutionService implements SpawnSubagentPort {
     }
   }
 
+  /** 活跃轮的发起用户消息在 turnDraft 投递事实中；已归档轮回退消息树沿 parentId 上溯。 */
+  private resolveOriginUserMessageId(
+    parentRunId: string,
+    parentSessionId: string,
+    parentMessageId: string
+  ): string | undefined {
+    const fromDraft =
+      this.deps.runCoordinator.getSnapshot(parentRunId)?.turnDraft?.userDelivery?.userMessageId
+    if (fromDraft) return fromDraft
+    const session = this.deps.sessionStore.load(parentSessionId)
+    if (!session) return undefined
+    const byId = new Map(session.messages.map(m => [m.id, m]))
+    const seen = new Set<string>()
+    let current = byId.get(parentMessageId)
+    // 有界上溯，seen 防环
+    for (let hop = 0; current && hop < 64; hop++) {
+      if (seen.has(current.id)) return undefined
+      seen.add(current.id)
+      if (current.role === 'user') return current.id
+      current = current.parentId ? byId.get(current.parentId) : undefined
+    }
+    return undefined
+  }
+
   private commitWithoutExecution(
     childSession: SubagentSessionData,
     runId: string,
@@ -880,6 +1083,79 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       if (snapshot.status !== 'running') this.deps.runCoordinator.markRunning(runId)
       this.deps.runCoordinator.commitTerminal({ runId, status, reason })
     }
+  }
+
+  private validateBackgroundAfterPermit(
+    plan: ResolvedExecutionPlan,
+    childRunId: string,
+    childSessionId: string
+  ): { status: 'cancelled' | 'failed' | 'interrupted'; reason: string } | null {
+    if (this.deps.isShuttingDown?.()) {
+      return { status: 'interrupted', reason: 'process_exit' }
+    }
+    const childRun = this.deps.runCoordinator.getSnapshot(childRunId)
+    if (!childRun) {
+      return { status: 'failed', reason: '后台 child run 不存在' }
+    }
+    if (childRun.status === 'cancelling') {
+      return { status: 'cancelled', reason: '后台 child run 已取消' }
+    }
+    // 分支失效化的持久证据记在源 run（child）自己的投递控制上；迟到 permit 不得执行已失效派遣。
+    if (childRun.deliveryBinding?.invalidatedReason) {
+      return {
+        status: 'cancelled',
+        reason: `后台派遣已失效：${childRun.deliveryBinding.invalidatedReason}`
+      }
+    }
+    const parentSession = this.deps.sessionStore.load(plan.parentSessionId)
+    if (!parentSession) {
+      return { status: 'failed', reason: `父会话 ${plan.parentSessionId} 不存在` }
+    }
+    const parentRun = this.deps.runCoordinator.getSnapshot(plan.parentRunId)
+    if (parentRun && parentRun.sessionId !== plan.parentSessionId) {
+      return { status: 'failed', reason: '后台派遣的 parent session/run identity 不匹配' }
+    }
+    const topParentSessionId =
+      plan.dispatch?.topParentSessionId ??
+      resolveTopParentSessionId(this.deps.sessionStore, plan.parentSessionId)
+    const intent = findCoveringControlIntent(this.deps.sessionStore, {
+      topParentSessionId,
+      parentSessionId: plan.parentSessionId,
+      coverRunIds: new Set([childRunId, plan.parentRunId]),
+      coverSessionIds: new Set([childSessionId, plan.parentSessionId])
+    })
+    if (intent) {
+      return {
+        status: 'cancelled',
+        reason: `control_intent:${intent.operationId}`
+      }
+    }
+    return null
+  }
+
+  private settleBackgroundFailure(
+    childSession: SubagentSessionData,
+    runId: string,
+    dispatch: SubagentRunDispatch | undefined,
+    error: unknown
+  ): void {
+    const snapshot = this.deps.runCoordinator.getSnapshot(runId)
+    if (!snapshot) {
+      this.commitWithoutExecution(
+        childSession,
+        runId,
+        'failed',
+        error instanceof Error ? error.message : String(error),
+        dispatch
+      )
+      return
+    }
+    if (isTerminalRunStatus(snapshot.status)) return
+    this.deps.runCoordinator.commitTerminal({
+      runId,
+      status: snapshot.status === 'cancelling' ? 'cancelled' : 'failed',
+      reason: error instanceof Error ? error.message : String(error)
+    })
   }
 
   private projectResult(
@@ -962,6 +1238,42 @@ function validateSkillRoots(
   }
   if (roots.some((root) => !path.isAbsolute(root))) {
     throw new Error('skillRoots 必须全部是绝对路径')
+  }
+}
+
+function resolveCallKind(command: SpawnSubagentCommand): SubagentRunDispatchCallKind {
+  if (command.invocation.kind === 'task_tool') {
+    return command.invocation.parentToolCallId.includes(':batch:')
+      ? 'batch_task'
+      : 'task'
+  }
+  if (command.invocation.kind === 'skill_fork') return 'skill_fork'
+  return 'task'
+}
+
+function isBackgroundSpawnCommand(
+  command: SpawnSubagentCommand | FollowupSubagentCommand
+): command is SpawnSubagentCommand {
+  return 'background' in command && command.background === true
+}
+
+function validateBackgroundSpawn(
+  command: SpawnSubagentCommand,
+  profile: SubagentProfileSnapshot,
+  callKind: SubagentRunDispatchCallKind,
+  isShuttingDown: (() => boolean) | undefined
+): void {
+  if (command.background !== true) return
+  if (callKind !== 'task') {
+    throw new Error('后台子代理仅支持只读 task，batch_task 与 skill fork 保持同步契约')
+  }
+  // 生效上限与 SubagentRuntimeFactory.resolveReadonlyCeiling 一致：
+  // profile 或调用隔离任一要求只读即为 read_only，不按 profile 名字判断。
+  if (profile.permissionCeiling !== 'read_only' && command.isolation !== 'readonly') {
+    throw new Error('拒绝后台：首版仅支持只读后台任务')
+  }
+  if (isShuttingDown?.()) {
+    throw new Error('应用正在退出，已关闭后台子代理接纳')
   }
 }
 
@@ -1083,6 +1395,32 @@ function buildRecoveryTask(originalTask: string, snapshots: readonly RunSnapshot
 }
 
 /**
+ * 查询覆盖本派遣的控制意图，含父会话和单独停止时的 child 会话。
+ * 无覆盖意图返回 null；损坏意图由 decoder 抛错，失败关闭。
+ */
+function findCoveringControlIntent(
+  sessionStore: SessionStore,
+  input: {
+    readonly topParentSessionId: string
+    readonly parentSessionId: string
+    readonly coverRunIds: ReadonlySet<string>
+    readonly coverSessionIds: ReadonlySet<string>
+  }
+): SessionControlIntent | null {
+  for (const sessionId of new Set([input.topParentSessionId, input.parentSessionId, ...input.coverSessionIds])) {
+    const intent = sessionStore.getControlIntent(sessionId)
+    if (!intent) continue
+    if (
+      intent.targetRunIds.some((runId) => input.coverRunIds.has(runId)) ||
+      intent.targetSessionIds.some((targetSessionId) => input.coverSessionIds.has(targetSessionId))
+    ) {
+      return intent
+    }
+  }
+  return null
+}
+
+/**
  * 沿 lineage 上溯到顶层父会话（有界）。
  * 遇到 kind='primary' 或路径断裂时回落为当前 sessionId。
  */
@@ -1106,7 +1444,7 @@ function resolveTopParentSessionId(
 
 /**
  * 构造子 run 的派遣关联。
- * originUserMessageId 本批不填（后续批次由接纳路径补齐）。
+ * 发起用户消息 id 用于自动接力预算，接纳时从父轮投递事实解析。
  */
 function buildDispatch(opts: {
   callKind: SubagentRunDispatchCallKind
@@ -1115,6 +1453,8 @@ function buildDispatch(opts: {
   parentMessageId: string
   parentToolCallId?: string
   topParentSessionId: string
+  execution: SubagentRunDispatch['execution']
+  originUserMessageId?: string
   sourceChildRunId?: string
 }): SubagentRunDispatch {
   return {
@@ -1124,8 +1464,9 @@ function buildDispatch(opts: {
     parentRunId: opts.parentRunId,
     parentMessageId: opts.parentMessageId,
     ...(opts.parentToolCallId ? { parentToolCallId: opts.parentToolCallId } : {}),
-    execution: 'sync',
+    execution: opts.execution,
     topParentSessionId: opts.topParentSessionId,
+    ...(opts.originUserMessageId ? { originUserMessageId: opts.originUserMessageId } : {}),
     ...(opts.sourceChildRunId ? { sourceChildRunId: opts.sourceChildRunId } : {})
   }
 }

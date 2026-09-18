@@ -43,6 +43,7 @@ function blocksToMarkdown(blocks: MessageBlock[]): string {
     if (block.type === 'image') {
       parts.push(`[图片：${block.fileName}]`)
     }
+    // runtime_input 是内部接力事实，不伪装成用户或助手正文导出。
   }
   return parts.filter(part => part.trim().length > 0).join('\n\n')
 }

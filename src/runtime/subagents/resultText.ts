@@ -34,6 +34,8 @@ export function buildSubagentToolResult(
 
 export function statusLabel(status: SubagentExecutionStatus): string {
   switch (status) {
+    case 'accepted':
+      return '已后台接纳'
     case 'completed':
       return '成功'
     case 'incomplete':

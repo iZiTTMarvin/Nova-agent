@@ -218,6 +218,8 @@ export interface RunSnapshot {
   executionGeneration?: number
   /** 子 run 的版本化派遣关联；仅 SubagentExecutionService 写入。 */
   dispatch?: SubagentRunDispatch
+  /** 源 run 投递控制（绑定/暂停/失效），终态后仍可更新，不是执行状态。 */
+  deliveryBinding?: SubagentDeliveryBinding
 }
 
 /** append-only 事件（落盘 events.jsonl） */
@@ -365,6 +367,81 @@ export function decodeSubagentRunDispatch(
     originUserMessageId: d.originUserMessageId as string | undefined,
     sourceChildRunId: d.sourceChildRunId as string | undefined
   }
+}
+
+export const SUBAGENT_DELIVERY_BINDING_VERSION = 1
+
+/**
+ * 源 run 的投递控制：绑定的父接收位置/接力 run、暂停、失效原因。
+ * 它不是第二份 child 执行状态；pending/已处理从源终态与父接收事实派生。
+ */
+export interface SubagentDeliveryBinding {
+  readonly version: 1
+  /** 绑定的父侧接收 run 或接力 run；未绑定时缺省。 */
+  readonly boundRunId?: string
+  readonly boundSessionId?: string
+  /** 用户暂停：不进入自动接力，不删除结果。 */
+  readonly paused?: boolean
+  /** 失效原因（停止/分支失效/删除）；只影响通知资格，不删除 child 结果。 */
+  readonly invalidatedReason?: string
+  readonly updatedAt: number
+}
+
+/**
+ * 失败关闭的 deliveryBinding decoder。
+ * raw == null → undefined；损坏/未知版本 → throw。
+ */
+export function decodeSubagentDeliveryBinding(
+  raw: unknown
+): SubagentDeliveryBinding | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('deliveryBinding: not an object')
+  const d = raw as Record<string, unknown>
+  if (typeof d.version !== 'number' || d.version !== SUBAGENT_DELIVERY_BINDING_VERSION) {
+    throw new Error(`deliveryBinding: unsupported version ${d.version}`)
+  }
+  if (typeof d.updatedAt !== 'number') {
+    throw new Error('deliveryBinding: updatedAt must be a number')
+  }
+  const strFields = ['boundRunId', 'boundSessionId', 'invalidatedReason'] as const
+  for (const key of strFields) {
+    const v = d[key]
+    if (v !== undefined && v !== null && (typeof v !== 'string' || v.trim() === '')) {
+      throw new Error(`deliveryBinding: "${key}" must be a non-empty string if present`)
+    }
+  }
+  if (d.paused !== undefined && d.paused !== null && typeof d.paused !== 'boolean') {
+    throw new Error('deliveryBinding: "paused" must be a boolean if present')
+  }
+  return {
+    version: 1,
+    boundRunId: (d.boundRunId ?? undefined) as string | undefined,
+    boundSessionId: (d.boundSessionId ?? undefined) as string | undefined,
+    paused: (d.paused ?? undefined) as boolean | undefined,
+    invalidatedReason: (d.invalidatedReason ?? undefined) as string | undefined,
+    updatedAt: d.updatedAt
+  }
+}
+
+/** 通知 id = childRunId + terminalTransitionId 的稳定组合；空输入拒绝。 */
+export function deriveSubagentNotificationId(
+  childRunId: string,
+  terminalTransitionId: string
+): string {
+  if (typeof childRunId !== 'string' || childRunId.trim() === '') {
+    throw new Error('notificationId: childRunId 必须为非空字符串')
+  }
+  if (typeof terminalTransitionId !== 'string' || terminalTransitionId.trim() === '') {
+    throw new Error('notificationId: terminalTransitionId 必须为非空字符串')
+  }
+  return `ntf_${childRunId}_${terminalTransitionId}`
+}
+
+/** 无 dispatch 的旧记录归一化为同步执行。 */
+export function resolveDispatchExecution(snapshot: {
+  dispatch?: SubagentRunDispatch
+}): SubagentRunDispatch['execution'] {
+  return snapshot.dispatch?.execution ?? 'sync'
 }
 
 /** 允许的状态转换表 */
