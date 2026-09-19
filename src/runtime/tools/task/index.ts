@@ -42,6 +42,10 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
       properties: {
         subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose / critic / inspector' },
         task: { type: 'string', description: '子任务描述' },
+        background: {
+          type: 'boolean',
+          description: '可选后台执行：立即返回接纳句柄并继续父任务，结果以后台通知送达。后台任务强制只读执行，不允许写工作区'
+        },
         model: {
           type: 'object',
           description: '可选 canonical 模型覆盖，仅改变模型路由，不改变 profile prompt/工具/权限/isolation',
@@ -64,11 +68,15 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
     executionMode: 'sequential',
     async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
       const extraKeys = Object.keys(args).filter(
-        key => !['subagent_type', 'task', 'model', 'reasoningEffort'].includes(key)
+        key => !['subagent_type', 'task', 'background', 'model', 'reasoningEffort'].includes(key)
       )
       if (extraKeys.length > 0) {
         return failure(`未知字段：${extraKeys.join(', ')}`)
       }
+      if (args.background !== undefined && typeof args.background !== 'boolean') {
+        return failure('background 必须是布尔值')
+      }
+      const background = args.background === true
       const profileId = String(args.subagent_type ?? '').trim()
       const task = String(args.task ?? '').trim()
       if (!profileId) return failure('子代理类型不能为空')
@@ -112,6 +120,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
               profileId === BUILTIN_SUBAGENT_IDS.critic
                 ? 'readonly'
                 : 'shared',
+            ...(background ? { background: true } : {}),
             timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
             ...(modelOverride ? { modelOverride } : {}),
             ...(reasoningEffort !== undefined ? { reasoningEffort } : {})

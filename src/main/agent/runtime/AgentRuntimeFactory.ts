@@ -248,6 +248,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryRetrievalService,
     loadSettings: loadNovaSettings,
     getSpawnSubagentPort,
+    getRunCoordinator: () => runCoordinator,
     getSubagentCatalog: () =>
       buildSubagentCatalog(
         listSubAgents(projectPath),

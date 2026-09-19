@@ -52,6 +52,7 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   { name: 'model_list', capability: 'agent', exposure: 'always', codeMode: 'direct-only' },
   { name: 'task', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'task_followup', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
+  { name: 'task_wait', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'subagent_read', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'batch_task', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'save_plan', capability: 'plan', exposure: 'mode-bound', codeMode: 'direct-only' },

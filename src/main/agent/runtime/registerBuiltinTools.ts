@@ -21,6 +21,7 @@ import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
 import { createTaskFollowupTool } from '../../../runtime/tools/task_followup'
+import { createTaskWaitTool } from '../../../runtime/tools/task_wait'
 import { subagentReadTool } from '../../../runtime/tools/subagentRead'
 import { createBatchTaskTool } from '../../../runtime/tools/batch_task'
 import { createAgentListTool } from '../../../runtime/tools/agent_list'
@@ -48,6 +49,7 @@ import type { MemoryRetrievalService } from '../../../runtime/memory/retrieval/M
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
+import type { RunCoordinator } from '../../../runtime/run'
 import type { SubagentCatalogEntry } from '../../../shared/subagents'
 
 export interface BuiltinToolRegistrationDeps {
@@ -58,6 +60,8 @@ export interface BuiltinToolRegistrationDeps {
   loadSettings: () => NovaSettings
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
+  /** task_wait 读取 run 状态与订阅变更；执行时惰性解析。 */
+  getRunCoordinator?: () => RunCoordinator | null
   /** agent_list 读取的 workspace-scoped catalog；仅返回公开字段。 */
   getSubagentCatalog?: () => readonly SubagentCatalogEntry[]
   loadSubagentProfile: (profileId: string, workspaceRoot: string) => unknown
@@ -155,6 +159,15 @@ export function registerBuiltinTools(
   toolRegistry.register(
     createTaskFollowupTool({
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined)
+    })
+  )
+  toolRegistry.register(
+    createTaskWaitTool({
+      getRunCoordinator: () => {
+        const coordinator = deps.getRunCoordinator?.()
+        if (!coordinator) throw new Error('子任务等待服务尚未装配')
+        return coordinator
+      }
     })
   )
   toolRegistry.register(subagentReadTool)

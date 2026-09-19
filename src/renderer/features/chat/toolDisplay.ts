@@ -27,6 +27,8 @@ export function getToolDisplayName(toolName: string): string {
       return '调度子代理 (task)'
     case 'task_followup':
       return '继续既有子代理 (task_followup)'
+    case 'task_wait':
+      return '等待子任务 (task_wait)'
     case 'subagent_read':
       return '回读子代理证据 (subagent_read)'
     case 'batch_task':
@@ -184,6 +186,11 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (childDisplay && display) return `续跑子代理 ${childDisplay}：${display}`
       if (childDisplay) return `续跑子代理 ${childDisplay}`
       return display || '继续既有子代理'
+    }
+    case 'task_wait': {
+      const runIds = Array.isArray(args.run_ids) ? args.run_ids.filter((id): id is string => typeof id === 'string') : []
+      if (args.all_unfinished === true) return '等待全部未完成子任务'
+      return runIds.length > 0 ? `等待 ${runIds.length} 个子任务` : '等待子任务'
     }
     case 'subagent_read': {
       const child = (args.child_session_id as string) || ''

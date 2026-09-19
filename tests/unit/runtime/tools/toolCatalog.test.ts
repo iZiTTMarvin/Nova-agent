@@ -99,6 +99,7 @@ describe('Tool Catalog 清洁度', () => {
         name =>
           name !== 'task' &&
           name !== 'task_followup' &&
+          name !== 'task_wait' &&
           name !== 'subagent_read' &&
           name !== 'batch_task'
       )

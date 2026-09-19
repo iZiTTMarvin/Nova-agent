@@ -98,6 +98,8 @@ export class FakeRuntime {
   readonly requests: RecordedRequest[] = []
 
   private readonly turns: FakeTurn[] = []
+  /** 按请求体标记路由的独立回合队列：父子并发派遣时各自保持确定性顺序 */
+  private readonly lanes: Array<{ marker: string; turns: FakeTurn[] }> = []
   private readonly holds = new Map<string, Deferred>()
   private readonly sockets = new Set<Socket>()
   private readonly server = createServer((req, res) => {
@@ -134,6 +136,19 @@ export class FakeRuntime {
 
   enqueue(...turns: FakeTurn[]): void {
     this.turns.push(...turns)
+  }
+
+  /**
+   * 建立按请求体标记路由的回合队列：请求体 JSON 含 marker 的请求消耗本队列，
+   * 其余请求仍走默认 FIFO。用于后台派遣时把父子请求编排成确定性顺序。
+   */
+  enqueueLane(marker: string, ...turns: FakeTurn[]): void {
+    let lane = this.lanes.find(candidate => candidate.marker === marker)
+    if (!lane) {
+      lane = { marker, turns: [] }
+      this.lanes.push(lane)
+    }
+    lane.turns.push(...turns)
   }
 
   release(id: string): void {
@@ -209,7 +224,9 @@ export class FakeRuntime {
     }
     this.requests.push(record)
 
-    const turn = this.turns.shift() ?? { kind: 'text', text: 'NOVA_E2E_DEFAULT' }
+    const raw = JSON.stringify(body)
+    const lane = this.lanes.find(candidate => raw.includes(candidate.marker) && candidate.turns.length > 0)
+    const turn = lane?.turns.shift() ?? this.turns.shift() ?? { kind: 'text', text: 'NOVA_E2E_DEFAULT' }
 
     if (turn.kind === 'error') {
       res.writeHead(turn.status, { 'content-type': 'application/json' })

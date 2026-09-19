@@ -101,6 +101,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
 
   const [resumeState, setResumeState] = useState<ResumeState>('idle')
   const [resumeRejection, setResumeRejection] = useState<string>('')
+  const [stopError, setStopError] = useState('')
   const unsubscribeRef = useRef<(() => void) | null>(null)
 
   const latestProjection = useSubagentProjectionStore((state) =>
@@ -123,6 +124,16 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
 
   useEffect(() => {
     return () => unsubscribeRef.current?.()
+  }, [])
+
+  /** 单独停止后台目标：只取消该 run，不影响父执行与兄弟任务；结果经权威快照回填。 */
+  const handleStop = useCallback(async (targetRunId: string, label: string) => {
+    setStopError('')
+    try {
+      await window.api.invoke('cancel-execution', { runId: targetRunId })
+    } catch (error) {
+      setStopError(`${label}失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }, [])
 
   const handleResume = useCallback(async (e: React.MouseEvent) => {
@@ -154,6 +165,12 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     projection.startedAt,
     active ? now : projection.completedAt ?? projection.startedAt ?? now
   )
+  // 后台子代理的单独停止入口：父空闲也能停；同步子代理跟随父 turn 的中断入口
+  const stopTarget =
+    projection.execution === 'background_read_only' && active && projection.status !== 'cancelling'
+      ? projection.childRunId
+      : undefined
+  const pendingRelayRunId = projection.pendingRelayRunId
 
   /** 次行文案：运行态展示当前动作，终态翻转为结果/失败/回退文案。 */
   const activityLine = useMemo(() => {
@@ -237,6 +254,30 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
           <InlinePermissionBar request={anchoredPermissionRequest} />
         </div>
       )}
+      {(stopTarget || pendingRelayRunId) && (
+        <div className="subagent-activity-row__actions">
+          {stopTarget && (
+            <button
+              type="button"
+              className="subagent-activity-row__stop-btn"
+              onClick={() => void handleStop(stopTarget, '停止后台任务')}
+            >
+              停止后台任务
+            </button>
+          )}
+          {pendingRelayRunId && (
+            <button
+              type="button"
+              className="subagent-activity-row__stop-btn"
+              onClick={() => void handleStop(pendingRelayRunId, '停止自动接力')}
+            >
+              停止自动接力
+            </button>
+          )}
+          {stopError && <span className="subagent-activity-row__stop-error">{stopError}</span>}
+        </div>
+      )}
+
       {((projection.status === 'interrupted' && isLatest) || resumeState !== 'idle') && (
         <div className="subagent-activity-row__resume">
           {resumeState === 'idle' && (

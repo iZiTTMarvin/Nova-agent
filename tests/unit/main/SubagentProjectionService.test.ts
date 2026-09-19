@@ -825,4 +825,65 @@ describe('SubagentProjectionService', () => {
       vi.useRealTimers()
     }
   })
+
+  it('后台 run 投影派生 execution 与接力预约；接力离开 queued 后入口事实消失', () => {
+    const child = createChild('call-bg', 'run-child-bg')
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-child-bg',
+      workspaceId: workspace,
+      sessionId: child.id,
+      dispatch: {
+        version: 1,
+        callKind: 'task',
+        parentSessionId,
+        parentRunId: 'run-parent',
+        parentMessageId: 'msg-parent',
+        parentToolCallId: 'call-bg',
+        topParentSessionId: parentSessionId,
+        execution: 'background_read_only'
+      }
+    })
+    coordinator.markRunning('run-child-bg', 'msg-bg-final')
+    sessionStore.appendMessageFast(child.id, {
+      id: 'msg-bg-final',
+      role: 'assistant',
+      content: 'background summary',
+      timestamp: Date.now()
+    })
+    coordinator.commitTerminal({ runId: 'run-child-bg', status: 'completed' })
+
+    // 空闲接力预约：queued 父 run 携带指向该 child 的冻结批次
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'run-relay-1',
+      workspaceId: workspace,
+      sessionId: parentSessionId,
+      relayTrigger: {
+        version: 1,
+        requestId: 'run-relay-1',
+        receiveMessageId: 'msg-relay-1',
+        originUserMessageId: 'msg-user-1',
+        anchorMessageId: null,
+        createdAt: Date.now(),
+        items: [
+          { notificationId: 'notif-1', sourceRunId: 'run-child-bg', content: 'background summary' }
+        ]
+      }
+    })
+
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    const pending = service.getByParentToolCallId(parentSessionId, 'call-bg')
+    expect(pending).toMatchObject({
+      status: 'completed',
+      execution: 'background_read_only',
+      pendingRelayRunId: 'run-relay-1'
+    })
+
+    // 接力开始执行后不再是可停止的预约，执行形态事实保持
+    coordinator.markRunning('run-relay-1', 'msg-relay-run')
+    const started = service.getByParentToolCallId(parentSessionId, 'call-bg')
+    expect(started?.pendingRelayRunId).toBeUndefined()
+    expect(started?.execution).toBe('background_read_only')
+  })
 })

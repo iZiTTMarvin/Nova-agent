@@ -455,6 +455,43 @@ describe('SubagentActivityRow', () => {
     renderer.unmount()
   })
 
+  it('后台子代理运行中显示停止后台任务入口并单独取消该 run；同步子代理不显示', async () => {
+    const background = renderDom(
+      <SubagentActivityRow
+        projection={baseProjection({ status: 'running', execution: 'background_read_only' })}
+      />
+    )
+    const stop = background.container.querySelector<HTMLButtonElement>(
+      '.subagent-activity-row__stop-btn'
+    )
+    expect(stop).not.toBeNull()
+    expect(stop?.textContent).toContain('停止后台任务')
+    act(() => stop!.click())
+    await flushAsync()
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'internal-run-id' })
+    background.unmount()
+
+    const sync = renderDom(
+      <SubagentActivityRow projection={baseProjection({ status: 'running' })} />
+    )
+    expect(sync.container.querySelector('.subagent-activity-row__stop-btn')).toBeNull()
+    sync.unmount()
+  })
+
+  it('接力已预约的完成行显示停止自动接力入口，点击取消接力 run', async () => {
+    const renderer = renderDom(
+      <SubagentActivityRow projection={baseProjection({ pendingRelayRunId: 'run-relay-9' })} />
+    )
+    const stop = renderer.container.querySelector<HTMLButtonElement>(
+      '.subagent-activity-row__stop-btn'
+    )
+    expect(stop?.textContent).toContain('停止自动接力')
+    act(() => stop!.click())
+    await flushAsync()
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'run-relay-9' })
+    renderer.unmount()
+  })
+
   it('点击继续按钮调用 send-message 且参数含稳定 userMessageId 与两个 id；不冒泡展开浮层', async () => {
     vi.useFakeTimers()
     try {

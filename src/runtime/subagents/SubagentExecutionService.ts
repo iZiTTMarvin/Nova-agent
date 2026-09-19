@@ -238,10 +238,14 @@ export class SubagentExecutionService implements SpawnSubagentPort {
   }
 
   private async spawnOnce(
-    command: SpawnSubagentCommand,
+    rawCommand: SpawnSubagentCommand,
     context: SpawnSubagentContext,
     identity: SpawnIdentity
   ): Promise<StartedSubagentExecution> {
+    // 后台派遣以只读执行；归一化先于接纳校验，后台资格按生效隔离判定
+    const command: SpawnSubagentCommand = rawCommand.background === true
+      ? { ...rawCommand, isolation: 'readonly' }
+      : rawCommand
     const parentSession = this.deps.sessionStore.load(command.parentSessionId)
     if (!parentSession) {
       throw new Error(`父会话 ${command.parentSessionId} 不存在`)
@@ -380,7 +384,7 @@ export class SubagentExecutionService implements SpawnSubagentPort {
       {
         task: command.task,
         workingDirectory: command.workingDirectory,
-        isolation: command.background === true ? 'readonly' : command.isolation,
+        isolation: command.isolation,
         ...(command.background === true
           ? { timeoutMs: command.timeoutMs ?? SUBAGENT_WALL_CLOCK_TIMEOUT_MS }
           : command.timeoutMs !== undefined

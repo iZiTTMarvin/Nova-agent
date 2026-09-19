@@ -678,20 +678,24 @@ describe('SubagentExecutionService', () => {
     }).status).toBe('completed')
   })
 
-  it('workspace_write profile 使用 shared isolation 时在持久化前拒绝后台任务', async () => {
+  it('后台派遣对可写 profile 强制只读生效上限并按后台接纳', async () => {
     const background = command({
       background: true,
       profileId: 'code',
       isolation: 'shared'
     })
-    const identity = createSpawnIdentity(background)
     const { service, prepareTurn } = createService()
 
-    await expect(service.spawn(background, { invocationRef: invocationRef() }))
-      .rejects.toThrow('拒绝后台：首版仅支持只读后台任务')
-    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
-    expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
-    expect(prepareTurn).not.toHaveBeenCalled()
+    // background 即只读契约：执行装配按 readonly 生效，而非拒绝接纳
+    const accepted = await service.spawn(background, { invocationRef: invocationRef() })
+    expect(accepted.status).toBe('accepted')
+    await vi.waitFor(() => expect(prepareTurn).toHaveBeenCalledTimes(1))
+    expect(prepareTurn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ isolation: 'readonly' })
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)).toEqual(expect.objectContaining({
+      dispatch: expect.objectContaining({ execution: 'background_read_only' })
+    }))
   })
 
   it('可写 profile 使用 readonly isolation 时生效上限为只读，允许后台接纳', async () => {

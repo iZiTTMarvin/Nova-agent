@@ -127,8 +127,12 @@ export const useSubagentProjectionStore = create<SubagentProjectionStore>((set, 
       snapshot.status === 'interrupted'
     if (!projection) {
       // followup 的父调用归属靠父会话工具调用正向重算，而该消息要等父 turn 结束才落盘；
-      // 父 run 终态后补一次刷新，让 followup 活动行补齐归属（消息持久化先于 run 终态提交）
-      if (isTerminal && get().childRunIdsByParentSessionId[snapshot.sessionId] !== undefined) {
+      // 父 run 终态后补一次刷新，让 followup 活动行补齐归属（消息持久化先于 run 终态提交）。
+      // 接力预约/执行/结算同样落在本会话 run 上：活动行的停止接力入口随投影重算出现与消失。
+      if (
+        (isTerminal || snapshot.relayTrigger !== undefined) &&
+        get().childRunIdsByParentSessionId[snapshot.sessionId] !== undefined
+      ) {
         void get().refreshParent(snapshot.sessionId)
       }
       return

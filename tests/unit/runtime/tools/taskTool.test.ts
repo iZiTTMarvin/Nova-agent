@@ -60,6 +60,10 @@ describe('task tool spawn adapter', () => {
       properties: {
         subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose / critic / inspector' },
         task: { type: 'string', description: '子任务描述' },
+        background: {
+          type: 'boolean',
+          description: '可选后台执行：立即返回接纳句柄并继续父任务，结果以后台通知送达。后台任务强制只读执行，不允许写工作区'
+        },
         model: {
           type: 'object',
           description: '可选 canonical 模型覆盖，仅改变模型路由，不改变 profile prompt/工具/权限/isolation',
@@ -126,6 +130,24 @@ describe('task tool spawn adapter', () => {
     expect(spawn.mock.calls[1]?.[0]).toEqual(
       expect.objectContaining({ isolation: 'shared' })
     )
+  })
+
+  it('background 参数按布尔透传：true 才进入 spawn 命令，非法类型失败关闭', async () => {
+    const { tool, spawn } = setup()
+    await tool.execute({ subagent_type: 'explore', task: 'survey' }, context())
+    await tool.execute({ subagent_type: 'explore', task: 'survey', background: true }, context())
+    const rejected = await tool.execute(
+      { subagent_type: 'explore', task: 'survey', background: 'yes' },
+      context()
+    )
+
+    expect(spawn.mock.calls[0]?.[0]).not.toHaveProperty('background')
+    expect(spawn.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({ background: true })
+    )
+    expect(rejected.success).toBe(false)
+    expect(rejected.error).toContain('background')
+    expect(spawn).toHaveBeenCalledTimes(2)
   })
 
   it('critic 走 readonly isolation，inspector 走 shared isolation', async () => {
