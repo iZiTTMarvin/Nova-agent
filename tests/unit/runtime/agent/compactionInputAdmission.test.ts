@@ -8,7 +8,7 @@ import {
   getTailTokenBudget,
   splitForCompactionByTokens
 } from '../../../../src/runtime/agent/compaction/compaction'
-import { createAgentContext } from '../../../../src/runtime/agent/core/AgentContext'
+import { createAgentContext, type AgentContext } from '../../../../src/runtime/agent/core/AgentContext'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
@@ -39,13 +39,16 @@ function createBudgetManager() {
   }
 }
 
-function createService(messages: ChatMessage[], client: MockModelClient): CompactionService {
+function createService(messages: ChatMessage[], client: MockModelClient): {
+  service: CompactionService
+  context: AgentContext
+} {
   const context = createAgentContext({
     readState: createReadState(),
     messages,
     systemPrompt: 'system prompt'
   })
-  return new CompactionService({
+  const service = new CompactionService({
     context,
     modelClient: client,
     contextBudgetManager: createBudgetManager(),
@@ -55,6 +58,7 @@ function createService(messages: ChatMessage[], client: MockModelClient): Compac
     getIdleCacheProfile: () => null,
     idleProjection: identitySummaryProjection
   })
+  return { service, context }
 }
 
 describe('compaction input admission', () => {
@@ -76,17 +80,15 @@ describe('compaction input admission', () => {
       { type: 'text_delta', delta: '继续检查仓库' },
       { type: 'message_end', finishReason: 'stop' }
     ] })
-    const service = createService(structuredClone(messages), client)
+    const { service, context } = createService(structuredClone(messages), client)
 
     await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(true)
 
     const calls = client.getCalls()
     expect(calls).toHaveLength(2)
     expect(calls.every(call => requestUnits(call.messages, call.tools) <= INPUT_LIMIT)).toBe(true)
-
-    const compacted = (service as unknown as { context: { messages: ChatMessage[] } }).context.messages
-    expect(requestUnits(compacted)).toBeLessThanOrEqual(INPUT_LIMIT)
-    expect(compacted.some(message => message.content === initiallyFoldedBoundary!.content)).toBe(true)
+    expect(requestUnits(context.messages)).toBeLessThanOrEqual(INPUT_LIMIT)
+    expect(context.messages.some(message => message.content === initiallyFoldedBoundary!.content)).toBe(true)
     service.dispose()
   })
 
@@ -101,11 +103,11 @@ describe('compaction input admission', () => {
       { type: 'text_delta', delta: '不会被调用' },
       { type: 'message_end', finishReason: 'stop' }
     ] })
-    const service = createService(messages, client)
+    const { service, context } = createService(messages, client)
 
     await expect(service.runOverflowCompaction('standard', identitySummaryProjection)).resolves.toBe(false)
     expect(client.getCalls()).toHaveLength(0)
-    expect((service as unknown as { context: { messages: ChatMessage[] } }).context.messages).toEqual(original)
+    expect(context.messages).toEqual(original)
     service.dispose()
   })
 })
