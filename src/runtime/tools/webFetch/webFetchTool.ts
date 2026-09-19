@@ -6,7 +6,7 @@
  * 先完整投递一轮、滑出窗口后成批归档；仅设病态天花板（明确报错，不静默砍）。
  */
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
-import { scraperFetchResponse } from '../webSearch/scraper/http'
+import { withScraperResponse } from '../webSearch/scraper/http'
 import { checkUrl } from './urlGate'
 import { extractContent } from './extractor'
 import { cacheGet, cachePut } from './fetchCache'
@@ -49,23 +49,35 @@ async function fetchWithGate(url: string, signal?: AbortSignal): Promise<Fetched
     if (!verdict.ok) {
       throw new GateError(verdict.detail)
     }
-    const response = await scraperFetchResponse(verdict.normalizedUrl, { signal })
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.get('location')
-      if (!location) {
-        throw new GateError(`HTTP ${response.status} 重定向缺少 Location 头`)
+    const outcome = await withScraperResponse(
+      verdict.normalizedUrl,
+      { signal },
+      async response => {
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location')
+          if (!location) {
+            throw new GateError(`HTTP ${response.status} 重定向缺少 Location 头`)
+          }
+          return { kind: 'redirect' as const, location }
+        }
+        if (!response.ok) {
+          throw new GateError(`HTTP ${response.status}: ${response.statusText}`)
+        }
+        return {
+          kind: 'page' as const,
+          body: await response.text(),
+          contentType: response.headers.get('content-type') ?? undefined
+        }
       }
-      current = new URL(location, verdict.normalizedUrl).toString()
+    )
+    if (outcome.kind === 'redirect') {
+      current = new URL(outcome.location, verdict.normalizedUrl).toString()
       continue
     }
-    if (!response.ok) {
-      throw new GateError(`HTTP ${response.status}: ${response.statusText}`)
-    }
-    const contentType = response.headers.get('content-type') ?? undefined
     return {
       finalUrl: verdict.normalizedUrl,
-      body: await response.text(),
-      contentType,
+      body: outcome.body,
+      contentType: outcome.contentType,
       fromCache: false,
       fetchedAt: Date.now()
     }

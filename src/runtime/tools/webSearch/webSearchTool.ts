@@ -80,6 +80,9 @@ export const webSearchTool: ToolExecutor = {
     const signal = context.abortSignal ?? new AbortController().signal
 
     for (const provider of providers) {
+      if (signal.aborted) {
+        return { success: false, output: '', error: '搜索已取消：请求已取消' }
+      }
       try {
         const response: SearchResponse = await provider.search(
           { query, maxResults, recency },
@@ -90,6 +93,9 @@ export const webSearchTool: ToolExecutor = {
           output: formatForLLM(response)
         }
       } catch (err) {
+        if (signal.aborted) {
+          return { success: false, output: '', error: '搜索已取消：请求已取消' }
+        }
         const providerError: SearchProviderError =
           err && typeof err === 'object' && 'provider' in err
             ? (err as SearchProviderError)

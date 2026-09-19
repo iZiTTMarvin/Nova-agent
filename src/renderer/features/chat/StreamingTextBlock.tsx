@@ -2,9 +2,9 @@
  * StreamingTextBlock — 流式期间的文本块渲染
  *
  * 封装 useStreamingRenderPool + MarkdownRenderer（两阶段增量）：
- * - 流式期间用 render pool 逐步放出字符（打字机效果）
+ * - agile 直接展示合帧后的内容，elegant 用 render pool 平滑放出
  * - Markdown 侧：已封口 prefix 冻结 + 活动 tail 低成本重解析
- * - tab 不可见时降频放出；回前台一次合并到最新长度
+ * - elegant 在 tab 不可见时停止缓放并直接合并到最新长度
  * - 流式结束后直接显示完整内容并启用终态高亮
  */
 import React, { useEffect, useRef, useState } from 'react'
@@ -29,7 +29,7 @@ export interface StreamingTextBlockProps {
    * 是否因等待用户输入（bash 权限 / askQuestion / 验证权限）而暂停。
    */
   paused?: boolean
-  /** 渲染风格：agile (32ms 帧) | elegant (36ms 帧) */
+  /** 渲染风格：agile 直接展示 | elegant 按 36ms 节奏平滑放出 */
   style?: RenderStyle
   /**
    * render pool 每次 tick（renderedLength 变化）时的回调。
@@ -56,8 +56,8 @@ function useDocumentVisible(): boolean {
 }
 
 /**
- * 流式文本块。流式期间走 useStreamingRenderPool 控制放出节奏，
- * Markdown 走 sealed+tail 增量解析；结束后一次性终态高亮。
+ * 流式文本块。agile 直接展示上游内容，elegant 用渲染池控制节奏；
+ * Markdown 走 sealed+tail 增量解析，结束后一次性终态高亮。
  */
 export const StreamingTextBlock = React.memo(function StreamingTextBlock({
   fullContent,
@@ -69,8 +69,8 @@ export const StreamingTextBlock = React.memo(function StreamingTextBlock({
 }: StreamingTextBlockProps) {
   const docVisible = useDocumentVisible()
 
-  // 不可见或暂停时关掉打字机：render pool 会把 renderedLength 拉到末尾（一次合并）
-  const animating = isStreaming && enableTypewriter && !paused && docVisible
+  // agile 不再逐字限速；elegant 在可见且未暂停时保留平滑放出。
+  const animating = style === 'elegant' && isStreaming && enableTypewriter && !paused && docVisible
   const pool = useStreamingRenderPool(fullContent, animating, style)
   const lastReportedLengthRef = useRef<number>(pool.renderedLength)
 

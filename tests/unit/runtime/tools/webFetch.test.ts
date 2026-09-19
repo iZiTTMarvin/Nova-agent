@@ -170,6 +170,7 @@ describe('权限升格：web_fetch 私网 IP', () => {
 describe('本地 server 抓取链路', () => {
   let server: Server
   let baseUrl: string
+  let redirectBodyReleased = false
 
   beforeAll(async () => {
     server = createServer((req, res) => {
@@ -181,6 +182,17 @@ describe('本地 server 抓取链路', () => {
       if (req.url === '/redirect-to-private') {
         res.writeHead(302, { location: 'http://192.168.99.99/admin' })
         res.end()
+        return
+      }
+      if (req.url === '/redirect-with-body') {
+        res.writeHead(302, { location: '/page' })
+        res.flushHeaders()
+        res.write('unused redirect body')
+        const timer = setInterval(() => res.write('.'), 20)
+        res.on('close', () => {
+          clearInterval(timer)
+          redirectBodyReleased = !res.writableEnded
+        })
         return
       }
       if (req.url === '/redirect-loop') {
@@ -223,6 +235,15 @@ describe('本地 server 抓取链路', () => {
     expect(out.success).toBe(false)
     if (out.success) return
     expect(out.error).toContain('重定向进入内网')
+  })
+
+  it('跟随重定向前释放未消费的旧响应正文', async () => {
+    const out = await webFetchTool.execute(
+      { url: `${baseUrl}/redirect-with-body`, force: true },
+      minimalContext()
+    )
+    expect(out.success).toBe(true)
+    await expect.poll(() => redirectBodyReleased).toBe(true)
   })
 
   it('重定向环明确报错', async () => {
