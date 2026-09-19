@@ -15,6 +15,7 @@ import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 import { parseRequestBudgetAnchor, type RequestBudgetMeasurement } from '../../../../src/runtime/model/requestBudget'
+import { estimateTextTokens } from '../../../../src/shared/model/tokenEstimate'
 
 const roots: string[] = []
 afterEach(() => { resetSessionIndexHostForTests(); roots.splice(0).forEach(root => rmSync(root, { recursive: true, force: true })) })
@@ -35,6 +36,51 @@ function setup(activeConfig = config) {
 }
 
 describe('同路由最终投影预算', () => {
+  it.each([
+    ['', 0], ['a', 1], ['abcd', 1], ['abcde', 2], ['\u007f', 1], ['\u0080', 1],
+    ['中文', 2], ['\ud800', 1], ['\udfff', 1], ['\ud800\udc00', 2],
+    ['\udbff\udfff', 2], ['A\ud800\udfffZ', 3], ['\udc00\ud800', 2]
+  ] as const)('Unicode 估算与硬阈值保持原口径 %j', (text, expected) => {
+    expect(estimateTextTokens(text)).toBe(expected)
+    const input: ChatMessage[] = [{ role: 'user', content: text }]
+    const json = JSON.stringify(input)
+    let units = 0
+    for (const char of json) {
+      const point = char.codePointAt(0)!
+      units += point <= 0x7f ? .25 : point <= 0xffff ? 1 : 2
+    }
+    const tokens = Math.ceil(units)
+    const bytes = Buffer.byteLength(json)
+    expect(estimateContextSize(input)).toEqual({ tokens, bytes })
+    expect(new ContextBudgetManager({ maxEstimatedTokens: tokens }).enforceInline(input))
+      .toEqual({ status: 'within_budget', estimatedTokens: tokens, serializedBytes: bytes })
+    expect(new ContextBudgetManager({ maxEstimatedTokens: tokens - 1 }).enforceInline(input))
+      .toEqual({ status: 'requires_compaction', estimatedTokens: tokens, serializedBytes: bytes })
+    expect(JSON.stringify(input)).toBe(json)
+  })
+
+  it('全部 UTF-16 单元与固定随机混合文本保持旧估算值', () => {
+    const samples = [Array.from({ length: 65536 }, (_, unit) => String.fromCharCode(unit)).join('')]
+    let seed = 731
+    for (let i = 0; i < 1000; i++) {
+      let text = ''
+      for (let j = 0; j < 100; j++) {
+        seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0
+        text += String.fromCharCode(seed % (j % 3 ? 65536 : 128))
+      }
+      samples.push(text)
+    }
+    const reference = samples.map(text => {
+      let units = 0
+      for (const char of text) {
+        const point = char.codePointAt(0)!
+        units += point <= 0x7f ? .25 : point <= 0xffff ? 1 : 2
+      }
+      return Math.ceil(units)
+    })
+    expect(samples.map(estimateTextTokens)).toEqual(reference)
+  })
+
   it('MiniMax 读图按视觉输入预留预算，不把 Base64 当作文本 token', () => {
     const { service, pool: client } = setup({ ...config, modelId: 'MiniMax-M3', contextWindow: 200_000 })
     const before = client.measureRequest(messages)

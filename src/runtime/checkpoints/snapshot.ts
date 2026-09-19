@@ -245,8 +245,21 @@ async function walkMtimes(
     entries = await readdir(dir, { withFileTypes: true })
   } catch { return }
 
+  const pending: Promise<{ relPath: string; mtimeMs: number; size: number } | undefined>[] = []
+  async function flush(): Promise<void> {
+    const results = await Promise.all(pending)
+    pending.length = 0
+    for (const result of results) {
+      if (!result) continue
+      stats.fileCount++
+      stats.totalBytes += result.size
+      if (isBudgetExceeded(stats, options)) stats.budgetLimited++
+      mtimes.set(result.relPath, result.mtimeMs)
+    }
+  }
+
   for (const entry of entries) {
-    if (options.abortSignal?.aborted) return
+    if (options.abortSignal?.aborted) break
 
     const name = entry.name
     if (isPathSkipped(name)) continue
@@ -258,6 +271,8 @@ async function walkMtimes(
     try {
       isDir = entry.isDirectory()
     } catch {
+      await flush()
+      if (options.abortSignal?.aborted) break
       try {
         isDir = (await stat(fullPath)).isDirectory()
       } catch {
@@ -267,26 +282,19 @@ async function walkMtimes(
 
     if (isDir) {
       if (ignoreMatcher(relPath, true)) continue
+      await flush()
       await walkMtimes(root, fullPath, mtimes, stats, options, ignoreMatcher)
     } else {
       if (ignoreMatcher(relPath, false)) continue
 
-      try {
-        const fileStat = await stat(fullPath)
-        stats.fileCount++
-        stats.totalBytes += fileStat.size
-
-        // 预算超限只省内存不省覆盖，仍记录 mtime 以与 walk 侧对齐
-        if (isBudgetExceeded(stats, options)) {
-          stats.budgetLimited++
-          mtimes.set(relPath, fileStat.mtimeMs)
-          continue
-        }
-
-        mtimes.set(relPath, fileStat.mtimeMs)
-      } catch {
-        continue
-      }
+      if (options.abortSignal?.aborted) break
+      pending.push(stat(fullPath).then(
+        fileStat => ({ relPath, mtimeMs: fileStat.mtimeMs, size: fileStat.size }),
+        () => undefined
+      ))
+      if (pending.length === 8) await flush()
     }
   }
+  // 取消也等待已发起的 I/O 收敛，结果只在此扫描内按发现顺序写入。
+  await flush()
 }

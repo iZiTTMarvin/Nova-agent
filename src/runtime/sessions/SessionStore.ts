@@ -1592,7 +1592,11 @@ export class SessionStore {
    * 不重写 messages.jsonl；同一会话树分支共享此 key。
    */
   ensureCacheRoutingKey(sessionId: string): string | null {
-    const session = this.load(sessionId)
+    // 迁移入口会补写计数；在迁移前识别旧元数据，保留完整历史恢复路径。
+    const metadata = this.loadMetadataOnly(sessionId)
+    const session = metadata && typeof metadata.messageCount !== 'number'
+      ? this.load(sessionId)
+      : this.loadMetadata(sessionId)
     if (!session) return null
 
     if (typeof session.cacheRoutingKey === 'string' && session.cacheRoutingKey.length > 0) {

@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, rmSync, mkdtempSync } from 'fs'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { mkdirSync, writeFileSync, rmSync, mkdtempSync, utimesSync } from 'fs'
+import * as fsp from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
@@ -7,6 +8,10 @@ import {
   snapshotMtimes,
   diffSnapshots
 } from '../../../../src/runtime/checkpoints/snapshot'
+
+vi.mock('fs/promises', async importOriginal => ({
+  ...await importOriginal<typeof import('fs/promises')>()
+}))
 
 /** 创建临时目录并在其中生成若干文件 */
 function createTempWorkspace(
@@ -26,6 +31,7 @@ describe('snapshot', () => {
   let tempDir: string | null = null
 
   afterEach(() => {
+    vi.restoreAllMocks()
     if (tempDir && rmSync) {
       rmSync(tempDir, { recursive: true, force: true })
       tempDir = null
@@ -76,6 +82,84 @@ describe('snapshot', () => {
     expect(result.size).toBe(2)
     expect(result.get('a.txt')).toBeGreaterThan(0)
     expect(result.get('b.txt')).toBeGreaterThan(0)
+  })
+
+  it.each([{ maxFiles: 1, maxBytes: 2 }, { maxFiles: 0, maxBytes: 0 }])(
+    '预算边缘仍保持深度优先顺序和完整 mtime 覆盖 %j', async options => {
+      tempDir = createTempWorkspace({
+        'a.txt': '12', 'b/nested.txt': '34', 'b/sub/deep.txt': '56', 'c.txt': '78',
+        '.gitignore': 'ignored/\n', 'ignored/file.txt': 'ignored', 'node_modules/x.txt': 'skip'
+      })
+      const before = await snapshotWorkspace(tempDir, options)
+      const original = fsp.stat
+      vi.spyOn(fsp, 'stat').mockImplementation(async (...args) => {
+        if (String(args[0]).endsWith('a.txt')) await new Promise(resolve => setImmediate(resolve))
+        return original(...args)
+      })
+      const after = await snapshotMtimes(tempDir, options)
+      expect([...after]).toEqual([...before].map(([path, file]) => [path, file.mtimeMs]))
+      expect([...after.keys()].filter(path => path !== '.gitignore'))
+        .toEqual(['a.txt', 'b/nested.txt', 'b/sub/deep.txt', 'c.txt'])
+    }
+  )
+
+  it.each(['ENOENT', 'EACCES'])('单文件 %s 不影响其余文件', async code => {
+    tempDir = createTempWorkspace({ 'a.txt': 'a', 'b.txt': 'b', 'c.txt': 'c' })
+    const original = fsp.stat
+    vi.spyOn(fsp, 'stat').mockImplementation(async (...args) => {
+      if (String(args[0]).endsWith('b.txt')) throw Object.assign(new Error(code), { code })
+      return original(...args)
+    })
+    expect([...await snapshotMtimes(tempDir)].map(([path]) => path)).toEqual(['a.txt', 'c.txt'])
+  })
+
+  it('取消停止派发并等待所有在途 stat，返回后 Map 不再变化', async () => {
+    tempDir = createTempWorkspace(Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`f${i}.txt`, 'x'])))
+    const controller = new AbortController()
+    const original = fsp.stat
+    const releases: (() => void)[] = []
+    let ready!: () => void
+    const started = new Promise<void>(resolve => { ready = resolve })
+    let inFlight = 0
+    const stat = vi.spyOn(fsp, 'stat').mockImplementation(async (...args) => {
+      inFlight++
+      await new Promise<void>(resolve => {
+        releases.push(resolve)
+        if (releases.length === 8) ready()
+      })
+      try { return await original(...args) } finally { inFlight-- }
+    })
+    let settled = false
+    const scan = snapshotMtimes(tempDir, { abortSignal: controller.signal }).then(result => {
+      settled = true
+      return result
+    })
+    await started
+    controller.abort()
+    expect(settled).toBe(false)
+    expect(inFlight).toBe(8)
+    releases.forEach(release => release())
+    const result = await scan
+    expect(stat).toHaveBeenCalledTimes(8)
+    expect(inFlight).toBe(0)
+    expect(result.size).toBe(8)
+    const entries = [...result]
+    await new Promise(resolve => setImmediate(resolve))
+    expect([...result]).toEqual(entries)
+  })
+
+  it('真实文件变更仍识别新增、修改、删除并保留二进制原文', async () => {
+    const bytes = Buffer.from([0, 255, 128, 13, 10])
+    tempDir = createTempWorkspace({ 'a.bin': bytes, 'deleted.txt': 'old', 'same.txt': 'same' })
+    const before = await snapshotWorkspace(tempDir)
+    writeFileSync(join(tempDir, 'a.bin'), Buffer.from([1, 2]))
+    utimesSync(join(tempDir, 'a.bin'), new Date(10000), new Date(10000))
+    rmSync(join(tempDir, 'deleted.txt'))
+    writeFileSync(join(tempDir, 'new.txt'), 'new')
+    expect(diffSnapshots(before, await snapshotMtimes(tempDir))).toEqual({
+      modified: ['a.bin'], added: ['new.txt'], deleted: ['deleted.txt']
+    })
+    expect(before.get('a.bin')?.content).toEqual(bytes)
   })
 
   it('diffSnapshots 识别新增、修改、删除', async () => {

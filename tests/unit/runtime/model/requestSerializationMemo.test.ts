@@ -31,6 +31,31 @@ function buildBody(): Record<string, unknown> {
 }
 
 describe('请求序列化 memo 一致性', () => {
+  it('Unicode 请求的预算计量、前缀哈希及原始字节保持一致', () => {
+    const body = { model: 'fixture', messages: [{ role: 'user', content: 'ASCII 中文\ud800\udc00\udfff\u007f\u0080' }] }
+    const raw = JSON.stringify(body)
+    let units = 0
+    for (const char of raw) {
+      const point = char.codePointAt(0)!
+      units += point <= 0x7f ? .25 : point <= 0xffff ? 1 : 2
+    }
+    const hash = (value: string) => createHash('sha256').update(value).digest('hex')
+    const expected = {
+      routeId: 'main', tokenizerId: 'unknown', contextWindow: 200_000,
+      envelopeHash: hash(JSON.stringify({ ...body, messages: null })),
+      prefixHashes: [hash(JSON.stringify(body.messages[0]))],
+      serializedBytes: Buffer.byteLength(raw), budgetUnits: Math.ceil(units)
+    }
+    const memo: RequestSerializationMemo = {}
+    const wire = computeWireSnapshot(body, 'generic', raw, memo)
+    expect(measureRequestBudget(body, 'main', 200_000)).toEqual(expected)
+    expect(measureRequestBudget(body, 'main', 200_000, memo)).toEqual(expected)
+    expect(wire.rawBodyHash).toBe(hash(raw))
+    expect(wire.rawBodyBytes).toBe(expected.serializedBytes)
+    expect(memo.bodyJson).toBe(raw)
+    expect(JSON.stringify(body)).toBe(raw)
+  })
+
   it('generic 档案：memo 与无 memo 的 WireSnapshot 全字段一致', () => {
     const body = buildBody()
     const rawBody = JSON.stringify(body)

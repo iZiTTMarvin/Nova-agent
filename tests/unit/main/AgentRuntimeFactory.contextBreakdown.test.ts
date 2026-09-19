@@ -9,6 +9,7 @@ import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/Ses
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
 import { createReadState } from '../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
+import { writeManifest, readManifest } from '../../../src/runtime/checkpoints/manifest'
 
 vi.mock('electron', () => ({
   app: {
@@ -38,6 +39,7 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
   const roots: string[] = []
 
   afterEach(() => {
+    vi.restoreAllMocks()
     resetSessionIndexHostForTests()
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
@@ -48,6 +50,7 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
     const workspace = resolve(sessionsDir, 'workspace')
     const store = new SessionStore(sessionsDir)
     const session = store.create(workspace)
+    const ledgerRead = vi.spyOn(store, 'loadContextSnapshot')
 
     const prepared = prepareAgentRuntime({
       session,
@@ -66,6 +69,7 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
       } as any
     })
 
+    expect(ledgerRead).toHaveBeenCalledTimes(1)
     // 1. 验证 frozenPrompt 包含完整的分层结构，特别是 Available Tools
     expect(prepared.frozenPrompt).toContain('=== Agent Role ===')
     expect(prepared.frozenPrompt).toContain('=== Base Rules ===')
@@ -97,6 +101,46 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
     )
 
     prepared.agentLoop.dispose()
+  })
+
+  it('清理时才读取实时激活分支，包含装配后追加的消息', () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-factory-prune-'))
+    roots.push(sessionsDir)
+    const workspace = resolve(sessionsDir, 'workspace')
+    const store = new SessionStore(sessionsDir)
+    const session = store.create(workspace)
+    const prepared = prepareAgentRuntime({
+      session, sessionStore: store, sessionId: session.id, projectPath: workspace, sessionsDir,
+      novaSettings: { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: false },
+      modelClient: new MockModelClient(), getImageStore: () => ({} as never),
+      readState: createReadState(), pendingAskQuestions: new Map(),
+      runCoordinator: { inbox: { enqueue: vi.fn() }, getSnapshot: () => null } as never
+    })
+    try {
+      const activeRead = vi.spyOn(store, 'loadActivePath')
+      prepared.checkpointManager.beginMessage('empty')
+      expect(activeRead).not.toHaveBeenCalled()
+      for (let i = 0; i < 31; i++) {
+        store.appendMessageFast(session.id, { id: `m${i}`, role: 'user', content: `message ${i}`, timestamp: i })
+        writeManifest(sessionsDir, {
+          sessionId: session.id, messageId: `m${i}`, workspaceRoot: workspace,
+          createdAt: i, createdFiles: [], modifiedFiles: [], deletedFiles: [], status: 'active'
+        })
+      }
+      prepared.checkpointManager.beginMessage('first')
+      expect(activeRead).toHaveBeenCalledTimes(1)
+      expect(readManifest(sessionsDir, session.id, 'm1')?.backupPruned).toBe(true)
+      expect(readManifest(sessionsDir, session.id, 'm2')?.backupPruned).toBeUndefined()
+      store.setCurrentLeaf(session.id, 'm2')
+      prepared.checkpointManager.beginMessage('branch')
+      expect(activeRead).toHaveBeenCalledTimes(2)
+      expect(activeRead.mock.results[1].value?.messages.map((message: { id: string }) => message.id))
+        .toEqual(['m0', 'm1', 'm2'])
+      expect(readManifest(sessionsDir, session.id, 'm2')?.backupPruned).toBeUndefined()
+      expect(readManifest(sessionsDir, session.id, 'm30')?.backupPruned).toBeUndefined()
+    } finally {
+      prepared.agentLoop.dispose()
+    }
   })
 
   it('桌面 loop 对仅思考无正文的 stop 自动续做一次', async () => {

@@ -32,7 +32,7 @@ export function pruneOldCheckpoints(
   sessionId: string,
   keepRecent: number,
   /** 若提供，仅统计激活路径上的 checkpoint（树模型下非激活分支不占保留名额） */
-  activePathMessageIds?: Set<string>
+  activePathMessageIds?: Set<string> | (() => Set<string> | undefined)
 ): void {
   if (keepRecent <= 0) return
 
@@ -40,8 +40,12 @@ export function pruneOldCheckpoints(
   if (!existsSync(sessionDir)) return
 
   let manifests = listSessionManifests(checkpointRoot, sessionId)
-  if (activePathMessageIds) {
-    manifests = manifests.filter(m => activePathMessageIds.has(m.messageId))
+  if (manifests.length <= keepRecent) return
+  const activePath = typeof activePathMessageIds === 'function'
+    ? activePathMessageIds()
+    : activePathMessageIds
+  if (activePath) {
+    manifests = manifests.filter(m => activePath.has(m.messageId))
   }
   if (manifests.length <= keepRecent) return
 
@@ -65,10 +69,14 @@ function pruneSingleManifest(
   const forwardDir = getForwardDir(checkpointRoot, manifest.sessionId, manifest.messageId)
 
   try {
-    if (existsSync(filesDir)) {
+    const hasFiles = existsSync(filesDir)
+    const hasForward = existsSync(forwardDir)
+    if (manifest.backupPruned && manifest.forwardPruned && !hasFiles && !hasForward) return
+
+    if (hasFiles) {
       rmSync(filesDir, { recursive: true, force: true })
     }
-    if (existsSync(forwardDir)) {
+    if (hasForward) {
       rmSync(forwardDir, { recursive: true, force: true })
     }
 

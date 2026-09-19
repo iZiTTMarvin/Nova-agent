@@ -324,6 +324,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   )
   // 呈现模式进程级一次解析（会话内稳定）：code-readonly 时只读探索工具改由 SDK 暴露
   const toolPresentation = getProcessToolPresentationMode()
+  const contextSnapshot = sessionStore.loadContextSnapshot(sessionId)
   const effectiveToolDefinitions = applyLedgerToolVisibility(
     projectEffectiveToolDefinitions(
       session.mode,
@@ -331,7 +332,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       toolAvailability,
       toolPresentation
     ),
-    sessionStore.loadContextSnapshot(sessionId)?.entries.length ?? 0
+    contextSnapshot?.entries.length ?? 0
   )
   let sdkSection = ''
   if (toolPresentation === 'code-readonly') {
@@ -495,7 +496,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     currentProviderId: activeCacheProfile.id
   }
   agentLoop.setSessionContext(sessionStore, sessionId, historyProjection)
-  restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), { ...historyProjection, sessionStore })
+  restoreOrInjectHistory(agentLoop, session, contextSnapshot, { ...historyProjection, sessionStore })
 
   // 跨回合诊断快照：读回上一轮状态并绑定持久化回调
   const prevDiagState = loadDiagnosticState(sessionsDir, sessionId)
@@ -511,7 +512,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionId,
     workspaceRoot: projectPath,
     getActivePathMessageIds: () => {
-      const s = sessionStore.load(sessionId)
+      const s = sessionStore.loadActivePath(sessionId)
       if (!s) return undefined
       return new Set(getSessionActiveMessages(s).map((m) => m.id))
     }
