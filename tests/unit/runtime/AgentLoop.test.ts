@@ -994,8 +994,8 @@ describe('AgentLoop', () => {
     const history: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
       history.push(
-        { role: 'user', content: 'x'.repeat(3_300) },
-        { role: 'assistant', content: 'y'.repeat(3_300) }
+        { role: 'user', content: 'x'.repeat(700) },
+        { role: 'assistant', content: 'y'.repeat(700) }
       )
     }
     loop.injectHistory(history)
@@ -1071,8 +1071,8 @@ describe('AgentLoop', () => {
     const recentMessages: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
       recentMessages.push(
-        { role: 'user', content: 'x'.repeat(3_300) },
-        { role: 'assistant', content: 'y'.repeat(3_300) }
+        { role: 'user', content: 'x'.repeat(700) },
+        { role: 'assistant', content: 'y'.repeat(700) }
       )
     }
 

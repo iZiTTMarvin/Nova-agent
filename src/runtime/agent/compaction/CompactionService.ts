@@ -56,7 +56,7 @@ export interface CompactionServiceOptions {
   contextBudgetManager: Pick<ContextBudgetManager, 'enforceInline'>
   cacheDiagnostics: Pick<CacheDiagnostics, 'bumpEpoch' | 'recordWireSnapshot'>
   contextWindow: number
-  measureRequest?: (messages: ChatMessage[], tools?: ToolDefinition[]) => RequestBudgetMeasurement
+  measureRequest?: (messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions) => RequestBudgetMeasurement
   canWrite?: () => boolean
   getSystemPrompt?: (entryCount: number) => string
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
@@ -100,7 +100,16 @@ interface PreparedCompactionInput {
   instruction: string
   stubContext: ChatMessage[]
   stateContext: ChatMessage[]
-  maxRequestUnits: number
+  requestBudgets: [CompactionRequestBudget, CompactionRequestBudget] | null
+}
+
+interface CompactionRequestBudget {
+  units: number
+  inputLimit: number
+}
+
+function requestBudgetUnits(measurement: RequestBudgetMeasurement): number {
+  return measurement.budgetUnits ?? Math.ceil(measurement.serializedBytes / 4)
 }
 
 /**
@@ -110,6 +119,7 @@ interface PreparedCompactionInput {
 export class CompactionService {
   private historyProjection: BuildConversationContextOptions = {}
   private readonly measureRequest: NonNullable<CompactionServiceOptions['measureRequest']>
+  private readonly hasProviderMeasurement: boolean
   private readonly canWrite: () => boolean
   private budget: ContextBreakdown['budget']
   private readonly context: AgentContext
@@ -117,8 +127,10 @@ export class CompactionService {
   private readonly contextBudgetManager: Pick<ContextBudgetManager, 'enforceInline'>
   private readonly cacheDiagnostics: Pick<CacheDiagnostics, 'bumpEpoch' | 'recordWireSnapshot'>
   private readonly getSystemPrompt: CompactionServiceOptions['getSystemPrompt']
-  private readonly configuredContextWindow: number
-  private get contextWindow(): number { return Math.min(this.configuredContextWindow, this.measureRequest([]).contextWindow) }
+  private readonly fallbackContextWindow: number
+  private get contextWindow(): number {
+    return this.hasProviderMeasurement ? this.measureRequest([]).contextWindow : this.fallbackContextWindow
+  }
   private readonly onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   private readonly getIdleCacheProfile: CompactionServiceOptions['getIdleCacheProfile']
   private readonly idleProjection: SummaryProjection
@@ -136,14 +148,15 @@ export class CompactionService {
   /** 最近一次阈值压缩 fail-open 时的估算 token；估算增长不足窗口 2% 前不再重试摘要 */
   private thresholdFailOpenAt: number | undefined
   constructor(options: CompactionServiceOptions) {
+    this.hasProviderMeasurement = options.measureRequest !== undefined
     this.measureRequest = options.measureRequest ?? ((messages, tools) => measureRequestBudget({ messages, tools }, 'unknown', options.contextWindow))
+    this.fallbackContextWindow = options.contextWindow
     this.canWrite = () => !this.disposed && (options.canWrite?.() ?? true)
     this.context = options.context
     this.modelClient = options.modelClient
     this.contextBudgetManager = options.contextBudgetManager
     this.cacheDiagnostics = options.cacheDiagnostics
     this.getSystemPrompt = options.getSystemPrompt
-    this.configuredContextWindow = options.contextWindow
     this.onCompaction = options.onCompaction
     this.getIdleCacheProfile = options.getIdleCacheProfile
     this.idleProjection = options.idleProjection
@@ -496,8 +509,7 @@ export class CompactionService {
     const system = this.context.messages.filter(message => message.role === 'system')
     const tools = this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context)
     const units = (messages: ChatMessage[]): number => {
-      const measured = this.measureRequest(messages, tools)
-      return measured.budgetUnits ?? Math.ceil(measured.serializedBytes / 4)
+      return requestBudgetUnits(this.measureRequest(messages, tools))
     }
     const baseUnits = units(system)
     const tailBudget = getTailTokenBudget(this.contextWindow) + extraTailTokens
@@ -531,10 +543,25 @@ export class CompactionService {
     }
   }
 
-  private requestUnits(messages: ChatMessage[]): number {
+  private compactionChatOptions(purpose: ChatRequestPurpose, abortSignal?: AbortSignal): ChatOptions {
+    const effort = this.getReasoningEffort?.()
+    return {
+      abortSignal,
+      includeInternalMessages: true,
+      purpose,
+      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {}),
+      ...(effort !== undefined ? { reasoningEffort: effort } : {})
+    }
+  }
+
+  private measureCompactionRequest(messages: ChatMessage[], purpose: ChatRequestPurpose): CompactionRequestBudget | null {
+    if (!this.hasProviderMeasurement) return null
     const tools = this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context)
-    const measured = this.measureRequest(messages, tools)
-    return measured.budgetUnits ?? Math.ceil(measured.serializedBytes / 4)
+    const measured = this.measureRequest(messages, tools, this.compactionChatOptions(purpose))
+    return {
+      units: requestBudgetUnits(measured),
+      inputLimit: resolveProductionBudgetLimits({ contextWindow: measured.contextWindow }).highWaterTokens
+    }
   }
 
   private buildPreparedCompactionInput(
@@ -579,7 +606,12 @@ export class CompactionService {
       instruction,
       stubContext,
       stateContext,
-      maxRequestUnits: Math.max(this.requestUnits(stubContext), this.requestUnits(stateContext))
+      requestBudgets: this.hasProviderMeasurement
+        ? [
+            this.measureCompactionRequest(stubContext, 'compaction-stub')!,
+            this.measureCompactionRequest(stateContext, 'compaction-state')!
+          ]
+        : null
     }
   }
 
@@ -597,7 +629,6 @@ export class CompactionService {
     priorState: string | undefined,
     previousFacts: StructuredHandoff['facts']
   ): PreparedCompactionInput {
-    const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: this.contextWindow })
     const all = [...parts.oldMessages, ...parts.recentMessages]
     const initialCut = parts.oldMessages.length
     const initial = this.buildPreparedCompactionInput(
@@ -608,7 +639,10 @@ export class CompactionService {
       priorState,
       previousFacts
     )
-    if (initial.maxRequestUnits <= highWaterTokens) return initial
+    if (!initial.requestBudgets) return initial
+    const fits = (prepared: PreparedCompactionInput): boolean =>
+      prepared.requestBudgets?.every(request => request.units <= request.inputLimit) ?? true
+    if (fits(initial)) return initial
 
     // 前缀增长时请求体与 required facts 只会保持或增大；在完整工具组边界上二分，
     // 找最大的可发送 old prefix，从而同时让保留 tail 尽可能小，提高最终重建过预算闸门的概率。
@@ -634,7 +668,7 @@ export class CompactionService {
         priorState,
         previousFacts
       )
-      if (prepared.maxRequestUnits <= highWaterTokens) {
+      if (fits(prepared)) {
         admitted = { cut, prepared }
         low = mid + 1
       } else {
@@ -643,9 +677,11 @@ export class CompactionService {
     }
 
     if (!admitted) {
+      const initialUnits = Math.max(...initial.requestBudgets.map(request => request.units))
+      const inputLimit = Math.min(...initial.requestBudgets.map(request => request.inputLimit))
       recordMetric('compaction.input_admission', {
-        inputLimit: highWaterTokens,
-        initialUnits: initial.maxRequestUnits
+        inputLimit,
+        initialUnits
       }, { tags: { outcome: 'no-safe-cut' } })
       throw new ContextRecoveryFailedError('request-overflow')
     }
@@ -653,10 +689,13 @@ export class CompactionService {
     parts.oldMessages = all.slice(0, admitted.cut)
     parts.recentMessages = all.slice(admitted.cut)
     parts.cutAt = all[admitted.cut]?.origin ?? null
+    const initialUnits = Math.max(...initial.requestBudgets.map(request => request.units))
+    const inputLimit = Math.min(...initial.requestBudgets.map(request => request.inputLimit))
+    const admittedUnits = Math.max(...admitted.prepared.requestBudgets!.map(request => request.units))
     recordMetric('compaction.input_admission', {
-      inputLimit: highWaterTokens,
-      initialUnits: initial.maxRequestUnits,
-      admittedUnits: admitted.prepared.maxRequestUnits,
+      inputLimit,
+      initialUnits,
+      admittedUnits,
       movedMessages: initialCut - admitted.cut
     }, { tags: { outcome: 'adapted' } })
     return admitted.prepared
@@ -761,14 +800,14 @@ export class CompactionService {
     // 不发 tool_choice：实测 CommandCode/DeepSeek 把它计入缓存键，会让摘要请求从头 miss；
     // 模型若仍发 tool_call，下方只收 text_delta → 空文本 → empty-summary，由 fail-open 兜住。
     const tools = this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context)
-    const effort = this.getReasoningEffort?.()
     const chatOptions: ChatOptions = {
-      abortSignal,
-      includeInternalMessages: true,
-      purpose,
+      ...this.compactionChatOptions(purpose, abortSignal),
       observation: { logicalRequestId: randomUUID(), runId: this.context.runId, sessionId: this.context.sessionId },
-      ...(this.promptCacheKey ? { promptCacheKey: this.promptCacheKey } : {}),
-      ...(effort !== undefined ? { reasoningEffort: effort } : {})
+    }
+
+    const requestBudget = this.measureCompactionRequest(messages, purpose)
+    if (requestBudget && requestBudget.units > requestBudget.inputLimit) {
+      throw new ContextRecoveryFailedError('request-overflow')
     }
 
     let text = ''
@@ -831,7 +870,7 @@ export class CompactionService {
     const beforeProjected = await projection.project(this.context.messages)
     const requestUnits = (messages: ChatMessage[]): number => {
       const measured = this.measureRequest(messages, this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context))
-      return measured.budgetUnits ?? Math.ceil(measured.serializedBytes / 4)
+      return requestBudgetUnits(measured)
     }
     const beforeUnits = requestUnits(beforeProjected)
 
