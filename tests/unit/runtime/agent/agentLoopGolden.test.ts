@@ -56,6 +56,7 @@ function createLoop(opts: {
       baseUrl: '',
       apiKey: '',
       modelId,
+      ...(config?.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {}),
       ...(dialect ? { toolDialect: dialect } : {})
     },
     fallbacks: fallbacks?.map(f => ({ config: f.config, client: f.client }))

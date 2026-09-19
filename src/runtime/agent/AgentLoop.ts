@@ -212,7 +212,8 @@ export class AgentLoop {
         primaryConfig: {
           baseUrl: clientConfig?.baseUrl ?? '',
           apiKey: '',
-          modelId: clientConfig?.modelId ?? 'primary'
+          modelId: clientConfig?.modelId ?? 'primary',
+          ...(config.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {})
         }
       })
     this.eventBus = eventBus
@@ -271,7 +272,12 @@ export class AgentLoop {
       onCompaction: this.config.onCompaction,
       getSystemPrompt: entryCount => this.buildFrozenSystemPrompt(entryCount),
       canWrite: () => !this.cancelled && (this.assertExecutionCurrent?.() ?? true),
-      measureRequest: (messages, tools) => this.modelPool.measureRequest(messages, tools, { purpose: 'main', promptCacheKey: this.config.promptCacheKey, reasoningEffort: this.config.reasoningEffort }),
+      measureRequest: (messages, tools, options) => this.modelPool.measureRequest(messages, tools, {
+        purpose: 'main',
+        promptCacheKey: this.config.promptCacheKey,
+        reasoningEffort: this.config.reasoningEffort,
+        ...options
+      }),
       getIdleCacheProfile: () => this.currentCacheProfile(),
       // 空闲压缩没有活跃轮次可借用缓存：独立缓存投影，取舍见 SummaryProjection 契约
       idleProjection: createSummaryProjection({

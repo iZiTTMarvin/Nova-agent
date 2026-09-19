@@ -159,8 +159,9 @@ describe('SubagentSessionHeader', () => {
   it('submitting → waiting 状态流转；投影出现 resumedFromRunId 后显示 started', async () => {
     vi.useFakeTimers()
     try {
-      const deferred = Promise.withResolvers<{ accepted: boolean }>()
-      mockInvoke.mockReturnValueOnce(deferred.promise)
+      let resolveDeferred!: (value: { accepted: boolean }) => void
+      const deferred = new Promise<{ accepted: boolean }>(resolve => { resolveDeferred = resolve })
+      mockInvoke.mockReturnValueOnce(deferred)
       const selectSession = vi.fn().mockResolvedValue(undefined)
       useChatStore.setState({
         sessions: [session],
@@ -182,7 +183,7 @@ describe('SubagentSessionHeader', () => {
       expect(renderer.container.textContent).toContain('提交中…')
 
       await act(async () => {
-        deferred.resolve({ accepted: true })
+        resolveDeferred({ accepted: true })
         await vi.advanceTimersByTimeAsync(0)
       })
       expect(renderer.container.textContent).toContain('已提交，等待父会话处理')

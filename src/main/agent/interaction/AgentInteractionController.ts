@@ -141,6 +141,9 @@ export async function cancelExecution(params: { runId: string }): Promise<{ runI
   if (!beforeCancel || beforeCancel.runId !== runId) {
     throw new Error(`取消执行的 run ${runId} 不存在`)
   }
+  if (isTerminalRunStatus(beforeCancel.status)) {
+    return { runId, status: beforeCancel.status }
+  }
   // 停止链路：先冻结目标并提交持久控制意图，意图落盘后才释放交互等待、
   // 逐项收敛取消与投递失效化；处理途中崩溃由启动重放补完
   await getSubagentLifecycleCoordinator().stopRunTree(runId, 'cancel_execution', {
