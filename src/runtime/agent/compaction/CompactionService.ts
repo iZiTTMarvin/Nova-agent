@@ -90,6 +90,8 @@ type CompactionApplyResult = { adopted: true } | { adopted: false; reason: 'stal
 
 interface CompactionOutputs { stub: string | null; state: string; handoff: StructuredHandoff }
 
+type ArchivedUserContent = Parameters<typeof extractTextFromSerializableContent>[0]
+
 interface PreparedCompactionInput {
   prefix: ChatMessage[]
   lastRole: ChatMessage['role'] | undefined
@@ -539,7 +541,7 @@ export class CompactionService {
     parts: CompactionParts,
     projectedNonSystem: ChatMessage[],
     systemMessage: ChatMessage | undefined,
-    archivedUsers: ReadonlyMap<string, { content: unknown }>,
+    archivedUsers: ReadonlyMap<string, { content: ArchivedUserContent }>,
     priorState: string | undefined,
     previousFacts: StructuredHandoff['facts']
   ): PreparedCompactionInput {
@@ -591,14 +593,14 @@ export class CompactionService {
     parts: CompactionParts,
     projectedNonSystem: ChatMessage[],
     systemMessage: ChatMessage | undefined,
-    archivedUsers: ReadonlyMap<string, { content: unknown }>,
+    archivedUsers: ReadonlyMap<string, { content: ArchivedUserContent }>,
     priorState: string | undefined,
     previousFacts: StructuredHandoff['facts']
   ): PreparedCompactionInput {
     const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: this.contextWindow })
     const all = [...parts.oldMessages, ...parts.recentMessages]
     const initialCut = parts.oldMessages.length
-    let prepared = this.buildPreparedCompactionInput(
+    const initial = this.buildPreparedCompactionInput(
       parts,
       projectedNonSystem,
       systemMessage,
@@ -606,17 +608,25 @@ export class CompactionService {
       priorState,
       previousFacts
     )
-    if (prepared.maxRequestUnits <= highWaterTokens) return prepared
+    if (initial.maxRequestUnits <= highWaterTokens) return initial
 
-    const initialUnits = prepared.maxRequestUnits
-    for (let cut = initialCut - 1; cut > 0; cut--) {
-      if (alignToToolGroupBoundary(all, cut) !== cut) continue
+    // 前缀增长时请求体与 required facts 只会保持或增大；在完整工具组边界上二分，
+    // 找最大的可发送 old prefix，从而同时让保留 tail 尽可能小，提高最终重建过预算闸门的概率。
+    const boundaries = all
+      .map((_, index) => index)
+      .filter(cut => cut > 0 && cut < initialCut && alignToToolGroupBoundary(all, cut) === cut)
+    let low = 0
+    let high = boundaries.length - 1
+    let admitted: { cut: number; prepared: PreparedCompactionInput } | null = null
+    while (low <= high) {
+      const mid = Math.floor((low + high) / 2)
+      const cut = boundaries[mid]
       const candidate: CompactionParts = {
         oldMessages: all.slice(0, cut),
         recentMessages: all.slice(cut),
         cutAt: all[cut]?.origin ?? null
       }
-      prepared = this.buildPreparedCompactionInput(
+      const prepared = this.buildPreparedCompactionInput(
         candidate,
         projectedNonSystem,
         systemMessage,
@@ -624,25 +634,32 @@ export class CompactionService {
         priorState,
         previousFacts
       )
-      if (prepared.maxRequestUnits > highWaterTokens) continue
-
-      parts.oldMessages = candidate.oldMessages
-      parts.recentMessages = candidate.recentMessages
-      parts.cutAt = candidate.cutAt
-      recordMetric('compaction.input_admission', {
-        inputLimit: highWaterTokens,
-        initialUnits,
-        admittedUnits: prepared.maxRequestUnits,
-        movedMessages: initialCut - cut
-      }, { tags: { outcome: 'adapted' } })
-      return prepared
+      if (prepared.maxRequestUnits <= highWaterTokens) {
+        admitted = { cut, prepared }
+        low = mid + 1
+      } else {
+        high = mid - 1
+      }
     }
 
+    if (!admitted) {
+      recordMetric('compaction.input_admission', {
+        inputLimit: highWaterTokens,
+        initialUnits: initial.maxRequestUnits
+      }, { tags: { outcome: 'no-safe-cut' } })
+      throw new ContextRecoveryFailedError('request-overflow')
+    }
+
+    parts.oldMessages = all.slice(0, admitted.cut)
+    parts.recentMessages = all.slice(admitted.cut)
+    parts.cutAt = all[admitted.cut]?.origin ?? null
     recordMetric('compaction.input_admission', {
       inputLimit: highWaterTokens,
-      initialUnits
-    }, { tags: { outcome: 'no-safe-cut' } })
-    throw new ContextRecoveryFailedError('request-overflow')
+      initialUnits: initial.maxRequestUnits,
+      admittedUnits: admitted.prepared.maxRequestUnits,
+      movedMessages: initialCut - admitted.cut
+    }, { tags: { outcome: 'adapted' } })
+    return admitted.prepared
   }
 
   /**
