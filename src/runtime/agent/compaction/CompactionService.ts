@@ -90,6 +90,17 @@ type CompactionApplyResult = { adopted: true } | { adopted: false; reason: 'stal
 
 interface CompactionOutputs { stub: string | null; state: string; handoff: StructuredHandoff }
 
+interface PreparedCompactionInput {
+  prefix: ChatMessage[]
+  lastRole: ChatMessage['role'] | undefined
+  sourceMessages: ChatMessage[]
+  required: ReturnType<typeof collectRequiredFacts>
+  instruction: string
+  stubContext: ChatMessage[]
+  stateContext: ChatMessage[]
+  maxRequestUnits: number
+}
+
 /**
  * 管理压缩候选与提交资格；持久化成功后统一发布上下文和缓存纪元。
  * 阈值压缩是留有 20% 预算余量的优化：摘要失败只记退避并放行本次请求，不终止任务；blocked 才是硬约束。
@@ -518,6 +529,122 @@ export class CompactionService {
     }
   }
 
+  private requestUnits(messages: ChatMessage[]): number {
+    const tools = this.context.dialect === 'xml' ? undefined : getEffectiveToolDefinitions(this.context)
+    const measured = this.measureRequest(messages, tools)
+    return measured.budgetUnits ?? Math.ceil(measured.serializedBytes / 4)
+  }
+
+  private buildPreparedCompactionInput(
+    parts: CompactionParts,
+    projectedNonSystem: ChatMessage[],
+    systemMessage: ChatMessage | undefined,
+    archivedUsers: ReadonlyMap<string, { content: unknown }>,
+    priorState: string | undefined,
+    previousFacts: StructuredHandoff['facts']
+  ): PreparedCompactionInput {
+    const projectedOld = projectedNonSystem.slice(0, parts.oldMessages.length)
+    const lastRole = projectedOld[projectedOld.length - 1]?.role
+    const prefix: ChatMessage[] = [
+      ...(systemMessage ? [systemMessage] : []),
+      ...projectedOld
+    ]
+    const sourceMessages = parts.oldMessages.map(message => {
+      const raw = message.role === 'user' && !message.contextInstruction && message.origin
+        ? archivedUsers.get(message.origin.messageId)
+        : undefined
+      return raw ? { ...message, content: extractTextFromSerializableContent(raw.content) } : message
+    })
+    const required = collectRequiredFacts(sourceMessages, previousFacts)
+    const instruction = [
+      buildStateInstruction(priorState),
+      '以下必需事实由程序原样保留，facts 输出 [] 即可，不需要复制。叙述部分必须尊重这些原句；额外事实只能引用原始 user 原句，owner 为该 messageId，value=quote。',
+      JSON.stringify(required)
+    ].join('\n')
+    const stubContext = [
+      ...prefix,
+      ...buildCompactionRequestTail(lastRole, buildStubPrompt())
+    ]
+    const stateContext = [
+      ...prefix,
+      ...buildCompactionRequestTail(lastRole, instruction)
+    ]
+    return {
+      prefix,
+      lastRole,
+      sourceMessages,
+      required,
+      instruction,
+      stubContext,
+      stateContext,
+      maxRequestUnits: Math.max(this.requestUnits(stubContext), this.requestUnits(stateContext))
+    }
+  }
+
+  /**
+   * 压缩请求自身也必须能进当前 provider。正常切点能装下时逐字节保持旧行为；
+   * 只有摘要请求超过高水位时，才把切点向前收缩到最近一个完整消息组边界。
+   * 被移出 oldMessages 的内容继续原样留在 recentMessages，因此 ledger 绝不会声称
+   * 覆盖摘要模型没有看到的历史。若连最小非空前缀都装不下，则维持失败语义。
+   */
+  private admitCompactionInput(
+    parts: CompactionParts,
+    projectedNonSystem: ChatMessage[],
+    systemMessage: ChatMessage | undefined,
+    archivedUsers: ReadonlyMap<string, { content: unknown }>,
+    priorState: string | undefined,
+    previousFacts: StructuredHandoff['facts']
+  ): PreparedCompactionInput {
+    const { highWaterTokens } = resolveProductionBudgetLimits({ contextWindow: this.contextWindow })
+    const all = [...parts.oldMessages, ...parts.recentMessages]
+    const initialCut = parts.oldMessages.length
+    let prepared = this.buildPreparedCompactionInput(
+      parts,
+      projectedNonSystem,
+      systemMessage,
+      archivedUsers,
+      priorState,
+      previousFacts
+    )
+    if (prepared.maxRequestUnits <= highWaterTokens) return prepared
+
+    const initialUnits = prepared.maxRequestUnits
+    for (let cut = initialCut - 1; cut > 0; cut--) {
+      if (alignToToolGroupBoundary(all, cut) !== cut) continue
+      const candidate: CompactionParts = {
+        oldMessages: all.slice(0, cut),
+        recentMessages: all.slice(cut),
+        cutAt: all[cut]?.origin ?? null
+      }
+      prepared = this.buildPreparedCompactionInput(
+        candidate,
+        projectedNonSystem,
+        systemMessage,
+        archivedUsers,
+        priorState,
+        previousFacts
+      )
+      if (prepared.maxRequestUnits > highWaterTokens) continue
+
+      parts.oldMessages = candidate.oldMessages
+      parts.recentMessages = candidate.recentMessages
+      parts.cutAt = candidate.cutAt
+      recordMetric('compaction.input_admission', {
+        inputLimit: highWaterTokens,
+        initialUnits,
+        admittedUnits: prepared.maxRequestUnits,
+        movedMessages: initialCut - cut
+      }, { tags: { outcome: 'adapted' } })
+      return prepared
+    }
+
+    recordMetric('compaction.input_admission', {
+      inputLimit: highWaterTokens,
+      initialUnits
+    }, { tags: { outcome: 'no-safe-cut' } })
+    throw new ContextRecoveryFailedError('request-overflow')
+  }
+
   /**
    * 并行发出 stub / state 两次压缩请求，都回放主对话前缀——含工具定义与思考强度。
    * 路由身份（resolveRouteIdentity 含 reasoningEffort）必须与主请求一致，否则服务端前缀缓存从头 miss。
@@ -536,37 +663,20 @@ export class CompactionService {
 
     const systemMessage = this.context.messages.find(message => message.role === 'system')
     const projectedAll = await projection.project(this.context.messages)
-    const projectedOld = projectedAll
-      .filter(message => message.role !== 'system')
-      .slice(0, parts.oldMessages.length)
-    const lastRole = projectedOld[projectedOld.length - 1]?.role
-    const prefix: ChatMessage[] = [
-      ...(systemMessage ? [systemMessage] : []),
-      ...projectedOld
-    ]
+    const projectedNonSystem = projectedAll.filter(message => message.role !== 'system')
     const priorState = this.context.compactionState?.state?.text
     const previousFacts = this.context.compactionState?.state?.handoff?.facts ?? []
     const archive = this.context.sessionStore && this.context.sessionId ? this.context.sessionStore.load(this.context.sessionId) : null
     const archivedUsers = new Map((archive?.messages ?? []).filter(message => message.role === 'user').map(message => [message.id, message]))
-    const sourceMessages = parts.oldMessages.map(message => {
-      const raw = message.role === 'user' && !message.contextInstruction && message.origin ? archivedUsers.get(message.origin.messageId) : undefined
-      return raw ? { ...message, content: extractTextFromSerializableContent(raw.content) } : message
-    })
-    const required = collectRequiredFacts(sourceMessages, previousFacts)
-    const instruction = [buildStateInstruction(priorState),
-      '以下必需事实由程序原样保留，facts 输出 [] 即可，不需要复制。叙述部分必须尊重这些原句；额外事实只能引用原始 user 原句，owner 为该 messageId，value=quote。',
-      JSON.stringify(required)].join('\n')
-    const stubContext = [
-      ...prefix,
-      ...buildCompactionRequestTail(lastRole, buildStubPrompt())
-    ]
-    const stateContext = [
-      ...prefix,
-      ...buildCompactionRequestTail(
-        lastRole,
-        instruction
-      )
-    ]
+    const prepared = this.admitCompactionInput(
+      parts,
+      projectedNonSystem,
+      systemMessage,
+      archivedUsers,
+      priorState,
+      previousFacts
+    )
+    const { prefix, lastRole, sourceMessages, required, instruction, stubContext, stateContext } = prepared
 
     const [stubResult, stateResult] = await Promise.allSettled([
       this.streamCompactionText(stubContext, 'compaction-stub', usageSources, abortSignal),
