@@ -71,7 +71,8 @@ describe('WorkspaceService workspace root changes', () => {
       getMainWindow: () => null,
       getRunCoordinator: () => ({
         assertNoNonTerminalRunsForSessions: vi.fn(),
-        deleteRunsForSessions: vi.fn(() => 0)
+        deleteRunsForSessions: vi.fn(() => 0),
+        listSnapshotsForSessions: vi.fn(() => [])
       })
     })
     service.setBroadcaster(() => {})

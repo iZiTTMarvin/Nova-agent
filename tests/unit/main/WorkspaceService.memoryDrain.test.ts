@@ -65,7 +65,8 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
       getMainWindow: () => null,
       getRunCoordinator: () => ({
         assertNoNonTerminalRunsForSessions: vi.fn(),
-        deleteRunsForSessions: vi.fn(() => 0)
+        deleteRunsForSessions: vi.fn(() => 0),
+        listSnapshotsForSessions: vi.fn(() => [])
       }),
       onSessionLeaving: (sessionId, workspaceRoot) => {
         events.push('leaving')
@@ -98,7 +99,8 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
       getMainWindow: () => null,
       getRunCoordinator: () => ({
         assertNoNonTerminalRunsForSessions: vi.fn(),
-        deleteRunsForSessions: vi.fn(() => 0)
+        deleteRunsForSessions: vi.fn(() => 0),
+        listSnapshotsForSessions: vi.fn(() => [])
       }),
       onSessionLeaving: (sessionId) => {
         leftSessions.push(sessionId)

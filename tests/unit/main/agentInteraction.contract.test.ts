@@ -86,7 +86,9 @@ describe('AgentInteractionController 契约', () => {
     await respondPermission(command)
     await respondPermission(command)
     expect(lifecycle.stopRunTree).toHaveBeenCalledTimes(1)
-    expect(lifecycle.stopRunTree).toHaveBeenCalledWith('root', 'cancel_execution')
+    expect(lifecycle.stopRunTree).toHaveBeenCalledWith('root', 'cancel_execution', {
+      releaseInteractions: expect.any(Function)
+    })
   })
 
   it('permission requestId 与 durable payload 错配时拒绝，不唤醒 AgentLoop', async () => {
