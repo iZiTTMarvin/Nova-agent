@@ -24,6 +24,8 @@ type PlanReturnState = {
   inspectorTab: InspectorTab
 }
 
+export type SidebarSortMode = 'projects' | 'sessions'
+
 const STORAGE_PREFIX = 'nova.layout.'
 
 /** 拖拽 clamp 与面板实现共享的宽度边界 */
@@ -35,6 +37,7 @@ export const INSPECTOR_WIDTH_MAX = 640
 const DEFAULTS = {
   sidebarCollapsed: false,
   sidebarWidth: 264,
+  sidebarSortMode: 'projects' as SidebarSortMode,
   inspectorOpen: false,
   inspectorTab: 'review' as InspectorTab,
   inspectorWidth: 420,
@@ -72,10 +75,11 @@ function clamp(n: number, min: number, max: number): number {
 
 function loadPersistedLayout(): Pick<
   typeof DEFAULTS,
-  'sidebarCollapsed' | 'sidebarWidth' | 'inspectorWidth' | 'inspectorTab'
+  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab'
 > {
   const collapsedRaw = readStored('sidebarCollapsed')
   const sidebarWidthRaw = readStored('sidebarWidth')
+  const sortModeRaw = readStored('sidebarSortMode')
   const inspectorWidthRaw = readStored('inspectorWidth')
   const tabRaw = readStored('inspectorTab')
 
@@ -89,6 +93,11 @@ function loadPersistedLayout(): Pick<
     if (Number.isFinite(n)) sidebarWidth = clamp(n, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
   }
 
+  let sidebarSortMode: SidebarSortMode = DEFAULTS.sidebarSortMode
+  if (sortModeRaw === 'projects' || sortModeRaw === 'sessions') {
+    sidebarSortMode = sortModeRaw
+  }
+
   let inspectorWidth = DEFAULTS.inspectorWidth
   if (inspectorWidthRaw !== null) {
     const n = Number(inspectorWidthRaw)
@@ -98,12 +107,13 @@ function loadPersistedLayout(): Pick<
   let inspectorTab: InspectorTab = DEFAULTS.inspectorTab
   if (tabRaw === 'review' || tabRaw === 'files') inspectorTab = tabRaw
 
-  return { sidebarCollapsed, sidebarWidth, inspectorWidth, inspectorTab }
+  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab }
 }
 
 export interface LayoutStoreState {
   sidebarCollapsed: boolean
   sidebarWidth: number
+  sidebarSortMode: SidebarSortMode
   inspectorOpen: boolean
   inspectorTab: InspectorTab
   inspectorWidth: number
@@ -114,6 +124,7 @@ export interface LayoutStoreState {
 
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
+  setSidebarSortMode: (mode: SidebarSortMode) => void
   openReview: (target: ReviewTarget) => void
   openFiles: () => void
   openPlan: (target: PlanTarget) => void
@@ -142,6 +153,11 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     const sidebarWidth = clamp(w, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
     writeStored('sidebarWidth', String(sidebarWidth))
     set({ sidebarWidth })
+  },
+
+  setSidebarSortMode: (sidebarSortMode) => {
+    writeStored('sidebarSortMode', sidebarSortMode)
+    set({ sidebarSortMode })
   },
 
   openReview: (target) => {
@@ -231,7 +247,7 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
 export function resetLayoutStoreForTests(): void {
   if (canUseLocalStorage()) {
     try {
-      for (const key of ['sidebarCollapsed', 'sidebarWidth', 'inspectorWidth', 'inspectorTab']) {
+      for (const key of ['sidebarCollapsed', 'sidebarWidth', 'sidebarSortMode', 'inspectorWidth', 'inspectorTab']) {
         localStorage.removeItem(STORAGE_PREFIX + key)
       }
     } catch {

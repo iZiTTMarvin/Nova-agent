@@ -4,7 +4,8 @@
  */
 .content-topbar {
   height: 44px;
-  background-color: var(--bg-app);
+  background-color: var(--surface-canvas);
+  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -56,7 +57,7 @@
 }
 
 .content-topbar__btn:hover {
-  background-color: var(--border-warm);
+  background-color: var(--surface-sidebar-hover);
   color: var(--text-primary);
 }
 

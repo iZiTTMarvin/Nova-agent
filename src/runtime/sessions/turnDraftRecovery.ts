@@ -39,8 +39,15 @@ export function recoverSessionTurnDrafts(
     const draft = snapshot.turnDraft
     if (!isTerminalRunStatus(snapshot.status) || !draft) continue
     if (draft.messageId !== snapshot.messageId) throw new Error('中断记录身份不一致，原始草稿已保留')
-    const userMessageId = draft.userDelivery?.userMessageId
-    if (!userMessageId) throw new Error('中断记录缺少用户消息坐标，原始草稿已保留')
+    const userMessageId = draft.userDelivery?.userMessageId ?? resolveFallbackUserMessageId(sessionId, store)
+    if (!userMessageId) {
+      // 坐标永久缺失时重试无意义：丢弃孤儿草稿解除会话阻断，避免每次打开/发送都报错
+      console.warn(
+        `[turnDraftRecovery] 草稿缺少用户消息坐标且无法定位锚点，丢弃孤儿草稿 session=${sessionId} run=${snapshot.runId}`
+      )
+      coordinator.clearTurnDraft(snapshot.runId)
+      continue
+    }
     const settledBlocks = draft.blocks.map(block => {
       if (block.type !== 'tool' || block.status !== 'running') return block
       if (!settle) return { ...block, status: 'error' as const, result: '工具执行被中断' }
@@ -74,6 +81,17 @@ export function recoverSessionTurnDrafts(
     }, userMessageId)
     coordinator.clearTurnDraft(snapshot.runId)
   }
+}
+
+/**
+ * 旧版本遗留草稿可能缺少投递坐标：中断轮次的 assistant 消息未落盘时，
+ * 会话叶子即发起该轮的用户消息，可作为归档锚点。
+ */
+function resolveFallbackUserMessageId(sessionId: string, store: SessionStore): string | null {
+  const session = store.load(sessionId)
+  if (!session) return null
+  const leaf = session.messages.find(message => message.id === session.currentLeafId)
+  return leaf?.role === 'user' ? leaf.id : null
 }
 
 /**

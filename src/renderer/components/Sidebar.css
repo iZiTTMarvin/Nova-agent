@@ -1,22 +1,22 @@
 /*
- * 侧栏壳：AppShell sideNav 槽宽度由内容决定，折叠/调宽在此自实现。
- * 折叠采用「宽度瞬时切换 + 内容 transform 滑出」：
- *  - 壳层宽度在开合瞬间一次切换（布局只重排一次，而非动画期间每帧重排）
- *  - 内部内容用 translateX 合成器滑动，动画帧走 GPU、不触发布局
+ * 侧边栏样式 — 现代冷峻 Zinc Desktop 视觉范式（对标 Cline）
  */
+
 .sidebar-shell {
   position: relative;
   flex-shrink: 0;
   height: 100%;
+  background-color: var(--surface-sidebar);
+  border-right: 1px solid var(--border-subtle);
   overflow: hidden;
   transition: none;
-  /* 内容 transform 滑动的合成层 */
   will-change: transform;
   contain: paint;
 }
 
 .sidebar-shell--collapsed {
   pointer-events: none;
+  border-right: none;
 }
 
 .sidebar-shell--resizing {
@@ -27,37 +27,43 @@
   height: 100%;
   display: flex;
   flex-direction: column;
-  /* 折叠滑出的合成器动画；宽度由父壳裁剪 */
   transition: transform var(--transition-normal);
   will-change: transform;
 }
 
-/* 侧栏顶行：与内容区顶行同高，整行可拖拽移动窗口 */
+/* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮 */
 .sidebar-topbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
   height: 44px;
-  padding: 0 8px 0 14px;
+  padding: 0 10px 0 14px;
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sidebar-topbar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .sidebar-topbar__title {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
 }
 
-.sidebar-topbar__toggle {
-  margin-left: auto;
+.sidebar-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   -webkit-app-region: no-drag;
-  width: 32px;
-  height: 32px;
 }
 
-/* 顶行之外的剩余高度全部给导航区 */
 .sidebar-shell__nav {
   flex: 1;
   min-height: 0;
@@ -70,18 +76,85 @@
   min-height: 0;
 }
 
-.sidebar-footer-actions {
-  display: flex;
+/* 顶部操作按钮（新会话、添加工作区）：默认完全透明无边框无底色，仅 hover 时显示微弱浅灰底色 */
+.sidebar-action-btn {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-action-btn:hover {
+  background-color: var(--surface-sidebar-hover) !important;
+  color: var(--text-primary);
+}
+
+/* 项目树标题行：高密度紧凑，无多余边框 */
+.sidebar-project-header {
+  position: relative;
+  height: 30px;
+  border-radius: 6px;
+  transition: background-color var(--transition-fast);
+}
+
+.sidebar-project-header:hover,
+.sidebar-project-header:focus-within,
+.sidebar-project-header--menu-open {
+  background-color: var(--surface-sidebar-hover);
+}
+
+.sidebar-project-header__actions {
+  display: none;
   align-items: center;
-  gap: 4px;
-  min-width: 0;
+  gap: 2px;
 }
 
-.sidebar-footer-actions > :last-child {
-  flex: 1;
-  min-width: 0;
+.sidebar-project-header:hover .sidebar-project-header__actions,
+.sidebar-project-header:focus-within .sidebar-project-header__actions,
+.sidebar-project-header--menu-open .sidebar-project-header__actions {
+  display: flex;
 }
 
+.sidebar-project-header:hover .sidebar-project-header__status,
+.sidebar-project-header:focus-within .sidebar-project-header__status,
+.sidebar-project-header--menu-open .sidebar-project-header__status {
+  display: none;
+}
+
+.sidebar-project-add-btn {
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* 项目树悬停详情小窗口（Hover 超过 1s 后在右侧分割线外部弹出） */
+.sidebar-project-popover {
+  /* 浮层必须实心：画布令牌在深浅主题下均为不透明色 */
+  background-color: var(--surface-canvas);
+  animation: sidebar-popover-enter 120ms ease-out;
+  box-shadow: var(--shadow-popup);
+}
+
+.sidebar-project-popover__path {
+  user-select: none;
+}
+
+@keyframes sidebar-popover-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+/* 调整宽度手柄 */
 .sidebar-shell__resize-handle {
   position: absolute;
   top: 0;
@@ -106,13 +179,14 @@
 
 .sidebar-shell__resize-handle:hover::after,
 .sidebar-shell__resize-handle:active::after {
-  background-color: var(--color-brand);
+  background-color: var(--accent-primary);
 }
 
+/* 状态色点与呼吸光效 */
 .sidebar-status-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -132,36 +206,54 @@
 }
 
 @keyframes sidebar-status-pulse {
-  0%,
-  100% {
+  0%, 100% {
     opacity: 1;
+    transform: scale(1);
   }
   50% {
     opacity: 0.45;
+    transform: scale(0.9);
   }
 }
 
 /*
- * 会话行：底色由行容器统一绘制，避免 SideNavItem 与操作区拼接出断边「阴影」。
- * 操作收进 MoreMenu（…），悬停/菜单打开时显示。
+ * 单条会话行（ThreadItem）：
+ * 固定 30px~32px 高度，激活卡片纯白/纯深灰底色，带微弱细线边框。
  */
 .sidebar-session-row {
   position: relative;
-  padding-block: 4px;
-  border-radius: var(--radius-element, 6px);
+  height: 32px;
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  margin-bottom: 1px;
+  transition: background-color var(--transition-fast);
 }
 
 .sidebar-session-row:hover,
-.sidebar-session-row:focus-within,
-.sidebar-session-row--active,
+.sidebar-session-row:focus-within {
+  background-color: var(--surface-sidebar-hover);
+}
+
+.sidebar-session-row--active {
+  background-color: var(--surface-sidebar-active) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 1px var(--border-subtle);
+}
+
 .sidebar-session-row--menu-open {
-  background-color: var(--color-neutral);
+  background-color: var(--surface-sidebar-hover);
+}
+
+.sidebar-session-row__meta {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 .sidebar-session-row__actions {
   position: absolute;
   top: 50%;
-  right: 2px;
+  right: 4px;
   z-index: 1;
   display: none;
   align-items: center;
@@ -180,12 +272,29 @@
   visibility: hidden;
 }
 
-/* 行容器已上色，内层导航项保持透明，整条底边才连续 */
+/* SideNavItem 基础覆盖：在行容器内保持透明，消除断裂感 */
 .sidebar-session-row :is(button, a).astryx-side-nav-item,
 .sidebar-session-row :is(button, a).astryx-side-nav-item:hover,
 .sidebar-session-row :is(button, a).astryx-side-nav-item[aria-current='page'] {
-  background-color: transparent;
-  box-shadow: none;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  height: 32px !important;
+  padding-block: 0 !important;
+  font-size: 13.5px !important;
+}
+
+/* SideNav 分区标题字号提升，保持清晰易读 */
+.sidebar-astryx-nav [role='heading'],
+.sidebar-astryx-nav span[id$='-title'] {
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  color: var(--text-secondary) !important;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-session-row--active :is(button, a).astryx-side-nav-item {
+  font-weight: 500;
+  color: var(--text-primary) !important;
 }
 
 .sidebar-session-menu__ellipsis {
@@ -193,52 +302,29 @@
   align-items: center;
   justify-content: center;
   width: 1em;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
-/*
- * 项目行默认右侧留白：任务数、「+」、折叠箭头只在 hover 或分组内聚焦时出现。
- * 悬浮簇绝对定位在折叠箭头左侧（24px 箭头 + 4px 行内边距 + 4px 间隙），不占布局；
- * 箭头是 Astryx 渲染在项目行主按钮末尾的 span（会话行不在直接子层，不会被误伤），
- * 与悬浮簇共用同一组显隐条件。
- */
-.sidebar-project-row {
-  position: relative;
-}
-
-.sidebar-project-row__hover-cluster {
-  position: absolute;
-  top: 0;
-  right: 32px;
-  display: none;
-  align-items: center;
-  gap: 8px;
-}
-
-.sidebar-project-row:hover .sidebar-project-row__hover-cluster,
-.sidebar-project-row:focus-within .sidebar-project-row__hover-cluster {
-  display: flex;
-}
-
-.sidebar-project-row > div > button > span:last-child {
-  display: none;
-}
-
-.sidebar-project-row:hover > div > button > span:last-child,
-.sidebar-project-row:focus-within > div > button > span:last-child {
-  display: inline-flex;
-}
-
-/*
- * 会话列表随项目展开变长时，Astryx SideNav 的滚动容器会因滚动条显隐导致
- * 右端内容（时间、⋯ 菜单）左右跳动。通过保留滚动条占位 + 收窄右侧内边距，
- * 让滚动条始终落在预留的 8px 区域内，不挤压会话行内容。
- */
+/* 列表滚动槽优化 */
 .sidebar-astryx-nav > div:nth-of-type(2) {
   box-sizing: border-box;
-  padding-inline-end: 8px;
+  padding-inline: 6px;
   scrollbar-gutter: stable;
+}
+
+/*
+ * 会话标题与项目名左对齐：项目名缩进 = 标题行内边距 8px + 折叠箭头 13px + 间距 6px，
+ * 会话行容器已缩进 8px，故行内条目再补 19px。StyleX 原子类带 :not() 提权，需 !important。
+ */
+.sidebar-project-children .sidebar-session-row :is(button, a).astryx-side-nav-item {
+  padding-inline-start: 19px !important;
+}
+
+/* 底部操作区 */
+.sidebar-footer-actions {
+  border-top: 1px solid var(--border-subtle);
+  height: 40px;
 }

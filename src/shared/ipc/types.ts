@@ -465,6 +465,10 @@ export interface IpcCommands {
     params: { sessionId: string }
     result: void
   }
+  'workspace:open-directory': {
+    params: { path: string }
+    result: void
+  }
   'compose:apply-stage-transition': {
     params: { sessionId: string; action: ComposeStageAction }
     result: { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string }

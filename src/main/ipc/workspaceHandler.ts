@@ -4,7 +4,7 @@
  * 注册所有 workspace:* 命令并负责把 workspace:changed 事件推给 renderer。
  * 所有命令都委托给 WorkspaceService，handler 本身无业务逻辑。
  */
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, shell } from 'electron'
 import { existsSync } from 'fs'
 import { handle } from './secureIpc'
 import {
@@ -20,6 +20,7 @@ import {
   WORKSPACE_SET_PERMISSION_MODE,
   WORKSPACE_SET_REASONING_EFFORT,
   WORKSPACE_READ_ACTIVE_PLAN,
+  WORKSPACE_OPEN_DIRECTORY,
   WORKSPACE_REGENERATE,
   WORKSPACE_SWITCH_BRANCH,
   WORKSPACE_BUMP_MESSAGES_REVISION,
@@ -98,6 +99,14 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
 
   handle(WORKSPACE_READ_ACTIVE_PLAN, async (_event, params: import('../../shared/workspace/types').ReadActivePlanParams) => {
     return service.readActivePlan(params)
+  })
+
+  handle(WORKSPACE_OPEN_DIRECTORY, async (_event, params: { path?: unknown }) => {
+    const targetPath = typeof params?.path === 'string' ? params.path.trim() : ''
+    if (!targetPath) throw new Error('缺少目录路径')
+    if (!existsSync(targetPath)) throw new Error('工作区目录不存在')
+    const err = await shell.openPath(targetPath)
+    if (err) throw new Error(`无法打开目录：${err}`)
   })
 
   handle(WORKSPACE_REGENERATE, async (_event, params: { sessionId: string; messageId: string }) => {

@@ -19,7 +19,13 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   SettingsIcon: () => null,
   PlusIcon: () => null,
   PinIcon: () => null,
-  PanelLeftIcon: () => null
+  PanelLeftIcon: () => null,
+  SearchIcon: () => null,
+  ClockIcon: () => null,
+  FilterIcon: () => null,
+  PuzzleIcon: () => null,
+  ChevronDownIcon: () => null,
+  TerminalIcon: () => null
 }))
 
 function findSessionButton(container: HTMLElement, title: string): HTMLButtonElement | undefined {
@@ -95,7 +101,8 @@ describe('Sidebar 子代理会话退出列表', () => {
     ])
     expect(text).toContain('Parent task')
     expect(text).not.toContain('Inspect runtime boundaries')
-    expect(text).toContain('1 个任务')
+    // 树状项目行保持极简，行内不常驻任务计数
+    expect(text).not.toContain('个任务')
     expect(findSessionButton(renderer.container, 'Inspect runtime boundaries')).toBeUndefined()
     expect(findSessionButton(renderer.container, 'Parent task')).toBeTruthy()
 

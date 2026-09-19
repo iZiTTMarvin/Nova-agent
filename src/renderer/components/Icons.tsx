@@ -458,3 +458,40 @@ export const ShieldCheckIcon: React.FC<IconProps> = ({ size = 16, ...props }) =>
     <path d="m9 12 2 2 4-4" />
   </svg>
 )
+
+/** 时钟图标 - Schedule / 时间排序 */
+export const ClockIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <circle cx="12" cy="12" r="10" />
+    <polyline points="12 6 12 12 16 14" />
+  </svg>
+)
+
+/** 漏斗过滤图标 - 会话过滤 */
+export const FilterIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+  </svg>
+)
+
+/** 滑块/定制图标 - Customize */
+export const SlidersIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <line x1="4" y1="21" x2="4" y2="14" />
+    <line x1="4" y1="10" x2="4" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="12" />
+    <line x1="12" y1="8" x2="12" y2="3" />
+    <line x1="20" y1="21" x2="20" y2="16" />
+    <line x1="20" y1="12" x2="20" y2="3" />
+    <line x1="1" y1="14" x2="7" y2="14" />
+    <line x1="9" y1="8" x2="15" y2="8" />
+    <line x1="17" y1="16" x2="23" y2="16" />
+  </svg>
+)
+
+/** 下折叠箭头图标 */
+export const ChevronDownIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polyline points="6 9 12 15 18 9" />
+  </svg>
+)

@@ -142,7 +142,7 @@ describe('中断草稿归档', () => {
     expect(readFileSync(file, 'utf8')).toBe(bytes)
   })
 
-  it('启动归档捕获坏草稿，不阻断其它会话', () => {
+  it('缺坐标草稿回退叶子用户消息归档，不阻断其它会话', () => {
     const store = new SessionStore(root)
     const good = store.create(root)
     const bad = store.create(root)
@@ -165,16 +165,42 @@ describe('中断草稿归档', () => {
     })
     const next = new RunCoordinator({ store: runStore })
     const interrupted = next.reconcileOnStartup()
-    const errors: unknown[] = []
-    const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
-      errors.push(args)
+    const warnings: unknown[] = []
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args)
     })
     expect(() => recoverInterruptedTurnDraftsOnStartup(interrupted, store, next)).not.toThrow()
     spy.mockRestore()
     expect(store.loadActivePath(good.id)?.messages.map(m => m.id)).toEqual(['user-good', 'assistant-good'])
-    expect(store.loadActivePath(bad.id)?.messages.map(m => m.id)).toEqual(['user-bad'])
-    expect(next.getSnapshot(badRun.runId)?.turnDraft).not.toBeNull()
-    expect(errors.length).toBeGreaterThan(0)
+    expect(store.loadActivePath(bad.id)?.messages.map(m => m.id)).toEqual(['user-bad', 'assistant-bad'])
+    expect(next.getSnapshot(badRun.runId)?.turnDraft).toBeNull()
+    expect(warnings).toHaveLength(0)
+  })
+
+  it('缺坐标且叶子非用户消息时丢弃孤儿草稿，会话保持可用', () => {
+    const store = new SessionStore(root)
+    const session = store.create(root)
+    store.appendMessageFast(session.id, { id: 'user', role: 'user', content: '提问', timestamp: 1 })
+    store.appendMessageFast(session.id, { id: 'answer', role: 'assistant', content: '已回答', timestamp: 2 })
+    const runStore = new RunStore({ runsRoot: join(root, 'runs') })
+    const coordinator = new RunCoordinator({ store: runStore })
+    const run = coordinator.startRun({ kind: 'agent', sessionId: session.id, workspaceId: root })
+    coordinator.markRunning(run.runId, 'orphan')
+    coordinator.upsertTurnDraft(run.runId, {
+      messageId: 'orphan',
+      blocks: [{ type: 'text', content: '无法定位的草稿' }]
+    })
+    const next = new RunCoordinator({ store: runStore })
+    next.reconcileOnStartup()
+    const warnings: unknown[] = []
+    const spy = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+      warnings.push(args)
+    })
+    expect(() => recoverSessionTurnDrafts(session.id, store, next)).not.toThrow()
+    spy.mockRestore()
+    expect(store.loadActivePath(session.id)?.messages.map(m => m.id)).toEqual(['user', 'answer'])
+    expect(next.getSnapshot(run.runId)?.turnDraft).toBeNull()
+    expect(warnings.length).toBeGreaterThan(0)
   })
 })
 

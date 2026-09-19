@@ -1,0 +1,51 @@
+/*
+ * 主画布空态背景 — 现代冷灰几何细线网格与星芒 Mascot 水印
+ */
+
+.welcome-hero-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  /* 32px 间距的几何网格细线 */
+  background-image: 
+    linear-gradient(to right, var(--grid-line-color) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line-color) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 85%);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* 巨幅星芒/Mascot 矢量水印 */
+.welcome-hero-watermark {
+  position: absolute;
+  top: 25%;
+  transform: translateY(-50%);
+  width: 240px;
+  height: 240px;
+  color: var(--watermark-fill);
+  opacity: var(--watermark-opacity);
+  filter: blur(0.5px);
+}
+
+.welcome-hero-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  margin-bottom: 2rem;
+  user-select: none;
+  pointer-events: auto;
+}

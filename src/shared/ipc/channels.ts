@@ -105,6 +105,8 @@ export const WORKSPACE_SET_REASONING_EFFORT = 'workspace:set-reasoning-effort' a
 export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 /** 在系统默认应用中打开当前会话 active plan 文件 */
 export const WORKSPACE_OPEN_ACTIVE_PLAN = 'workspace:open-active-plan' as const
+/** 在系统文件管理器中打开指定目录（项目根目录） */
+export const WORKSPACE_OPEN_DIRECTORY = 'workspace:open-directory' as const
 /** compose 胶囊手动回退到方案（与 stage_transition 工具同一套校验） */
 export const COMPOSE_APPLY_STAGE_TRANSITION = 'compose:apply-stage-transition' as const
 /** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */

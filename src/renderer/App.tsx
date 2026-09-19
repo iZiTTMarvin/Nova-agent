@@ -3,7 +3,7 @@ import { Theme } from '@astryxdesign/core/theme'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
 import { neutralIconRegistry } from '@astryxdesign/theme-neutral'
-import { parchmentTheme } from './styles/parchment'
+import { clineTheme } from './styles/cline-theme'
 import { useChatStore } from './stores/useChatStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
@@ -340,7 +340,7 @@ function App(): React.ReactNode {
   ])
 
   return (
-    <Theme theme={parchmentTheme} mode={theme}>
+    <Theme theme={clineTheme} mode={theme}>
       {/*
         壳结构由 AppShell 拥有：sideNav=Sidebar；无贯穿顶栏（topNav 缺省），
         左右两栏各自通顶——侧栏顶行在 Sidebar 内，内容区顶行是 ContentTopBar。

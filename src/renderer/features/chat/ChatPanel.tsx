@@ -66,6 +66,7 @@ import {
 import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
 import { createComposerFileTrigger } from './composerFileTrigger'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
+import { WelcomeHero } from './WelcomeHero'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
 import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
@@ -1069,14 +1070,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
             </div>
           )}
 
-            {isEmptyState && (
-              <div className="mb-8 flex flex-col items-center justify-center space-y-4">
-                <NovaLogo size={48} />
-                <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
-                  说出你的想法
-                </h1>
-              </div>
-            )}
+            {isEmptyState && <WelcomeHero />}
 
             {/* Child Session 是 durable 执行记录；继续/恢复必须回到统一子代理执行服务。 */}
             {currentSession?.kind === 'subagent' ? (
