@@ -42,6 +42,7 @@ export type MetricCategory =
   | 'budget.assessment'
   | 'compaction.rejected'
   | 'compaction.committed'
+  | 'compaction.input_admission'
   | 'session.append'
   | 'readState.set'
   | 'readState.evict'
