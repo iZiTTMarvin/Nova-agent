@@ -64,6 +64,12 @@ describe('对话表面：消息结构走 Astryx ChatMessage/ChatMessageBubble', 
     expect(messageItemSource).not.toContain('chat-msg-wrapper')
     expect(chatPanelCss).not.toContain('chat-msg-wrapper')
   })
+
+  it('内部接力消息走 ChatMessage sender="system"，不伪装为用户气泡', () => {
+    expect(messageItemSource).toContain("msg.internalSource === 'runtime_input'")
+    expect(messageItemSource).toMatch(/<ChatMessage\s+sender="system"/)
+    expect(messageItemSource).toContain('chat-msg--relay-event')
+  })
 })
 
 describe('对话表面：Markdown 内核为 Astryx', () => {

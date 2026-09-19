@@ -56,6 +56,11 @@ describe('shouldShowNotification', () => {
     expect(shouldShowNotification({ ...base, windowFocused: false })).toBe(true)
     expect(shouldShowNotification({ ...base, onlyWhenUnfocused: false, windowFocused: true })).toBe(true)
   })
+
+  it('子代理 run 一律抑制桌面通知，避免与自动接力重复打扰', () => {
+    expect(shouldShowNotification({ ...base, isSubagent: true })).toBe(false)
+    expect(shouldShowNotification({ ...base, isSubagent: false })).toBe(true)
+  })
 })
 
 describe('detectRunNotificationTrigger', () => {

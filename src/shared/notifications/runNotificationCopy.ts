@@ -10,11 +10,12 @@ export interface NotificationGateInput {
   windowFocused: boolean
   onlyWhenUnfocused: boolean
   e2e: boolean
+  isSubagent?: boolean
 }
 
-/** 策略门禁：开关 + 平台支持 + 失焦（可选） + 非测试环境 */
+/** 策略门禁：开关 + 平台支持 + 失焦（可选） + 非测试环境 + 仅限主会话 run */
 export function shouldShowNotification(input: NotificationGateInput): boolean {
-  if (!input.enabled || !input.supported || input.e2e) return false
+  if (!input.enabled || !input.supported || input.e2e || input.isSubagent) return false
   if (input.onlyWhenUnfocused && input.windowFocused) return false
   return true
 }

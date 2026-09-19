@@ -1,0 +1,80 @@
+/* ActiveBackgroundBanner — 父会话常驻后台任务指示横条 */
+.active-background-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto 8px auto;
+  padding: 6px 14px;
+  background: color-mix(in srgb, var(--color-brand) 5%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--color-brand) 20%, var(--border-warm));
+  border-radius: var(--radius-md);
+  box-sizing: border-box;
+  user-select: none;
+  pointer-events: auto;
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.04));
+  transition: border-color 200ms ease, background-color 200ms ease;
+}
+
+.active-background-banner__left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.active-background-banner__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-brand);
+  flex-shrink: 0;
+  animation: active-banner-pulse 2s ease-in-out infinite;
+}
+
+@keyframes active-banner-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 40%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.active-background-banner__text {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-background-banner__actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.active-background-banner__btn {
+  padding: 2px 8px;
+  border: 1px solid var(--border-warm);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  transition: all 160ms ease;
+  white-space: nowrap;
+}
+
+.active-background-banner__btn:hover {
+  background: var(--bg-sand);
+  color: var(--color-brand);
+  border-color: var(--color-brand);
+}

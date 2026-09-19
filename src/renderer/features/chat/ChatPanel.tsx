@@ -68,6 +68,7 @@ import { createComposerFileTrigger } from './composerFileTrigger'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
+import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
 import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
 import '../todo/TodoPanel.css'
 
@@ -1012,6 +1013,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           <div
             className="w-full flex flex-col items-center pointer-events-none"
           >
+            {/* 常驻后台子任务指示横条 */}
+            <div className="w-full pointer-events-auto">
+              <ActiveBackgroundBanner parentSessionId={currentSessionId} />
+            </div>
+
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 

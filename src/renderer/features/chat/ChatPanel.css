@@ -315,6 +315,39 @@
   color: var(--color-error);
 }
 
+/* 子代理接力系统事件行：居中、轻量、羊皮纸色调药丸 */
+.chat-msg--relay-event {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  padding: 8px 0;
+  user-select: none;
+}
+
+.chat-msg__relay-event-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-light);
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+.chat-msg__relay-event-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-brand);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
 /* 终态错误的动作按钮行：紧贴错误文案下方 */
 .chat-msg__error-actions {
   display: flex;

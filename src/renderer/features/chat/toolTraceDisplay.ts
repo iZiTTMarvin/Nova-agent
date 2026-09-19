@@ -55,6 +55,14 @@ export function getToolTraceAction(toolName: string): string {
       return 'Searched'
     case 'task':
       return 'Task'
+    case 'task_followup':
+      return 'Followup'
+    case 'task_wait':
+      return 'Wait'
+    case 'subagent_read':
+      return 'Inspect'
+    case 'batch_task':
+      return 'Batch'
     case 'invoke_skill':
       return 'Skill'
     case 'todo_write':
@@ -162,6 +170,38 @@ export function getToolTraceTarget(
       if (sub) return truncateTarget(sub)
       return task ? truncateTarget(task) : 'subagent'
     }
+    case 'task_followup': {
+      const child = (args.child_session_id as string) || ''
+      const task = (args.task as string) || ''
+      const childDisplay = child.length > 8 ? `${child.slice(0, 8)}...` : child
+      if (childDisplay && task) return truncateTarget(`${childDisplay}: ${task}`)
+      if (childDisplay) return truncateTarget(childDisplay)
+      return task ? truncateTarget(task) : 'subagent'
+    }
+    case 'task_wait': {
+      const runIds = Array.isArray(args.run_ids)
+        ? args.run_ids.filter((id): id is string => typeof id === 'string')
+        : []
+      if (args.all_unfinished === true) return '全部未完成子任务'
+      return runIds.length > 0 ? `${runIds.length} 个子任务` : '子任务'
+    }
+    case 'subagent_read': {
+      const child = (args.child_session_id as string) || ''
+      const childDisplay = child.length > 12 ? `${child.slice(0, 12)}...` : child
+      const operation = (args.operation as string) || 'inspect'
+      return childDisplay ? `${childDisplay} (${operation})` : operation
+    }
+    case 'batch_task': {
+      const items = Array.isArray(args.items) ? args.items : []
+      const first =
+        items[0] && typeof items[0] === 'object'
+          ? (items[0] as Record<string, unknown>).task
+          : ''
+      const preview = typeof first === 'string' && first ? first : ''
+      return items.length > 0
+        ? truncateTarget(`${items.length} 项${preview ? `: ${preview}` : ''}`)
+        : 'batch'
+    }
     case 'invoke_skill': {
       const skill = (args.skill_name as string) || ''
       const task = (args.task as string) || ''
@@ -247,6 +287,14 @@ export function getToolTraceActionChinese(toolName: string): string {
       return '已搜索'
     case 'task':
       return '已委托'
+    case 'task_followup':
+      return '已续跑'
+    case 'task_wait':
+      return '已等待'
+    case 'subagent_read':
+      return '已回读'
+    case 'batch_task':
+      return '已批处理'
     case 'invoke_skill':
       return '已调用技能'
     case 'todo_write':

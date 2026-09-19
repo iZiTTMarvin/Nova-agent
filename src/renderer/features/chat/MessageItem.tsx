@@ -28,7 +28,7 @@ import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
-import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
+import type { ExtendedMessage, MessageDiffCache, RendererMessageBlock } from '../../stores/types'
 import type { TerminalErrorAction } from '../../../shared/session/terminalErrorBlocks'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageRenderMode } from './messageRenderTier'
@@ -227,8 +227,9 @@ function MessageItemInner({
   // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
   // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
   const msg = useEffectiveMessage(msgProp)
+  const isInternalInput = msg.role === 'user' && msg.internalSource === 'runtime_input'
   const isAssistant = msg.role === 'assistant'
-  const isUser = msg.role === 'user'
+  const isUser = msg.role === 'user' && !isInternalInput
   const isStaticRow = renderMode === 'static'
 
   // 用户消息编辑态（编辑重发）：本地受控，确认后调用 onEditResend 走分叉重发
@@ -362,6 +363,28 @@ function MessageItemInner({
       tooltip="复制此消息"
     />
   )
+
+  if (isInternalInput) {
+    const runtimeInputBlocks = (msg.blocks ?? []).filter(
+      (b): b is Extract<RendererMessageBlock, { type: 'runtime_input' }> => b.type === 'runtime_input'
+    )
+    const count = runtimeInputBlocks.length
+    const label =
+      count > 1
+        ? `后台子任务已完成（共 ${count} 项）· 结果已自动同步到上下文`
+        : '后台子任务已完成 · 结果已自动同步到上下文'
+
+    return (
+      <ChatMessage sender="system">
+        <div className="chat-msg chat-msg--relay-event" role="status" aria-label={label}>
+          <span className="chat-msg__relay-event-pill">
+            <span className="chat-msg__relay-event-dot" aria-hidden="true" />
+            <span className="chat-msg__relay-event-text">{label}</span>
+          </span>
+        </div>
+      </ChatMessage>
+    )
+  }
 
   /* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出。
      按钮几何全部交给 Astryx（IconButton size/variant），不再有 .astryx-* 几何覆盖。 */

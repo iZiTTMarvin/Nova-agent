@@ -17,6 +17,10 @@ describe('getToolTraceAction', () => {
     expect(getToolTraceAction('edit')).toBe('Edited')
     expect(getToolTraceAction('write')).toBe('Wrote')
     expect(getToolTraceAction('grep')).toBe('Grepped')
+    expect(getToolTraceAction('task_wait')).toBe('Wait')
+    expect(getToolTraceAction('batch_task')).toBe('Batch')
+    expect(getToolTraceAction('subagent_read')).toBe('Inspect')
+    expect(getToolTraceAction('task_followup')).toBe('Followup')
   })
 })
 
@@ -34,6 +38,14 @@ describe('getToolTraceTarget', () => {
   it('write 附带行数', () => {
     expect(getToolTraceTarget('write', { path: 'a.ts', content: 'a\nb\nc' })).toBe('a.ts +3')
   })
+
+  it('子代理编排工具正确提取目标摘要', () => {
+    expect(getToolTraceTarget('task_wait', { run_ids: ['run-1', 'run-2'] })).toBe('2 个子任务')
+    expect(getToolTraceTarget('task_wait', { all_unfinished: true })).toBe('全部未完成子任务')
+    expect(getToolTraceTarget('subagent_read', { child_session_id: 'sess_sub_1234567890', operation: 'search' })).toBe('sess_sub_123... (search)')
+    expect(getToolTraceTarget('batch_task', { items: [{ task: '检查第一项' }, { task: '检查第二项' }] })).toBe('2 项: 检查第一项')
+    expect(getToolTraceTarget('task_followup', { child_session_id: 'sess_sub_abc123', task: '继续深入分析' })).toBe('sess_sub...: 继续深入分析')
+  })
 })
 
 describe('getToolTraceActionChinese', () => {
@@ -45,6 +57,10 @@ describe('getToolTraceActionChinese', () => {
     expect(getToolTraceActionChinese('grep')).toBe('已搜索')
     expect(getToolTraceActionChinese('find')).toBe('已查找')
     expect(getToolTraceActionChinese('ls')).toBe('已列出')
+    expect(getToolTraceActionChinese('task_wait')).toBe('已等待')
+    expect(getToolTraceActionChinese('batch_task')).toBe('已批处理')
+    expect(getToolTraceActionChinese('subagent_read')).toBe('已回读')
+    expect(getToolTraceActionChinese('task_followup')).toBe('已续跑')
   })
 })
 

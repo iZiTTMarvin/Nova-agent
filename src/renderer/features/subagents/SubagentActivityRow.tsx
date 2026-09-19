@@ -227,6 +227,11 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
           <span className="subagent-activity-row__header">
             <span className="subagent-activity-row__dot" aria-hidden="true" />
             <span className="subagent-activity-row__agent">{projection.profile.name}</span>
+            {projection.taskLabel && projection.taskLabel !== projection.profile.name && (
+              <span className="subagent-activity-row__task-label" title={projection.taskLabel}>
+                {projection.taskLabel}
+              </span>
+            )}
             {modelLine && <span className="subagent-activity-row__model">{modelLine}</span>}
             <span className="subagent-activity-row__status">
               {status.label}{elapsed ? ` · ${elapsed}` : ''}

@@ -12,6 +12,7 @@ import type { RunSnapshot } from '../../../shared/run/types'
 import { MarkdownRenderer } from '../chat/MarkdownRenderer'
 import { formatSubagentModelLine } from './modelLine'
 import { useRunStore } from '../../stores/useRunStore'
+import { useChatStore } from '../../stores/useChatStore'
 import type { PopoverAnchor } from './SubagentActivityRow'
 
 /** 每页拉取的尾部消息条数；子代理为短会话，单页通常即可覆盖全部。 */
@@ -242,6 +243,11 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
         <header className="subagent-detail-popover__header">
           <div className="subagent-detail-popover__title">
             <span className="subagent-detail-popover__name">{projection.profile.name}</span>
+            {projection.taskLabel && projection.taskLabel !== projection.profile.name && (
+              <span className="subagent-detail-popover__task-label" title={projection.taskLabel}>
+                · {projection.taskLabel}
+              </span>
+            )}
             {modelLine && (
               <span className="subagent-detail-popover__model">{modelLine}</span>
             )}
@@ -251,14 +257,28 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
               </span>
             )}
           </div>
-          <button
-            type="button"
-            className="subagent-detail-popover__close"
-            aria-label="关闭详情"
-            onClick={onClose}
-          >
-            ×
-          </button>
+          <div className="subagent-detail-popover__actions">
+            <button
+              type="button"
+              className="subagent-detail-popover__open-session"
+              aria-label="进入子会话"
+              title="进入独立子会话查看完整历史与交互"
+              onClick={() => {
+                onClose()
+                void useChatStore.getState().selectSession(projection.childSessionId)
+              }}
+            >
+              进入会话 ↗
+            </button>
+            <button
+              type="button"
+              className="subagent-detail-popover__close"
+              aria-label="关闭详情"
+              onClick={onClose}
+            >
+              ×
+            </button>
+          </div>
         </header>
 
         <div className="subagent-detail-popover__body">

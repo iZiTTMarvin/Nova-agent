@@ -242,3 +242,29 @@ export function selectLatestSubagentByChildSessionId(
     (candidate.startedAt ?? 0) >= (latest.startedAt ?? 0) ? candidate : latest
   )
 }
+
+export function isSubagentActive(status: SubagentActivityProjection['status']): boolean {
+  return (
+    status === 'queued' ||
+    status === 'running' ||
+    status === 'waiting_user' ||
+    status === 'retrying' ||
+    status === 'resuming' ||
+    status === 'cancelling'
+  )
+}
+
+/** 查询当前父会话下正在执行的后台子任务 */
+export function selectActiveBackgroundSubagentsByParentSessionId(
+  state: SubagentProjectionState,
+  parentSessionId: string | null
+): SubagentActivityProjection[] {
+  if (!parentSessionId) return []
+  const childRunIds = state.childRunIdsByParentSessionId[parentSessionId] ?? []
+  return childRunIds
+    .map((id) => state.byChildRunId[id])
+    .filter((p): p is SubagentActivityProjection =>
+      Boolean(p && p.execution === 'background_read_only' && isSubagentActive(p.status))
+    )
+}
+

@@ -46,12 +46,16 @@ export function notifyOnSnapshot(snapshot: RunSnapshot): void {
     if (!trigger) return
     const win = getMainWindowRef?.() ?? null
     const settings = loadNovaSettings()
+    const isSubagent = Boolean(
+      snapshot.dispatch || snapshot.sessionId.startsWith('sess_sub_')
+    )
     const allowed = shouldShowNotification({
       enabled: settings.notificationsEnabled,
       supported: Notification.isSupported(),
       windowFocused: win?.isFocused() ?? false,
       onlyWhenUnfocused: settings.notifyOnlyWhenUnfocused,
-      e2e: process.env.NOVA_E2E === '1'
+      e2e: process.env.NOVA_E2E === '1',
+      isSubagent
     })
     if (!allowed) return
 
