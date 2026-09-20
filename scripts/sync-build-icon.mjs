@@ -2,6 +2,7 @@
 import { copyFileSync, existsSync, mkdirSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { verifyBrandAssets } from './verify-brand-assets.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const brandDir = join(root, 'assets', 'brand')
@@ -23,6 +24,7 @@ function pickBrandPng() {
 }
 
 const src = pickBrandPng()
+await verifyBrandAssets()
 mkdirSync(buildDir, { recursive: true })
 mkdirSync(dirname(rendererIcon), { recursive: true })
 copyFileSync(src, outFile)

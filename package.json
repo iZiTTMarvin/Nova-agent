@@ -8,6 +8,7 @@
   "scripts": {
     "predev": "node scripts/verify-native-bootstrap.mjs",
     "dev": "npm run sync:icon && electron-vite dev",
+    "prebuild": "npm run verify:brand-assets",
     "build": "electron-vite build",
     "build:headless": "vite build --config vite.headless.config.ts && vite build --config vite.headless-worker.config.ts",
     "nova:headless": "node out/headless/nova-headless.cjs",
@@ -31,6 +32,7 @@
     "test:e2e:stress": "npm run build && npm --prefix tests/e2e run test:stress",
     "test:e2e:packaged": "npm run build && electron-builder --config electron-builder.yml --win --dir && npm --prefix tests/e2e run test:packaged",
     "validate:skills": "node scripts/validate-skill-frontmatter.mjs",
+    "verify:brand-assets": "node scripts/verify-brand-assets.mjs",
     "sync:icon": "node scripts/sync-build-icon.mjs",
     "astryx:theme": "astryx theme build src/renderer/styles/astryx-parchment-theme.ts -o src/renderer/styles/astryx-parchment.css",
     "postinstall": "electron-rebuild -f -w better-sqlite3",
