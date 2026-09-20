@@ -39,7 +39,7 @@ describe('resetChromiumDiskCaches 失败容忍', () => {
     mkdirSync(join(sandbox, 'GPUCache'), { recursive: true })
 
     const messages: string[] = []
-    expect(() => resetChromiumDiskCaches(sandbox, msg => messages.push(msg))).not.toThrow()
+    expect(() => resetChromiumDiskCaches(sandbox, { log: msg => messages.push(msg) })).not.toThrow()
 
     expect(messages.some(m => m.includes('Cache'))).toBe(true)
     expect(existsSync(join(sandbox, 'GPUCache'))).toBe(false)

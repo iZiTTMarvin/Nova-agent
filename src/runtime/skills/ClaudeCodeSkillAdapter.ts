@@ -8,10 +8,12 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync
 } from 'fs'
+import type { Dirent } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { getNovaHomeDir } from '../settings/novaSettings'
@@ -52,7 +54,12 @@ export function resolveClaudeSkillsCacheDir(novaHomeDir?: string): string {
 
 /**
  * 同步 Claude Code 技能到 Nova 缓存目录
- * @returns 缓存目录路径；开关关闭或无可同步内容时返回 undefined
+ *
+ * 增量同步：缓存与源一致时零拷贝（启动路径不能因第三方技能数量变慢）。
+ * 一致 = 缓存来源标记匹配当前胜出源，且源目录无任何文件比上次同步时刻新。
+ * 孤儿（源已删除）与换源（工作区切换后同名技能换了来源）整目录重建。
+ *
+ * @returns 缓存目录路径；开关关闭时返回 undefined
  */
 export function syncClaudeCodeSkills(opts: ClaudeSyncOptions): ClaudeSyncResult | undefined {
   if (!opts.enabled) {
@@ -62,96 +69,122 @@ export function syncClaudeCodeSkills(opts: ClaudeSyncOptions): ClaudeSyncResult 
   const cacheDir = resolveClaudeSkillsCacheDir(opts.novaHomeDir)
   mkdirSync(cacheDir, { recursive: true })
 
-  // 清空旧缓存后重建，保证关闭项目级 skill 后不会残留
-  if (existsSync(cacheDir)) {
-    for (const entry of readdirSync(cacheDir, { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        rmSync(join(cacheDir, entry.name), { recursive: true, force: true })
-      }
-    }
+  // 期望集：先全局后项目，同名时项目覆盖（对齐优先级 project > global within third_party）
+  const sources = new Map<string, string>()
+  collectSourceSkillDirs(resolveClaudeGlobalSkillsDir(), sources)
+  if (opts.workspaceRoot) {
+    collectSourceSkillDirs(resolveClaudeProjectSkillsDir(opts.workspaceRoot), sources)
   }
 
   let syncedCount = 0
 
-  // 先全局后项目，同名时项目覆盖（对齐优先级 project > global within third_party）
-  const globalDir = resolveClaudeGlobalSkillsDir()
-  syncedCount += syncScope(globalDir, cacheDir)
-
-  if (opts.workspaceRoot) {
-    const projectDir = resolveClaudeProjectSkillsDir(opts.workspaceRoot)
-    syncedCount += syncScope(projectDir, cacheDir, { overwrite: true })
+  let cacheEntries: string[] = []
+  try {
+    cacheEntries = readdirSync(cacheDir, { withFileTypes: true })
+      .filter(e => e.isDirectory())
+      .map(e => e.name)
+  } catch {
+    cacheEntries = []
   }
 
-  if (syncedCount === 0) {
-    return { cacheDir, syncedCount: 0 }
+  for (const name of cacheEntries) {
+    const targetDir = join(cacheDir, name)
+    const sourceDir = sources.get(name)
+    if (sourceDir && isCacheUpToDate(targetDir, sourceDir)) {
+      continue
+    }
+    rmSync(targetDir, { recursive: true, force: true })
+    if (sourceDir) {
+      copySkillDirectory(sourceDir, targetDir)
+      syncedCount += 1
+    }
+  }
+
+  for (const [name, sourceDir] of sources) {
+    const targetDir = join(cacheDir, name)
+    if (!existsSync(targetDir)) {
+      copySkillDirectory(sourceDir, targetDir)
+      syncedCount += 1
+    }
   }
 
   return { cacheDir, syncedCount }
 }
 
-interface SyncScopeOptions {
-  /** 允许覆盖缓存中已有同名技能（项目级覆盖全局） */
-  overwrite?: boolean
-}
+/** 记录缓存来源的标记文件（copySkillDirectory 写入） */
+const SOURCE_MARKER_FILE = '.nova-claude-source'
 
-/**
- * 将单个 Claude 技能目录同步到缓存根目录
- */
-function syncScope(
-  sourceRoot: string,
-  cacheRoot: string,
-  opts: SyncScopeOptions = {}
-): number {
-  if (!existsSync(sourceRoot)) return 0
-
-  let count = 0
+function collectSourceSkillDirs(sourceRoot: string, sources: Map<string, string>): void {
+  if (!existsSync(sourceRoot)) return
   let entries: string[]
   try {
     entries = readdirSync(sourceRoot, { withFileTypes: true })
       .filter(e => e.isDirectory() && !SKIP_DIRS.has(e.name))
       .map(e => e.name)
   } catch {
-    return 0
+    return
   }
-
   for (const dirName of entries) {
-    const sourceDir = join(sourceRoot, dirName)
-    const sourceSkillPath = join(sourceDir, SKILL_FILE)
-    if (!existsSync(sourceSkillPath)) continue
-
-    const targetDir = join(cacheRoot, dirName)
-    if (!opts.overwrite && existsSync(targetDir)) {
-      continue
-    }
-
-    if (opts.overwrite || shouldSyncSkillDir(sourceDir, targetDir)) {
-      if (existsSync(targetDir)) {
-        rmSync(targetDir, { recursive: true, force: true })
-      }
-      copySkillDirectory(sourceDir, targetDir)
-      count += 1
+    if (existsSync(join(sourceRoot, dirName, SKILL_FILE))) {
+      sources.set(dirName, join(sourceRoot, dirName))
     }
   }
-
-  return count
 }
 
-/** 源目录 SKILL.md 更新或缓存缺失时需要同步 */
+function isCacheUpToDate(targetDir: string, sourceDir: string): boolean {
+  try {
+    if (readFileSync(join(targetDir, SOURCE_MARKER_FILE), 'utf-8') !== sourceDir) {
+      return false
+    }
+  } catch {
+    return false
+  }
+  return !shouldSyncSkillDir(sourceDir, targetDir)
+}
+
+/**
+ * 源 SKILL.md 或任一附属文件比上次同步时刻新时需要整目录重建。
+ * 上次同步时刻取缓存标记文件的 mtime（它在全部拷贝完成后写入）；
+ * 附属文件（脚本、参考文档）单独改动因此也能被检测到。
+ */
 function shouldSyncSkillDir(sourceDir: string, targetDir: string): boolean {
-  const sourceSkill = join(sourceDir, SKILL_FILE)
   const targetSkill = join(targetDir, SKILL_FILE)
 
   if (!existsSync(targetDir) || !existsSync(targetSkill)) {
     return true
   }
 
+  let syncTimeMs: number
   try {
-    const sourceMtime = statSync(sourceSkill).mtimeMs
-    const targetMtime = statSync(targetSkill).mtimeMs
-    return sourceMtime > targetMtime
+    syncTimeMs = statSync(join(targetDir, SOURCE_MARKER_FILE)).mtimeMs
   } catch {
     return true
   }
+
+  const stack = [sourceDir]
+  while (stack.length > 0) {
+    const dir = stack.pop()!
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const filePath = join(dir, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(filePath)
+        continue
+      }
+      if (!entry.isFile()) continue
+      try {
+        if (statSync(filePath).mtimeMs > syncTimeMs) return true
+      } catch {
+        // 单个文件不可读不触发重建，拷贝阶段自会暴露问题
+      }
+    }
+  }
+  return false
 }
 
 /** 复制技能目录（SKILL.md + 附属文件/子目录） */
@@ -170,7 +203,7 @@ function copySkillDirectory(sourceDir: string, targetDir: string): void {
 
   // 记录源路径，便于调试（不影响 frontmatter 解析）
   try {
-    writeFileSync(join(targetDir, '.nova-claude-source'), sourceDir, 'utf-8')
+    writeFileSync(join(targetDir, SOURCE_MARKER_FILE), sourceDir, 'utf-8')
   } catch {
     // 标记文件写入失败不影响加载
   }

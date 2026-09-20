@@ -33,7 +33,7 @@ import {
   interruptActiveSubagentsOnShutdown,
   markSubagentsShuttingDown
 } from './services/SubagentLifecycleHost'
-import { resetChromiumDiskCaches } from './cacheReset'
+import { resetChromiumDiskCaches, markChromiumCachesClean, clearChromiumCachesCleanMarker } from './cacheReset'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
 let quitInProgress = false
@@ -165,6 +165,8 @@ function createMainWindow(): void {
   // 渲染进程崩溃自愈：记日志 + reload（带上限防循环）
   contents.on('render-process-gone', (_event, details) => {
     mainLog.error('[render-process-gone]', details)
+    // 崩溃可能源于缓存损坏：作废干净退出标记，下次启动重建缓存
+    clearChromiumCachesCleanMarker(app.getPath('userData'))
     if (renderReloadAttempts >= MAX_RENDER_RELOAD_ATTEMPTS) {
       void dialog.showMessageBox(win, {
         type: 'error',
@@ -308,6 +310,11 @@ async function bootstrap(): Promise<void> {
             console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
           }
         })
+      // 干净退出标记：让下次启动跳过 Chromium 缓存重建，复用代码缓存加速启动。
+      // 仅打包态写入；dev 恒重建，不留标记。
+      if (app.isPackaged) {
+        markChromiumCachesClean(app.getPath('userData'))
+      }
       app.exit(requestedExitCode)
     })()
   })
@@ -324,7 +331,7 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore()
     win.focus()
   })
-  // Chromium 初始化缓存目录前物理重建，已损坏的缓存不进入本次渲染链路
-  resetChromiumDiskCaches(app.getPath('userData'))
+  // Chromium 初始化缓存目录前物理重建：dev 每次重建；打包态仅上次异常退出后重建
+  resetChromiumDiskCaches(app.getPath('userData'), { packaged: app.isPackaged })
   void bootstrap()
 }
