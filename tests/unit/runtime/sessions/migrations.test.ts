@@ -576,15 +576,15 @@ describe('migrateSessionData', () => {
       subagent
     })
 
-    expect(primary).toMatchObject({ schemaVersion: 20, mode: 'plan' })
+    expect(primary).toMatchObject({ schemaVersion: 21, mode: 'plan' })
     expect(child).toMatchObject({
-      schemaVersion: 20,
+      schemaVersion: 21,
       mode: 'default',
       messages,
       currentLeafId: 'm1',
       subagent
     })
-    expect(historicalComposeChild).toMatchObject({ schemaVersion: 20, mode: 'compose' })
+    expect(historicalComposeChild).toMatchObject({ schemaVersion: 21, mode: 'compose' })
   })
 
   it('完全访问持久值按当前 schema 原样恢复', () => {
@@ -628,7 +628,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.composeStages).toEqual([
       { id: 'interview', status: 'completed', completedAt: 10 },
       { id: 'blueprint', status: 'in_progress', note: '正在写方案' },
@@ -758,7 +758,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.composeStages?.map(s => s.id)).toEqual([
       'interview',
       'blueprint',
@@ -790,11 +790,11 @@ describe('migrateSessionData', () => {
       updatedAt: 1
     })
 
-    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.composeStages).toBeUndefined()
   })
 
-  it('v19 会话升级到 v20，controlIntent 缺省即无意图', () => {
+  it('v19 会话升级到当前版本，controlIntent 缺省即无意图', () => {
     const v19 = {
       schemaVersion: 19,
       kind: 'primary',
@@ -810,11 +810,11 @@ describe('migrateSessionData', () => {
     }
 
     const migrated = migrateSessionData(v19)
-    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.controlIntent).toBeUndefined()
   })
 
-  it('v20 带合法 controlIntent 原样保留；非法版本由 decoder 拒绝', () => {
+  it('v20 带合法 controlIntent 升级后原样保留；非法版本由 decoder 拒绝', () => {
     const controlIntent = {
       version: 1,
       operationId: 'op1',
@@ -838,7 +838,7 @@ describe('migrateSessionData', () => {
       controlIntent
     })
 
-    expect(migrated.schemaVersion).toBe(20)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.controlIntent).toEqual(controlIntent)
     expect(() => decodeSessionControlIntent({ ...controlIntent, version: 2 })).toThrow()
     expect(decodeSessionControlIntent(null)).toBeUndefined()

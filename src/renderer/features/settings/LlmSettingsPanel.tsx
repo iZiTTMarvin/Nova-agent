@@ -23,6 +23,8 @@ import {
   createCustomProvider,
   mergeFetchedModelEntries,
   resolveActiveModelAfterSave,
+  getSupportedReasoningEfforts,
+  resolveModelReasoningEffort,
   generateLocalId
 } from '../../../shared/config/llmRegistry'
 import { ChevronIcon } from '../../components/Icons'
@@ -30,6 +32,15 @@ import { ChevronIcon } from '../../components/Icons'
 type Selection =
   | { kind: 'preset'; presetId: PresetProviderId }
   | { kind: 'custom'; providerId: string }
+
+const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  auto: '自动',
+  low: '低',
+  medium: '中',
+  high: '高',
+  xhigh: '极高',
+  max: '最高'
+}
 
 export const LlmSettingsPanel: React.FC = () => {
   const llmRegistry = useSettingsStore(state => state.llmRegistry)
@@ -562,6 +573,12 @@ const ModelEntryRow: React.FC<{
   onRemove: () => void
 }> = ({ entry, disabled, onUpdate, onRemove }) => {
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const configuredEffort = entry.reasoningEffort ?? 'auto'
+  const capabilityEfforts = getSupportedReasoningEfforts(entry)
+  const supportedEfforts: readonly ReasoningEffort[] = capabilityEfforts
+    ?? (configuredEffort !== 'auto' ? ['auto', configuredEffort] : ['auto'])
+  const effectiveEffort = resolveModelReasoningEffort(entry)
+  const configuredValue = supportedEfforts.includes(configuredEffort) ? configuredEffort : 'auto'
 
   const label = entry.displayName ?? entry.modelId
   const showId = entry.displayName && entry.displayName !== entry.modelId
@@ -630,21 +647,26 @@ const ModelEntryRow: React.FC<{
 
           <Selector
             label="思考强度"
-            options={[
-              { value: 'auto', label: '自动（推荐，不发送参数）' },
-              { value: 'low', label: '低' },
-              { value: 'medium', label: '中' },
-              { value: 'high', label: '高' },
-              { value: 'max', label: '最高' }
-            ]}
-            value={entry.reasoningEffort ?? 'auto'}
+            options={supportedEfforts.map(value => ({
+              value,
+              label: value === 'auto' && effectiveEffort !== 'auto'
+                ? `自动（默认 ${REASONING_EFFORT_LABELS[effectiveEffort]}）`
+                : REASONING_EFFORT_LABELS[value]
+            }))}
+            value={configuredValue}
             onChange={value =>
               onUpdate({ reasoningEffort: value as ReasoningEffort })
             }
-            isDisabled={disabled}
+            isDisabled={disabled || supportedEfforts.length === 1}
             width="100%"
           />
-          <span className="settings-help">控制推理深度；auto 不影响现有行为。</span>
+          <span className="settings-help">
+            {supportedEfforts.length === 1
+              ? capabilityEfforts === null
+                ? '该模型尚未登记可选档位，由服务商决定。'
+                : '该模型没有可选档位，由服务商决定。'
+              : '控制推理深度；自动由服务商决定。'}
+          </span>
 
           <Selector
             label="支持图片"

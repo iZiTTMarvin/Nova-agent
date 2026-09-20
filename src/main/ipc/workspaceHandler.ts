@@ -19,6 +19,7 @@ import {
   WORKSPACE_SET_MODE,
   WORKSPACE_SET_PERMISSION_MODE,
   WORKSPACE_SET_REASONING_EFFORT,
+  WORKSPACE_SET_SESSION_MODEL,
   WORKSPACE_READ_ACTIVE_PLAN,
   WORKSPACE_OPEN_DIRECTORY,
   WORKSPACE_REGENERATE,
@@ -95,6 +96,10 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
 
   handle(WORKSPACE_SET_REASONING_EFFORT, async (_event, params: import('../../shared/workspace/types').SetReasoningEffortParams) => {
     return service.setReasoningEffortOverride(params)
+  })
+
+  handle(WORKSPACE_SET_SESSION_MODEL, async (_event, params: import('../../shared/workspace/types').SetSessionModelParams) => {
+    return service.setSessionModel(params)
   })
 
   handle(WORKSPACE_READ_ACTIVE_PLAN, async (_event, params: import('../../shared/workspace/types').ReadActivePlanParams) => {

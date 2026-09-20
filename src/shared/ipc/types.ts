@@ -49,6 +49,7 @@ import type {
   SetModeParams,
   SetPermissionModeParams,
   SetReasoningEffortParams,
+  SetSessionModelParams,
   ActivePlanDocument,
   ReadActivePlanParams
 } from '../workspace/types'
@@ -455,6 +456,10 @@ export interface IpcCommands {
   }
   'workspace:set-reasoning-effort': {
     params: SetReasoningEffortParams
+    result: WorkspaceState
+  }
+  'workspace:set-session-model': {
+    params: SetSessionModelParams
     result: WorkspaceState
   }
   'workspace:read-active-plan': {

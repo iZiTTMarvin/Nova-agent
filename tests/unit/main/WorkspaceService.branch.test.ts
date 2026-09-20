@@ -5,6 +5,7 @@ import * as path from 'path'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 import { WorkspaceService } from '../../../src/main/services/WorkspaceService'
 import { isAgentTurnInProgress } from '../../../src/main/agent/state'
+import { createCustomProvider, type LlmRegistry } from '../../../src/shared/config/llmRegistry'
 import {
   writeManifest,
   getFilesDir,
@@ -24,7 +25,8 @@ vi.mock('../../../src/runtime/agent', () => ({
 vi.mock('../../../src/main/agent/state', () => ({
   clearReadStateForSession: vi.fn(),
   deleteReadStateForSession: vi.fn(),
-  isAgentTurnInProgress: vi.fn(() => false)
+  isAgentTurnInProgress: vi.fn(() => false),
+  isSessionTurnInProgress: vi.fn(() => false)
 }))
 
 vi.mock('../../../src/main/index', () => ({
@@ -41,8 +43,13 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
   })
 }))
 
+const modelConfigMocks = vi.hoisted(() => ({
+  loadLlmRegistry: vi.fn()
+}))
+
 vi.mock('../../../src/runtime/model/config', () => ({
-  loadModelConfig: () => null
+  loadModelConfig: () => null,
+  loadLlmRegistry: modelConfigMocks.loadLlmRegistry
 }))
 
 /**
@@ -59,6 +66,7 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     store = new SessionStore(tmpDir)
     broadcasted = []
     vi.mocked(isAgentTurnInProgress).mockReturnValue(false)
+    modelConfigMocks.loadLlmRegistry.mockReturnValue(null)
 
     service = new WorkspaceService({
       disposeIdleLoopForSession: vi.fn(),
@@ -306,6 +314,66 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     expect(service.getState().reasoningEffortOverride).toBe('high')
   })
 
+  it('新会话继承上一会话的模型与思考强度，并且立即广播一致状态', () => {
+    const registry = modelRegistry()
+    modelConfigMocks.loadLlmRegistry.mockReturnValue(registry)
+    const first = store.create('/ws', 'default', {
+      modelOverride: { providerId: 'provider', modelEntryId: 'gpt' },
+      reasoningEffortOverride: 'xhigh'
+    })
+    service.initOnStartup()
+
+    const next = service.createSession({ workspaceRoot: '/ws' })
+    const persisted = store.loadMetadata(next.currentSessionId!)
+
+    expect(persisted?.modelOverride).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
+    expect(persisted?.reasoningEffortOverride).toBe('xhigh')
+    expect(next.activeModelRef).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
+    expect(next.reasoningEffortOverride).toBe('xhigh')
+    expect(next.currentSessionId).not.toBe(first.id)
+  })
+
+  it('模型切换在主进程对账档位，切回会话恢复各自选择', () => {
+    const registry = modelRegistry()
+    modelConfigMocks.loadLlmRegistry.mockReturnValue(registry)
+    const first = store.create('/ws', 'default', {
+      modelOverride: { providerId: 'provider', modelEntryId: 'gpt' },
+      reasoningEffortOverride: 'xhigh'
+    })
+    const second = store.create('/ws', 'default', {
+      modelOverride: { providerId: 'provider', modelEntryId: 'gpt' },
+      reasoningEffortOverride: 'xhigh'
+    })
+    service.initOnStartup()
+    service.selectSession(second.id)
+
+    const switched = service.setSessionModel({
+      ref: { providerId: 'provider', modelEntryId: 'minimax' }
+    })
+    expect(switched.activeModelRef).toEqual({ providerId: 'provider', modelEntryId: 'minimax' })
+    expect(switched.reasoningEffortOverride).toBeNull()
+    expect(store.loadMetadata(second.id)?.reasoningEffortOverride).toBeUndefined()
+
+    const restored = service.selectSession(first.id)
+    expect(restored.activeModelRef).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
+    expect(restored.reasoningEffortOverride).toBe('xhigh')
+    expect(registry.activeModel).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
+  })
+
+  it('拒绝当前模型不支持的思考强度', () => {
+    const registry = modelRegistry()
+    modelConfigMocks.loadLlmRegistry.mockReturnValue(registry)
+    const session = store.create('/ws', 'default', {
+      modelOverride: { providerId: 'provider', modelEntryId: 'minimax' },
+      reasoningEffortOverride: 'high'
+    })
+    service.initOnStartup()
+
+    expect(() => service.setReasoningEffortOverride({ effort: 'xhigh' }))
+      .toThrow('当前模型不支持思考强度 xhigh')
+    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe('high')
+  })
+
   it('切走后不再为过期会话全量计算上下文', async () => {
     const first = store.create('/ws')
     const second = store.create('/ws')
@@ -331,6 +399,21 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     store.appendMessage(session.id, { id: 'u2', role: 'user', content: 'q2', timestamp: 3 })
     store.appendMessage(session.id, { id: 'a2', role: 'assistant', content: 'a2', timestamp: 4 })
     return session
+  }
+
+  function modelRegistry(): LlmRegistry {
+    const provider = createCustomProvider('Models', 'https://models.example/v1')
+    provider.id = 'provider'
+    provider.apiKey = 'key'
+    provider.models = [
+      { id: 'gpt', modelId: 'gpt-5.4', displayName: 'GPT-5.4' },
+      { id: 'minimax', modelId: 'MiniMax-M3', displayName: 'MiniMax-M3' }
+    ]
+    return {
+      version: 2,
+      providers: [provider],
+      activeModel: { providerId: 'provider', modelEntryId: 'gpt' }
+    }
   }
 
   it('switchBranch 先失效化丢弃路径的投递再切 leaf', () => {

@@ -44,6 +44,8 @@ import { syncTavilyApiKeyFromSettings } from '../../../runtime/settings/syncTavi
 import { subscribeObservationCapture } from '../../../runtime/memory/MemoryObservationBridge'
 import { buildFileReferencePrefix, extractFileReferences } from '../../../shared/chat/fileReferences'
 import { getSessionStore } from '../../services/SessionStoreHost'
+import { resolveSessionModelConfig } from '../../services/sessionModelConfig'
+import { createModelClient } from '../../services/createModelClient'
 import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { ensureObservationCaptureForSession } from '../../services/MemoryConsolidationHost'
@@ -253,7 +255,9 @@ export async function sendAgentMessage(
     dismissPendingAskQuestionsForSession(params.sessionId)
   }
 
-  const modelClient = getModelClient()
+  // 会话有效模型：会话覆盖优先，否则跟随全局最近选择；注册表不可解析时回退全局 client
+  const sessionModelConfig = resolveSessionModelConfig(session)
+  const modelClient = sessionModelConfig ? createModelClient(sessionModelConfig) : getModelClient()
   if (!modelClient) {
     throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
   }
@@ -281,8 +285,8 @@ export async function sendAgentMessage(
   const capturedWorkspaceRoot = projectPath
   const capturedSessionsDir = sessionsDir
 
-  // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
-  const persistedConfig = loadModelConfig(app.getPath('userData'))
+  // 读取会话有效配置以获取模型上下文窗口上限，用于动态压缩阈值
+  const persistedConfig = sessionModelConfig ?? loadModelConfig(app.getPath('userData'))
   const supportsVision = resolveSupportsVision(
     persistedConfig?.modelId ?? '',
     persistedConfig?.supportsVision
@@ -341,6 +345,7 @@ export async function sendAgentMessage(
     sessionsDir,
     novaSettings,
     modelClient,
+    ...(persistedConfig ? { modelConfig: persistedConfig } : {}),
     getImageStore,
     // readState 按会话隔离：同会话跨 turn 复用，不同会话互不污染
     readState: getReadStateForSession(params.sessionId),

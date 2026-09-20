@@ -75,4 +75,44 @@ describe('请求级思考强度覆盖（ChatOptions.reasoningEffort）', () => {
     const body = await drainBody(makeClient())
     expect('reasoning_effort' in body).toBe(false)
   })
+
+  it('不支持的请求覆盖回落到模型默认值，而不是降级为 auto', async () => {
+    const client = new OpenAICompatibleModelClient({
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+      apiKey: 'test-key',
+      modelId: 'glm-5.3',
+      reasoningEffort: 'high'
+    })
+    const body = await drainBody(client, { reasoningEffort: 'medium' })
+    expect(body.reasoning_effort).toBe('high')
+  })
+
+  it('MiniMax 官方端点把 High 和 Max 都编码为 adaptive', async () => {
+    const client = new OpenAICompatibleModelClient({
+      baseUrl: 'https://api.minimaxi.com/v1',
+      apiKey: 'test-key',
+      modelId: 'MiniMax-M3'
+    })
+    const high = await drainBody(client, { reasoningEffort: 'high' })
+    const max = await drainBody(client, { reasoningEffort: 'max' })
+    expect(high.thinking).toEqual({ type: 'adaptive' })
+    expect(max.thinking).toEqual({ type: 'adaptive' })
+    expect(high).not.toHaveProperty('reasoning_effort')
+    expect(max).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('MiniMax 产品档位共享 adaptive route，但不与 auto 混用', () => {
+    const client = new OpenAICompatibleModelClient({
+      baseUrl: 'https://api.minimaxi.com/v1',
+      apiKey: 'test-key',
+      modelId: 'MiniMax-M3'
+    })
+    const messages = [{ role: 'user' as const, content: 'hi' }]
+
+    const high = client.measureRequest(messages, undefined, { reasoningEffort: 'high' }).routeId
+    const max = client.measureRequest(messages, undefined, { reasoningEffort: 'max' }).routeId
+    const auto = client.measureRequest(messages, undefined, { reasoningEffort: 'auto' }).routeId
+    expect(high).toBe(max)
+    expect(high).not.toBe(auto)
+  })
 })

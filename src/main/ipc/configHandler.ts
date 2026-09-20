@@ -11,20 +11,20 @@ import {
 import type { ModelConfig } from '../../shared/config'
 import type { LlmRegistry } from '../../shared/config/llmRegistry'
 import { maskApiKey, isMaskedApiKey } from '../../shared/config/apiKeyMask'
-import { resolveCacheProfile } from '../../runtime/model/cacheProfile'
-import { resolveActiveModelConfig, resolveFallbackModelConfigs } from '../../shared/config/llmRegistry'
 import {
   saveModelConfig,
   loadModelConfig,
   loadLlmRegistry,
-  saveLlmRegistry,
-  setActiveModelInRegistry
+  saveLlmRegistry
 } from '../../runtime/model/config'
 import { fetchProviderModels } from '../../runtime/model/fetchProviderModels'
-import { OpenAICompatibleModelClient } from '../../runtime/model/OpenAICompatibleModelClient'
-import { getModelClient, setModelClient } from '../services/ModelClientHost'
-import { createModelClient } from '../services/createModelClient'
+import {
+  applyActiveModelRef,
+  applyModelConfigToClient,
+  syncActiveModelFromRegistry
+} from '../services/ModelClientHost'
 import { electronTransportFetch } from '../network/electronTransportFetch'
+import { getWorkspaceService } from '../services/WorkspaceService'
 
 /** 返回渲染层前掩码所有 provider 的 apiKey */
 function maskRegistryForRenderer(registry: LlmRegistry): LlmRegistry {
@@ -54,36 +54,6 @@ function mergeRegistryApiKeys(incoming: LlmRegistry, onDisk: LlmRegistry | null)
   }
 }
 
-/** 用 ModelConfig 更新主进程全局 ModelClient */
-function applyModelConfigToClient(config: ModelConfig): void {
-  const profile = resolveCacheProfile(config.baseUrl, config.modelId, {
-    cacheProfile: config.cacheProfile,
-    cacheStrategy: config.cacheStrategy
-  })
-  const strategy = profile.marker === 'cache_control' ? 'anthropic' : 'auto'
-
-  const activeClient = getModelClient()
-  if (activeClient) {
-    activeClient.updateConfig(config)
-    if (activeClient instanceof OpenAICompatibleModelClient) {
-      activeClient.setCacheStrategy(strategy)
-    }
-  } else {
-    const client = createModelClient(config)
-    client.setCacheStrategy(strategy)
-    setModelClient(client)
-  }
-}
-
-/** 从注册表同步活跃模型到 ModelClient */
-function syncActiveModelFromRegistry(registry: LlmRegistry): void {
-  const active = resolveActiveModelConfig(registry)
-  if (!active) return
-  const fallbacks = resolveFallbackModelConfigs(registry)
-  const config = fallbacks.length > 0 ? { ...active, fallbacks } : active
-  applyModelConfigToClient(config)
-}
-
 /**
  * 注册模型配置相关的 IPC 处理器
  */
@@ -92,6 +62,7 @@ export function registerConfigHandler(): void {
   handle(SAVE_MODEL_CONFIG, async (_event, rawConfig: ModelConfig): Promise<void> => {
     const config = saveModelConfig(rawConfig, app.getPath('userData'))
     applyModelConfigToClient(config)
+    getWorkspaceService().refreshModelSelection()
   })
 
   // v1 兼容：加载活跃 ModelConfig（掩码后返回）
@@ -114,14 +85,15 @@ export function registerConfigHandler(): void {
     const merged = mergeRegistryApiKeys(registry, onDisk)
     const saved = saveLlmRegistry(userData, merged)
     syncActiveModelFromRegistry(saved)
+    getWorkspaceService().refreshModelSelection()
   })
 
-  // v2：快速切换活跃模型
+  // v2：快速切换全局最近模型（新会话与无覆盖会话的默认）
   handle(
     SET_ACTIVE_MODEL,
     async (_event, ref: { providerId: string; modelEntryId: string }): Promise<void> => {
-      const registry = setActiveModelInRegistry(app.getPath('userData'), ref)
-      syncActiveModelFromRegistry(registry)
+      applyActiveModelRef(app.getPath('userData'), ref)
+      getWorkspaceService().refreshModelSelection()
     }
   )
 

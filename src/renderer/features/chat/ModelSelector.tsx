@@ -1,106 +1,80 @@
 /**
- * Composer 复合选择器 — 触发器显示「模型名 · 生效思考强度」。
+ * Composer 模型选择器 — 只负责切换当前会话的模型。
  *
- * 主菜单为思考强度单选区（会话级覆盖，见 CONTEXT.md）+ 级联模型子菜单；
- * 子菜单复用「服务商 → 模型」结构，尾部固定「管理模型」。
- * 触发器、键盘导航、焦点回收和菜单层交给 Astryx 统一处理。
+ * 模型是会话级覆盖（无会话时写全局最近选择）；思考强度由
+ * ReasoningEffortControl 独立承担，两者互不耦合。
  */
-import React, { useMemo } from 'react'
+import React, { useCallback, useMemo } from 'react'
 import { Button } from '@astryxdesign/core/Button'
-import { DropdownMenu, type DropdownMenuOption } from '@astryxdesign/core/DropdownMenu'
+import {
+  DropdownMenu,
+  type DropdownMenuItemData,
+  type DropdownMenuOption
+} from '@astryxdesign/core/DropdownMenu'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import {
   groupSelectableModels,
-  getActiveModelDisplayName,
-  getActiveModelReasoningEffort,
-  type ReasoningEffort
+  getModelDisplayName,
+  type ActiveModelRef
 } from '../../../shared/config/llmRegistry'
 import { CheckSmallIcon } from '../../components/Icons'
-
-const EFFORT_VALUES: ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'max']
-
-const EFFORT_LABELS: Record<ReasoningEffort, string> = {
-  auto: 'auto（不发送参数）',
-  low: 'low',
-  medium: 'medium',
-  high: 'high',
-  max: 'max'
-}
 
 export const ModelSelector: React.FC = () => {
   const llmRegistry = useSettingsStore(state => state.llmRegistry)
   const setActiveModel = useSettingsStore(state => state.setActiveModel)
   const openLlmSettings = useSettingsStore(state => state.openLlmSettings)
-  const override = useWorkspaceStore(state => state.reasoningEffortOverride)
-  const setReasoningEffortOverride = useWorkspaceStore(
-    state => state.setReasoningEffortOverride
-  )
+  const activeModelRef = useWorkspaceStore(state => state.activeModelRef)
+  const currentSessionId = useWorkspaceStore(state => state.currentSessionId)
+  const setSessionModel = useWorkspaceStore(state => state.setSessionModel)
 
   const groups = llmRegistry ? groupSelectableModels(llmRegistry) : []
-  const displayName = llmRegistry ? getActiveModelDisplayName(llmRegistry) : null
-  const defaultEffort = llmRegistry ? getActiveModelReasoningEffort(llmRegistry) : 'auto'
-  const effectiveEffort = override ?? defaultEffort
   const hasModels = groups.length > 0
-  const activeRef = llmRegistry?.activeModel
+  // 会话有效引用优先；广播未到达（或未配置）时回退注册表活跃模型
+  const currentRef: ActiveModelRef | null = activeModelRef ?? llmRegistry?.activeModel ?? null
+  const displayName = llmRegistry ? getModelDisplayName(llmRegistry, activeModelRef ?? undefined) : null
 
-  const isActiveModel = (providerId: string, modelEntryId: string) =>
-    activeRef?.providerId === providerId && activeRef?.modelEntryId === modelEntryId
+  const isCurrentModel = useCallback(
+    (providerId: string, modelEntryId: string) =>
+      currentRef?.providerId === providerId && currentRef?.modelEntryId === modelEntryId,
+    [currentRef?.modelEntryId, currentRef?.providerId]
+  )
 
-  const handleSelectModel = async (providerId: string, modelEntryId: string) => {
+  const handleSelectModel = useCallback(async (ref: ActiveModelRef) => {
     try {
-      await setActiveModel(providerId, modelEntryId)
-    } catch {
-      // store 已打日志
+      if (currentSessionId) {
+        await setSessionModel(ref)
+      } else {
+        // 无会话：写全局最近选择，供首个会话与后续新会话继承
+        await setActiveModel(ref.providerId, ref.modelEntryId)
+      }
+    } catch (err) {
+      console.error('[ModelSelector] 切换模型失败:', err)
     }
-  }
-
-  const handleSelectEffort = async (effort: ReasoningEffort | null) => {
-    await setReasoningEffortOverride(effort)
-  }
+  }, [currentSessionId, setActiveModel, setSessionModel])
 
   const menuItems = useMemo<DropdownMenuOption[]>(() => {
     const checked = <CheckSmallIcon size={14} />
+    const items: DropdownMenuItemData[] = []
 
-    const effortItems = [
-      {
-        label:
-          defaultEffort === 'auto'
-            ? '跟随模型默认'
-            : `跟随模型默认（当前 ${defaultEffort}）`,
-        icon: override === null ? checked : undefined,
-        onClick: () => void handleSelectEffort(null)
-      },
-      ...EFFORT_VALUES.map(value => ({
-        label: EFFORT_LABELS[value],
-        icon: override === value ? checked : undefined,
-        onClick: () => void handleSelectEffort(value)
-      }))
-    ]
-
-    const modelItems: DropdownMenuOption[] = []
     for (const group of groups) {
-      const items = group.models.map(model => ({
+      const models = group.models.map(model => ({
         label: model.displayName,
-        icon: isActiveModel(model.providerId, model.modelEntryId) ? checked : undefined,
-        onClick: () => void handleSelectModel(model.providerId, model.modelEntryId)
+        icon: isCurrentModel(model.providerId, model.modelEntryId) ? checked : undefined,
+        onClick: () => void handleSelectModel({
+          providerId: model.providerId,
+          modelEntryId: model.modelEntryId
+        })
       }))
-
-      if (items.length === 1) {
-        modelItems.push(items[0])
-      } else {
-        modelItems.push({ label: group.providerName, items })
-      }
+      items.push(models.length === 1 ? models[0]! : { label: group.providerName, items: models })
     }
-    modelItems.push({ type: 'divider' })
-    modelItems.push({ label: '管理模型', onClick: openLlmSettings })
 
     return [
-      { type: 'section', title: '思考强度', items: effortItems },
+      { type: 'section', title: '模型', items },
       { type: 'divider' },
-      { label: displayName ?? '选择模型', items: modelItems }
+      { label: '管理模型…', onClick: openLlmSettings }
     ]
-  }, [groups, activeRef, override, defaultEffort, displayName, openLlmSettings, setActiveModel, setReasoningEffortOverride])
+  }, [groups, handleSelectModel, isCurrentModel, openLlmSettings])
 
   if (!hasModels) {
     return (
@@ -118,14 +92,12 @@ export const ModelSelector: React.FC = () => {
   return (
     <DropdownMenu
       button={{
-        label: '切换模型与思考强度',
+        label: '切换模型',
         variant: 'ghost',
         size: 'sm',
-        tooltip: '切换模型与思考强度',
+        tooltip: '切换模型',
         children: (
-          <span className="model-selector__label">
-            {displayName ?? '选择模型'} · {effectiveEffort}
-          </span>
+          <span className="model-selector__label">{displayName ?? '选择模型'}</span>
         )
       }}
       items={menuItems}

@@ -25,7 +25,7 @@ import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
-import { buildReasoningParams } from './reasoningDialect'
+import { buildReasoningParams, resolveRequestReasoningEffort } from './reasoningDialect'
 import { isReasoningSourceCompatible } from './reasoningSource'
 import { projectMessagesForVision } from './visionProjection'
 import { resolveCacheProfile, type CacheMarker, type CacheProfile } from './cacheProfile'
@@ -33,7 +33,7 @@ import {
   observeReasoningField,
   type ObservedReasoningField
 } from './reasoningObservation'
-import type { CacheStrategy } from '../../shared/config/types'
+import type { CacheStrategy, ReasoningEffort } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
 import { computeWireSnapshot, resetRequestSerializationMemo, type RequestSerializationMemo } from './requestFingerprint'
@@ -119,6 +119,16 @@ export class OpenAICompatibleModelClient implements ModelClient {
     })
   }
 
+  /** 请求参数与 route identity 必须使用同一份有效强度，避免无效档位制造假路由差异。 */
+  private effectiveReasoningEffort(options?: ChatOptions): ReasoningEffort {
+    return resolveRequestReasoningEffort(
+      this.config.modelId,
+      this.config.reasoningEffort,
+      options?.reasoningEffort,
+      this.config.baseUrl
+    )
+  }
+
   /**
    * 初始化观测字段：仅当档案标记 reasoningWireObservable 时启用观测，
    * 初始值取静态 reasoningWire（限定为 reasoning_content / reasoning 两类载体）。
@@ -183,7 +193,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const reasoningParams = buildReasoningParams(
       this.config.modelId,
       this.config.baseUrl,
-      options?.reasoningEffort ?? this.config.reasoningEffort ?? 'auto'
+      this.effectiveReasoningEffort(options)
     )
     if (reasoningParams) {
       Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams, requestDisabled))
@@ -214,7 +224,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
   }
 
   measureRequest(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): RequestBudgetMeasurement {
-    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: options?.reasoningEffort ?? this.config.reasoningEffort, cacheProfile: this.cacheProfile.id })
+    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: this.effectiveReasoningEffort(options), cacheProfile: this.cacheProfile.id })
     return measureRequestBudget(this.buildRequestBody(messages, tools, options), route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow))
   }
 
@@ -254,7 +264,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     const logicalRequestId = options?.observation?.logicalRequestId ?? randomUUID()
     const purpose = options?.purpose ?? 'main'
-    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: options?.reasoningEffort ?? this.config.reasoningEffort, cacheProfile: this.cacheProfile.id })
+    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: this.effectiveReasoningEffort(options), cacheProfile: this.cacheProfile.id })
     let dispatchIndexWithinCall = 0
     let physicalAttemptId = ''
     let observedAttempt: Awaited<ReturnType<typeof transportFetch>>['attempt'] | undefined

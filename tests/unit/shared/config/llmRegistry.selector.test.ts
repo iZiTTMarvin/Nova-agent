@@ -26,7 +26,10 @@ describe('resolveModelSelector (pure)', () => {
     const deepseek = createProviderFromPreset('deepseek', 'key-ds')
     deepseek.id = 'deepseek'
     deepseek.name = 'DeepSeek'
-    deepseek.models = [{ id: 'ds-flash', modelId: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' }]
+    deepseek.models = [
+      { id: 'ds-flash', modelId: 'deepseek-v4-flash', displayName: 'deepseek-v4-flash' },
+      { id: 'ds-opaque', modelId: 'vendor-model-without-metadata', displayName: 'Opaque model' }
+    ]
     const custom = createCustomProvider('Custom GLM', 'https://custom.example/v1')
     custom.id = 'custom-glm'
     custom.apiKey = 'key-custom'
@@ -120,7 +123,7 @@ describe('resolveModelSelector (pure)', () => {
       expect(known.supportedEfforts).toEqual(['auto', 'low', 'high', 'max'])
     }
 
-    const unknown = resolveModelSelector(registry, 'deepseek::ds-flash', 'max')
+    const unknown = resolveModelSelector(registry, 'deepseek::ds-opaque', 'max')
     expect(unknown.status).toBe('unsupported_effort')
     if (unknown.status === 'unsupported_effort') {
       expect(unknown.supportedEfforts).toBeNull()
@@ -130,7 +133,7 @@ describe('resolveModelSelector (pure)', () => {
   it('validateReasoningEffort returns known set or unknown capability', () => {
     const registry = buildRegistry()
     const known = registry.providers[0]!.models[2]!
-    const unknown = registry.providers[1]!.models[0]!
+    const unknown = registry.providers[1]!.models[1]!
     expect(validateReasoningEffort(known, 'max')).toEqual(expect.objectContaining({ ok: true }))
     expect(validateReasoningEffort(unknown, 'max')).toEqual({
       ok: false,

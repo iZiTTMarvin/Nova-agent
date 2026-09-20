@@ -119,6 +119,16 @@ describe('child model routing', () => {
     })
   })
 
+  it('unbound profile normalizes an unsupported persisted entry default to auto', () => {
+    const reg = registry()
+    reg.providers[1]!.models[0]!.reasoningEffort = 'medium'
+
+    const resolved = resolveChildModelFromProfile(reg, { ...profile, model: undefined })
+
+    expect(resolved.header.reasoningEffort).toBe('auto')
+    expect(resolved.modelConfig).not.toHaveProperty('reasoningEffort')
+  })
+
   it('header effort stays frozen when the registry default changes', () => {
     const header = resolveChildModelFromProfile(registry(), profile).header
     const changed = registry()

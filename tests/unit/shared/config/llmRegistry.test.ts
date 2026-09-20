@@ -241,6 +241,46 @@ describe('llmRegistry', () => {
     }
     expect(getActiveModelReasoningEffort(registry)).toBe('auto')
   })
+
+  it('已知不支持的模型档位会归一为 auto，不进入运行配置', () => {
+    const provider = createProviderFromPreset('glm', 'key')
+    provider.models = [{
+      id: 'glm53',
+      modelId: 'glm-5.3',
+      reasoningEffort: 'medium'
+    }]
+    const registry = {
+      version: 2 as const,
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelEntryId: 'glm53' }
+    }
+
+    expect(getActiveModelReasoningEffort(registry)).toBe('auto')
+    const resolved = resolveModelReference(registry)
+    expect(resolved.status).toBe('available')
+    if (resolved.status === 'available') {
+      expect(resolved.config.reasoningEffort).toBeUndefined()
+    }
+  })
+
+  it('validateLlmRegistry 会剥离已知不支持的 reasoningEffort', () => {
+    const provider = createProviderFromPreset('glm', 'key')
+    provider.models = [{
+      id: 'glm53',
+      modelId: 'glm-5.3',
+      reasoningEffort: 'medium'
+    }]
+    const result = validateLlmRegistry({
+      version: 2,
+      providers: [provider],
+      activeModel: { providerId: provider.id, modelEntryId: 'glm53' }
+    })
+
+    expect(result.valid).toBe(true)
+    if (result.valid) {
+      expect(result.registry.providers[0].models[0].reasoningEffort).toBeUndefined()
+    }
+  })
 })
 
 describe('resolveActiveModelAfterSave', () => {

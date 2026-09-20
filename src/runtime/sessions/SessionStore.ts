@@ -57,7 +57,7 @@ import {
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode, PermissionMode, RuntimeInputBlock } from '../../shared/session'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import {
   applyStageTransition,
@@ -366,6 +366,10 @@ export class SessionStore {
     options: {
       readonly codeIndexEnabled?: boolean
       readonly permissionMode?: PermissionMode
+      /** 新会话的模型覆盖；缺省跟随注册表全局最近选择 */
+      readonly modelOverride?: ActiveModelRef
+      /** 新会话的思考强度覆盖；缺省跟随模型默认 */
+      readonly reasoningEffortOverride?: ReasoningEffort
     } = {}
   ): SessionData {
     const now = Date.now()
@@ -383,7 +387,11 @@ export class SessionStore {
       title: SESSION_PLACEHOLDER_TITLE,
       titleSource: 'placeholder',
       messageCount: 0,
-      codeIndexEnabled: options.codeIndexEnabled === true
+      codeIndexEnabled: options.codeIndexEnabled === true,
+      ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
+      ...(options.reasoningEffortOverride
+        ? { reasoningEffortOverride: options.reasoningEffortOverride }
+        : {})
     }
 
     this.save(session)
@@ -810,7 +818,8 @@ export class SessionStore {
           ...(data.pinned ? { pinned: true } : {}),
           ...(data.reasoningEffortOverride
             ? { reasoningEffortOverride: data.reasoningEffortOverride }
-            : {})
+            : {}),
+          ...(data.modelOverride ? { modelOverride: data.modelOverride } : {})
         }
         if (data.kind === 'subagent') {
           summaries.push({
@@ -1261,6 +1270,30 @@ export class SessionStore {
     const session = this.load(sessionId)
     if (!session) return null
 
+    if (effort === null) {
+      delete session.reasoningEffortOverride
+    } else {
+      session.reasoningEffortOverride = effort
+    }
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /** 原子更新会话模型与其兼容的思考强度。 */
+  updateModelSelection(
+    sessionId: string,
+    ref: ActiveModelRef | null,
+    effort: ReasoningEffort | null
+  ): SessionData | null {
+    const session = this.load(sessionId)
+    if (!session) return null
+
+    if (ref === null) {
+      delete session.modelOverride
+    } else {
+      session.modelOverride = { providerId: ref.providerId, modelEntryId: ref.modelEntryId }
+    }
     if (effort === null) {
       delete session.reasoningEffortOverride
     } else {

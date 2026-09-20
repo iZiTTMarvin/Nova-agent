@@ -5,7 +5,7 @@
  * 回退/编辑重发在后续阶段通过分叉实现，本期先完成数据模型与 active path 派生。
  */
 import type { Mode, MessageBlock, PermissionMode, UserDeliveryFacts } from '../../shared/session'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 import type {
   SessionKind,
   SubagentLineage,
@@ -49,6 +49,11 @@ interface SessionSummaryBase {
    * 只作用于主会话；子代理的有效值记录在自身 header 中。
    */
   reasoningEffortOverride?: ReasoningEffort
+  /**
+   * 会话级模型覆盖（与 SessionData.modelOverride 同源）。
+   * 只作用于主会话；子代理的模型记录在自身 header 中。
+   */
+  modelOverride?: ActiveModelRef
 }
 
 /** 普通会话列表项不携带 child metadata。 */
@@ -222,6 +227,11 @@ interface SessionDataBase {
    * 设置后优先于模型默认思考强度，只作用于主会话主对话；缺省表示无覆盖。
    */
   reasoningEffortOverride?: ReasoningEffort
+  /**
+   * 会话级模型覆盖（schema v21+）。缺省表示跟随注册表的全局最近选择；
+   * 指向的模型被删除/禁用/退役时由 resolveSessionModelRef 回落，不残留死引用。
+   */
+  modelOverride?: ActiveModelRef
   /**
    * 会话级工具组激活态（Tool Economy）。
    * 单调增长、独立于消息历史与上下文压缩；runtime 创建时优先从此恢复，

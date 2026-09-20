@@ -31,6 +31,7 @@ import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { PermissionModeButton } from '../permissions/PermissionModeButton'
 import { ModelSelector } from './ModelSelector'
+import { ReasoningEffortControl } from './ReasoningEffortControl'
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
   browserFrameScheduler,
@@ -1154,6 +1155,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 <div className="flex items-center gap-2">
                   <ContextIndicator />
                   <ModelSelector />
+                  <ReasoningEffortControl />
                   {isGenerating || sendInFlight || cancellingForCurrentSession ? (
                     <IconButton
                       label={cancellingForCurrentSession ? '正在停止' : '中断生成'}

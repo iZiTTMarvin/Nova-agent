@@ -24,6 +24,7 @@ import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
 import { loadLlmRegistry, loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
+import type { ModelConfig } from '../../../shared/config'
 import { preferredToolDialect } from '../../../runtime/model/dialect'
 import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
 import type { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
@@ -120,9 +121,12 @@ export interface PreparedAgentRuntime {
  * - 无 fallbacks 时返回单个 client（AgentLoop 构造函数会自动包装成无 fallback 的 pool）。
  * - fallback client 创建失败（配置非法）时跳过该条，不阻塞主流程。
  */
-export function buildModelPoolWithFallbacks(primary: ModelClient): ModelClient | ModelClientPool {
+export function buildModelPoolWithFallbacks(
+  primary: ModelClient,
+  primaryConfig?: ModelConfig
+): ModelClient | ModelClientPool {
   try {
-    const cfg = loadModelConfig(app.getPath('userData'))
+    const cfg = primaryConfig ?? loadModelConfig(app.getPath('userData'))
     if (!cfg || !cfg.fallbacks || cfg.fallbacks.length === 0) {
       return primary
     }
@@ -165,6 +169,8 @@ export interface PrepareAgentRuntimeInput {
   sessionsDir: string
   novaSettings: NovaSettings
   modelClient: ModelClient
+  /** 会话有效模型配置（含 fallback 链）；缺省时回退读全局配置 */
+  modelConfig?: ModelConfig
   getImageStore: () => ImageStore
   readState: ReadState
   pendingAskQuestions: Map<string, PendingAskQuestionEntry>
@@ -186,6 +192,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionsDir,
     novaSettings,
     modelClient,
+    modelConfig,
     getImageStore,
     readState,
     pendingAskQuestions,
@@ -203,7 +210,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
 
   const artifactStore = new ArtifactStore(sessionsDir)
 
-  const persistedConfig = loadModelConfig(app.getPath('userData'))
+  const persistedConfig = modelConfig ?? loadModelConfig(app.getPath('userData'))
   const contextWindow = resolveContextWindow(
     persistedConfig?.modelId ?? '',
     persistedConfig?.contextWindow
@@ -308,7 +315,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionStore.updateToolAvailability(sessionId, state)
   })
 
-  const modelPool = buildModelPoolWithFallbacks(modelClient)
+  const modelPool = buildModelPoolWithFallbacks(modelClient, persistedConfig ?? undefined)
   const activeProvider =
     modelPool instanceof ModelClientPool
       ? modelPool.getActiveProvider()

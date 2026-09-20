@@ -101,6 +101,8 @@ export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
 export const WORKSPACE_SET_PERMISSION_MODE = 'workspace:set-permission-mode' as const
 /** 设置当前会话的思考强度覆盖（null 清除） */
 export const WORKSPACE_SET_REASONING_EFFORT = 'workspace:set-reasoning-effort' as const
+/** 设置当前会话的模型（同时回写全局最近选择） */
+export const WORKSPACE_SET_SESSION_MODEL = 'workspace:set-session-model' as const
 /** 读取当前会话 active plan 的完整 Markdown，用于计划审阅卡 */
 export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 /** 在系统默认应用中打开当前会话 active plan 文件 */

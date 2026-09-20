@@ -1,4 +1,5 @@
 import {
+  resolveModelReasoningEffort,
   resolveModelReference,
   type ActiveModelRef,
   type LlmRegistry,
@@ -52,7 +53,7 @@ function buildCatalogEntry(
   }
 
   const reasoningEffort =
-    model?.reasoningEffort ?? resolved.entry.reasoningEffort ?? 'auto'
+    model?.reasoningEffort ?? resolveModelReasoningEffort(resolved.entry)
   return {
     profileId: spec.id,
     name: spec.name,
