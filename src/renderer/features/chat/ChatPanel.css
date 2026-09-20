@@ -841,6 +841,7 @@
 /* ── ContextIndicator 上下文占用圆环 + hover Popover ────────── */
 .context-indicator-wrap {
   position: relative;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
 }
@@ -1248,8 +1249,10 @@ button.code-index-status-chip:hover {
 
 /* composer 卡片与子会话只读提示：表面/边框/投影全部走主题变量，深浅色一致 */
 .chat-composer-box {
+  position: relative;
+  z-index: 2;
   background-color: var(--bg-card);
-  border: 1px solid var(--border-cream);
+  border: 1px solid var(--border-composer);
   border-radius: 16px;
   box-shadow: var(--shadow-whisper);
   backdrop-filter: blur(24px);

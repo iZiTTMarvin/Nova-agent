@@ -5,7 +5,7 @@
 .content-topbar {
   height: 44px;
   background-color: var(--surface-canvas);
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-chrome);
   display: flex;
   align-items: center;
   justify-content: space-between;

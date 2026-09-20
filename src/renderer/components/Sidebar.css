@@ -41,7 +41,7 @@
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
-  border-bottom: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-chrome);
 }
 
 .sidebar-topbar__brand {
@@ -325,6 +325,6 @@
 
 /* 底部操作区 */
 .sidebar-footer-actions {
-  border-top: 1px solid var(--border-subtle);
+  border-top: 1px solid var(--border-chrome);
   height: 40px;
 }

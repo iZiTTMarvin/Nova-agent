@@ -24,6 +24,8 @@
   --border-strong: rgba(0, 0, 0, 0.12);      /* 浮层与弹窗边框 */
   --border-cream: var(--border-subtle);
   --border-warm: var(--border-subtle);
+  --border-chrome: transparent;
+  --border-composer: color-mix(in srgb, var(--color-warning) 28%, transparent);
 
   /* 文本梯度（无衬线现代阶梯） */
   --text-primary: #18181b;                   /* Zinc-900 核心文字 */
