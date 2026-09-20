@@ -29,6 +29,7 @@ import type {
 } from '../../shared/storage/types'
 import { readManifest } from '../checkpoints/manifest'
 import type { CheckpointManifest } from '../checkpoints/types'
+import { SESSION_BACKUP_FILE } from '../sessions/types'
 
 /** 临时 bash 日志文件名前缀 */
 const BASH_TMP_PREFIX = 'nova-bash-'
@@ -323,6 +324,80 @@ export function runStartupGc(
     } catch (err) {
       details.push(`陈旧快照清理失败: ${(err as Error).message}`)
     }
+  }
+
+  // 3. 会话迁移备份收敛：同名备份只保留最新一份
+  const backupCleanup = cleanupSessionMigrationBackups(sessionsDir)
+  freedBytes += backupCleanup.freedBytes
+  affectedSessions += backupCleanup.affectedSessions
+  details.push(...backupCleanup.details)
+
+  return { freedBytes, affectedSessions, details }
+}
+
+/**
+ * 收敛 session.json.backup*：每会话只保留最新一份迁移前备份。
+ * 迁移失败会在下个启动周期重试，备份若按时间戳新建将随重试无界堆积。
+ * 时间戳命名备份自固定名备份上线起不再产生；此收敛逻辑在存量时间戳备份
+ * 清零后可移除。
+ */
+function cleanupSessionMigrationBackups(sessionsDir: string): {
+  freedBytes: number
+  affectedSessions: number
+  details: string[]
+} {
+  const details: string[] = []
+  let freedBytes = 0
+  let affectedSessions = 0
+
+  if (!existsSync(sessionsDir)) {
+    return { freedBytes, affectedSessions, details }
+  }
+
+  try {
+    for (const sessionEntry of readdirSync(sessionsDir, { withFileTypes: true })) {
+      if (!sessionEntry.isDirectory()) continue
+      const sessionDir = join(sessionsDir, sessionEntry.name)
+
+      let backups: Array<{ name: string; mtime: number; bytes: number }>
+      try {
+        backups = readdirSync(sessionDir, { withFileTypes: true })
+          .filter(
+            e =>
+              e.isFile() &&
+              e.name.startsWith(SESSION_BACKUP_FILE)
+          )
+          .map(e => {
+            const filePath = join(sessionDir, e.name)
+            const st = statSync(filePath)
+            return { name: e.name, mtime: st.mtimeMs, bytes: st.size }
+          })
+      } catch {
+        continue
+      }
+
+      if (backups.length <= 1) continue
+      backups.sort((a, b) => b.mtime - a.mtime)
+
+      let sessionFreed = 0
+      for (const backup of backups.slice(1)) {
+        try {
+          unlinkSync(join(sessionDir, backup.name))
+          sessionFreed += backup.bytes
+        } catch {
+          // 单个删除失败不阻断其余备份收敛
+        }
+      }
+      if (sessionFreed > 0) {
+        freedBytes += sessionFreed
+        affectedSessions += 1
+        details.push(
+          `迁移备份收敛 ${sessionEntry.name}: 保留 ${backups[0]!.name}，-${sessionFreed} bytes`
+        )
+      }
+    }
+  } catch (err) {
+    details.push(`迁移备份收敛失败: ${(err as Error).message}`)
   }
 
   return { freedBytes, affectedSessions, details }

@@ -379,6 +379,9 @@ export interface SessionToolCall {
 /** 会话元数据持久化文件名 */
 export const SESSION_DATA_FILE = 'session.json'
 
+/** 迁移前备份文件名（固定名覆盖式写入，存储 GC 按此前缀收敛历史堆积） */
+export const SESSION_BACKUP_FILE = `${SESSION_DATA_FILE}.backup`
+
 /** 会话消息体追加持久化文件名（JSONL，每行一条 SessionMessage） */
 export const SESSION_MESSAGES_FILE = 'messages.jsonl'
 

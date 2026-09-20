@@ -20,7 +20,7 @@ import type {
 } from '../../shared/subagents'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { Mode, PermissionMode } from '../../shared/session/types'
-import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
+import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, SESSION_BACKUP_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 import {
@@ -738,8 +738,10 @@ export function migrateSessionData(data: unknown): SessionData {
     return result
   }
 
-  // 从 rawVersion 顺序迁移到 CURRENT
-  let current: unknown = raw
+  // 从 rawVersion 顺序迁移到 CURRENT。
+  // 空 v3/v4 会话的 session.json 不含 messages 字段（消息在 messages.jsonl，空会话则连该文件也没有），
+  // 迁移链各步（如 v4→v5 取标题）假定 messages 为数组，这里先补齐空数组。
+  let current: unknown = Array.isArray(raw.messages) ? raw : { ...raw, messages: [] }
   for (let v = rawVersion; v < MIGRATIONS.length; v++) {
     const migrate = MIGRATIONS[v]
     if (migrate) {
@@ -767,7 +769,7 @@ export function migrateSessionData(data: unknown): SessionData {
  * 流程：
  * 1. 读取 session.json 原始内容。
  * 2. 若已是当前版本，直接返回（不写盘、不备份，避免无谓 IO）。
- * 3. 复制原文件为 <sessionId>.json.backup.<timestamp>。
+ * 3. 复制原文件为 session.json.backup（固定名覆盖式，只保留最新一份）。
  * 4. 迁移 + 写回。
  * 5. 迁移失败时保留原文件，向上抛错。
  *
@@ -832,12 +834,8 @@ export function migrateSessionFile(
     return migrated
   }
 
-  // 迁移前备份（覆盖式：同一 session 重复迁移只保留最新备份，避免堆积）
-  const backupPath = path.join(
-    sessionsDir,
-    sessionId,
-    `${SESSION_DATA_FILE}.backup.${Date.now()}`
-  )
+  // 迁移前备份（固定文件名覆盖式写入：同一 session 重复迁移只保留最新备份，避免堆积）
+  const backupPath = path.join(sessionsDir, sessionId, SESSION_BACKUP_FILE)
   try {
     fs.copyFileSync(filePath, backupPath)
   } catch (err) {

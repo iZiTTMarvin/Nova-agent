@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -152,6 +153,56 @@ describe('migrateSessionData', () => {
     expect(migrated.titleSource).toBe('placeholder')
   })
 
+  it('v4 空 v3+ 会话缺 messages 字段也能迁移（消息在 jsonl 的空会话不崩迁移链）', () => {
+    const v4 = {
+      schemaVersion: 4,
+      id: 'sess_no_messages_field',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const migrated = migrateSessionData(v4)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.messages).toEqual([])
+    expect(migrated.title).toBe(SESSION_MIGRATED_EMPTY_TITLE)
+  })
+
+  it('v4 空 v3+ 会话物理文件缺 messages.jsonl 时 migrateSessionFile 成功且备份不堆积', () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-session-v4-empty-'))
+    const sessionId = 'sess_v4_empty'
+    const sessionDir = join(sessionsDir, sessionId)
+    mkdirSync(sessionDir)
+    writeFileSync(
+      join(sessionDir, SESSION_DATA_FILE),
+      JSON.stringify({
+        schemaVersion: 4,
+        id: sessionId,
+        workspaceRoot: '/ws',
+        mode: 'default',
+        currentLeafId: null,
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      'utf-8'
+    )
+
+    try {
+      const migrated = migrateSessionFile(sessionsDir, sessionId)
+      expect(migrated?.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+      expect(migrated?.messages).toEqual([])
+
+      // 已是当前版本后再次迁移不再产生新备份：固定名覆盖，不按时间戳堆积
+      migrateSessionFile(sessionsDir, sessionId)
+      const backups = readdirSync(sessionDir).filter(name => name.startsWith(`${SESSION_DATA_FILE}.backup`))
+      expect(backups).toEqual([`${SESSION_DATA_FILE}.backup`])
+    } finally {
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+
   it('v8 会话升级到当前版本，不强制生成 cacheRoutingKey', () => {
     const v8 = {
       schemaVersion: 8,
@@ -202,9 +253,7 @@ describe('migrateSessionData', () => {
       expect(persisted.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
       expect(persisted.kind).toBe('primary')
       expect('messages' in persisted).toBe(false)
-      expect(
-        readdirSync(sessionDir).filter((name) => name.startsWith(`${SESSION_DATA_FILE}.backup.`))
-      ).toHaveLength(1)
+      expect(existsSync(join(sessionDir, `${SESSION_DATA_FILE}.backup`))).toBe(true)
     } finally {
       rmSync(sessionsDir, { recursive: true, force: true })
     }
