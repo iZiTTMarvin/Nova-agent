@@ -44,9 +44,39 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   expect(inherited.activeModelRef).toEqual(gptRef)
   expect(inherited.reasoningEffortOverride).toBe('xhigh')
 
-  await nova.invoke('workspace:set-session-model', { ref: minimaxRef })
+  await nova.page.getByRole('button', { name: '切换模型' }).click()
+  const providerMenuItem = nova.page.getByRole('menuitem', { name: 'E2E Models', exact: true })
+  await providerMenuItem.hover()
+  await expect(nova.page.getByRole('menuitem', { name: 'MiniMax-M3', exact: true })).toBeVisible()
+  await nova.page.getByRole('menuitem', { name: 'MiniMax-M3', exact: true }).click()
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('MiniMax-M3')
   await expect(nova.page.getByRole('button', { name: '思考强度：High' })).toBeVisible()
+  expect((await nova.getWorkspace()).activeModelRef).toEqual(minimaxRef)
+
+  const requestCountBeforeSwitchProbe = nova.provider.requests.length
+  nova.provider.enqueue({ kind: 'text', text: 'MODEL_SWITCH_WIRE_OK' })
+  await nova.sendPrompt('验证切换后的模型请求')
+  await nova.waitUntilIdle()
+  expect(nova.provider.requests).toHaveLength(requestCountBeforeSwitchProbe + 1)
+  expect(nova.provider.requests.at(-1)?.body.model).toBe('MiniMax-M3')
+
+  await nova.page.getByRole('button', { name: '切换模型' }).click()
+  await nova.page.getByRole('menuitem', { name: 'E2E Models', exact: true }).hover()
+  await nova.page.getByRole('menuitem', { name: 'GPT-5.4', exact: true }).click()
+  await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('GPT-5.4')
+  expect((await nova.getWorkspace()).activeModelRef).toEqual(gptRef)
+
+  const requestCountBeforeSwitchBackProbe = nova.provider.requests.length
+  nova.provider.enqueue({ kind: 'text', text: 'MODEL_SWITCH_BACK_WIRE_OK' })
+  await nova.sendPrompt('验证切回后的模型请求')
+  await nova.waitUntilIdle()
+  expect(nova.provider.requests).toHaveLength(requestCountBeforeSwitchBackProbe + 1)
+  expect(nova.provider.requests.at(-1)?.body.model).toBe('gpt-5.4')
+
+  await nova.page.getByRole('button', { name: '切换模型' }).click()
+  await nova.page.getByRole('menuitem', { name: 'E2E Models', exact: true }).hover()
+  await nova.page.getByRole('menuitem', { name: 'MiniMax-M3', exact: true }).click()
+  await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('MiniMax-M3')
 
   await nova.page.getByRole('button', { name: '思考强度：High' }).click()
   await expect(nova.page.getByRole('slider', { name: '思考强度' }))
@@ -61,6 +91,13 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   await nova.selectSession(original.currentSessionId!)
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('GPT-5.4')
   await expect(nova.page.getByRole('button', { name: '思考强度：XHigh' })).toBeVisible()
+
+  const requestCountInOriginalSession = nova.provider.requests.length
+  nova.provider.enqueue({ kind: 'text', text: 'MODEL_SESSION_ISOLATION_WIRE_OK' })
+  await nova.sendPrompt('验证原会话仍使用原模型')
+  await nova.waitUntilIdle()
+  expect(nova.provider.requests).toHaveLength(requestCountInOriginalSession + 1)
+  expect(nova.provider.requests.at(-1)?.body.model).toBe('gpt-5.4')
 
   expect(nova.pageErrors).toEqual([])
 })

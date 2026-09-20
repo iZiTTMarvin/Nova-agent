@@ -1262,12 +1262,13 @@ export class SessionStore {
   /**
    * 更新会话思考强度覆盖并持久化（只写 session.json 元数据）。
    * effort 为 null 时清除覆盖，回落模型默认思考强度。
+   * 高频交互路径：只读元数据，不加载完整对话记录。
    */
   updateReasoningEffortOverride(
     sessionId: string,
     effort: ReasoningEffort | null
   ): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     if (effort === null) {
@@ -1280,13 +1281,13 @@ export class SessionStore {
     return session
   }
 
-  /** 原子更新会话模型与其兼容的思考强度。 */
+  /** 原子更新会话模型与其兼容的思考强度（只读/只写元数据，不加载对话记录）。 */
   updateModelSelection(
     sessionId: string,
     ref: ActiveModelRef | null,
     effort: ReasoningEffort | null
   ): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     if (ref === null) {

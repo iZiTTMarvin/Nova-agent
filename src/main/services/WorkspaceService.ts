@@ -640,6 +640,22 @@ export class WorkspaceService {
     return next
   }
 
+  /** 就地更新单条会话摘要（模型/强度等元数据变化），不重扫全部会话目录 */
+  private upsertSessionSummary(data: SessionData): void {
+    const next = [...this.state.availableSessions]
+    const index = next.findIndex(session => session.id === data.id)
+    if (index >= 0) {
+      next[index] = this.summaryFromMetadata(data)
+    } else {
+      next.push(this.summaryFromMetadata(data))
+    }
+    next.sort((a, b) => {
+      const byUpdated = b.updatedAt - a.updatedAt
+      return byUpdated !== 0 ? byUpdated : b.createdAt - a.createdAt
+    })
+    this.state.availableSessions = next
+  }
+
   private summaryFromMetadata(data: SessionData): SessionSummary {
     const base = {
       id: data.id,
@@ -752,7 +768,7 @@ export class WorkspaceService {
 
   /**
    * 设置会话思考强度覆盖（并持久化到目标会话）。
-   * effort 为 null 清除覆盖；进行中的 run 不受影响，下一次 run 生效。
+   * effort 为 null 清除覆盖。turn 在装配时捕获强度，运行中切换不影响当前 run。
    */
   setReasoningEffortOverride(params: {
     effort: ReasoningEffort | null
@@ -770,9 +786,6 @@ export class WorkspaceService {
     }
     if (target.kind === 'subagent') {
       throw new Error('子会话的思考强度由父任务派生，不能单独切换')
-    }
-    if (isSessionTurnInProgress(sessionId)) {
-      throw new Error('当前会话仍在运行，不能切换思考强度。请等待当前操作完成。')
     }
 
     if (params.effort !== null) {
@@ -798,7 +811,7 @@ export class WorkspaceService {
     if (targetIsCurrent) {
       this.state = { ...this.state, reasoningEffortOverride: params.effort }
     }
-    this.state.availableSessions = store.list()
+    this.upsertSessionSummary(session)
     this.broadcast()
     return this.getState()
   }
@@ -806,7 +819,7 @@ export class WorkspaceService {
   /**
    * 设置会话模型覆盖（并持久化到目标会话）。
    * ref 为 null 时清除覆盖、回到注册表默认模型。
-   * 进行中的 run 不受影响，下一次 run 生效。
+   * turn 装配时按会话有效配置创建 client，运行中切换不影响当前 run，下一次 run 生效。
    */
   setSessionModel(params: SetSessionModelParams): WorkspaceState {
     const store = this.deps.getSessionStore()
@@ -821,9 +834,6 @@ export class WorkspaceService {
     }
     if (target.kind === 'subagent') {
       throw new Error('子会话的模型由父任务派生，不能单独切换')
-    }
-    if (isSessionTurnInProgress(sessionId)) {
-      throw new Error('当前会话仍在运行，不能切换模型。请等待当前操作完成。')
     }
 
     const registry = loadLlmRegistry(app.getPath('userData'))
@@ -844,7 +854,7 @@ export class WorkspaceService {
     const session = store.updateModelSelection(sessionId, params.ref, nextEffort)
     if (!session) throw new Error(`会话不存在: ${sessionId}`)
 
-    this.state.availableSessions = store.list()
+    this.upsertSessionSummary(session)
     if (sessionId === this.state.currentSessionId) {
       this.state = {
         ...this.state,

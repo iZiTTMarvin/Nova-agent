@@ -20,7 +20,13 @@ vi.mock('@astryxdesign/core/DropdownMenu', () => {
   const renderOptions = (options: MockOption[]): React.ReactNode => options.map((option, index) => {
     if (option.type === 'divider') return <hr key={index} />
     if (option.type === 'section') {
-      return <section key={index} aria-label={option.title}>{renderOptions(option.items ?? [])}</section>
+      return (
+        <section key={index} aria-label={option.title}>
+          {(option.items ?? []).map((item, itemIndex) => (
+            <button key={itemIndex} type="button" onClick={item.onClick}>{item.label}</button>
+          ))}
+        </section>
+      )
     }
     return (
       <div key={index}>
@@ -47,7 +53,10 @@ function registryWithModels(): LlmRegistry {
 
   const minimax = createProviderFromPreset('minimax', 'minimax-key')
   minimax.id = 'minimax'
-  minimax.models = [{ id: 'm3', modelId: 'MiniMax-M3', displayName: 'MiniMax-M3' }]
+  minimax.models = [
+    { id: 'm3', modelId: 'MiniMax-M3', displayName: 'MiniMax-M3' },
+    { id: 'm3-fast', modelId: 'MiniMax-M3-fast', displayName: 'MiniMax-M3-fast' }
+  ]
 
   return {
     version: 2,

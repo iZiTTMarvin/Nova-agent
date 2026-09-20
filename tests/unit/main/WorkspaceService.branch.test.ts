@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 import { WorkspaceService } from '../../../src/main/services/WorkspaceService'
-import { isAgentTurnInProgress } from '../../../src/main/agent/state'
+import { isAgentTurnInProgress, isSessionTurnInProgress } from '../../../src/main/agent/state'
 import { createCustomProvider, type LlmRegistry } from '../../../src/shared/config/llmRegistry'
 import {
   writeManifest,
@@ -66,6 +66,7 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     store = new SessionStore(tmpDir)
     broadcasted = []
     vi.mocked(isAgentTurnInProgress).mockReturnValue(false)
+    vi.mocked(isSessionTurnInProgress).mockReturnValue(false)
     modelConfigMocks.loadLlmRegistry.mockReturnValue(null)
 
     service = new WorkspaceService({
@@ -358,6 +359,36 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     expect(restored.activeModelRef).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
     expect(restored.reasoningEffortOverride).toBe('xhigh')
     expect(registry.activeModel).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
+  })
+
+  it('生成中仍可切换模型与思考强度，不重扫会话列表也不读对话记录', () => {
+    const registry = modelRegistry()
+    modelConfigMocks.loadLlmRegistry.mockReturnValue(registry)
+    const session = store.create('/ws', 'default', {
+      modelOverride: { providerId: 'provider', modelEntryId: 'gpt' }
+    })
+    service.initOnStartup()
+    vi.mocked(isSessionTurnInProgress).mockReturnValue(true)
+
+    const listSpy = vi.spyOn(store, 'list')
+    const loadSpy = vi.spyOn(store, 'load')
+
+    const switched = service.setSessionModel({
+      ref: { providerId: 'provider', modelEntryId: 'minimax' }
+    })
+    expect(switched.activeModelRef).toEqual({ providerId: 'provider', modelEntryId: 'minimax' })
+    expect(
+      switched.availableSessions.find(s => s.id === session.id)?.modelOverride
+    ).toEqual({ providerId: 'provider', modelEntryId: 'minimax' })
+    expect(store.loadMetadata(session.id)?.modelOverride)
+      .toEqual({ providerId: 'provider', modelEntryId: 'minimax' })
+
+    const effort = service.setReasoningEffortOverride({ effort: 'max' })
+    expect(effort.reasoningEffortOverride).toBe('max')
+    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe('max')
+
+    expect(listSpy).not.toHaveBeenCalled()
+    expect(loadSpy).not.toHaveBeenCalled()
   })
 
   it('拒绝当前模型不支持的思考强度', () => {

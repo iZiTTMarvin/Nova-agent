@@ -8,7 +8,6 @@ import React, { useCallback, useMemo } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import {
   DropdownMenu,
-  type DropdownMenuItemData,
   type DropdownMenuOption
 } from '@astryxdesign/core/DropdownMenu'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -55,7 +54,7 @@ export const ModelSelector: React.FC = () => {
 
   const menuItems = useMemo<DropdownMenuOption[]>(() => {
     const checked = <CheckSmallIcon size={14} />
-    const items: DropdownMenuItemData[] = []
+    const items: DropdownMenuOption[] = []
 
     for (const group of groups) {
       const models = group.models.map(model => ({
@@ -70,7 +69,7 @@ export const ModelSelector: React.FC = () => {
     }
 
     return [
-      { type: 'section', title: '模型', items },
+      ...items,
       { type: 'divider' },
       { label: '管理模型…', onClick: openLlmSettings }
     ]
