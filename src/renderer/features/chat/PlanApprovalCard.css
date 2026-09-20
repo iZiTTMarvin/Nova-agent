@@ -5,7 +5,6 @@
   border-radius: 16px;
   background-color: var(--bg-card);
   box-shadow: var(--shadow-whisper);
-  backdrop-filter: blur(24px);
   overflow: hidden;
 }
 
@@ -172,7 +171,7 @@
 
 .plan-approval-card__error {
   padding: 0 12px 8px;
-  color: var(--nova-status-error, var(--color-error));
+  color: var(--nova-status-error);
   font-size: 0.76rem;
 }
 
@@ -206,7 +205,7 @@
   margin: 1px 0;
   padding: 4px 8px;
   border-radius: 6px;
-  color: var(--text-secondary, #5c574e);
+  color: var(--text-secondary);
   font-size: 0.78rem;
 }
 
@@ -217,7 +216,7 @@
   width: 16px;
   height: 16px;
   flex: 0 0 auto;
-  color: var(--color-brand, #c96442);
+  color: var(--color-brand);
   animation: plan-approval-pending-pulse 1.4s ease-in-out infinite;
 }
 
@@ -226,7 +225,7 @@
 }
 
 .plan-approval-pending__hint {
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   font-size: 0.72rem;
 }
 

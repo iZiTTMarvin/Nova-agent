@@ -85,11 +85,11 @@
   letter-spacing: 0.005em;
   background: linear-gradient(
     90deg,
-    var(--color-brand, #8b5cf6) 0%,
-    var(--color-brand, #8b5cf6) 36%,
+    var(--color-brand) 0%,
+    var(--color-brand) 36%,
     #e9d5ff 50%,
-    var(--color-brand, #8b5cf6) 64%,
-    var(--color-brand, #8b5cf6) 100%
+    var(--color-brand) 64%,
+    var(--color-brand) 100%
   );
   background-position: 100% 0;
   background-size: 250% 100%;
@@ -108,8 +108,8 @@
   font-size: 0.8rem;
   font-weight: 400;
   font-variant-numeric: tabular-nums;
-  color: var(--text-tertiary, #94a3b8);
-  -webkit-text-fill-color: var(--text-tertiary, #94a3b8);
+  color: var(--text-muted);
+  -webkit-text-fill-color: var(--text-muted);
   white-space: nowrap;
   opacity: 0.9;
 }

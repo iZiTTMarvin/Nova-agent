@@ -10,10 +10,10 @@
   flex-direction: column;
   gap: 10px;
   padding: 12px 14px;
-  border: 1px solid var(--border-cream, rgba(0, 0, 0, 0.1));
-  border-radius: var(--radius-lg, 16px);
-  background-color: var(--bg-card, #fff);
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.05);
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-card);
   /* 限制 dock 最大高度，避免选项过多时挤压消息流 */
   max-height: min(40vh, 360px);
   overflow-y: auto;
@@ -64,25 +64,25 @@
   align-items: flex-start;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  transition: background-color var(--transition-fast, 0.12s),
-    border-color var(--transition-fast, 0.12s);
+  transition: background-color var(--transition-fast),
+    border-color var(--transition-fast);
   border: 1px solid transparent;
 }
 
 .ask-question-option:hover {
-  background-color: var(--bg-sand, rgba(0, 0, 0, 0.03));
+  background-color: var(--bg-sand);
 }
 
 .ask-question-option.selected {
-  border-color: var(--color-brand, #3898ec);
-  background-color: rgba(56, 152, 236, 0.06);
+  border-color: var(--color-brand);
+  background-color: var(--surface-brand);
 }
 
 .ask-question-recommended-tag {
   font-size: 0.7rem;
-  color: var(--color-brand, #3898ec);
+  color: var(--color-brand);
   font-weight: 600;
 }
 
@@ -103,10 +103,10 @@
 .ask-question-error {
   font-size: 0.8rem;
   padding: 6px 10px;
-  border-radius: var(--radius-sm, 6px);
-  border: 1px solid rgba(181, 51, 51, 0.18);
-  background-color: rgba(181, 51, 51, 0.08);
-  color: var(--color-error, #b53333);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-danger);
+  background-color: var(--surface-danger);
+  color: var(--color-error);
 }
 
 .ask-question-footer {

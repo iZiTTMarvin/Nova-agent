@@ -41,7 +41,7 @@
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
-  border-bottom: 1px solid var(--border-chrome);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar-topbar__brand {
@@ -88,7 +88,7 @@
 }
 
 .sidebar-action-btn:hover {
-  background-color: var(--surface-sidebar-hover) !important;
+  background-color: var(--surface-hover) !important;
   color: var(--text-primary);
 }
 
@@ -103,7 +103,7 @@
 .sidebar-project-header:hover,
 .sidebar-project-header:focus-within,
 .sidebar-project-header--menu-open {
-  background-color: var(--surface-sidebar-hover);
+  background-color: var(--surface-hover);
 }
 
 .sidebar-project-header__actions {
@@ -133,8 +133,8 @@
 
 /* 项目树悬停详情小窗口（Hover 超过 1s 后在右侧分割线外部弹出） */
 .sidebar-project-popover {
-  /* 浮层必须实心：画布令牌在深浅主题下均为不透明色 */
-  background-color: var(--surface-canvas);
+  /* 浮层必须实心且高于宿主侧栏，故取卡片档而非画布档（画布是最低层，会看起来凹陷） */
+  background-color: var(--surface-card);
   animation: sidebar-popover-enter 120ms ease-out;
   box-shadow: var(--shadow-popup);
 }
@@ -232,16 +232,16 @@
 
 .sidebar-session-row:hover,
 .sidebar-session-row:focus-within {
-  background-color: var(--surface-sidebar-hover);
+  background-color: var(--surface-hover);
 }
 
 .sidebar-session-row--active {
   background-color: var(--surface-sidebar-active) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 0 0 1px var(--border-subtle);
+  box-shadow: var(--ring-shadow-subtle);
 }
 
 .sidebar-session-row--menu-open {
-  background-color: var(--surface-sidebar-hover);
+  background-color: var(--surface-hover);
 }
 
 .sidebar-session-row__meta {
@@ -325,6 +325,6 @@
 
 /* 底部操作区 */
 .sidebar-footer-actions {
-  border-top: 1px solid var(--border-chrome);
+  border-top: 1px solid var(--border-subtle);
   height: 40px;
 }

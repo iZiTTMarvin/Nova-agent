@@ -1,5 +1,5 @@
 .diff-file__body {
-  background-color: #fafaf7;
+  background-color: var(--code-block-bg);
   min-width: 0;
   max-width: 100%;
 }

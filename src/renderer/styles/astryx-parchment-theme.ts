@@ -54,13 +54,13 @@ export const parchmentTheme = defineTheme({
 
     // ── 强调 / 状态色 ──
     '--color-accent': 'var(--accent-primary)',
-    '--color-accent-muted': 'rgba(59, 130, 246, 0.10)',
+    '--color-accent-muted': 'light-dark(rgba(59, 130, 246, 0.10), rgba(96, 165, 250, 0.16))',
     '--color-success': 'var(--nova-status-success)',
     '--color-error': 'var(--nova-status-error)',
     '--color-warning': 'var(--accent-warning)',
-    '--color-success-muted': 'rgba(34, 197, 94, 0.12)',
-    '--color-error-muted': 'rgba(239, 68, 68, 0.08)',
-    '--color-warning-muted': 'rgba(245, 158, 11, 0.12)',
+    '--color-success-muted': 'light-dark(rgba(34, 197, 94, 0.12), rgba(74, 222, 128, 0.16))',
+    '--color-error-muted': 'light-dark(rgba(239, 68, 68, 0.08), rgba(248, 113, 113, 0.14))',
+    '--color-warning-muted': 'light-dark(rgba(245, 158, 11, 0.12), rgba(251, 191, 36, 0.16))',
 
     // ── 前景在强调色上的反色 ──
     '--color-on-accent': '#ffffff',
@@ -71,14 +71,16 @@ export const parchmentTheme = defineTheme({
     '--color-on-light': 'var(--text-primary)',
 
     // ── 覆盖层 / 悬停态 ──
+    // 悬停与按压必须是叠加而非黑色涂抹，否则深色下完全不可见（黑上叠黑）。
+    // overlay-hover 与 nova 的 --surface-hover 保持同一组取值。
     '--color-overlay': 'rgba(0, 0, 0, 0.45)',
-    '--color-overlay-hover': 'rgba(0, 0, 0, 0.04)',
-    '--color-overlay-pressed': 'rgba(0, 0, 0, 0.08)',
-    '--color-tint-hover': 'rgba(59, 130, 246, 0.08)',
+    '--color-overlay-hover': 'light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.03))',
+    '--color-overlay-pressed': 'light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.07))',
+    '--color-tint-hover': 'light-dark(rgba(59, 130, 246, 0.08), rgba(96, 165, 250, 0.14))',
 
     // ── 骨架与阴影 ──
     '--color-skeleton': 'var(--surface-muted)',
-    '--color-shadow': 'rgba(0, 0, 0, 0.08)',
+    '--color-shadow': 'light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.55))',
 
     // ── 聊天气泡几何 ──
     '--radius-chat': '16px'

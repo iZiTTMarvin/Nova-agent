@@ -14,7 +14,7 @@
   box-sizing: border-box;
   user-select: none;
   pointer-events: auto;
-  box-shadow: var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.04));
+  box-shadow: var(--shadow-whisper);
   transition: border-color 200ms ease, background-color 200ms ease;
 }
 

@@ -145,7 +145,7 @@
 }
 
 .diff-file--deleted .diff-file__status-badge {
-  background-color: rgba(181, 51, 51, 0.08);
+  background-color: var(--surface-danger);
   color: var(--color-error);
 }
 
@@ -199,7 +199,7 @@
 }
 
 .diff-file__review-badge--rejected {
-  background-color: rgba(181, 51, 51, 0.08);
+  background-color: var(--surface-danger);
   color: var(--color-error);
 }
 
@@ -207,7 +207,7 @@
   padding: 6px 14px;
   font-size: 0.8rem;
   color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.05);
+  background-color: var(--surface-danger-subtle);
   border-top: 1px solid var(--border-cream);
 }
 
@@ -306,8 +306,8 @@
   margin-bottom: 8px;
   font-size: 0.75rem;
   color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.06);
-  border: 1px solid rgba(181, 51, 51, 0.15);
+  background-color: var(--surface-danger);
+  border: 1px solid var(--border-danger);
   border-radius: var(--radius-sm);
 }
 

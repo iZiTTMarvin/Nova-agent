@@ -39,13 +39,13 @@
 .skill-card__badge--builtin {
   border-color: rgba(201, 100, 66, 0.35);
   color: var(--color-brand);
-  background: var(--color-brand-dim, rgba(201, 100, 66, 0.08));
+  background: var(--color-brand-dim);
 }
 
 .skill-card__badge--third_party_claude {
-  border-color: rgba(56, 152, 236, 0.35);
+  border-color: var(--border-brand);
   color: #2563eb;
-  background: rgba(56, 152, 236, 0.08);
+  background: var(--surface-brand);
 }
 
 .skill-card__toggle {

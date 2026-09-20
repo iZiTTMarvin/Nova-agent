@@ -136,7 +136,7 @@
 /* 作用域严格限定在 .astryx-checkbox-list 内，绝不影响普通无序/有序列表 */
 .markdown-body .astryx-checkbox-list {
   margin-inline: 0 !important;
-  margin-block: var(--spacing-2, 8px) var(--spacing-3, 12px) !important;
+  margin-block: 8px 12px !important;
 }
 
 .markdown-body .astryx-checkbox-list .astryx-list {
@@ -198,7 +198,7 @@
 
 /* 未勾选状态：精致暗色边框与半透明低调底色 */
 .markdown-body .astryx-checkbox-list .astryx-checkbox:not([data-checked="checked"]):not(.checked) {
-  border-color: var(--border-cream, rgba(255, 255, 255, 0.25)) !important;
+  border-color: var(--border-cream) !important;
   background-color: rgba(255, 255, 255, 0.03) !important;
 }
 
@@ -212,7 +212,7 @@
 .markdown-body .astryx-checkbox-list .astryx-checkbox svg {
   width: 10px !important;
   height: 10px !important;
-  stroke: var(--color-on-accent, #ffffff) !important;
+  stroke: var(--color-on-accent) !important;
 }
 
 

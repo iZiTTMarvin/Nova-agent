@@ -347,10 +347,12 @@ function App(): React.ReactNode {
         content 为「顶行 + 对话/inspector 行」纵向堆叠（AppShell 无右侧槽）。
         height="fill" → 100dvh 内部滚动；contentPadding=0 → 对话区边到边；
         mobileNav=false → Electron 桌面端无移动断点抽屉。
-        variant="section" 提供 nav 与内容间的分隔线（替代手写 border）。
+        variant="surface" 而非 "section"：两者底色同为 background-surface，差别只在
+        section 会额外画一条 LayoutPanel 分隔线。分隔线由 .sidebar-shell 独占——它需要在
+        侧栏折叠时随之消失，而 AppShell 那条会留下 1px 孤线，且与自带 border 叠成 2px。
       */}
       <AppShell
-        variant="section"
+        variant="surface"
         sideNav={<Sidebar updateSnapshot={updateSnapshot} />}
         contentPadding={0}
         height="fill"

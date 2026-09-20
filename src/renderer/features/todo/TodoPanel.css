@@ -19,16 +19,14 @@
 }
 
 .todo-panel {
-  border: 1px solid var(--border-cream, #f0eee6);
+  border: 1px solid var(--border-subtle);
   border-bottom: 0;
-  background: var(--bg-card, #ffffff);
-  box-shadow: 0 -2px 10px rgba(20, 20, 19, 0.03);
-  backdrop-filter: blur(24px);
+  background: var(--bg-card);
   border-radius: 12px 12px 0 0;
   /* overflow: hidden 会让内部滚动区域裁掉 focus 环，改 visible 由 body 自管滚动 */
   overflow: visible;
   font-size: 13px;
-  transition: box-shadow var(--transition-fast, 0.15s), border-color var(--transition-fast, 0.15s);
+  transition: box-shadow var(--transition-fast), border-color var(--transition-fast);
   pointer-events: auto;
   /* dock 高度上限：composer 区是 absolute bottom:0，dock 向上堆叠。
      没有上限时 >5 项 todo 会顶到 200px+ 挤压上方消息区末条。
@@ -39,7 +37,7 @@
 }
 
 .todo-panel:hover {
-  border-color: var(--border-warm, #e8e6dc);
+  border-color: var(--border-warm);
 }
 
 .todo-panel__header {
@@ -56,7 +54,7 @@
   border-radius: 12px 12px 0 0;
   cursor: pointer;
   text-align: left;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
 }
 
 /* 细条态略收紧，少占 composer 上方空间 */
@@ -66,13 +64,13 @@
 }
 
 .todo-panel__header:hover {
-  background: rgba(0, 0, 0, 0.02);
+  background: var(--surface-hover);
 }
 
 .todo-panel__caret {
   display: inline-block;
   width: 14px;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   font-size: 11px;
   transition: transform 0.15s ease;
 }
@@ -84,13 +82,13 @@
 .todo-panel__title {
   font-weight: 500;
   flex: 1;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
 }
 
 .todo-panel__progress {
   font-variant-numeric: tabular-nums;
   font-size: 12px;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   background: rgba(201, 100, 66, 0.08);
   padding: 1px 8px;
   border-radius: 999px;
@@ -121,7 +119,7 @@
 }
 
 .todo-panel__body {
-  border-top: 1px solid var(--border-warm, #ece6da);
+  border-top: 1px solid var(--border-warm);
   padding: 6px 4px 8px 4px;
   /* 头部固定，body 独占剩余高度并内部滚动；父容器已 max-height: 40vh */
   overflow-y: auto;
@@ -133,7 +131,7 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 4px 10px 8px 10px;
-  color: var(--text-secondary, #8a857d);
+  color: var(--text-secondary);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -150,16 +148,16 @@
   gap: 8px;
   padding: 5px 10px;
   border-radius: 6px;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
   transition: background-color 0.12s ease;
 }
 
 .todo-row--in-progress {
-  background: rgba(56, 152, 236, 0.08);
+  background: var(--surface-brand);
 }
 
 .todo-row--done {
-  color: var(--text-secondary, #8a857d);
+  color: var(--text-secondary);
 }
 
 .todo-row--done .todo-row__content {
@@ -178,7 +176,7 @@
 .todo-row__glyph {
   font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
   font-size: 12px;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   width: 22px;
   text-align: center;
   flex-shrink: 0;
@@ -200,16 +198,16 @@
 }
 
 .todo-priority--high {
-  background: rgba(217, 119, 87, 0.14);
-  color: #c96442;
+  background: var(--surface-danger);
+  color: var(--color-error);
 }
 
 .todo-priority--medium {
-  background: rgba(184, 156, 95, 0.18);
-  color: #8a6f2a;
+  background: var(--surface-warning);
+  color: var(--color-warning);
 }
 
 .todo-priority--low {
-  background: rgba(120, 120, 120, 0.10);
-  color: #6b6760;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
 }

@@ -11,7 +11,7 @@
 
 .mode-switch__menu-title {
   padding: 8px 12px 6px;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 600;
 }
@@ -19,10 +19,10 @@
 .mode-switch__error {
   margin: 0 8px 6px;
   padding: 7px 9px;
-  border: 1px solid rgba(181, 51, 51, 0.2);
+  border: 1px solid var(--border-danger);
   border-radius: 6px;
-  background: rgba(181, 51, 51, 0.08);
-  color: var(--color-error, #b53333);
+  background: var(--surface-danger);
+  color: var(--color-error);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -30,7 +30,7 @@
 .mode-switch__menu-section {
   margin-top: 4px;
   padding-top: 4px;
-  border-top: 1px solid var(--border-cream, rgba(0, 0, 0, 0.1));
+  border-top: 1px solid var(--border-cream);
 }
 
 .mode-switch__menu-item {
@@ -56,7 +56,7 @@
 
 .mode-switch__menu-item-desc {
   overflow: hidden;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   font-size: 11px;
   font-weight: 400;
   line-height: 1.3;
@@ -73,7 +73,7 @@
   align-items: center;
   height: 32px;
   overflow: hidden;
-  border: 1px solid var(--border-warm, #d8cfc0);
+  border: 1px solid var(--border-warm);
   border-radius: 8px;
 }
 

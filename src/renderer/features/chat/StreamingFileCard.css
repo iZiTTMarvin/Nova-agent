@@ -130,7 +130,7 @@
 
 /* error = 红色系 */
 .streaming-card--error .streaming-card__status-badge {
-  background-color: rgba(181, 51, 51, 0.08);
+  background-color: var(--surface-danger);
   color: var(--color-error);
 }
 
@@ -156,7 +156,7 @@
 .streaming-card__body {
   max-height: 360px;
   overflow: auto;
-  background-color: #fafaf7;
+  background-color: var(--code-block-bg);
   border-top: 1px solid var(--border-cream);
   padding: 8px 0;
   max-width: 100%;
@@ -178,7 +178,7 @@
   text-align: right;
   padding-right: 8px;
   color: var(--text-muted);
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--surface-gutter);
   user-select: none;
   flex-shrink: 0;
   font-size: 0.75rem;
@@ -202,7 +202,7 @@
   border-radius: var(--radius-sm);
   font-size: 0.8rem;
   color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.05);
+  background-color: var(--surface-danger-subtle);
   border: 1px solid rgba(181, 51, 51, 0.1);
   white-space: pre-wrap;
   word-break: break-word;

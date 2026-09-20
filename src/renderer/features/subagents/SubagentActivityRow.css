@@ -11,7 +11,7 @@
   box-sizing: border-box;
   padding: 4px 3px;
   border-radius: 7px;
-  color: var(--text-primary, #2f2c27);
+  color: var(--text-primary);
   transition: background-color 240ms ease;
 }
 
@@ -74,7 +74,7 @@
 }
 
 .subagent-activity-row--attention .subagent-activity-row__dot {
-  background: var(--color-warning, #d97757);
+  background: var(--color-warning);
 }
 
 .subagent-activity-row--success .subagent-activity-row__dot {
@@ -159,7 +159,7 @@
 .subagent-activity-row__activity {
   min-width: 0;
   padding: 0 2px;
-  color: var(--text-secondary, #5d5852);
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 16px;
   overflow: hidden;
@@ -174,9 +174,9 @@
 .subagent-activity-row__activity--live {
   background: linear-gradient(
     90deg,
-    var(--text-secondary, #5d5852) 25%,
-    var(--text-primary, #2f2c27) 50%,
-    var(--text-secondary, #5d5852) 75%
+    var(--text-secondary) 25%,
+    var(--text-primary) 50%,
+    var(--text-secondary) 75%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -235,7 +235,7 @@
   background: var(--bg-card);
   border: 1px solid var(--border-warm);
   border-radius: var(--radius-md);
-  color: var(--text-secondary, #5d5852);
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 16px;
   cursor: pointer;
@@ -272,7 +272,7 @@
   /* 降级时恢复纯色，避免透明色 + 静态渐变影响可读性 */
   .subagent-activity-row__activity--live {
     background: none;
-    color: var(--text-secondary, #5d5852);
+    color: var(--text-secondary);
   }
 }
 
@@ -351,7 +351,7 @@
   padding: 2px 8px;
   border: 1px solid var(--border-warm);
   border-radius: var(--radius-sm);
-  background: var(--bg-hover);
+  background: var(--surface-muted);
   color: var(--text-secondary);
   font-size: 11px;
   line-height: 16px;
@@ -614,7 +614,7 @@
   flex-direction: column;
   gap: 2px;
   padding: 5px 4px;
-  color: var(--text-secondary, #5d5852);
+  color: var(--text-secondary);
   font-size: 11px;
 }
 

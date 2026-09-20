@@ -17,7 +17,7 @@
 }
 
 .composer-skill-trigger__title {
-  font-size: var(--font-size-ui, 14px);
+  font-size: var(--font-size-base);
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.35;
@@ -35,11 +35,11 @@
 .composer-skill-trigger__kind {
   font-weight: 500;
   color: var(--text-muted);
-  font-size: var(--font-size-caption, 12px);
+  font-size: var(--font-size-sm);
 }
 
 .composer-skill-trigger__desc {
-  font-size: var(--font-size-caption, 12px);
+  font-size: var(--font-size-sm);
   color: var(--text-muted);
   line-height: 1.4;
   min-width: 0;
@@ -50,5 +50,5 @@
 
 .composer-skill-trigger__note {
   margin-left: 6px;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
 }

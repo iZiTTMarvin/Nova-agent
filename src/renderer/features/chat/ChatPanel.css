@@ -35,7 +35,7 @@
 
 .chat-session-breadcrumb__trigger:hover,
 .chat-session-breadcrumb__trigger[aria-expanded='true'] {
-  background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
+  background: var(--color-overlay-hover);
   color: var(--text-primary);
 }
 
@@ -109,7 +109,7 @@
 }
 
 .chat-session-breadcrumb__item:hover {
-  background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
+  background: var(--color-overlay-hover);
 }
 
 .chat-session-breadcrumb__item-label {
@@ -146,7 +146,7 @@
 /* 消息流内层阅读柱容器：最大宽度对齐主流 Agent 黄金阅读行宽（48rem/768px）并水平居中 */
 .chat-messages__flow-inner {
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin-inline: auto;
   min-width: 0;
   display: flex;
@@ -156,7 +156,7 @@
 .chat-messages__virtual {
   flex-shrink: 0;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin-inline: auto;
 }
 
@@ -165,7 +165,7 @@
   flex-direction: column;
   gap: 24px;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin-inline: auto;
 }
 
@@ -311,7 +311,7 @@
 
 .chat-msg--error {
   border-color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.03);
+  background-color: var(--surface-danger-subtle);
   color: var(--color-error);
 }
 
@@ -333,8 +333,8 @@
   border-radius: 999px;
   font-size: 11.5px;
   color: var(--text-secondary);
-  background: var(--bg-hover);
-  border: 1px solid var(--border-light);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
   line-height: 1.5;
   letter-spacing: 0.01em;
 }
@@ -428,7 +428,7 @@
 
 .assistant-pending__log {
   font-size: 0.75rem;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -730,7 +730,7 @@
   gap: 4px;
   margin-top: 6px;
   font-size: 0.75rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   user-select: none;
 }
 
@@ -749,14 +749,14 @@
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin: 0 auto 12px;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle, #d8d4c8);
-  background: var(--bg-cream, #f8f6f0);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
   font-size: 0.82rem;
-  color: var(--text-secondary, #5c5c5c);
+  color: var(--text-secondary);
 }
 
 .chat-tier1-notice__dismiss {
@@ -785,10 +785,10 @@
   margin: 0 0 10px;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(207, 34, 46, 0.2);
-  background: rgba(207, 34, 46, 0.06);
+  border: 1px solid var(--border-danger);
+  background: var(--surface-danger);
   font-size: 0.82rem;
-  color: var(--text-secondary, #5c5c5c);
+  color: var(--text-secondary);
   box-sizing: border-box;
   /* 容器链 pointer-events: none，交互子元素需各自恢复 */
   pointer-events: auto;
@@ -883,7 +883,7 @@ button.code-index-status-chip:hover {
 }
 
 .code-index-status-chip--warning {
-  color: var(--color-warning, #d97706);
+  color: var(--color-warning);
 }
 
 .code-index-status-chip__warning-dot {
@@ -1193,8 +1193,8 @@ button.code-index-status-chip:hover {
   position: absolute;
   inset: 0;
   z-index: 50;
-  border: 2px dashed var(--color-focus, #3898ec);
-  background: rgba(56, 152, 236, 0.08);
+  border: 2px dashed var(--color-focus);
+  background: var(--surface-brand);
   border-radius: var(--radius-xl);
   pointer-events: none;
   display: flex;
@@ -1203,7 +1203,7 @@ button.code-index-status-chip:hover {
 }
 
 .chat-panel__drag-overlay span {
-  color: var(--color-focus, #3898ec);
+  color: var(--color-focus);
   font-weight: 500;
   font-size: 1.125rem; /* ~text-lg */
 }
@@ -1255,7 +1255,6 @@ button.code-index-status-chip:hover {
   border: 1px solid var(--border-composer);
   border-radius: 16px;
   box-shadow: var(--shadow-whisper);
-  backdrop-filter: blur(24px);
   pointer-events: auto;
   transition:
     box-shadow var(--transition-fast),
@@ -1267,8 +1266,8 @@ button.code-index-status-chip:hover {
 }
 
 .chat-composer-box--dragover {
-  border-color: var(--color-focus, #3898ec);
-  box-shadow: 0 0 0 2px rgba(56, 152, 236, 0.2);
+  border-color: var(--color-focus);
+  box-shadow: var(--ring-focus);
 }
 
 .chat-subagent-note {
@@ -1283,7 +1282,7 @@ button.code-index-status-chip:hover {
 .chat-panel__composer-inner {
   position: relative;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1330,7 +1329,7 @@ button.code-index-status-chip:hover {
   background: var(--bg-card);
   box-shadow: var(--shadow-card);
   font-size: 12px;
-  color: var(--text-primary, #1a1a1a);
+  color: var(--text-primary);
 }
 
 .steering-queue__header {
@@ -1342,7 +1341,7 @@ button.code-index-status-chip:hover {
 
 .steering-queue__title {
   font-weight: 500;
-  color: var(--text-secondary, #5c5c5c);
+  color: var(--text-secondary);
   font-size: 11px;
   letter-spacing: 0.02em;
 }
@@ -1350,7 +1349,7 @@ button.code-index-status-chip:hover {
 .steering-queue__hint {
   flex: 1;
   font-size: 11px;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
 }
 
 .steering-queue__list {
@@ -1375,7 +1374,7 @@ button.code-index-status-chip:hover {
   min-width: 14px;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   text-align: right;
 }
 
@@ -1384,7 +1383,7 @@ button.code-index-status-chip:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-primary, #1a1a1a);
+  color: var(--text-primary);
 }
 
 .steering-queue__remove {
@@ -1395,7 +1394,7 @@ button.code-index-status-chip:hover {
   justify-content: center;
   border: none;
   background: transparent;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
   font-size: 14px;
@@ -1410,8 +1409,8 @@ button.code-index-status-chip:hover {
 }
 
 .steering-queue__remove:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #d33;
+  background: var(--surface-hover);
+  color: var(--color-error);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1479,15 +1478,15 @@ button.code-index-status-chip:hover {
   background: transparent;
   cursor: default;
   text-align: left;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   font: inherit;
   font-size: 13px;
   min-width: 0;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   appearance: none;
   user-select: none;
   overflow-anchor: auto;
-  transition: background-color var(--transition-fast, 140ms) ease;
+  transition: background-color var(--transition-fast) ease;
 }
 
 .ask-question-tool-card__header:not(:disabled) {
@@ -1495,8 +1494,8 @@ button.code-index-status-chip:hover {
 }
 
 .ask-question-tool-card__header:not(:disabled):hover {
-  color: var(--text-primary, #1f1d1a);
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
 }
 
 .ask-question-tool-card__glyph {
@@ -1514,16 +1513,16 @@ button.code-index-status-chip:hover {
 }
 
 .ask-question-tool-card__glyph--running {
-  color: var(--color-brand, #c96442);
+  color: var(--color-brand);
   animation: ask-question-pulse 1.4s ease-in-out infinite;
 }
 
 .ask-question-tool-card__glyph--success {
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
 }
 
 .ask-question-tool-card__glyph--error {
-  color: var(--color-error, #c96442);
+  color: var(--color-error);
 }
 
 @keyframes ask-question-pulse {
@@ -1542,13 +1541,13 @@ button.code-index-status-chip:hover {
 .ask-question-tool-card__chevron {
   flex-shrink: 0;
   display: inline-flex;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
 }
 
 .ask-question-tool-card__detail {
   margin: 2px 0 6px 11px;
   padding: 4px 0 6px 10px;
-  border-left: 1.5px solid color-mix(in srgb, var(--text-muted, #87867f) 28%, transparent);
+  border-left: 1.5px solid color-mix(in srgb, var(--text-muted) 28%, transparent);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1562,13 +1561,13 @@ button.code-index-status-chip:hover {
 
 .ask-question-tool-card__q {
   font-size: 0.82rem;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
   line-height: 1.4;
 }
 
 .ask-question-tool-card__a {
   font-size: 0.8rem;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   line-height: 1.4;
 }
 

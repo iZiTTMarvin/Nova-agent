@@ -783,7 +783,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
               <div key={projectPath} className="sidebar-project-group mb-0.5">
                 {/* 项目标题行：加粗字体，hover 显示操作（三个点与新建会话按钮） */}
                 <div
-                  className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-surface-sidebar-hover group transition-colors select-none ${
+                  className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-surface-hover group transition-colors select-none ${
                     isMenuOpen ? 'sidebar-project-header--menu-open' : ''
                   }`}
                   onClick={() => toggleProjectExpand(projectPath)}
@@ -886,7 +886,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
 
                       <button
                         type="button"
-                        className="sidebar-project-add-btn w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-surface-sidebar-hover transition-colors"
+                        className="sidebar-project-add-btn w-6 h-6 flex items-center justify-center rounded text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors"
                         title="在此项目下新建会话"
                         aria-label="在此项目下新建会话"
                         onClick={(e) => {
@@ -961,7 +961,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                     return (
                       <div key={projectPath} className="sidebar-project-group mb-0.5 opacity-80 hover:opacity-100 transition-opacity">
                         <div
-                          className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-surface-sidebar-hover group transition-colors select-none ${
+                          className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-surface-hover group transition-colors select-none ${
                             isMenuOpen ? 'sidebar-project-header--menu-open' : ''
                           }`}
                           onClick={() => toggleProjectExpand(projectPath)}
@@ -1068,7 +1068,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
             role="button"
             tabIndex={0}
             title={hoveredProject.path}
-            className="sidebar-project-popover__path flex items-center gap-1.5 px-2 py-1 -mx-1 rounded text-xs text-text-muted hover:text-text-primary hover:bg-surface-sidebar-hover cursor-pointer transition-colors group/path min-w-0"
+            className="sidebar-project-popover__path flex items-center gap-1.5 px-2 py-1 -mx-1 rounded text-xs text-text-muted hover:text-text-primary hover:bg-surface-hover cursor-pointer transition-colors group/path min-w-0"
             onClick={(e) => {
               e.stopPropagation()
               void handleOpenProjectDirectory(hoveredProject.path)
