@@ -1,37 +1,51 @@
-import React from 'react'
-import { NovaLogo } from '../../components/Icons'
+import React, { useRef } from 'react'
+import { LEFT_EYE, RIGHT_EYE, useWelcomeMascotGaze } from './useWelcomeMascotGaze'
 import './WelcomeHero.css'
 
 /**
- * 主画布空态组件（AgentWelcomeHero）
- * 对标 Cline Desktop 现代无衬线 Typography 与空间几何呼吸感
+ * 空会话主画布：淡网格 + 会看人的星。标语与教程由 Composer 承担，这里不再重复。
  */
 export const WelcomeHero: React.FC = () => {
+  const rootRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
+  const leftPupilRef = useRef<SVGGElement>(null)
+  const rightPupilRef = useRef<SVGGElement>(null)
+
+  useWelcomeMascotGaze({ rootRef, svgRef, leftPupilRef, rightPupilRef })
+
   return (
     <>
-      {/* 空间感几何细线网格与巨幅星芒 Mascot 水印 */}
-      <div className="welcome-hero-bg" aria-hidden>
+      <div className="welcome-hero-bg" aria-hidden />
+      <div ref={rootRef} className="welcome-mascot-slot" aria-hidden="true">
         <svg
-          className="welcome-hero-watermark"
-          viewBox="0 0 100 100"
-          fill="currentColor"
-          xmlns="http://www.w3.org/2000/svg"
+          ref={svgRef}
+          className="welcome-mascot"
+          viewBox="0 0 128 128"
+          focusable="false"
         >
-          <path d="M50 0 C50 25 75 50 100 50 C75 50 50 75 50 100 C50 75 25 50 0 50 C25 50 50 25 50 0 Z" />
-          <circle cx="50" cy="50" r="8" opacity="0.4" />
+          <path
+            className="welcome-mascot__body"
+            d="M72 14 C74 11 78 12 78 16 L77 36 C76 44 80 48 88 49 L111 51 C115 51 116 55 112 58 L94 72 C88 76 86 81 88 88 L92 107 C93 111 89 114 86 111 L69 99 C63 94 58 94 51 98 L30 108 C26 110 23 107 25 103 L33 82 C36 75 34 70 28 66 L13 54 C9 51 11 47 15 47 L38 46 C46 46 51 42 55 36 Z"
+          />
+          <g ref={leftPupilRef} className="welcome-mascot__pupil">
+            <ellipse
+              className="welcome-mascot__eye"
+              cx={LEFT_EYE.x}
+              cy={LEFT_EYE.y}
+              rx="2.1"
+              ry="4.2"
+            />
+          </g>
+          <g ref={rightPupilRef} className="welcome-mascot__pupil">
+            <ellipse
+              className="welcome-mascot__eye"
+              cx={RIGHT_EYE.x}
+              cy={RIGHT_EYE.y}
+              rx="2.1"
+              ry="4.2"
+            />
+          </g>
         </svg>
-      </div>
-
-      {/* 现代标语与引导提示 */}
-      <div className="welcome-hero-content mb-8 flex flex-col items-center justify-center space-y-3">
-        <NovaLogo size={44} animating={false} />
-        <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-text-primary">
-          说出你的想法，或分配编程任务
-        </h1>
-        <p className="text-xs md:text-sm text-text-muted mt-1 tracking-normal">
-          输入 <kbd className="px-1.5 py-0.5 rounded bg-surface-muted text-[11px] font-mono border border-border-subtle">/</kbd> 唤起能力技能，
-          输入 <kbd className="px-1.5 py-0.5 rounded bg-surface-muted text-[11px] font-mono border border-border-subtle">@</kbd> 引用文件
-        </p>
       </div>
     </>
   )

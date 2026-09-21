@@ -1,11 +1,11 @@
 /*
  * 内容区顶行：右栏自己的顶栏（面包屑 + 面板/会话操作 + 窗口控制）。
  * 无贯穿顶栏后，本行与侧边栏顶行各自承担所在栏的窗口拖拽区职责。
+ * 不做底部分隔线，与侧栏顶行对齐，靠表面色差分层。
  */
 .content-topbar {
   height: 44px;
   background-color: var(--surface-canvas);
-  border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
   justify-content: space-between;

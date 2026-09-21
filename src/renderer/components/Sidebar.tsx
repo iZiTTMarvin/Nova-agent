@@ -1179,11 +1179,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
       >
         {/* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮 */}
         <div className="sidebar-topbar">
-          <div className="sidebar-topbar__brand flex items-center gap-2">
-            <NovaLogo size={18} />
-            <span className="sidebar-topbar__title font-semibold text-sm text-text-primary">
-              Nova Agent
-            </span>
+          <div className="sidebar-topbar__brand">
+            <NovaLogo size={24} />
           </div>
           <div className="sidebar-topbar__actions ml-auto flex items-center gap-1">
             <IconButton

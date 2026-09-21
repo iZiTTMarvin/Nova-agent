@@ -31,7 +31,7 @@
   will-change: transform;
 }
 
-/* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮 */
+/* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮。不做底部分隔线，靠表面色差分层。 */
 .sidebar-topbar {
   display: flex;
   align-items: center;
@@ -41,20 +41,11 @@
   flex-shrink: 0;
   -webkit-app-region: drag;
   user-select: none;
-  border-bottom: 1px solid var(--border-subtle);
 }
 
 .sidebar-topbar__brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-.sidebar-topbar__title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.01em;
 }
 
 .sidebar-topbar__actions {
@@ -323,8 +314,7 @@
   padding-inline-start: 19px !important;
 }
 
-/* 底部操作区 */
+/* 底部操作区：无顶部分隔线，避免侧栏被横线切开 */
 .sidebar-footer-actions {
-  border-top: 1px solid var(--border-subtle);
   height: 40px;
 }
