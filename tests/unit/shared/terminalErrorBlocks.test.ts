@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
 import {
   TERMINAL_ERROR_NOTICE_PREFIX,
   CONTEXT_BUDGET_EXCEEDED_NOTICE,
+  REMOTE_RESULT_UNKNOWN_NOTICE,
   formatTerminalErrorNotice,
   formatTerminalErrorMessage,
   appendTerminalErrorToBlocks,
@@ -99,6 +100,15 @@ describe('ModelFailure 前缀协议', () => {
       expect(translated).not.toContain('ModelFailure:')
       expect(translated).not.toBe('raw provider text')
     }
+  })
+
+  it('已收到响应头后断流不改写成网络不可达，也不提供重试', () => {
+    const error = encodeModelFailureError(
+      'network',
+      `network_reset: SSE ended before model completion；请求可能已送达，${REMOTE_RESULT_UNKNOWN_NOTICE}`
+    )
+    expect(formatTerminalErrorMessage(error)).toBe(REMOTE_RESULT_UNKNOWN_NOTICE)
+    expect(resolveTerminalErrorActions(error)).toEqual([])
   })
 
   it('每类失败带可执行动作，不同类别动作符合恢复语义', () => {

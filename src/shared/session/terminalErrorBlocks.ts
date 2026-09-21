@@ -6,6 +6,8 @@ import { parseModelFailureError, type ModelFailureKind } from '../model/failureK
 export const TERMINAL_ERROR_NOTICE_PREFIX = '⚠️ '
 export const CONTEXT_BUDGET_EXCEEDED_NOTICE =
   '对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。'
+/** 已拿到响应头后断流：请求可能已送达，不能改写成「网络连不上」或提供重试 */
+export const REMOTE_RESULT_UNKNOWN_NOTICE = '远端结果与费用未知，已停止自动重试。'
 
 /** 错误恢复动作：展示侧据此渲染按钮，语义跨端一致 */
 export type TerminalErrorAction =
@@ -27,6 +29,10 @@ const MODEL_FAILURE_PRESENTATIONS: Record<ModelFailureKind, { text: string; acti
   unknown: { text: '出了个没识别出来的问题，可以导出诊断包帮忙定位。', actions: ['export-diagnostics'] }
 }
 
+function isRemoteResultUnknown(message: string): boolean {
+  return message.includes(REMOTE_RESULT_UNKNOWN_NOTICE)
+}
+
 /** 将内部预算错误转换为用户可执行的提示，其他错误保留原文。 */
 export function formatTerminalErrorMessage(error: string): string {
   const modelFailure = parseModelFailureError(error)
@@ -37,6 +43,7 @@ export function formatTerminalErrorMessage(error: string): string {
       const inner = formatTerminalErrorMessage(modelFailure.message)
       if (inner !== modelFailure.message) return inner
     }
+    if (isRemoteResultUnknown(modelFailure.message)) return REMOTE_RESULT_UNKNOWN_NOTICE
     return MODEL_FAILURE_PRESENTATIONS[modelFailure.kind].text
   }
   if (error.startsWith('ContextRecoveryFailed:')) {
@@ -65,6 +72,7 @@ export function resolveTerminalErrorActions(error: string): TerminalErrorAction[
     if (error.startsWith('ContextBudgetExceeded:')) return ['new-session']
     return []
   }
+  if (isRemoteResultUnknown(modelFailure.message)) return []
   // unknown 包裹更具体错误时（如压缩链抛的 ContextBudgetExceeded），跟随内层语义给动作，
   // 与 formatTerminalErrorMessage 的内层回退保持一致
   if (modelFailure.kind === 'unknown') {

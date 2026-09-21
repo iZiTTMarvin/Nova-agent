@@ -21,6 +21,8 @@ const cache = new Map<string, SessionIndexDb>()
 let openFn: SessionIndexOpenFn | null = null
 /** 默认：能加载 better-sqlite3 则用 SQLite，否则用内存（仅保证进程不崩；生产 Electron 必有 native） */
 let defaultPreferSqlite = true
+/** reset 时恢复到该基线；单测 setup 可关掉，避免 Node 进程误开 WAL。 */
+let preferSqliteBaseline = true
 
 /** 解析规范化 sessionDir 作为 cache key */
 function cacheKey(sessionDir: string): string {
@@ -46,7 +48,6 @@ function defaultOpen(sessionDir: string): SessionIndexDb {
   if (defaultPreferSqlite && canOpenSqliteSessionIndex()) {
     return openIndexDb(sessionDir)
   }
-  // Node vitest（Electron ABI 的 better-sqlite3 无法加载）回退内存，避免拖垮现有 SessionStore 单测
   return createMemorySessionIndexDb()
 }
 
@@ -145,11 +146,17 @@ export function setSessionIndexOpenFnForTests(fn: SessionIndexOpenFn | null): vo
   openFn = fn
 }
 
-/** 单测重置：关连接 + 清工厂 */
+/** 单测重置：关连接 + 清工厂，preferSqlite 回到 setup 设定的基线 */
 export function resetSessionIndexHostForTests(): void {
   closeAllSessionIndexes()
   openFn = null
-  defaultPreferSqlite = true
+  defaultPreferSqlite = preferSqliteBaseline
+}
+
+/** 单测 setup 用：关掉默认 SQLite，避免 Node 进程打开 WAL 后删不掉临时目录 */
+export function setSessionIndexPreferSqliteForTests(prefer: boolean): void {
+  preferSqliteBaseline = prefer
+  defaultPreferSqlite = prefer
 }
 
 /** 测试辅助：当前缓存数量 */

@@ -147,7 +147,7 @@ export function registerSessionHandler(): void {
       const active = getSessionActiveMessages(session)
       const markdown = exportSessionToMarkdown(active, session.title)
       if (params.target === 'clipboard') {
-        clipboard.writeText(markdown)
+        await clipboard.writeText(markdown)
         return { status: 'copied' as const }
       }
       const picked = await dialog.showSaveDialog({
