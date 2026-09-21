@@ -53,6 +53,10 @@ export interface BrowserSessionHostDeps {
   readonly onGuestMount?: (snapshot: BrowserGuestMountSnapshot) => void
   readonly getCurrentSessionId?: () => string | null
   readonly identity?: BrowserIdentityLedger
+  readonly allocatePartition?: (browserId: string) =>
+    | { readonly partition: string }
+    | { readonly error: 'resource_limit' }
+  readonly releasePartition?: (browserId: string) => Promise<void>
 }
 
 export interface BrowserBindingInspection {
@@ -97,7 +101,7 @@ function defaultDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function partitionFor(browserId: string): string {
+function uniquePartition(browserId: string): string {
   return `nova-browser-${browserId}`
 }
 
@@ -375,6 +379,13 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!issued.ok) {
       return browserNotApplied(issued.code, '无法打开新的浏览器页面')
     }
+    const allocated = deps.allocatePartition
+      ? deps.allocatePartition(issued.value.browserId)
+      : { partition: uniquePartition(issued.value.browserId) }
+    if ('error' in allocated) {
+      ledger.retire(issued.value.browserId)
+      return browserNotApplied(allocated.error, '没有可复用的隔离资料槽')
+    }
     const record: PageRecord = {
       sessionId: context.sessionId,
       url,
@@ -382,7 +393,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       loading: true,
       lifecycle: 'opening',
       control: { holder: 'user' },
-      partition: partitionFor(issued.value.browserId),
+      partition: allocated.partition,
       visible: true,
       guest: null,
       attachWaiters: [],
@@ -549,6 +560,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       emit()
       if (!(await waitDestroyed(guest))) {
         return { status: 'outcome_unknown' as const, detail: '页面进程尚未销毁，拒绝当作已关闭' }
+      }
+      if (deps.releasePartition) {
+        await deps.releasePartition(command.browserId)
       }
       ledger.retire(command.browserId)
       pages.delete(command.browserId)

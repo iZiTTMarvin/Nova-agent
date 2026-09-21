@@ -314,6 +314,85 @@ describe('BrowserSessionHost 生命周期', () => {
     harness.host.handlePopup('file:///tmp/x', 'sess_1')
     expect(harness.externals).toEqual(['https://example.com/three'])
   })
+
+  it('关闭后释放隔离槽，清理失败则不能把旧槽发给新页', async () => {
+    const guests = new Map<number, FakeGuest>([
+      [21, new FakeGuest({ id: 21 })],
+      [22, new FakeGuest({ id: 22 })]
+    ])
+    const cleaned: string[] = []
+    let failCleanup = false
+    const pool = (await import('../../../../src/main/browser/partitionSlots')).createBrowserPartitionSlotPool(
+      async (partition) => {
+        if (failCleanup) throw new Error('cleanup failed')
+        cleaned.push(partition)
+      }
+    )
+    const clock = createClock()
+    const snapshots: BrowserSurfaceSnapshot[] = []
+    const host = createBrowserSessionHost({
+      resolveWorkspaceKey: () => 'ws_a',
+      lookupGuest: (id) => guests.get(id),
+      openExternal: () => {},
+      delay: clock.delay,
+      onSnapshot: (snapshot) => {
+        snapshots.push(snapshot)
+      },
+      allocatePartition: (browserId) => {
+        const got = pool.acquire(browserId)
+        if (!got.ok) return { error: 'resource_limit' }
+        return { partition: got.partition }
+      },
+      releasePartition: async (browserId) => {
+        await pool.release(browserId)
+      }
+    })
+    const opening = host.open({ url: 'https://example.com/a' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const browserId = snapshots.at(-1)?.pages[0]?.browserId
+    expect(browserId).toBeTruthy()
+    await host.attach({ sessionId: 'sess_1', browserId: browserId!, webContentsId: 21 })
+    await opening
+    const partition = pool.inspect()[0]?.partition
+    expect(partition).toBeDefined()
+    expect(pool.inspect()[0]?.ownerBrowserId).toBe(browserId)
+
+    const closing = host.close({ browserId: browserId! }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    await Promise.resolve()
+    clock.flush(1000)
+    await Promise.resolve()
+    guests.get(21)?.destroy()
+    await closing
+    expect(cleaned).toEqual([partition])
+    expect(pool.inspect()[0]?.state).toBe('idle')
+
+    failCleanup = true
+    const opening2 = host.open({ url: 'https://example.com/b' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const browserId2 = snapshots.at(-1)?.pages.find((page) => page.lifecycle === 'opening')?.browserId
+    expect(browserId2).toBeTruthy()
+    await host.attach({ sessionId: 'sess_1', browserId: browserId2!, webContentsId: 22 })
+    await opening2
+    expect(pool.inspect()[0]?.ownerBrowserId).toBe(browserId2)
+    const closing2 = host.close({ browserId: browserId2! }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    await Promise.resolve()
+    clock.flush(1000)
+    await Promise.resolve()
+    guests.get(22)?.destroy()
+    await closing2
+    expect(pool.inspect()[0]?.state).toBe('unusable')
+    const third = host.open({ url: 'https://example.com/c' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const browserId3 = snapshots.at(-1)?.pages.find((page) => page.browserId !== browserId2)?.browserId
+    expect(browserId3).toBeTruthy()
+    expect(pool.inspect()[1]?.ownerBrowserId).toBe(browserId3)
+    expect(pool.inspect()[1]?.partition).toBeDefined()
+    expect(pool.inspect()[0]?.state).toBe('unusable')
+    clock.flush(15_000)
+    await expect(third).resolves.toMatchObject({ status: 'not_applied', code: 'timeout' })
+  })
 })
 
 function latestBrowserId(snapshots: BrowserSurfaceSnapshot[]): string {
