@@ -226,11 +226,18 @@ export class PermissionManager {
         reason: this.planDenyReason(query.toolName)
       }
     }
+    if (resolution.effects.includes('network.write')) {
+      return {
+        decision: 'deny',
+        riskLevel: 'high',
+        reason: this.planDenyReason(query.toolName)
+      }
+    }
     return null
   }
 
   /**
-   * 只读能力上限：排除写文件、执行 Shell、控制进程与编排派生。
+   * 只读能力上限：排除写文件、执行 Shell、控制进程、编排派生与网络写入。
    * 编排也在排除之列，保持与只读子代理此前借用 plan 边界时一致的收窄面。
    */
   private resolveCapabilityCeiling(
@@ -249,7 +256,7 @@ export class PermissionManager {
       return {
         decision: 'deny',
         riskLevel: 'high',
-        reason: `只读上限下禁止 "${query.toolName}" 产生的副作用（写文件 / 执行 Shell / 控制进程 / 编排）`
+        reason: `只读上限下禁止 "${query.toolName}" 产生的副作用（写文件 / 执行 Shell / 控制进程 / 编排 / 网络写入）`
       }
     }
     return null

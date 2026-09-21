@@ -4,7 +4,10 @@
  * - 新增工具忘记登记 Catalog → 未分组 fail-open（自动变 core）或隐藏行为不可预期；
  * - Catalog 行被误删 → 注册工具失去可用性策略来源。
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentConfig'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
@@ -13,9 +16,11 @@ import type { BuiltinToolRegistrationDeps } from '../../../../src/main/agent/run
 import {
   buildLoadToolsDescription,
   getCatalogEntry,
+  getDeferredGroupMeta,
   isLoadableToolGroup,
   listCatalogEntries,
   listDefinedGroupIds,
+  listGroupToolNames,
   listLiveDeferredGroupIds,
   normalizeGroupAlias,
   validateCatalogIntegrity,
@@ -118,6 +123,26 @@ describe('Deferred 组暴露规则', () => {
     expect(isLoadableToolGroup('browser')).toBe(false)
     expect(isLoadableToolGroup('computer-use')).toBe(false)
     expect(isLoadableToolGroup('agent')).toBe(true)
+    expect(getDeferredGroupMeta('browser')?.reserved).toBe(true)
+    expect(listGroupToolNames('browser')).toEqual([])
+  })
+
+  it('内置注册、headless 编码清单与子代理预设均不含浏览器工具', () => {
+    const registered = fullRegistryNames()
+    expect(registered.filter(name => name.startsWith('browser_'))).toEqual([])
+
+    const headlessSource = readFileSync(
+      join(__dirname, '../../../../src/headless/cli.ts'),
+      'utf8'
+    )
+    expect(headlessSource).not.toMatch(/browser_(open|observe|act|close|capture)/)
+
+    for (const spec of BUILTIN_SUBAGENTS) {
+      expect(
+        spec.allowedTools.filter(name => name.startsWith('browser_')),
+        `${spec.id} 不应授予浏览器工具`
+      ).toEqual([])
+    }
   })
 
   it('历史 orchestration 只作为恢复 alias，不进入组定义与 live enum', () => {

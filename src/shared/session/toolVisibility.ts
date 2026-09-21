@@ -13,7 +13,8 @@ function hasPlanHiddenEffects(
   return (
     (options.includeOrchestration && descriptor.effects.includes('orchestration')) ||
     descriptor.effects.includes('filesystem.write') ||
-    descriptor.effects.includes('shell.execute')
+    descriptor.effects.includes('shell.execute') ||
+    descriptor.effects.includes('network.write')
   )
 }
 
