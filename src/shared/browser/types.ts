@@ -5,6 +5,8 @@
 
 export const BROWSER_MAX_LIVE_PAGES = 2 as const
 
+export const BROWSER_PAGE_CAP_MESSAGE = '最多同时两个页面'
+
 export const BROWSER_ERROR_CODES = Object.freeze([
   'unavailable',
   'unsupported',
@@ -98,6 +100,13 @@ export type BrowserControlProjection =
   | { readonly holder: 'user' }
   | { readonly holder: 'agent'; readonly runId: string }
 
+export interface BrowserPageLoadError {
+  readonly errorCode: number
+  readonly message: string
+  readonly url: string
+  readonly isCertificateError: boolean
+}
+
 export interface BrowserPageProjection {
   readonly browserId: string
   readonly generation: number
@@ -109,6 +118,8 @@ export interface BrowserPageProjection {
   readonly lifecycle: BrowserLifecycleStatus
   readonly control: BrowserControlProjection
   readonly capabilities: BrowserCapabilityDescriptor
+  readonly faviconUrl: string | null
+  readonly loadError: BrowserPageLoadError | null
 }
 
 export interface BrowserSurfaceSnapshot {

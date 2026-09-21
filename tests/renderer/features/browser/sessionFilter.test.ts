@@ -17,6 +17,8 @@ function page(partial: Partial<BrowserPageProjection> & { browserId: string; ses
     lifecycle: 'ready',
     control: { holder: 'user' },
     capabilities: BROWSER_ENGINE_CAPABILITIES,
+    faviconUrl: null,
+    loadError: null,
     ...partial
   }
 }
@@ -51,5 +53,33 @@ describe('浏览器快照按会话过滤', () => {
       'sess_b',
       'brw_a'
     )).toBeNull()
+  })
+
+  it('两页并存时按焦点选择，忽略另一页的加载错误', () => {
+    const snapshot: BrowserSurfaceSnapshot = {
+      sequence: 2,
+      activeBrowserId: 'brw_a',
+      maxLivePages: 2,
+      pages: [
+        page({ browserId: 'brw_a', sessionId: 'sess_a', title: 'A', url: 'https://a.test' }),
+        page({
+          browserId: 'brw_b',
+          sessionId: 'sess_a',
+          title: 'B',
+          url: 'https://b.test',
+          loadError: {
+            errorCode: -105,
+            message: 'ERR_NAME_NOT_RESOLVED',
+            url: 'https://b.test',
+            isCertificateError: false
+          }
+        })
+      ]
+    }
+    const pages = pagesForSession(snapshot, 'sess_a')
+    expect(pages).toHaveLength(2)
+    expect(pickFocusedPage(pages, 'brw_b', 'brw_a')?.browserId).toBe('brw_b')
+    expect(pickFocusedPage(pages, 'brw_b', 'brw_a')?.loadError?.errorCode).toBe(-105)
+    expect(pickFocusedPage(pages, 'brw_a', 'brw_a')?.loadError).toBeNull()
   })
 })

@@ -70,31 +70,82 @@
 
 .browser-panel__tabs {
   display: flex;
+  align-items: center;
   gap: 4px;
   padding: 4px 8px;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border-cream);
   flex-shrink: 0;
+  min-height: 32px;
 }
 
 .browser-panel__tab {
-  appearance: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 156px;
+  min-width: 60px;
+  max-width: 156px;
+  height: 28px;
+  padding: 0 22px 0 8px;
   border: none;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  max-width: 160px;
+  cursor: default;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.browser-panel__tab:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
 }
 
 .browser-panel__tab.is-active {
   background: var(--color-brand-dim);
   color: var(--text-primary);
+}
+
+.browser-panel__tab-favicon,
+.browser-panel__tab-favicon-fallback {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  object-fit: contain;
+  border-radius: 2px;
+}
+
+.browser-panel__tab-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-panel__tab-close {
+  appearance: none;
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.browser-panel__tab-close:hover {
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
 }
 
 .browser-panel__loading {
@@ -141,11 +192,37 @@
   z-index: 1;
 }
 
+.browser-panel__failed-icon {
+  opacity: 0.55;
+  color: var(--nova-status-warning, #b54708);
+}
+
+.browser-panel__failed-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .browser-panel__failed-url {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--text-muted);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.browser-panel__failed-hint {
+  max-width: 22em;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.browser-panel__failed-external {
+  color: var(--color-brand);
   font-size: 12px;
 }
 

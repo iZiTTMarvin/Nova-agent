@@ -12,7 +12,9 @@ export type BrowserGuestEvent =
   | 'did-navigate'
   | 'did-start-loading'
   | 'did-stop-loading'
+  | 'did-fail-load'
   | 'page-title-updated'
+  | 'page-favicon-updated'
 
 export interface BrowserGuestContents {
   readonly id: number

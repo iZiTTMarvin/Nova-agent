@@ -78,7 +78,9 @@ type PublicContractsRemainExplicit = [
   Assert<Equal<'code' extends keyof AppliedOutcome ? true : false, false>>,
   Assert<Equal<'observation' extends keyof NotAppliedOutcome ? true : false, false>>,
   Assert<Equal<BrowserAction['kind'], 'click' | 'fill' | 'select' | 'press' | 'scroll' | 'viewport'>>,
-  Assert<Equal<BrowserNavigateAction['kind'], 'url' | 'back' | 'forward' | 'reload' | 'stop'>>
+  Assert<Equal<BrowserNavigateAction['kind'], 'url' | 'back' | 'forward' | 'reload' | 'stop'>>,
+  Assert<Equal<'faviconUrl' extends keyof BrowserPageProjection ? true : false, true>>,
+  Assert<Equal<'loadError' extends keyof BrowserPageProjection ? true : false, true>>
 ]
 
 export type BrowserContractTypeAssertions = PublicContractsRemainExplicit

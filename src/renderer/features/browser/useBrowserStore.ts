@@ -10,10 +10,12 @@ import {
   BROWSER_OPEN,
   BROWSER_SNAPSHOT
 } from '../../../shared/ipc/channels'
-import type {
-  BrowserGuestMountSnapshot,
-  BrowserNavigateAction,
-  BrowserSurfaceSnapshot
+import {
+  BROWSER_MAX_LIVE_PAGES,
+  BROWSER_PAGE_CAP_MESSAGE,
+  type BrowserGuestMountSnapshot,
+  type BrowserNavigateAction,
+  type BrowserSurfaceSnapshot
 } from '../../../shared/browser'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useLayoutStore } from '../../stores/useLayoutStore'
@@ -25,11 +27,14 @@ interface BrowserStoreState {
   guests: BrowserGuestMountSnapshot | null
   focusedBrowserId: string | null
   lastError: string | null
+  composeNewPage: boolean
   applySnapshot: (snapshot: BrowserSurfaceSnapshot) => void
   applyGuestMount: (snapshot: BrowserGuestMountSnapshot) => void
   bindSessionSurface: (sessionId: string | null) => void
   focusPage: (browserId: string) => void
+  beginNewPage: () => boolean
   openUrl: (rawUrl: string) => Promise<void>
+  retryFocused: () => Promise<void>
   navigateFocused: (action: BrowserNavigateAction) => Promise<void>
   closePage: (browserId: string, options?: { keepSurface?: boolean }) => Promise<void>
   closeFocused: () => Promise<void>
@@ -46,18 +51,40 @@ function pageIdsForSession(
   return pagesForSession(snapshot, sessionId).map((page) => page.browserId)
 }
 
+async function openFreshPage(
+  sessionId: string,
+  url: string,
+  set: (partial: Partial<BrowserStoreState>) => void
+): Promise<void> {
+  const pages = pagesForSession(useBrowserStore.getState().snapshot, sessionId)
+  if (pages.length >= BROWSER_MAX_LIVE_PAGES) {
+    set({ lastError: BROWSER_PAGE_CAP_MESSAGE, composeNewPage: false })
+    return
+  }
+  const opened = await window.api.invoke(BROWSER_OPEN, { sessionId, url })
+  if (opened.status === 'applied') {
+    useLayoutStore.getState().openBrowserSurface()
+    set({ focusedBrowserId: opened.page.browserId, lastError: null, composeNewPage: false })
+    return
+  }
+  set({ lastError: opened.detail, composeNewPage: false })
+}
+
 export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
   snapshot: null,
   guests: null,
   focusedBrowserId: null,
   lastError: null,
+  composeNewPage: false,
 
   applySnapshot: (snapshot) => {
     const sessionId = currentSessionId()
     const previousIds = new Set(pageIdsForSession(get().snapshot, sessionId))
     const pages = pagesForSession(snapshot, sessionId)
-    const focused = pickFocusedPage(pages, get().focusedBrowserId, snapshot.activeBrowserId)
-    const appeared = pages.some((page) => !previousIds.has(page.browserId))
+    const newcomers = pages.filter((page) => !previousIds.has(page.browserId))
+    const focused = newcomers.at(-1)
+      ?? pickFocusedPage(pages, get().focusedBrowserId, snapshot.activeBrowserId)
+    const appeared = newcomers.length > 0
     set({
       snapshot,
       focusedBrowserId: focused?.browserId ?? null
@@ -81,7 +108,18 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     const sessionId = currentSessionId()
     const pages = pagesForSession(get().snapshot, sessionId)
     if (!pages.some((page) => page.browserId === browserId)) return
-    set({ focusedBrowserId: browserId })
+    set({ focusedBrowserId: browserId, composeNewPage: false })
+  },
+
+  beginNewPage: () => {
+    const sessionId = currentSessionId()
+    const pages = pagesForSession(get().snapshot, sessionId)
+    if (pages.length >= BROWSER_MAX_LIVE_PAGES) {
+      set({ lastError: BROWSER_PAGE_CAP_MESSAGE, composeNewPage: false })
+      return false
+    }
+    set({ composeNewPage: true, lastError: null })
+    return true
   },
 
   openUrl: async (rawUrl) => {
@@ -98,32 +136,38 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     useLayoutStore.getState().openBrowserSurface()
     const pages = pagesForSession(get().snapshot, sessionId)
     const focused = pickFocusedPage(pages, get().focusedBrowserId, get().snapshot?.activeBrowserId ?? null)
-    if (focused && (focused.lifecycle === 'failed' || focused.lifecycle === 'crashed')) {
+    const openFresh = get().composeNewPage || !focused || focused.lifecycle === 'closing'
+    if (focused && (focused.lifecycle === 'failed' || focused.lifecycle === 'crashed') && !get().composeNewPage) {
       await get().closePage(focused.browserId, { keepSurface: true })
-      const opened = await window.api.invoke(BROWSER_OPEN, { sessionId, url })
-      if (opened.status === 'applied') {
-        useLayoutStore.getState().openBrowserSurface()
-        set({ focusedBrowserId: opened.page.browserId, lastError: null })
-        return
-      }
-      set({ lastError: opened.detail })
+      await openFreshPage(sessionId, url, set)
       return
     }
-    if (focused && focused.lifecycle !== 'closing') {
+    if (!openFresh && focused) {
       const result = await window.api.invoke(BROWSER_NAVIGATE, {
         sessionId,
         browserId: focused.browserId,
         action: { kind: 'url', url }
       })
       if (result.status !== 'applied') set({ lastError: result.detail })
+      else set({ lastError: null })
       return
     }
-    const opened = await window.api.invoke(BROWSER_OPEN, { sessionId, url })
-    if (opened.status === 'applied') {
-      set({ focusedBrowserId: opened.page.browserId, lastError: null })
+    await openFreshPage(sessionId, url, set)
+  },
+
+  retryFocused: async () => {
+    const sessionId = currentSessionId()
+    const pages = pagesForSession(get().snapshot, sessionId)
+    const focused = pickFocusedPage(pages, get().focusedBrowserId, get().snapshot?.activeBrowserId ?? null)
+    if (!sessionId || !focused) return
+    if (focused.loadError && focused.lifecycle !== 'failed' && focused.lifecycle !== 'crashed') {
+      await get().navigateFocused({ kind: 'reload' })
       return
     }
-    set({ lastError: opened.detail })
+    const url = focused.url
+    await get().closePage(focused.browserId, { keepSurface: true })
+    if (!url) return
+    await openFreshPage(sessionId, url, set)
   },
 
   navigateFocused: async (action) => {
@@ -207,6 +251,7 @@ export function resetBrowserStoreForTests(): void {
     snapshot: null,
     guests: null,
     focusedBrowserId: null,
-    lastError: null
+    lastError: null,
+    composeNewPage: false
   })
 }

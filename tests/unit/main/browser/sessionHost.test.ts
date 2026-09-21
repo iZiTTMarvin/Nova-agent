@@ -428,6 +428,56 @@ describe('BrowserSessionHost 生命周期', () => {
     harness.clock.flush(15_000)
     await second
   })
+
+  it('page-favicon-updated 投影 URL；主 frame 致命错误进 loadError，子资源与中止忽略', async () => {
+    const guest = new FakeGuest({ id: 41, url: 'https://example.com/app' })
+    const harness = createHarness(new Map([[41, guest]]))
+    const browserId = await openReady(harness, 41, 'https://example.com/app')
+
+    guest.emit('page-favicon-updated', {}, ['https://example.com/favicon.ico'])
+    expect(latestPage(harness.snapshots, browserId)?.faviconUrl).toBe('https://example.com/favicon.ico')
+
+    guest.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'https://missing.test/img.png', false)
+    expect(latestPage(harness.snapshots, browserId)?.loadError).toBeNull()
+
+    guest.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://example.com/app', true)
+    expect(latestPage(harness.snapshots, browserId)?.loadError).toBeNull()
+
+    guest.emit('did-fail-load', {}, -201, 'ERR_CERT_DATE_INVALID', 'https://bad-cert.test/', true)
+    expect(latestPage(harness.snapshots, browserId)).toMatchObject({
+      url: 'https://bad-cert.test/',
+      loading: false,
+      loadError: {
+        errorCode: -201,
+        message: 'ERR_CERT_DATE_INVALID',
+        url: 'https://bad-cert.test/',
+        isCertificateError: true
+      }
+    })
+
+    guest.emit('did-start-loading')
+    expect(latestPage(harness.snapshots, browserId)?.loadError).toBeNull()
+    expect(latestPage(harness.snapshots, browserId)?.loading).toBe(true)
+  })
+
+  it('第三页打开被拒绝并提示最多两个页面', async () => {
+    const harness = createHarness(new Map([
+      [51, new FakeGuest({ id: 51 })],
+      [52, new FakeGuest({ id: 52 })]
+    ]))
+    await openReady(harness, 51, 'https://example.com/one')
+    const second = harness.host.open({ url: 'https://example.com/two' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const id2 = harness.snapshots.at(-1)?.pages.find((page) => page.url.includes('/two'))?.browserId
+    expect(id2).toBeTruthy()
+    await harness.host.attach({ sessionId: 'sess_1', browserId: id2!, webContentsId: 52 })
+    await second
+    await expect(harness.host.open({ url: 'https://example.com/three' }, { sessionId: 'sess_1' })).resolves.toMatchObject({
+      status: 'not_applied',
+      code: 'resource_limit',
+      detail: '最多同时两个页面'
+    })
+  })
 })
 
 function latestBrowserId(snapshots: BrowserSurfaceSnapshot[]): string {
@@ -440,5 +490,12 @@ function latestLifecycle(
   snapshots: BrowserSurfaceSnapshot[],
   browserId: string
 ): string | undefined {
-  return snapshots.at(-1)?.pages.find((page) => page.browserId === browserId)?.lifecycle
+  return latestPage(snapshots, browserId)?.lifecycle
+}
+
+function latestPage(
+  snapshots: BrowserSurfaceSnapshot[],
+  browserId: string
+) {
+  return snapshots.at(-1)?.pages.find((page) => page.browserId === browserId)
 }

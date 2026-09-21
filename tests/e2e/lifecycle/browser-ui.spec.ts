@@ -103,6 +103,74 @@ test('切会话只展示当前会话页面，连续 reload 后仍能挂上', asy
   }
 })
 
+test('两页并开可切换可单独关，地址栏跟焦点，封顶如实提示', async ({ nova }) => {
+  const fixture = await startBrowseFixture()
+  try {
+    const workspace = await nova.getWorkspace()
+    const sessionId = workspace.currentSessionId
+    expect(sessionId).toBeTruthy()
+
+    const first = await nova.invoke(BROWSER_OPEN, {
+      sessionId: sessionId!,
+      url: `${fixture.origin}/`
+    })
+    expect(first.status).toBe('applied')
+    const second = await nova.invoke(BROWSER_OPEN, {
+      sessionId: sessionId!,
+      url: `${fixture.origin}/two`
+    })
+    expect(second.status).toBe('applied')
+
+    const tabs = nova.page.getByTestId('browser-tab')
+    await expect(tabs).toHaveCount(2)
+    const address = nova.page.getByTestId('browser-address')
+    await tabs.nth(1).click()
+    await expect.poll(async () => address.inputValue()).toContain('/two')
+
+    await tabs.first().click()
+    await expect.poll(async () => address.inputValue()).not.toContain('/two')
+
+    await nova.page.getByRole('button', { name: '最多同时两个页面' }).click()
+    await expect(nova.page.getByTestId('browser-surface-error')).toHaveText('最多同时两个页面')
+
+    await tabs.first().getByTestId('browser-tab-close').click()
+    await expect(tabs).toHaveCount(1)
+    await expect(nova.page.locator('webview[data-browser-id]')).toHaveCount(1)
+    await expect.poll(async () => address.inputValue()).toContain('/two')
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('加载失败显示错误与重试', async ({ nova }) => {
+  const live = await startBrowseFixture()
+  const dead = await startBrowseFixture()
+  const deadUrl = `${dead.origin}/`
+  await dead.close()
+  try {
+    const workspace = await nova.getWorkspace()
+    const opened = await nova.invoke(BROWSER_OPEN, {
+      sessionId: workspace.currentSessionId!,
+      url: `${live.origin}/`
+    })
+    expect(opened.status).toBe('applied')
+    await expect(nova.page.locator('webview[data-browser-id]')).toBeVisible()
+
+    const address = nova.page.getByTestId('browser-address')
+    await address.fill(deadUrl)
+    await address.press('Enter')
+    await address.blur()
+
+    const error = nova.page.getByTestId('browser-load-error')
+    await expect(error).toBeVisible({ timeout: 20_000 })
+    await expect(error.getByText('无法打开该页面')).toBeVisible()
+    await nova.page.getByTestId('browser-load-error-retry').click()
+    await expect(error).toBeVisible()
+  } finally {
+    await live.close()
+  }
+})
+
 test('设置浮层盖住网页，缩放后舞台仍对齐', async ({ nova }) => {
   const fixture = await startBrowseFixture()
   try {

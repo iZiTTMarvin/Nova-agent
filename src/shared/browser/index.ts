@@ -2,6 +2,7 @@ export {
   BROWSER_ENGINE_CAPABILITIES,
   BROWSER_ERROR_CODES,
   BROWSER_MAX_LIVE_PAGES,
+  BROWSER_PAGE_CAP_MESSAGE,
   browserNotApplied,
   isBrowserErrorCode,
   type ActionOutcome,
@@ -44,6 +45,7 @@ export {
   type BrowserOpenIpcParams,
   type BrowserOpenResult,
   type BrowserPageIdentity,
+  type BrowserPageLoadError,
   type BrowserPageProjection,
   type BrowserScrollAmount,
   type BrowserScrollDirection,
@@ -70,6 +72,19 @@ export {
   parseObservationIdentity,
   type BrowserParseResult
 } from './parse'
+export {
+  BROWSER_CERT_ERROR_CODE_MAX,
+  BROWSER_CERT_ERROR_CODE_MIN,
+  BROWSER_ERR_ABORTED,
+  isCertificateBrowserLoadError,
+  projectBrowserPage,
+  projectFaviconUrl,
+  projectGuestLoadError,
+  readGuestFaviconArgs,
+  readGuestLoadFailureArgs,
+  type BrowserPageProjectInput,
+  type GuestLoadFailureFields
+} from './project'
 export {
   createBrowserIdentityLedger,
   type BrowserIdentityFailureCode,

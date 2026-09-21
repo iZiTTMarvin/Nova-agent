@@ -27,12 +27,19 @@ export function BrowserGuestLayer(): ReactNode {
   const pages = pagesForSession(snapshot, sessionId)
   const focused = pickFocusedPage(pages, focusedBrowserId, snapshot?.activeBrowserId ?? null)
   const shown = guestShownInSession(guests?.guests ?? [], sessionId, focused?.browserId ?? null)
+  const overlayBlocksGuest = Boolean(focused?.loadError)
 
   useEffect(() => {
     const layer = layerRef.current
     if (!layer) return
-    reconcileGuests(layer, guestsRef.current, guests?.guests ?? [], shown?.browserId ?? null)
-  }, [guests, shown?.browserId])
+    reconcileGuests(
+      layer,
+      guestsRef.current,
+      guests?.guests ?? [],
+      shown?.browserId ?? null,
+      overlayBlocksGuest
+    )
+  }, [guests, shown?.browserId, overlayBlocksGuest])
 
   useEffect(() => {
     const layer = layerRef.current
@@ -42,7 +49,7 @@ export function BrowserGuestLayer(): ReactNode {
       frame = 0
       const slot = document.querySelector<HTMLElement>('[data-browser-guest-slot]')
       const box = slot && surfaceOpen ? slot.getBoundingClientRect() : null
-      const visible = Boolean(box && shown && box.width > 1 && box.height > 1)
+      const visible = Boolean(box && shown && !overlayBlocksGuest && box.width > 1 && box.height > 1)
       layer.hidden = !visible
       if (!visible || !box) return
       layer.style.top = `${box.top}px`
@@ -68,7 +75,7 @@ export function BrowserGuestLayer(): ReactNode {
       visualViewport?.removeEventListener('resize', schedule)
       visualViewport?.removeEventListener('scroll', schedule)
     }
-  }, [surfaceOpen, shown?.browserId, sessionId])
+  }, [surfaceOpen, shown?.browserId, sessionId, overlayBlocksGuest])
 
   useEffect(() => {
     return () => {
@@ -93,7 +100,8 @@ function reconcileGuests(
   layer: HTMLDivElement,
   mounted: Map<string, { spec: BrowserGuestMount; node: WebviewGuest }>,
   guests: readonly BrowserGuestMount[],
-  shownBrowserId: string | null
+  shownBrowserId: string | null,
+  overlayBlocksGuest: boolean
 ): void {
   const nextIds = new Set(guests.map((guest) => guest.browserId))
   for (const [browserId, current] of mounted) {
@@ -116,7 +124,7 @@ function reconcileGuests(
       current.spec = spec
     }
     const node = mounted.get(spec.browserId)!.node
-    const hide = shownBrowserId !== spec.browserId
+    const hide = overlayBlocksGuest || shownBrowserId !== spec.browserId
     node.classList.toggle('is-hidden', hide)
   }
 }

@@ -3,11 +3,16 @@
  * 不执行 CDP 动作；不拥有模型循环或权限规则。
  */
 import {
-  BROWSER_ENGINE_CAPABILITIES,
   BROWSER_MAX_LIVE_PAGES,
+  BROWSER_PAGE_CAP_MESSAGE,
   browserNotApplied,
   createBrowserIdentityLedger,
   parseBrowserHttpUrl,
+  projectBrowserPage,
+  projectFaviconUrl,
+  projectGuestLoadError,
+  readGuestFaviconArgs,
+  readGuestLoadFailureArgs,
   type BrowserAttachIpcParams,
   type BrowserAttachResult,
   type BrowserClaimResult,
@@ -19,6 +24,7 @@ import {
   type BrowserListResult,
   type BrowserNavigateResult,
   type BrowserOpenResult,
+  type BrowserPageLoadError,
   type BrowserPageProjection,
   type BrowserSurfaceSnapshot,
   type BrowserControlProjection,
@@ -85,6 +91,8 @@ interface PageRecord {
   loading: boolean
   lifecycle: BrowserLifecycleStatus
   control: BrowserControlProjection
+  faviconUrl: string | null
+  loadError: BrowserPageLoadError | null
   partition: string
   visible: boolean
   guest: BrowserGuestContents | null
@@ -169,7 +177,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     },
     record: PageRecord
   ): BrowserPageProjection {
-    return {
+    return projectBrowserPage({
       browserId: identity.browserId,
       generation: identity.generation,
       documentEpoch: identity.documentEpoch,
@@ -179,8 +187,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       loading: record.loading,
       lifecycle: record.lifecycle,
       control: record.control,
-      capabilities: BROWSER_ENGINE_CAPABILITIES
-    }
+      faviconUrl: record.faviconUrl,
+      loadError: record.loadError
+    })
   }
 
   function lookupPage(
@@ -298,6 +307,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     })
     listen(record, guest, 'did-start-loading', () => {
       record.loading = true
+      record.loadError = null
       emit()
     })
     listen(record, guest, 'did-stop-loading', () => {
@@ -316,12 +326,25 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       } catch {
         // ignore
       }
+      record.faviconUrl = null
       ledger.bumpDocumentEpoch(browserId)
       emit()
     })
     listen(record, guest, 'page-title-updated', (...args: unknown[]) => {
       if (typeof args[0] === 'string') record.title = args[0]
       else if (typeof args[1] === 'string') record.title = args[1]
+      emit()
+    })
+    listen(record, guest, 'page-favicon-updated', (...args: unknown[]) => {
+      record.faviconUrl = projectFaviconUrl(readGuestFaviconArgs(args))
+      emit()
+    })
+    listen(record, guest, 'did-fail-load', (...args: unknown[]) => {
+      const failure = projectGuestLoadError(readGuestLoadFailureArgs(args))
+      if (!failure) return
+      record.loadError = failure
+      record.loading = false
+      if (failure.url.length > 0) record.url = failure.url
       emit()
     })
     listen(record, guest, 'destroyed', () => {
@@ -395,6 +418,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     }
     const issued = ledger.issuePage({ sessionId: context.sessionId, workspaceKey })
     if (!issued.ok) {
+      if (issued.code === 'resource_limit') {
+        return browserNotApplied(issued.code, BROWSER_PAGE_CAP_MESSAGE)
+      }
       return browserNotApplied(issued.code, '无法打开新的浏览器页面')
     }
     const allocated = deps.allocatePartition
@@ -411,6 +437,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       loading: true,
       lifecycle: 'opening',
       control: { holder: 'user' },
+      faviconUrl: null,
+      loadError: null,
       partition: allocated.partition,
       visible: true,
       guest: null,
