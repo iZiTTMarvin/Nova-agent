@@ -156,6 +156,13 @@ export const DOWNLOAD_APP_UPDATE = 'app:update:download' as const
 export const INSTALL_APP_UPDATE = 'app:update:install' as const
 /** 图片落盘：用户上传的 base64 data URL → 主进程写盘 → 返回 nova-image:// URL */
 export const IMAGE_SAVE = 'image:save' as const
+/** 内置浏览器：人工浏览命令（AI 工具不走这些通道） */
+export const BROWSER_OPEN = 'browser:open' as const
+export const BROWSER_NAVIGATE = 'browser:navigate' as const
+export const BROWSER_CLOSE = 'browser:close' as const
+export const BROWSER_GET_SNAPSHOT = 'browser:get-snapshot' as const
+export const BROWSER_CLAIM = 'browser:claim' as const
+export const BROWSER_RELEASE = 'browser:release' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 
@@ -195,3 +202,5 @@ export const SKILL_CHANGED = 'skill:changed' as const
 export const WORKSPACE_CHANGED = 'workspace:changed' as const
 /** 主进程应用更新状态投影 */
 export const APP_UPDATE_STATE_CHANGED = 'app:update:state-changed' as const
+/** 内置浏览器页面状态投影（小字段；宿主是唯一写入方） */
+export const BROWSER_SNAPSHOT = 'browser:snapshot' as const

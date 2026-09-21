@@ -86,8 +86,28 @@ import type {
 } from '../fs/types'
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 import type { AppUpdateSnapshot } from '../update'
+import type {
+  BrowserClaimIpcParams,
+  BrowserClaimResult,
+  BrowserCloseIpcParams,
+  BrowserCloseResult,
+  BrowserListResult,
+  BrowserNavigateIpcParams,
+  BrowserNavigateResult,
+  BrowserOpenIpcParams,
+  BrowserOpenResult,
+  BrowserSnapshotIpcParams,
+  BrowserSurfaceSnapshot
+} from '../browser'
 import {
   APP_UPDATE_STATE_CHANGED,
+  BROWSER_CLAIM,
+  BROWSER_CLOSE,
+  BROWSER_GET_SNAPSHOT,
+  BROWSER_NAVIGATE,
+  BROWSER_OPEN,
+  BROWSER_RELEASE,
+  BROWSER_SNAPSHOT,
   CHECK_APP_UPDATE,
   DOWNLOAD_APP_UPDATE,
   GET_APP_UPDATE_STATE,
@@ -615,6 +635,30 @@ export interface IpcCommands {
       url: string
     }
   }
+  [BROWSER_OPEN]: {
+    params: BrowserOpenIpcParams
+    result: BrowserOpenResult
+  }
+  [BROWSER_NAVIGATE]: {
+    params: BrowserNavigateIpcParams
+    result: BrowserNavigateResult
+  }
+  [BROWSER_CLOSE]: {
+    params: BrowserCloseIpcParams
+    result: BrowserCloseResult
+  }
+  [BROWSER_GET_SNAPSHOT]: {
+    params: BrowserSnapshotIpcParams
+    result: BrowserListResult
+  }
+  [BROWSER_CLAIM]: {
+    params: BrowserClaimIpcParams
+    result: BrowserClaimResult
+  }
+  [BROWSER_RELEASE]: {
+    params: BrowserClaimIpcParams
+    result: BrowserClaimResult
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -865,6 +909,9 @@ export interface IpcEvents {
     sessionId: string | null
   }
   [APP_UPDATE_STATE_CHANGED]: AppUpdateSnapshot
+  [BROWSER_SNAPSHOT]: {
+    snapshot: BrowserSurfaceSnapshot
+  }
 }
 
 /** 所有事件 channel 名称 */
