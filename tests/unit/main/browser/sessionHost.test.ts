@@ -393,6 +393,41 @@ describe('BrowserSessionHost 生命周期', () => {
     clock.flush(15_000)
     await expect(third).resolves.toMatchObject({ status: 'not_applied', code: 'timeout' })
   })
+
+  it('挂载超时后拒绝迟到绑定，关闭失败页才释放槽', async () => {
+    const guest = new FakeGuest({ id: 31 })
+    const harness = createHarness(new Map([[31, guest]]))
+    const opening = harness.host.open({ url: 'https://example.com/late' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const browserId = latestBrowserId(harness.snapshots)
+    harness.clock.flush(15_000)
+    await expect(opening).resolves.toMatchObject({ status: 'not_applied', code: 'timeout' })
+    expect(latestLifecycle(harness.snapshots, browserId)).toBe('failed')
+    expect(harness.host.livePageCount()).toBe(1)
+
+    const late = await harness.host.attach({
+      sessionId: 'sess_1',
+      browserId,
+      webContentsId: 31
+    })
+    expect(late).toMatchObject({ status: 'not_applied', code: 'unavailable' })
+    expect(latestLifecycle(harness.snapshots, browserId)).toBe('failed')
+    expect(harness.host.inspectBinding(browserId)?.webContentsId).toBeNull()
+
+    const second = harness.host.open({ url: 'https://example.com/other' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    expect(harness.host.livePageCount()).toBe(2)
+
+    const closing = harness.host.close({ browserId }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    await Promise.resolve()
+    harness.clock.flush(1000)
+    await expect(closing).resolves.toEqual({ status: 'applied', browserId })
+    expect(harness.host.inspectBinding(browserId)).toBeNull()
+    expect(harness.host.livePageCount()).toBe(1)
+    harness.clock.flush(15_000)
+    await second
+  })
 })
 
 function latestBrowserId(snapshots: BrowserSurfaceSnapshot[]): string {

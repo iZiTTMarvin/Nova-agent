@@ -19,7 +19,8 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   RestoreIcon: () => null,
   CloseIcon: () => null,
   PanelLeftIcon: () => null,
-  PanelRightIcon: () => null
+  PanelRightIcon: () => null,
+  GlobeIcon: () => null
 }))
 
 // 面包屑是 chat 领域组件，顶行布局测试不依赖其数据链路
@@ -64,6 +65,23 @@ describe('ContentTopBar 布局开关', () => {
 
     expect(useLayoutStore.getState().inspectorOpen).toBe(true)
     expect(btn?.className).toContain('content-topbar__btn--active')
+    renderer.unmount()
+  })
+
+  it('点击「在 Nova 中打开」展开浏览器表面，不打开 Inspector', () => {
+    const renderer = renderDom(<ContentTopBar />)
+    const btn = renderer.container.querySelector<HTMLButtonElement>(
+      '[aria-label="在 Nova 中打开"]'
+    )
+    expect(btn).not.toBeNull()
+    act(() => {
+      btn?.click()
+    })
+    expect(useLayoutStore.getState()).toMatchObject({
+      browserSurfaceOpen: true,
+      inspectorOpen: false,
+      inspectorWidth: 420
+    })
     renderer.unmount()
   })
 

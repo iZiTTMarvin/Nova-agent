@@ -1,8 +1,4 @@
 import { session, shell, type BrowserWindow } from 'electron'
-import {
-  BROWSER_GUEST_MOUNT,
-  BROWSER_SNAPSHOT
-} from '../../shared/ipc/channels'
 import type { BrowserGuestMountSnapshot, BrowserSurfaceSnapshot } from '../../shared/browser'
 import { getMainWindow } from '../mainWindowRef'
 import { getSessionStore } from '../services/SessionStoreHost'
@@ -10,6 +6,10 @@ import { getWorkspaceService } from '../services/WorkspaceService'
 import { lookupElectronGuest } from './guestContents'
 import { createBrowserPartitionSlotPool } from './partitionSlots'
 import { createBrowserSessionHost, type BrowserSessionHost } from './sessionHost'
+import {
+  pushBrowserGuestMountSnapshot,
+  pushBrowserSurfaceSnapshot
+} from './snapshotCoalescer'
 import { hardenWebviewAttachment } from './webviewPolicy'
 
 export type { BrowserSessionHost } from './sessionHost'
@@ -35,15 +35,11 @@ export async function cleanupBrowserPartition(partition: string): Promise<void> 
 const slotPool = createBrowserPartitionSlotPool(cleanupBrowserPartition)
 
 function sendSnapshot(snapshot: BrowserSurfaceSnapshot): void {
-  const win = getMainWindow()
-  if (!win || win.isDestroyed()) return
-  win.webContents.send(BROWSER_SNAPSHOT, { snapshot })
+  pushBrowserSurfaceSnapshot(getMainWindow(), snapshot)
 }
 
 function sendGuestMount(snapshot: BrowserGuestMountSnapshot): void {
-  const win = getMainWindow()
-  if (!win || win.isDestroyed()) return
-  win.webContents.send(BROWSER_GUEST_MOUNT, { snapshot })
+  pushBrowserGuestMountSnapshot(getMainWindow(), snapshot)
 }
 
 export function initBrowserSessionHost(): BrowserSessionHost {

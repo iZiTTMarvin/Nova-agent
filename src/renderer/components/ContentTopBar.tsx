@@ -5,7 +5,8 @@ import {
   RestoreIcon,
   CloseIcon,
   PanelLeftIcon,
-  PanelRightIcon
+  PanelRightIcon,
+  GlobeIcon
 } from './Icons'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -129,6 +130,7 @@ const SessionMoreMenu: React.FC = () => {
 export const ContentTopBar: React.FC = () => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const inspectorOpen = useLayoutStore(state => state.inspectorOpen)
+  const browserSurfaceOpen = useLayoutStore(state => state.browserSurfaceOpen)
 
   return (
     <div className="content-topbar">
@@ -149,6 +151,15 @@ export const ContentTopBar: React.FC = () => {
         <SessionBreadcrumb />
       </div>
       <div className="content-topbar__right">
+        <IconButton
+          label="在 Nova 中打开"
+          icon={<GlobeIcon size={16} />}
+          variant="ghost"
+          size="sm"
+          className={`content-topbar__btn${browserSurfaceOpen ? ' content-topbar__btn--active' : ''}`}
+          onClick={() => useLayoutStore.getState().openBrowserSurface()}
+          tooltip="在 Nova 中打开"
+        />
         <IconButton
           label="审查与文件面板"
           icon={<PanelRightIcon size={16} />}

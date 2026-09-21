@@ -305,6 +305,7 @@ export type BrowserAttachResult =
 export interface BrowserGuestMount {
   readonly browserId: string
   readonly generation: number
+  readonly sessionId: string
   readonly src: string
   readonly partition: string
   readonly visible: boolean

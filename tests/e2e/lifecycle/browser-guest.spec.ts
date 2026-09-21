@@ -40,8 +40,8 @@ test('内置网页可被设置浮层挡住，reload 后仍能重新挂上', asyn
     const settings = nova.page.getByRole('dialog', { name: '设置' })
     await expect(settings).toBeVisible()
 
-    const box = await guest.boundingBox()
-    expect(box).toBeTruthy()
+    const dialogBox = await settings.boundingBox()
+    expect(dialogBox).toBeTruthy()
     const hit = await nova.page.evaluate(
       ({ x, y }) => {
         const node = document.elementFromPoint(x, y)
@@ -50,7 +50,7 @@ test('内置网页可被设置浮层挡住，reload 后仍能重新挂上', asyn
           settings: Boolean(node?.closest('[aria-label="设置"]'))
         }
       },
-      { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
+      { x: dialogBox!.x + dialogBox!.width / 2, y: dialogBox!.y + dialogBox!.height / 2 }
     )
     expect(hit.settings).toBe(true)
     expect(hit.tag === 'WEBVIEW').toBe(false)

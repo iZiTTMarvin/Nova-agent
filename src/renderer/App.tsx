@@ -9,10 +9,11 @@ import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { Sidebar } from './components/Sidebar'
-import { ChatPanel, type ChatPanelHandle } from './features/chat/ChatPanel'
-import { InspectorPanel } from './features/inspector/InspectorPanel'
+import { type ChatPanelHandle } from './features/chat/ChatPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
 import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
+import { BrowserWorkspaceBody } from './features/browser/BrowserWorkspaceBody'
+import { startBrowserStore } from './features/browser/useBrowserStore'
 import { ContentTopBar } from './components/ContentTopBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
@@ -83,6 +84,7 @@ function App(): React.ReactNode {
     void loadTheme()
     // 启动工作区分发器（订阅 workspace:changed）
     const stopDispatcher = startWorkspaceDispatcher()
+    const stopBrowser = startBrowserStore()
     // 拉取初始工作区状态（会触发首次 dispatch，加载会话列表 + 选中最近会话）
     void useWorkspaceStore.getState().init().then(() => {
       // 运行态由 chat hydration 拉权威 snapshot；这里只刷新等待徽标。
@@ -91,6 +93,7 @@ function App(): React.ReactNode {
     })
     return () => {
       stopDispatcher()
+      stopBrowser()
     }
   }, [loadModelConfig, loadTheme])
 
@@ -361,17 +364,7 @@ function App(): React.ReactNode {
       >
         <div className="app-workspace">
           <ContentTopBar />
-          <div className="app-workspace__body">
-            <div className="app-workspace__main">
-              <ChatPanel ref={chatPanelRef} />
-            </div>
-            <InspectorPanel
-              onDragSessionChange={(active) => {
-                if (active) chatPanelRef.current?.freezeReadingWidth()
-                else chatPanelRef.current?.restoreReadingWidth()
-              }}
-            />
-          </div>
+          <BrowserWorkspaceBody chatPanelRef={chatPanelRef} />
         </div>
         <BrowserGuestLayer />
         {/* 模型参数配置模态窗：须叠在 guest 之上，DOM 合成才能挡住网页 */}

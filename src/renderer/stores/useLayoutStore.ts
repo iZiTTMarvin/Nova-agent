@@ -1,6 +1,6 @@
 /**
- * 三段式布局 UI 状态的唯一 Owner（Sidebar / Inspector 开合与宽度）。
- * 不持久化 inspectorOpen / reviewTarget，避免重启后误开审阅面板。
+ * 布局 UI 状态的唯一 Owner（Sidebar / Inspector / 浏览器表面的开合与宽度）。
+ * 不持久化 inspectorOpen / reviewTarget / browserSurfaceOpen，避免重启后误开。
  */
 import { create } from 'zustand'
 
@@ -33,6 +33,9 @@ export const SIDEBAR_WIDTH_MIN = 200
 export const SIDEBAR_WIDTH_MAX = 400
 export const INSPECTOR_WIDTH_MIN = 320
 export const INSPECTOR_WIDTH_MAX = 640
+export const BROWSER_WIDTH_MIN = 360
+export const BROWSER_WIDTH_MAX = 720
+export const BROWSER_SPLIT_MIN_PX = 880
 
 const DEFAULTS = {
   sidebarCollapsed: false,
@@ -44,7 +47,9 @@ const DEFAULTS = {
   reviewTarget: null as ReviewTarget | null,
   inspectorSurface: 'standard' as InspectorSurface,
   planTarget: null as PlanTarget | null,
-  planReturnState: null as PlanReturnState | null
+  planReturnState: null as PlanReturnState | null,
+  browserSurfaceOpen: false,
+  browserWidth: 480
 }
 
 function canUseLocalStorage(): boolean {
@@ -75,12 +80,13 @@ function clamp(n: number, min: number, max: number): number {
 
 function loadPersistedLayout(): Pick<
   typeof DEFAULTS,
-  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab'
+  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab' | 'browserWidth'
 > {
   const collapsedRaw = readStored('sidebarCollapsed')
   const sidebarWidthRaw = readStored('sidebarWidth')
   const sortModeRaw = readStored('sidebarSortMode')
   const inspectorWidthRaw = readStored('inspectorWidth')
+  const browserWidthRaw = readStored('browserWidth')
   const tabRaw = readStored('inspectorTab')
 
   let sidebarCollapsed = DEFAULTS.sidebarCollapsed
@@ -107,7 +113,13 @@ function loadPersistedLayout(): Pick<
   let inspectorTab: InspectorTab = DEFAULTS.inspectorTab
   if (tabRaw === 'review' || tabRaw === 'files') inspectorTab = tabRaw
 
-  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab }
+  let browserWidth = DEFAULTS.browserWidth
+  if (browserWidthRaw !== null) {
+    const n = Number(browserWidthRaw)
+    if (Number.isFinite(n)) browserWidth = clamp(n, BROWSER_WIDTH_MIN, BROWSER_WIDTH_MAX)
+  }
+
+  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab, browserWidth }
 }
 
 export interface LayoutStoreState {
@@ -121,6 +133,8 @@ export interface LayoutStoreState {
   inspectorSurface: InspectorSurface
   planTarget: PlanTarget | null
   planReturnState: PlanReturnState | null
+  browserSurfaceOpen: boolean
+  browserWidth: number
 
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
@@ -133,6 +147,9 @@ export interface LayoutStoreState {
   setInspectorWidth: (w: number) => void
   setInspectorTab: (tab: InspectorTab) => void
   selectReviewFile: (filePath: string) => void
+  openBrowserSurface: () => void
+  closeBrowserSurface: () => void
+  setBrowserWidth: (w: number) => void
 }
 
 const persisted = loadPersistedLayout()
@@ -240,6 +257,20 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     const { reviewTarget } = get()
     if (reviewTarget === null) return
     set({ reviewTarget: { ...reviewTarget, filePath } })
+  },
+
+  openBrowserSurface: () => {
+    set({ browserSurfaceOpen: true })
+  },
+
+  closeBrowserSurface: () => {
+    set({ browserSurfaceOpen: false })
+  },
+
+  setBrowserWidth: (w) => {
+    const browserWidth = clamp(w, BROWSER_WIDTH_MIN, BROWSER_WIDTH_MAX)
+    writeStored('browserWidth', String(browserWidth))
+    set({ browserWidth })
   }
 }))
 
@@ -247,7 +278,14 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
 export function resetLayoutStoreForTests(): void {
   if (canUseLocalStorage()) {
     try {
-      for (const key of ['sidebarCollapsed', 'sidebarWidth', 'sidebarSortMode', 'inspectorWidth', 'inspectorTab']) {
+      for (const key of [
+        'sidebarCollapsed',
+        'sidebarWidth',
+        'sidebarSortMode',
+        'inspectorWidth',
+        'inspectorTab',
+        'browserWidth'
+      ]) {
         localStorage.removeItem(STORAGE_PREFIX + key)
       }
     } catch {

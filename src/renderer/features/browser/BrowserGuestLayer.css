@@ -1,13 +1,7 @@
 .browser-guest-layer {
   position: fixed;
-  top: 52px;
-  right: 28px;
-  width: 280px;
-  height: 160px;
   z-index: 4;
   overflow: hidden;
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
   pointer-events: auto;
 }
 

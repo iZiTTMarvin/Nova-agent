@@ -151,6 +151,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       guests.push({
         browserId,
         generation: identity.value.generation,
+        sessionId: record.sessionId,
         src: record.url,
         partition: record.partition,
         visible: record.visible
@@ -190,11 +191,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
     const record = pages.get(browserId)
     if (!record) return browserNotApplied('page_closed', '页面记录已不存在')
-    if (record.halted && record.lifecycle === 'crashed') {
-      return browserNotApplied('page_crashed', '页面已崩溃')
-    }
     if (record.lifecycle === 'closing') {
       return browserNotApplied('page_closed', '页面正在关闭')
+    }
+    if (record.lifecycle === 'failed') {
+      return browserNotApplied('unavailable', '页面未能挂载')
+    }
+    if (record.lifecycle === 'crashed' || record.halted) {
+      return browserNotApplied('page_crashed', '页面已崩溃')
     }
     return { record, page: project(identity.value, record) }
   }
@@ -358,12 +362,26 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     }
   }
 
+  function occupiesSlot(record: PageRecord): boolean {
+    return record.lifecycle !== 'closing'
+  }
+
   function livePageCount(): number {
     let live = 0
     for (const record of pages.values()) {
-      if (record.lifecycle !== 'closing' && record.lifecycle !== 'failed') live += 1
+      if (occupiesSlot(record)) live += 1
     }
     return live
+  }
+
+  function rejectStaleAttach(record: PageRecord): ReturnType<typeof browserNotApplied> | null {
+    if (record.lifecycle === 'closing') {
+      return browserNotApplied('page_closed', '页面正在关闭')
+    }
+    if (record.lifecycle === 'failed' || record.halted) {
+      return browserNotApplied('unavailable', '页面挂载已失败，拒绝迟到绑定')
+    }
+    return null
   }
 
   async function open(command: BrowserOpenCommand, context: BrowserCommandContext): Promise<BrowserOpenResult> {
@@ -406,11 +424,18 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const attached = new Promise<BrowserAttachResult>((resolve) => {
       record.attachWaiters.push(resolve)
     })
+    const browserId = issued.value.browserId
     return Promise.race([
       attached,
       delay(BROWSER_ATTACH_TIMEOUT_MS).then((): BrowserAttachResult => {
+        const current = pages.get(browserId)
+        if (current !== record) {
+          return browserNotApplied('page_closed', '页面记录已不存在')
+        }
         if (record.lifecycle === 'opening' && record.guest === null) {
           record.lifecycle = 'failed'
+          record.halted = true
+          record.loading = false
           const timeout = browserNotApplied('timeout', '页面未能在时限内挂载')
           failAttachWaiters(record, timeout)
           emit()
@@ -422,9 +447,15 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   }
 
   async function attach(params: BrowserAttachIpcParams): Promise<BrowserAttachResult> {
-    const found = lookupPage(params.browserId, params.sessionId)
-    if ('status' in found) return found
-    return runSerial(found.record, async () => {
+    const identity = ledger.inspect(params.browserId, params.sessionId)
+    if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
+    const record = pages.get(params.browserId)
+    if (!record) return browserNotApplied('page_closed', '页面记录已不存在')
+    const stale = rejectStaleAttach(record)
+    if (stale) return stale
+    return runSerial(record, async () => {
+      const rejected = rejectStaleAttach(record)
+      if (rejected) return rejected
       const guest = deps.lookupGuest(params.webContentsId)
       if (!guest) {
         return browserNotApplied('unavailable', '找不到对应的页面进程')
@@ -449,21 +480,21 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       if (boundTo !== undefined && boundTo !== params.browserId) {
         return browserNotApplied('unavailable', '该页面进程已绑定其它标签')
       }
-      if (found.record.guest && found.record.guest.id === guest.id) {
-        return finishAttach(params.browserId, params.sessionId, found.record)
+      if (record.guest && record.guest.id === guest.id) {
+        return finishAttach(params.browserId, params.sessionId, record)
       }
-      if (found.record.guest && !safeDestroyed(found.record.guest)) {
+      if (record.guest && !safeDestroyed(record.guest)) {
         return browserNotApplied('unavailable', '旧页面进程仍在，拒绝抢绑')
       }
-      bindGuest(params.browserId, found.record, guest, params.sessionId)
-      found.record.loading = safeLoading(guest)
+      bindGuest(params.browserId, record, guest, params.sessionId)
+      record.loading = safeLoading(guest)
       try {
-        found.record.url = guest.getURL() || found.record.url
-        found.record.title = guest.getTitle() || found.record.title
+        record.url = guest.getURL() || record.url
+        record.title = guest.getTitle() || record.title
       } catch {
         // ignore
       }
-      return finishAttach(params.browserId, params.sessionId, found.record)
+      return finishAttach(params.browserId, params.sessionId, record)
     })
   }
 
@@ -479,6 +510,11 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     sessionId: string,
     record: PageRecord
   ): BrowserAttachResult {
+    const rejected = rejectStaleAttach(record)
+    if (rejected) {
+      unbindGuest(record)
+      return rejected
+    }
     record.lifecycle = record.visible ? 'ready' : 'hidden'
     const identity = ledger.inspect(browserId, sessionId)
     if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
@@ -634,10 +670,12 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     for (const record of pages.values()) {
       if (record.lifecycle === 'closing' || record.lifecycle === 'failed') continue
       unbindGuest(record)
-      if (record.lifecycle === 'ready' || record.lifecycle === 'hidden' || record.lifecycle === 'crashed') {
-        record.lifecycle = record.lifecycle === 'crashed' ? 'crashed' : 'opening'
+      if (record.lifecycle === 'ready' || record.lifecycle === 'hidden') {
+        record.lifecycle = 'opening'
       }
-      failAttachWaiters(record, browserNotApplied('unavailable', '界面已重新加载，等待重新挂载'))
+      if (record.lifecycle !== 'crashed') {
+        failAttachWaiters(record, browserNotApplied('unavailable', '界面已重新加载，等待重新挂载'))
+      }
     }
     emit()
   }

@@ -44,6 +44,8 @@ describe('useLayoutStore', () => {
     expect(s.reviewTarget).toBeNull()
     expect(s.inspectorSurface).toBe('standard')
     expect(s.planTarget).toBeNull()
+    expect(s.browserSurfaceOpen).toBe(false)
+    expect(s.browserWidth).toBe(480)
   })
 
   it('计划视图复用 Inspector 并在关闭后恢复此前 surface', () => {
@@ -138,6 +140,11 @@ describe('useLayoutStore', () => {
     expect(useLayoutStore.getState().inspectorWidth).toBe(320)
     useLayoutStore.getState().setInspectorWidth(999)
     expect(useLayoutStore.getState().inspectorWidth).toBe(640)
+
+    useLayoutStore.getState().setBrowserWidth(100)
+    expect(useLayoutStore.getState().browserWidth).toBe(360)
+    useLayoutStore.getState().setBrowserWidth(999)
+    expect(useLayoutStore.getState().browserWidth).toBe(720)
   })
 
   it('selectReviewFile：有 target 时更新 filePath；null 时 no-op', () => {
@@ -166,6 +173,7 @@ describe('useLayoutStore', () => {
     expect(localStorage.getItem('nova.layout.inspectorTab')).toBe('files')
     expect(localStorage.getItem('nova.layout.inspectorOpen')).toBeNull()
     expect(localStorage.getItem('nova.layout.reviewTarget')).toBeNull()
+    expect(localStorage.getItem('nova.layout.browserSurfaceOpen')).toBeNull()
 
     // 模拟重启：仅恢复可持久化字段；open / reviewTarget 回到默认
     useLayoutStore.setState({
@@ -184,5 +192,20 @@ describe('useLayoutStore', () => {
     expect(s.inspectorTab).toBe('files')
     expect(s.inspectorOpen).toBe(false)
     expect(s.reviewTarget).toBeNull()
+  })
+
+  it('浏览器表面开合不影响 Inspector 默认宽度，且不持久化开合', () => {
+    expect(useLayoutStore.getState().inspectorWidth).toBe(420)
+    useLayoutStore.getState().openBrowserSurface()
+    expect(useLayoutStore.getState()).toMatchObject({
+      browserSurfaceOpen: true,
+      inspectorWidth: 420,
+      inspectorOpen: false
+    })
+    useLayoutStore.getState().setBrowserWidth(500)
+    expect(localStorage.getItem('nova.layout.browserWidth')).toBe('500')
+    useLayoutStore.getState().closeBrowserSurface()
+    expect(useLayoutStore.getState().browserSurfaceOpen).toBe(false)
+    expect(useLayoutStore.getState().inspectorWidth).toBe(420)
   })
 })
