@@ -163,6 +163,8 @@ export const BROWSER_CLOSE = 'browser:close' as const
 export const BROWSER_GET_SNAPSHOT = 'browser:get-snapshot' as const
 export const BROWSER_CLAIM = 'browser:claim' as const
 export const BROWSER_RELEASE = 'browser:release' as const
+/** renderer 在 webview did-attach 后上报 guest webContentsId，供宿主 fail-closed 校验 */
+export const BROWSER_ATTACH = 'browser:attach' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 
@@ -204,3 +206,5 @@ export const WORKSPACE_CHANGED = 'workspace:changed' as const
 export const APP_UPDATE_STATE_CHANGED = 'app:update:state-changed' as const
 /** 内置浏览器页面状态投影（小字段；宿主是唯一写入方） */
 export const BROWSER_SNAPSHOT = 'browser:snapshot' as const
+/** renderer 挂载 webview 所需的 guest 描述（partition / 可见性） */
+export const BROWSER_GUEST_MOUNT = 'browser:guest-mount' as const

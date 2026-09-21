@@ -87,10 +87,13 @@ import type {
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 import type { AppUpdateSnapshot } from '../update'
 import type {
+  BrowserAttachIpcParams,
+  BrowserAttachResult,
   BrowserClaimIpcParams,
   BrowserClaimResult,
   BrowserCloseIpcParams,
   BrowserCloseResult,
+  BrowserGuestMountSnapshot,
   BrowserListResult,
   BrowserNavigateIpcParams,
   BrowserNavigateResult,
@@ -101,9 +104,11 @@ import type {
 } from '../browser'
 import {
   APP_UPDATE_STATE_CHANGED,
+  BROWSER_ATTACH,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
   BROWSER_GET_SNAPSHOT,
+  BROWSER_GUEST_MOUNT,
   BROWSER_NAVIGATE,
   BROWSER_OPEN,
   BROWSER_RELEASE,
@@ -659,6 +664,10 @@ export interface IpcCommands {
     params: BrowserClaimIpcParams
     result: BrowserClaimResult
   }
+  [BROWSER_ATTACH]: {
+    params: BrowserAttachIpcParams
+    result: BrowserAttachResult
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -911,6 +920,9 @@ export interface IpcEvents {
   [APP_UPDATE_STATE_CHANGED]: AppUpdateSnapshot
   [BROWSER_SNAPSHOT]: {
     snapshot: BrowserSurfaceSnapshot
+  }
+  [BROWSER_GUEST_MOUNT]: {
+    snapshot: BrowserGuestMountSnapshot
   }
 }
 

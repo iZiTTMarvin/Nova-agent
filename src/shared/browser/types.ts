@@ -291,6 +291,30 @@ export interface BrowserClaimIpcParams {
   readonly browserId: string
 }
 
+export interface BrowserAttachIpcParams {
+  readonly sessionId: string
+  readonly browserId: string
+  readonly webContentsId: number
+}
+
+export type BrowserAttachResult =
+  | { readonly status: 'applied'; readonly page: BrowserPageProjection }
+  | BrowserNotApplied
+  | BrowserUnknownOutcome
+
+export interface BrowserGuestMount {
+  readonly browserId: string
+  readonly generation: number
+  readonly src: string
+  readonly partition: string
+  readonly visible: boolean
+}
+
+export interface BrowserGuestMountSnapshot {
+  readonly sequence: number
+  readonly guests: readonly BrowserGuestMount[]
+}
+
 export function isBrowserErrorCode(value: string): value is BrowserErrorCode {
   return (BROWSER_ERROR_CODES as readonly string[]).includes(value)
 }

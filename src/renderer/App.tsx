@@ -12,6 +12,7 @@ import { Sidebar } from './components/Sidebar'
 import { ChatPanel, type ChatPanelHandle } from './features/chat/ChatPanel'
 import { InspectorPanel } from './features/inspector/InspectorPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
+import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
 import { ContentTopBar } from './components/ContentTopBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
@@ -372,8 +373,8 @@ function App(): React.ReactNode {
             />
           </div>
         </div>
-
-        {/* 模型参数配置模态窗 */}
+        <BrowserGuestLayer />
+        {/* 模型参数配置模态窗：须叠在 guest 之上，DOM 合成才能挡住网页 */}
         <SettingsModal />
       </AppShell>
     </Theme>

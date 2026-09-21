@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserPort } from '../../../src/runtime/browser'
 import { BROWSER_ENGINE_CAPABILITIES } from '../../../src/shared/browser'
 import {
+  BROWSER_ATTACH,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
   BROWSER_GET_SNAPSHOT,
@@ -92,6 +93,7 @@ describe('browserHandler 入参校验与转发', () => {
 
   it('登记人工浏览通道', () => {
     expect([...mocks.handlers.keys()].sort()).toEqual([
+      BROWSER_ATTACH,
       BROWSER_CLAIM,
       BROWSER_CLOSE,
       BROWSER_GET_SNAPSHOT,
@@ -144,5 +146,18 @@ describe('browserHandler 入参校验与转发', () => {
     const result = await invoke(BROWSER_GET_SNAPSHOT, { browserId: 'brw_1' })
     expect(result).toMatchObject({ status: 'not_applied', code: 'invalid_request' })
     expect(port?.listPages).not.toHaveBeenCalled()
+  })
+
+  it('未装配宿主时拒绝 webContentsId 上报', async () => {
+    const result = await invoke(BROWSER_ATTACH, {
+      sessionId: 'sess_1',
+      browserId: 'brw_1',
+      webContentsId: 2
+    })
+    expect(result).toEqual({
+      status: 'not_applied',
+      code: 'unavailable',
+      detail: '浏览器宿主尚未装配'
+    })
   })
 })

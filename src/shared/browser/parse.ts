@@ -2,6 +2,7 @@ import {
   browserNotApplied,
   type BrowserAction,
   type BrowserActCommand,
+  type BrowserAttachIpcParams,
   type BrowserClaimIpcParams,
   type BrowserCloseIpcParams,
   type BrowserNavigateAction,
@@ -52,7 +53,7 @@ function readIntegerInRange(
     : null
 }
 
-function parseHttpUrl(value: unknown): string | null {
+export function parseBrowserHttpUrl(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0 || value.length > MAX_URL_LENGTH) {
     return null
   }
@@ -159,7 +160,7 @@ export function parseBrowserNavigateAction(input: unknown): BrowserParseResult<B
   const kind = input.kind
   if (kind === 'url') {
     if (!hasExactKeys(input, ['kind', 'url'])) return failed('url 导航只能包含 kind 与 url')
-    const url = parseHttpUrl(input.url)
+    const url = parseBrowserHttpUrl(input.url)
     if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
     return { ok: true, value: Object.freeze({ kind: 'url', url }) }
   }
@@ -214,7 +215,7 @@ export function parseBrowserOpenIpcParams(input: unknown): BrowserParseResult<Br
   }
   const sessionId = readNonEmptyString(input, 'sessionId')
   if (sessionId === null) return failed('打开命令需要非空 sessionId')
-  const url = parseHttpUrl(input.url)
+  const url = parseBrowserHttpUrl(input.url)
   if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
   return { ok: true, value: Object.freeze({ sessionId, url }) }
 }
@@ -255,4 +256,19 @@ export function parseBrowserSnapshotIpcParams(
   const sessionId = readNonEmptyString(input, 'sessionId')
   if (sessionId === null) return failed('快照命令需要非空 sessionId')
   return { ok: true, value: Object.freeze({ sessionId }) }
+}
+
+export function parseBrowserAttachIpcParams(
+  input: unknown
+): BrowserParseResult<BrowserAttachIpcParams> {
+  if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'browserId', 'webContentsId'])) {
+    return failed('挂载上报必须且只能包含 sessionId、browserId 与 webContentsId')
+  }
+  const sessionId = readNonEmptyString(input, 'sessionId')
+  const browserId = readNonEmptyString(input, 'browserId')
+  const webContentsId = readIntegerInRange(input, 'webContentsId', 1, Number.MAX_SAFE_INTEGER)
+  if (sessionId === null || browserId === null || webContentsId === null) {
+    return failed('挂载上报需要非空身份与正整数 webContentsId')
+  }
+  return { ok: true, value: Object.freeze({ sessionId, browserId, webContentsId }) }
 }

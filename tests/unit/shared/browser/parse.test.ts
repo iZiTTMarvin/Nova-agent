@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseBrowserAction,
   parseBrowserActCommand,
+  parseBrowserAttachIpcParams,
   parseBrowserNavigateAction,
   parseBrowserNavigateIpcParams,
   parseBrowserOpenIpcParams,
@@ -126,6 +127,28 @@ describe('browser 导航与打开入参', () => {
       generation: 1.5,
       documentEpoch: 1,
       observationId: 'obs_1'
+    }).ok).toBe(false)
+  })
+
+  it('挂载上报只接受正整数 webContentsId', () => {
+    expect(parseBrowserAttachIpcParams({
+      sessionId: 'sess_1',
+      browserId: 'brw_1',
+      webContentsId: 2
+    })).toEqual({
+      ok: true,
+      value: { sessionId: 'sess_1', browserId: 'brw_1', webContentsId: 2 }
+    })
+    expect(parseBrowserAttachIpcParams({
+      sessionId: 'sess_1',
+      browserId: 'brw_1',
+      webContentsId: 0
+    }).ok).toBe(false)
+    expect(parseBrowserAttachIpcParams({
+      sessionId: 'sess_1',
+      browserId: 'brw_1',
+      webContentsId: 2,
+      partition: 'nova-browser'
     }).ok).toBe(false)
   })
 })

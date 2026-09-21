@@ -18,6 +18,7 @@ import { registerStorageHandler } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
 import { registerFsHandler } from './fsHandler'
 import { registerBrowserHandler } from './browserHandler'
+import { initBrowserSessionHost, getBrowserSessionHost } from '../browser'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
 import { registerCodeIndexHandler } from './codeIndexHandler'
@@ -194,8 +195,12 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   // 当前项目只读文件浏览（Inspector 文件 tab）
   registerFsHandler()
 
-  // 浏览器 IPC 先登记通道并 fail closed；宿主装配后由 getPort 注入实现。
-  registerBrowserHandler({ getPort: () => null })
+  // 浏览器宿主先于 IPC 登记装配；未挂页面时仍可 fail closed。
+  const browserHost = initBrowserSessionHost()
+  registerBrowserHandler({
+    getPort: () => getBrowserSessionHost() ?? browserHost,
+    getHost: () => getBrowserSessionHost() ?? browserHost
+  })
 
   // 图片落盘 IPC + nova-image:// 协议 handler 共用同一 ImageStore 实例。
   // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。

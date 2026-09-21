@@ -25,6 +25,7 @@ import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
 import { processRegistry } from '../runtime/process'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
+import { bindWebviewPolicy, getBrowserSessionHost } from './browser'
 import { initMainLogger, mainLog } from './logger'
 import { initAutoUpdater } from './updater'
 import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
@@ -119,12 +120,22 @@ function createMainWindow(): void {
     frame: false,
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js')
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      webviewTag: true
     },
     title: 'Nova Agent',
     show: false
   })
   setMainWindow(win)
+
+  const browserHost = getBrowserSessionHost()
+  if (browserHost) {
+    bindWebviewPolicy(win, browserHost)
+  }
 
   win.on('ready-to-show', () => {
     if (getMainWindow()) {
