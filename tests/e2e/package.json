@@ -9,6 +9,7 @@
     "test:fault": "playwright test fault --grep-invert @stress",
     "test:stress": "playwright test fault/stress.spec.ts",
     "test:packaged": "playwright test packaged",
+    "test:browser-gate": "playwright test browser-gate",
     "test:upgrade": "playwright test upgrade"
   },
   "devDependencies": {
