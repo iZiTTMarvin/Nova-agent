@@ -377,7 +377,7 @@ test('点击被遮挡的目标返回 target_occluded，不误报成功', async (
   }
 })
 
-test('导航后旧 ref 失效，动作返回 stale_observation', async ({ nova }) => {
+test('导航或页内跳转后旧 ref 失效', async ({ nova }) => {
   test.setTimeout(90_000)
   const fixture = await startFixture()
   try {
@@ -391,12 +391,16 @@ test('导航后旧 ref 失效，动作返回 stale_observation', async ({ nova }
       action: { kind: 'url', url: `${fixture.origin}/next` }
     }) as { status: string }
     expect(moved.status).toBe('applied')
-    const stale = await nova.invoke(BROWSER_ACT, {
+    // 地址栏通道的导航属于用户动作，会撤销 AI 控制权（generation 变化），旧观察按接管拒绝
+    const takenOver = await nova.invoke(BROWSER_ACT, {
       sessionId: opened.sessionId,
       observation: form.observation,
       action: { kind: 'click', ref: save!.ref }
     }) as { status: string; code?: string }
-    expect(stale, JSON.stringify(stale)).toMatchObject({ status: 'not_applied', code: 'stale_observation' })
+    expect(takenOver, JSON.stringify(takenOver)).toMatchObject({
+      status: 'not_applied',
+      code: 'taken_over'
+    })
 
     await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: opened.sessionId,
