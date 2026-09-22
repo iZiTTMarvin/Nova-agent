@@ -109,6 +109,17 @@ describe('resolveSubagentProfileSnapshot', () => {
     expect(toolHasWriteCapability('web_search')).toBe(false)
   })
 
+  it('浏览器工具即使写在 allowedTools 里也不会进入子代理快照', () => {
+    const snapshot = resolveSubagentProfileSnapshot({
+      id: 'code',
+      name: 'code',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read', 'browser_observe', 'browser_act']
+    }, 'code')
+    expect(snapshot.toolNames).toEqual(['read'])
+  })
+
   it('read_only profile 永久剥离写工具与递归 delegation 工具', () => {
     const snapshot = resolveSubagentProfileSnapshot({
       id: 'explore',

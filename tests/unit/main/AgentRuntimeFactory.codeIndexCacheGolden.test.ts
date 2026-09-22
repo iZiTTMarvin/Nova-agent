@@ -155,16 +155,9 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         toolsHash: snapshot.toolsHash,
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
-        // 基线随工具面更新：0.1.4 起技能目录与导入导出、系统代理与记忆策略等
-        // 多轮有意变更累积后重置；bash 描述锚定为常量、系统消息行尾统一 LF，
-        // 两个哈希跨机器稳定
-        // 基线随工具面更新：0.1.4 新增 web_fetch（联网读链接）后重置
-        // 基线随工具面更新：新增 subagent_read（子代理证据回读）后重置；
-        // 系统消息内含工具清单，两个哈希随之同步变化
-        // 基线随工具面更新：task 工具新增 background 参数并注册 task_wait
-        // （后台子任务与显式等待）后重置
-        toolsHash: '93d11e467d21a7b1',
-        systemContentHash: 'f46bb47af7cfb136'
+        // bash 描述锚定为常量、系统消息行尾统一 LF；工具清单变化后重置哈希
+        toolsHash: '1dfc3166b7cab84f',
+        systemContentHash: '6ca3dcd57674341f'
       })
     } finally {
       prepared.agentLoop.dispose()

@@ -36,7 +36,13 @@ import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { historyReadTool } from '../../../runtime/tools/historyRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import { createRunCodeTool } from '../../../runtime/tools/runCode'
+import { createBrowserOpenTool } from '../../../runtime/tools/browser_open'
+import { createBrowserObserveTool } from '../../../runtime/tools/browser_observe'
+import { createBrowserActTool } from '../../../runtime/tools/browser_act'
+import { createBrowserCloseTool } from '../../../runtime/tools/browser_close'
+import { createBrowserCaptureTool } from '../../../runtime/tools/browser_capture'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
+import type { BrowserPort } from '../../../runtime/browser'
 import {
   InProcessCodeRuntime,
   getProcessToolPresentationMode,
@@ -78,6 +84,14 @@ export interface BuiltinToolRegistrationDeps {
   codeIndexEnabled: boolean
   /** 查询端可随 workspace 生命周期更换，不参与工具是否注册。 */
   getCodeContextQueryPort: () => CodeContextQueryPort | null
+  /** 内置浏览器端口；缺省时浏览器工具返回 unavailable。 */
+  getBrowserPort?: () => BrowserPort | null
+  /** 截图本地证据落盘；缺省则只返回文字说明。 */
+  saveBrowserCaptureEvidence?: (input: {
+    readonly sessionId: string
+    readonly mimeType: string
+    readonly base64: string
+  }) => Promise<string | null>
   /**
    * compose 阶段完成的运行时事实。缺省视为两项均未满足（拒绝完成「图」「验」）；
    * 测试注册工具时不必接投影服务。
@@ -191,6 +205,20 @@ export function registerBuiltinTools(
       }
     })
   )
+  const getBrowserPort = deps.getBrowserPort ?? (() => null)
+  toolRegistry.register(createBrowserOpenTool({ getPort: getBrowserPort }))
+  toolRegistry.register(createBrowserObserveTool({ getPort: getBrowserPort }))
+  toolRegistry.register(createBrowserActTool({ getPort: getBrowserPort }))
+  toolRegistry.register(createBrowserCloseTool({ getPort: getBrowserPort }))
+  toolRegistry.register(
+    createBrowserCaptureTool({
+      getPort: getBrowserPort,
+      ...(deps.saveBrowserCaptureEvidence
+        ? { saveEvidence: deps.saveBrowserCaptureEvidence }
+        : {})
+    })
+  )
+
   // load_tools 最后注册：其 enum / 描述需要完整注册清单来判定 live deferred 组
   toolRegistry.register(
     createLoadToolsTool({

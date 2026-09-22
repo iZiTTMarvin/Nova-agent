@@ -15,6 +15,7 @@ import {
   isValidSubagentPresetId
 } from '../../shared/subagents/presetIdentity'
 import { getCatalogEntry } from '../tools/catalog'
+import { isBrowserToolName } from '../../shared/browser'
 import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
 import type {
   SubAgentSpec,
@@ -140,6 +141,7 @@ function requireCatalogTools(fields: SubagentProfileFields): void {
 
 function requireSelectableTools(fields: SubagentProfileFields): void {
   const forbidden = fields.allowedTools.find(toolName => {
+    if (isBrowserToolName(toolName)) return true
     const effects = getToolPermissionDescriptor(toolName)?.effects ?? []
     return effects.some(
       effect =>
@@ -152,7 +154,9 @@ function requireSelectableTools(fields: SubagentProfileFields): void {
     throw new SubagentPresetDecodeError([
       {
         field: 'allowedTools',
-        message: `子代理预设.allowedTools 不可包含「${forbidden}」（编排/会话/模式工具不可授予子代理）`
+        message: isBrowserToolName(forbidden)
+          ? `子代理预设.allowedTools 不可包含「${forbidden}」（内置浏览器只给主代理）`
+          : `子代理预设.allowedTools 不可包含「${forbidden}」（编排/会话/模式工具不可授予子代理）`
       }
     ])
   }

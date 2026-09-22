@@ -1,8 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { Socket } from 'node:net'
 import { setTimeout as delay } from 'node:timers/promises'
+import { BROWSER_VISION_PROBE_MARKER } from '../../../src/runtime/browser/visionProbe'
 
 type JsonObject = Record<string, unknown>
+type TurnFactory = (record: RecordedRequest) => FakeTurn | null
 
 export type FakeTurn =
   | {
@@ -98,6 +100,7 @@ export class FakeRuntime {
   readonly requests: RecordedRequest[] = []
 
   private readonly turns: FakeTurn[] = []
+  private turnFactory: TurnFactory | null = null
   /** 按请求体标记路由的独立回合队列：父子并发派遣时各自保持确定性顺序 */
   private readonly lanes: Array<{ marker: string; turns: FakeTurn[] }> = []
   private readonly holds = new Map<string, Deferred>()
@@ -136,6 +139,10 @@ export class FakeRuntime {
 
   enqueue(...turns: FakeTurn[]): void {
     this.turns.push(...turns)
+  }
+
+  setTurnFactory(factory: TurnFactory | null): void {
+    this.turnFactory = factory
   }
 
   /**
@@ -224,9 +231,23 @@ export class FakeRuntime {
     }
     this.requests.push(record)
 
+    if (JSON.stringify(body).includes(BROWSER_VISION_PROBE_MARKER)) {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache',
+        connection: 'keep-alive'
+      })
+      writeSse(res, contentChunk('{"ok":true}'))
+      writeSse(res, finishChunk())
+      writeSse(res, '[DONE]')
+      res.end()
+      return
+    }
+
     const raw = JSON.stringify(body)
+    const override = this.turnFactory?.(record) ?? null
     const lane = this.lanes.find(candidate => raw.includes(candidate.marker) && candidate.turns.length > 0)
-    const turn = lane?.turns.shift() ?? this.turns.shift() ?? { kind: 'text', text: 'NOVA_E2E_DEFAULT' }
+    const turn = override ?? lane?.turns.shift() ?? this.turns.shift() ?? { kind: 'text', text: 'NOVA_E2E_DEFAULT' }
 
     if (turn.kind === 'error') {
       res.writeHead(turn.status, { 'content-type': 'application/json' })

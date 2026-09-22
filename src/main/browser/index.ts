@@ -6,6 +6,7 @@ import { getWorkspaceService } from '../services/WorkspaceService'
 import { createElectronBrowserDriver } from './electronDriver'
 import { lookupElectronGuest } from './guestContents'
 import { createBrowserPartitionSlotPool } from './partitionSlots'
+import { getBrowserSessionHost, setBrowserSessionHost } from './hostRef'
 import { createBrowserSessionHost, type BrowserSessionHost } from './sessionHost'
 import {
   pushBrowserGuestMountSnapshot,
@@ -22,8 +23,7 @@ export {
   BROWSER_PARTITION_SLOT_NAMES,
   createBrowserPartitionSlotPool
 } from './partitionSlots'
-
-let host: BrowserSessionHost | null = null
+export { getBrowserSessionHost } from './hostRef'
 
 export async function cleanupBrowserPartition(partition: string): Promise<void> {
   const ses = session.fromPartition(partition)
@@ -44,8 +44,9 @@ function sendGuestMount(snapshot: BrowserGuestMountSnapshot): void {
 }
 
 export function initBrowserSessionHost(): BrowserSessionHost {
-  if (host) return host
-  host = createBrowserSessionHost({
+  const existing = getBrowserSessionHost()
+  if (existing) return existing
+  const host = createBrowserSessionHost({
     resolveWorkspaceKey: (sessionId) => getSessionStore().loadMetadata(sessionId)?.workspaceRoot ?? null,
     lookupGuest: lookupElectronGuest,
     openExternal: (url) => {
@@ -64,10 +65,7 @@ export function initBrowserSessionHost(): BrowserSessionHost {
     onSnapshot: sendSnapshot,
     onGuestMount: sendGuestMount
   })
-  return host
-}
-
-export function getBrowserSessionHost(): BrowserSessionHost | null {
+  setBrowserSessionHost(host)
   return host
 }
 

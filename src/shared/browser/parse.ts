@@ -312,3 +312,89 @@ export function parseBrowserCaptureIpcParams(
   if (!observation.ok) return observation
   return { ok: true, value: Object.freeze({ sessionId, observation: observation.value }) }
 }
+
+export type BrowserOpenToolArgs =
+  | { readonly action: 'open'; readonly url: string }
+  | { readonly action: 'url'; readonly browserId: string; readonly url: string }
+  | { readonly action: 'back'; readonly browserId: string }
+  | { readonly action: 'forward'; readonly browserId: string }
+  | { readonly action: 'reload'; readonly browserId: string }
+  | { readonly action: 'stop'; readonly browserId: string }
+
+export type BrowserObserveToolArgs =
+  | { readonly action: 'list' }
+  | { readonly action: 'snapshot'; readonly browserId: string }
+
+export type BrowserCloseToolArgs = { readonly browserId: string }
+
+export type BrowserCaptureToolArgs = { readonly observation: ObservationIdentity }
+
+export function parseBrowserOpenToolArgs(input: unknown): BrowserParseResult<BrowserOpenToolArgs> {
+  if (!isRecord(input)) return failed('打开命令必须是对象')
+  const action = input.action
+  if (action === 'open') {
+    if (!hasExactKeys(input, ['action', 'url'])) return failed('open 只能包含 action 与 url')
+    const url = parseBrowserHttpUrl(input.url)
+    if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
+    return { ok: true, value: Object.freeze({ action: 'open', url }) }
+  }
+  if (action === 'url') {
+    if (!hasExactKeys(input, ['action', 'browserId', 'url'])) {
+      return failed('url 导航只能包含 action、browserId 与 url')
+    }
+    const browserId = readNonEmptyString(input, 'browserId')
+    const url = parseBrowserHttpUrl(input.url)
+    if (browserId === null) return failed('url 导航需要非空 browserId')
+    if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
+    return { ok: true, value: Object.freeze({ action: 'url', browserId, url }) }
+  }
+  if (action === 'back' || action === 'forward' || action === 'reload' || action === 'stop') {
+    if (!hasExactKeys(input, ['action', 'browserId'])) {
+      return failed(`${action} 只能包含 action 与 browserId`)
+    }
+    const browserId = readNonEmptyString(input, 'browserId')
+    if (browserId === null) return failed(`${action} 需要非空 browserId`)
+    return { ok: true, value: Object.freeze({ action, browserId }) }
+  }
+  return failed('未知的打开或导航动作')
+}
+
+export function parseBrowserObserveToolArgs(
+  input: unknown
+): BrowserParseResult<BrowserObserveToolArgs> {
+  if (!isRecord(input)) return failed('观察命令必须是对象')
+  const action = input.action
+  if (action === 'list') {
+    if (!hasExactKeys(input, ['action'])) return failed('list 不能带额外字段')
+    return { ok: true, value: Object.freeze({ action: 'list' }) }
+  }
+  if (action === 'snapshot') {
+    if (!hasExactKeys(input, ['action', 'browserId'])) {
+      return failed('snapshot 只能包含 action 与 browserId')
+    }
+    const browserId = readNonEmptyString(input, 'browserId')
+    if (browserId === null) return failed('snapshot 需要非空 browserId')
+    return { ok: true, value: Object.freeze({ action: 'snapshot', browserId }) }
+  }
+  return failed('未知的观察动作')
+}
+
+export function parseBrowserCloseToolArgs(input: unknown): BrowserParseResult<BrowserCloseToolArgs> {
+  if (!isRecord(input) || !hasExactKeys(input, ['browserId'])) {
+    return failed('关闭命令只能包含 browserId')
+  }
+  const browserId = readNonEmptyString(input, 'browserId')
+  if (browserId === null) return failed('关闭命令需要非空 browserId')
+  return { ok: true, value: Object.freeze({ browserId }) }
+}
+
+export function parseBrowserCaptureToolArgs(
+  input: unknown
+): BrowserParseResult<BrowserCaptureToolArgs> {
+  if (!isRecord(input) || !hasExactKeys(input, ['observation'])) {
+    return failed('截图命令只能包含 observation')
+  }
+  const observation = parseObservationIdentity(input.observation)
+  if (!observation.ok) return observation
+  return { ok: true, value: Object.freeze({ observation: observation.value }) }
+}

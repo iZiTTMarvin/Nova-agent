@@ -45,6 +45,16 @@ export function getToolDisplayName(toolName: string): string {
       return '联网搜索 (web_search)'
     case 'web_fetch':
       return '读取网页 (web_fetch)'
+    case 'browser_open':
+      return '打开网页 (browser_open)'
+    case 'browser_observe':
+      return '观察网页 (browser_observe)'
+    case 'browser_act':
+      return '操作网页 (browser_act)'
+    case 'browser_close':
+      return '关闭网页 (browser_close)'
+    case 'browser_capture':
+      return '截取网页 (browser_capture)'
     case 'archive_read':
       return '读取归档内容 (archive_read)'
     case 'history_read':
@@ -225,6 +235,32 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const display = url.length > 60 ? url.slice(0, 57) + '...' : url
       return display ? `读取网页 ${display}` : '读取网页'
     }
+    case 'browser_open': {
+      const action = typeof args.action === 'string' ? args.action : 'open'
+      const url = typeof args.url === 'string' ? args.url : ''
+      const display = url.length > 40 ? `${url.slice(0, 37)}...` : url
+      if (action === 'open') return display ? `打开网页 ${display}` : '打开网页'
+      if (action === 'url') return display ? `跳转网页 ${display}` : '跳转网页'
+      if (action === 'back') return '网页后退'
+      if (action === 'forward') return '网页前进'
+      if (action === 'reload') return '刷新网页'
+      if (action === 'stop') return '停止加载网页'
+      return '打开网页'
+    }
+    case 'browser_observe': {
+      return args.action === 'list' ? '列出打开的网页' : '观察网页'
+    }
+    case 'browser_act': {
+      const action = args.action && typeof args.action === 'object'
+        ? (args.action as Record<string, unknown>).kind
+        : ''
+      if (typeof action === 'string' && action.length > 0) return `操作网页：${action}`
+      return '操作网页'
+    }
+    case 'browser_close':
+      return '关闭网页'
+    case 'browser_capture':
+      return '截取网页'
     case 'askQuestion': {
       // 取首题问题文本作摘要；多题时附带题数，便于不展开卡片就知道在问什么
       const questions = Array.isArray(args.questions) ? args.questions : []

@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 import type { SubagentProfileSnapshot } from '../../shared/subagents'
 import { toolHasWriteCapability } from '../../shared/permissions/toolEffects'
+import { isBrowserToolName } from '../../shared/browser'
 import { decodeSubagentProfileFields } from './presetCodec'
 import { BUILTIN_SUBAGENT_IDS } from '../../shared/subagents/presetIdentity'
 
@@ -57,6 +58,7 @@ export function resolveSubagentProfileSnapshot(
       ? 'read_only'
       : 'workspace_write'
   const toolNames = parsed.allowedTools.filter((name) => {
+    if (isBrowserToolName(name)) return false
     // 递归编排工具默认全部剥离（含续跑），防子代理再派子代理；仅显式 allowRecursion 放行
     if ((name === 'task' || name === 'task_followup') && options.allowRecursion !== true) {
       return false

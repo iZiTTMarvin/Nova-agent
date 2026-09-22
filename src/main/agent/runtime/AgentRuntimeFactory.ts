@@ -88,6 +88,7 @@ import {
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import { writerLeaseRegistry } from '../../../runtime/workspace'
 import { planReviewWaiters } from '../interaction/planReviewWaiters'
+import { getBrowserSessionHost } from '../../browser/hostRef'
 
 export interface AgentRuntimeRunRefs {
   runId: string
@@ -269,6 +270,14 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     memoryEnabled: novaSettings.memoryEnabled,
     codeIndexEnabled: session.codeIndexEnabled === true,
     getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null),
+    getBrowserPort: () => getBrowserSessionHost(),
+    saveBrowserCaptureEvidence: async ({ sessionId, mimeType, base64 }) => {
+      try {
+        return getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`).filePath
+      } catch {
+        return null
+      }
+    },
     getStageFacts: sid => {
       let projection
       try {

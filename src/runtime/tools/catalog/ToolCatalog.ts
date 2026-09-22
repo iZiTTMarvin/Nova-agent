@@ -15,6 +15,11 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   { name: 'shell_session', capability: 'shell', exposure: 'always', codeMode: 'direct-only' },
   { name: 'web_search', capability: 'web', exposure: 'always', codeMode: 'direct-only' },
   { name: 'web_fetch', capability: 'web', exposure: 'always', codeMode: 'direct-only' },
+  { name: 'browser_open', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_observe', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_act', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_close', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_capture', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
   {
     name: 'memory_search',
     capability: 'memory',
@@ -73,7 +78,7 @@ const GROUPS: readonly DeferredToolGroupMeta[] = [
     id: 'browser',
     label: 'browser',
     description: 'Navigate and interact with browser content.',
-    reserved: true
+    reserved: false
   },
   {
     id: 'computer-use',

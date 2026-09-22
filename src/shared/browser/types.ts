@@ -7,6 +7,27 @@ export const BROWSER_MAX_LIVE_PAGES = 2 as const
 
 export const BROWSER_PAGE_CAP_MESSAGE = '最多同时两个页面'
 
+/** 截图输出约束；数字是预算，不是建议。 */
+export const BROWSER_CAPTURE_DEVICE_SCALE = 1 as const
+export const BROWSER_CAPTURE_MAX_LONG_EDGE = 1440 as const
+export const BROWSER_CAPTURE_MAX_PIXELS = 2_000_000 as const
+export const BROWSER_CAPTURE_MAX_BYTES = 1_048_576 as const
+export const BROWSER_CAPTURE_MAX_PER_RUN = 6 as const
+
+export const BROWSER_TOOL_NAMES = Object.freeze([
+  'browser_open',
+  'browser_observe',
+  'browser_act',
+  'browser_close',
+  'browser_capture'
+] as const)
+
+export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
+
+export function isBrowserToolName(value: string): value is BrowserToolName {
+  return (BROWSER_TOOL_NAMES as readonly string[]).includes(value)
+}
+
 export const BROWSER_ERROR_CODES = Object.freeze([
   'unavailable',
   'unsupported',

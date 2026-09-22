@@ -3,9 +3,13 @@ import {
   parseBrowserAction,
   parseBrowserActCommand,
   parseBrowserAttachIpcParams,
+  parseBrowserCaptureToolArgs,
+  parseBrowserCloseToolArgs,
   parseBrowserNavigateAction,
   parseBrowserNavigateIpcParams,
+  parseBrowserObserveToolArgs,
   parseBrowserOpenIpcParams,
+  parseBrowserOpenToolArgs,
   parseObservationIdentity
 } from '../../../../src/shared/browser'
 
@@ -150,5 +154,46 @@ describe('browser 导航与打开入参', () => {
       webContentsId: 2,
       partition: 'nova-browser'
     }).ok).toBe(false)
+  })
+})
+
+describe('browser 工具入参判别联合', () => {
+  it('open / 导航动作互斥，拒绝危险地址', () => {
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'https://example.com' })).toEqual({
+      ok: true,
+      value: { action: 'open', url: 'https://example.com' }
+    })
+    expect(parseBrowserOpenToolArgs({ action: 'back', browserId: 'brw_1' })).toEqual({
+      ok: true,
+      value: { action: 'back', browserId: 'brw_1' }
+    })
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'javascript:alert(1)' }).ok).toBe(false)
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'https://example.com', browserId: 'brw_1' }).ok).toBe(false)
+  })
+
+  it('observe 只接受 list 或 snapshot', () => {
+    expect(parseBrowserObserveToolArgs({ action: 'list' })).toEqual({
+      ok: true,
+      value: { action: 'list' }
+    })
+    expect(parseBrowserObserveToolArgs({ action: 'snapshot', browserId: 'brw_1' })).toEqual({
+      ok: true,
+      value: { action: 'snapshot', browserId: 'brw_1' }
+    })
+    expect(parseBrowserObserveToolArgs({ action: 'list', browserId: 'brw_1' }).ok).toBe(false)
+  })
+
+  it('close / capture 字段精确', () => {
+    expect(parseBrowserCloseToolArgs({ browserId: 'brw_1' }).ok).toBe(true)
+    expect(parseBrowserCloseToolArgs({ browserId: 'brw_1', force: true }).ok).toBe(false)
+    expect(parseBrowserCaptureToolArgs({
+      observation: {
+        browserId: 'brw_1',
+        generation: 1,
+        documentEpoch: 1,
+        observationId: 'obs_1'
+      }
+    }).ok).toBe(true)
+    expect(parseBrowserCaptureToolArgs({ observationId: 'obs_1' }).ok).toBe(false)
   })
 })

@@ -115,21 +115,33 @@ describe('Tool Catalog 清洁度', () => {
 })
 
 describe('Deferred 组暴露规则', () => {
-  it('browser / computer-use 为预留空组：不进入 live 组、不接受 load_tools', () => {
+  it('browser 组在工具登记后可加载；computer-use 仍为预留空组', () => {
     const live = listLiveDeferredGroupIds(fullRegistryNames())
-    expect(live).toEqual(['agent'])
-    expect(live).not.toContain('browser')
+    expect(live).toEqual(['agent', 'browser'])
     expect(live).not.toContain('computer-use')
-    expect(isLoadableToolGroup('browser')).toBe(false)
+    expect(isLoadableToolGroup('browser')).toBe(true)
     expect(isLoadableToolGroup('computer-use')).toBe(false)
     expect(isLoadableToolGroup('agent')).toBe(true)
-    expect(getDeferredGroupMeta('browser')?.reserved).toBe(true)
-    expect(listGroupToolNames('browser')).toEqual([])
+    expect(getDeferredGroupMeta('browser')?.reserved).toBe(false)
+    expect(getDeferredGroupMeta('computer-use')?.reserved).toBe(true)
+    expect(listGroupToolNames('browser')).toEqual([
+      'browser_open',
+      'browser_observe',
+      'browser_act',
+      'browser_close',
+      'browser_capture'
+    ])
   })
 
-  it('内置注册、headless 编码清单与子代理预设均不含浏览器工具', () => {
+  it('内置注册含浏览器工具；headless 编码清单与子代理预设仍不含', () => {
     const registered = fullRegistryNames()
-    expect(registered.filter(name => name.startsWith('browser_'))).toEqual([])
+    expect(registered.filter(name => name.startsWith('browser_'))).toEqual([
+      'browser_open',
+      'browser_observe',
+      'browser_act',
+      'browser_close',
+      'browser_capture'
+    ])
 
     const headlessSource = readFileSync(
       join(__dirname, '../../../../src/headless/cli.ts'),
