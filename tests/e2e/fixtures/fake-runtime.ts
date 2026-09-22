@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { BROWSER_VISION_PROBE_MARKER } from '../../../src/runtime/browser/visionProbe'
 
 type JsonObject = Record<string, unknown>
-type TurnFactory = (record: RecordedRequest) => FakeTurn | null
+type TurnFactory = (record: RecordedRequest) => FakeTurn | Promise<FakeTurn | null> | null
 
 export type FakeTurn =
   | {
@@ -245,7 +245,7 @@ export class FakeRuntime {
     }
 
     const raw = JSON.stringify(body)
-    const override = this.turnFactory?.(record) ?? null
+    const override = (await Promise.resolve(this.turnFactory?.(record) ?? null)) ?? null
     const lane = this.lanes.find(candidate => raw.includes(candidate.marker) && candidate.turns.length > 0)
     const turn = override ?? lane?.turns.shift() ?? this.turns.shift() ?? { kind: 'text', text: 'NOVA_E2E_DEFAULT' }
 

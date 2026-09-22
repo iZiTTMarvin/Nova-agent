@@ -550,6 +550,42 @@ describe('BrowserSessionHost 生命周期', () => {
     await expect(pending).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
   })
 
+  it('动作进行中被接管后，已发出的结果不会写回当前页', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markEntered = (): void => {}
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve
+    })
+    const harness = createHarness(new Map([[12, new FakeGuest({ id: 12 })]]), {
+      ...immediateControl(),
+      act: async (_guest, fence) => {
+        markEntered()
+        await gate
+        const current = fence.stillCurrent()
+        if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+        return { status: 'applied', summary: 'clicked' }
+      }
+    })
+    const browserId = await openReady(harness, 12)
+    const observed = await harness.host.observe({ browserId }, agentContext())
+    expect(observed.status).toBe('applied')
+    if (observed.status !== 'applied') return
+    const pending = harness.host.act(
+      { observation: observed.observation, action: { kind: 'click', ref: 'e1' } },
+      agentContext()
+    )
+    await entered
+    await harness.host.claim({ browserId }, { sessionId: 'sess_1' })
+    release()
+    await expect(pending).resolves.toMatchObject({
+      status: 'not_applied',
+      code: 'taken_over'
+    })
+  })
+
   it('待执行超过四个时，后续代理命令返回 busy', async () => {
     let release = (): void => {}
     const gate = new Promise<void>((resolve) => {

@@ -249,15 +249,15 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     record: PageRecord,
     context: BrowserCommandContext | undefined,
     task: (signal: AbortSignal) => Promise<T>
-  ): Promise<T> {
+  ): Promise<T | ReturnType<typeof browserNotApplied>> {
     const waiting = record.jobs.filter((job) => !job.started).length
     if (context?.authority && waiting >= BROWSER_PENDING_MAX) {
-      return Promise.resolve(browserNotApplied('busy', '该页面待执行命令已满') as T)
+      return Promise.resolve(browserNotApplied('busy', '该页面待执行命令已满'))
     }
-    return new Promise<T>((resolve) => {
+    return new Promise((resolve) => {
       const abort = new AbortController()
       let settled = false
-      const finish = (value: T): void => {
+      const finish = (value: T | ReturnType<typeof browserNotApplied>): void => {
         if (settled) return
         settled = true
         resolve(value)
@@ -268,12 +268,12 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         started: false,
         abortReason: null,
         settleNotApplied(result) {
-          finish(result as T)
+          finish(result)
         },
         run: async () => {
           job.started = true
           if (job.abort.signal.aborted) {
-            finish((job.abortReason ?? browserNotApplied('taken_over', '页面控制已撤销')) as T)
+            finish(job.abortReason ?? browserNotApplied('taken_over', '页面控制已撤销'))
             return
           }
           try {
@@ -283,7 +283,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
               browserNotApplied(
                 'unavailable',
                 error instanceof Error ? error.message : '命令失败'
-              ) as T
+              )
             )
           }
         }
