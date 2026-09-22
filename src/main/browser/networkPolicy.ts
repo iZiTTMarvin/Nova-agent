@@ -5,7 +5,7 @@
 import {
   decideBrowserNetworkRequest,
   type BrowserNetworkRequest
-} from '../../shared/browser/previewOrigin'
+} from '../../shared/browser'
 
 export interface PartitionRequestDetails {
   readonly url: string

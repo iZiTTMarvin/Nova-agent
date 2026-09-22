@@ -6,7 +6,7 @@
 import {
   canonicalizePreviewTarget,
   type PreviewAddressClass
-} from '../../shared/browser/previewOrigin'
+} from '../../shared/browser'
 
 export interface PreviewGrant {
   readonly origin: string
