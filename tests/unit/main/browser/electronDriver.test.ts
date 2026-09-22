@@ -110,6 +110,7 @@ class ScriptedGuest implements BrowserGuestContents {
   url = 'http://127.0.0.1/doc'
   readonly debugger: ScriptedDebugger
   loadError: unknown = null
+  loadHang = false
   png: Buffer | null = PNG
 
   constructor(dbg?: ScriptedDebugger) {
@@ -141,6 +142,7 @@ class ScriptedGuest implements BrowserGuestContents {
   }
 
   async loadURL(url: string): Promise<void> {
+    if (this.loadHang) return new Promise(() => {})
     if (this.loadError) {
       if (this.url === 'http://127.0.0.1/doc') this.url = 'http://127.0.0.1/next'
       else this.url = 'http://127.0.0.1/other'
@@ -317,6 +319,17 @@ describe('ElectronBrowserDriver', () => {
     const next = await driver.observe(guest, openFence())
     expect(Date.now() - started).toBeLessThan(200)
     expect(next).toMatchObject({ status: 'not_applied', code: 'debugger_detached' })
+    driver.release(guest)
+  })
+
+  it('挂起的 loadURL 在命令时限内返回 timeout', async () => {
+    const guest = new ScriptedGuest()
+    guest.loadHang = true
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 40 })
+    const started = Date.now()
+    const result = await driver.load(guest, openFence(), 'http://127.0.0.1/hung')
+    expect(Date.now() - started).toBeLessThan(500)
+    expect(result).toMatchObject({ status: 'not_applied', code: 'timeout' })
     driver.release(guest)
   })
 

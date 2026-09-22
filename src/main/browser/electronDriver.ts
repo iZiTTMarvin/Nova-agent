@@ -206,13 +206,9 @@ export function createElectronBrowserDriver(
         state.world = null
         const deadlineAt = now() + deadlineMs
         const previous = safeUrl(guest)
-        try {
-          await guest.loadURL(url)
-        } catch (error) {
-          if (!isNavigationAborted(error)) {
-            const message = error instanceof Error ? error.message : '导航失败'
-            return browserNotApplied('navigation_failed', message)
-          }
+        const navigated = await awaitGuestNavigation(guest, fence, deadlineAt, now, () => guest.loadURL(url))
+        if (navigated.status === 'interrupted') return navigated.result
+        if (navigated.status === 'aborted') {
           const committed = await confirmAborted(state, guest, fence, url, previous, now() + abortedMs, now)
           if (committed !== true) return committed
           return { status: 'applied' }
@@ -799,6 +795,85 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 async function delay(ms: number): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function stopGuest(guest: BrowserGuestContents): void {
+  try {
+    guest.stop()
+  } catch {
+    // guest 可能已销毁
+  }
+}
+
+type GuestNavigationWait =
+  | { readonly status: 'committed' }
+  | { readonly status: 'aborted' }
+  | { readonly status: 'interrupted'; readonly result: BrowserNotApplied }
+
+async function awaitGuestNavigation(
+  guest: BrowserGuestContents,
+  fence: BrowserControlFence,
+  deadlineAt: number,
+  now: () => number,
+  navigate: () => Promise<void>
+): Promise<GuestNavigationWait> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let timedOut = false
+  let onAbort: (() => void) | undefined
+  const timeout = new Promise<GuestNavigationWait>((resolve) => {
+    timer = setTimeout(() => {
+      timedOut = true
+      stopGuest(guest)
+      resolve({
+        status: 'interrupted',
+        result: browserNotApplied('timeout', '页面没有在时限内就绪')
+      })
+    }, remaining(deadlineAt, now))
+  })
+  const cancelled = fence.signal
+    ? new Promise<GuestNavigationWait>((resolve) => {
+        onAbort = () => {
+          stopGuest(guest)
+          resolve({
+            status: 'interrupted',
+            result: browserNotApplied('cancelled', '命令已取消')
+          })
+        }
+        if (fence.signal!.aborted) onAbort()
+        else fence.signal!.addEventListener('abort', onAbort, { once: true })
+      })
+    : null
+  try {
+    const finished = navigate().then(
+      (): GuestNavigationWait => ({ status: 'committed' }),
+      (error: unknown): GuestNavigationWait => {
+        if (timedOut) {
+          return {
+            status: 'interrupted',
+            result: browserNotApplied('timeout', '页面没有在时限内就绪')
+          }
+        }
+        if (fence.signal?.aborted) {
+          return {
+            status: 'interrupted',
+            result: browserNotApplied('cancelled', '命令已取消')
+          }
+        }
+        if (isNavigationAborted(error)) return { status: 'aborted' }
+        return {
+          status: 'interrupted',
+          result: browserNotApplied(
+            'navigation_failed',
+            error instanceof Error ? error.message : '导航失败'
+          )
+        }
+      }
+    )
+    return await (cancelled ? Promise.race([finished, timeout, cancelled]) : Promise.race([finished, timeout]))
+  } finally {
+    if (timer) clearTimeout(timer)
+    if (onAbort) fence.signal?.removeEventListener('abort', onAbort)
+  }
 }
 
 async function guard(task: () => Promise<BrowserControlReadResult>): Promise<BrowserControlReadResult> {

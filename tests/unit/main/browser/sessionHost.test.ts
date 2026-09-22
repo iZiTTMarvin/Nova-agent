@@ -632,6 +632,32 @@ describe('BrowserSessionHost 生命周期', () => {
     expect(latestPage(harness.snapshots, browserId)?.lifecycle).toBe('ready')
   })
 
+  it('关闭进行中的观察会结束命令且页面关掉', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markEntered = (): void => {}
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve
+    })
+    const guest = new FakeGuest({ id: 12 })
+    const harness = createHarness(new Map([[12, guest]]), gatedControl(gate, markEntered))
+    const browserId = await openReady(harness, 12)
+    const inFlight = harness.host.observe({ browserId }, agentContext())
+    await entered
+    const closing = harness.host.close({ browserId }, { sessionId: 'sess_1' })
+    release()
+    const observed = await inFlight
+    expect(observed.status).toBe('not_applied')
+    if (observed.status === 'not_applied') {
+      expect(['page_closed', 'cancelled']).toContain(observed.code)
+    }
+    harness.clock.flush(1000)
+    guest.destroy()
+    await expect(closing).resolves.toEqual({ status: 'applied', browserId })
+  })
+
   it('用户导航会提升 generation；代理导航只取得租约', async () => {
     const harness = createHarness(new Map([[10, new FakeGuest({ id: 10 })]]))
     const browserId = await openReady(harness, 10)
