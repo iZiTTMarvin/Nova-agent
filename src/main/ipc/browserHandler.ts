@@ -4,21 +4,27 @@
  */
 import { handle } from './secureIpc'
 import {
+  BROWSER_ACT,
   BROWSER_ATTACH,
+  BROWSER_CAPTURE,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
   BROWSER_GET_SNAPSHOT,
   BROWSER_NAVIGATE,
+  BROWSER_OBSERVE,
   BROWSER_OPEN,
   BROWSER_RELEASE
 } from '../../shared/ipc/channels'
 import {
   browserNotApplied,
   invalidBrowserRequest,
+  parseBrowserActIpcParams,
   parseBrowserAttachIpcParams,
+  parseBrowserCaptureIpcParams,
   parseBrowserClaimIpcParams,
   parseBrowserCloseIpcParams,
   parseBrowserNavigateIpcParams,
+  parseBrowserObserveIpcParams,
   parseBrowserOpenIpcParams,
   parseBrowserSnapshotIpcParams
 } from '../../shared/browser'
@@ -96,6 +102,36 @@ export function registerBrowserHandler(deps: BrowserHandlerDeps): void {
     if (!port) return HOST_UNAVAILABLE
     return port.release(
       { browserId: parsed.value.browserId },
+      contextOf(parsed.value.sessionId)
+    )
+  })
+
+  handle(BROWSER_OBSERVE, async (_event, raw: unknown) => {
+    const parsed = parseBrowserObserveIpcParams(raw)
+    if (!parsed.ok) return invalidBrowserRequest(parsed.detail)
+    const port = deps.getPort()
+    if (!port) return HOST_UNAVAILABLE
+    return port.observe({ browserId: parsed.value.browserId }, contextOf(parsed.value.sessionId))
+  })
+
+  handle(BROWSER_ACT, async (_event, raw: unknown) => {
+    const parsed = parseBrowserActIpcParams(raw)
+    if (!parsed.ok) return invalidBrowserRequest(parsed.detail)
+    const port = deps.getPort()
+    if (!port) return HOST_UNAVAILABLE
+    return port.act(
+      { observation: parsed.value.observation, action: parsed.value.action },
+      contextOf(parsed.value.sessionId)
+    )
+  })
+
+  handle(BROWSER_CAPTURE, async (_event, raw: unknown) => {
+    const parsed = parseBrowserCaptureIpcParams(raw)
+    if (!parsed.ok) return invalidBrowserRequest(parsed.detail)
+    const port = deps.getPort()
+    if (!port) return HOST_UNAVAILABLE
+    return port.capture(
+      { observation: parsed.value.observation },
       contextOf(parsed.value.sessionId)
     )
   })

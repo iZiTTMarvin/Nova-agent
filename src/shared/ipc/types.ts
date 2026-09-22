@@ -87,8 +87,14 @@ import type {
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 import type { AppUpdateSnapshot } from '../update'
 import type {
+  ActionOutcome,
+  BrowserActIpcParams,
   BrowserAttachIpcParams,
   BrowserAttachResult,
+  BrowserCaptureIpcParams,
+  BrowserCaptureResult,
+  BrowserObserveIpcParams,
+  BrowserObserveResult,
   BrowserClaimIpcParams,
   BrowserClaimResult,
   BrowserCloseIpcParams,
@@ -110,8 +116,11 @@ import {
   BROWSER_GET_SNAPSHOT,
   BROWSER_GUEST_MOUNT,
   BROWSER_NAVIGATE,
+  BROWSER_OBSERVE,
   BROWSER_OPEN,
   BROWSER_RELEASE,
+  BROWSER_ACT,
+  BROWSER_CAPTURE,
   BROWSER_SNAPSHOT,
   CHECK_APP_UPDATE,
   DOWNLOAD_APP_UPDATE,
@@ -667,6 +676,18 @@ export interface IpcCommands {
   [BROWSER_ATTACH]: {
     params: BrowserAttachIpcParams
     result: BrowserAttachResult
+  }
+  [BROWSER_OBSERVE]: {
+    params: BrowserObserveIpcParams
+    result: BrowserObserveResult
+  }
+  [BROWSER_ACT]: {
+    params: BrowserActIpcParams
+    result: ActionOutcome
+  }
+  [BROWSER_CAPTURE]: {
+    params: BrowserCaptureIpcParams
+    result: BrowserCaptureResult
   }
 }
 

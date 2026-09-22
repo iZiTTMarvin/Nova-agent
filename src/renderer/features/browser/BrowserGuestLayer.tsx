@@ -13,6 +13,15 @@ import './BrowserGuestLayer.css'
 
 interface WebviewGuest extends HTMLElement {
   getWebContentsId: () => number
+  getURL?: () => string
+}
+
+function readGuestUrl(node: WebviewGuest): string {
+  try {
+    return node.getURL?.() ?? ''
+  } catch {
+    return ''
+  }
 }
 
 export function BrowserGuestLayer(): ReactNode {
@@ -119,7 +128,8 @@ function reconcileGuests(
       layer.appendChild(node)
     } else {
       if (current.spec.src !== spec.src) {
-        current.node.setAttribute('src', spec.src)
+        const live = readGuestUrl(current.node)
+        if (live !== spec.src) current.node.setAttribute('src', spec.src)
       }
       current.spec = spec
     }

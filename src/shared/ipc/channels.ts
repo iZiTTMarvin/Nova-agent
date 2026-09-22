@@ -165,6 +165,10 @@ export const BROWSER_CLAIM = 'browser:claim' as const
 export const BROWSER_RELEASE = 'browser:release' as const
 /** renderer 在 webview did-attach 后上报 guest webContentsId，供宿主 fail-closed 校验 */
 export const BROWSER_ATTACH = 'browser:attach' as const
+/** 页面观察、操作与截图。脚本只在主进程的隔离世界执行。 */
+export const BROWSER_OBSERVE = 'browser:observe' as const
+export const BROWSER_ACT = 'browser:act' as const
+export const BROWSER_CAPTURE = 'browser:capture' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 

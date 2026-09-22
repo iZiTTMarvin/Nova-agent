@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { BrowserPageControl } from '../../../../src/main/browser/controlPort'
 import {
   createBrowserSessionHost,
   type BrowserSessionHost
@@ -68,9 +69,22 @@ class FakeGuest implements BrowserGuestContents {
 
   debugger = {
     isAttached: (): boolean => this.debuggerAttached,
+    attach: (protocol: string): void => {
+      void protocol
+      this.debuggerAttached = true
+    },
     detach: (): void => {
       this.detachImpl()
-    }
+    },
+    sendCommand: async (): Promise<unknown> => {
+      throw new Error('sendCommand 未实现')
+    },
+    on: (): void => {},
+    off: (): void => {}
+  }
+
+  async capturePage(): Promise<{ toPNG(): Buffer; getSize(): { width: number; height: number } }> {
+    throw new Error('capturePage 未实现')
   }
 
   on(event: BrowserGuestEvent, listener: (...args: unknown[]) => void): void {
@@ -121,7 +135,7 @@ function createClock(): {
   }
 }
 
-function createHarness(guests: Map<number, FakeGuest>): {
+function createHarness(guests: Map<number, FakeGuest>, control?: BrowserPageControl): {
   host: BrowserSessionHost
   snapshots: BrowserSurfaceSnapshot[]
   mounts: BrowserGuestMountSnapshot[]
@@ -139,6 +153,7 @@ function createHarness(guests: Map<number, FakeGuest>): {
       externals.push(url)
     },
     delay: clock.delay,
+    control,
     onSnapshot: (snapshot) => {
       snapshots.push(snapshot)
     },
@@ -477,6 +492,60 @@ describe('BrowserSessionHost 生命周期', () => {
       code: 'resource_limit',
       detail: '最多同时两个页面'
     })
+  })
+
+  it('未装配控制端口时观察返回未装配，而不是抛错', async () => {
+    const harness = createHarness(new Map([[3, new FakeGuest({ id: 3 })]]))
+    const browserId = await openReady(harness, 3)
+    await expect(harness.host.observe({ browserId }, { sessionId: 'sess_1' })).resolves.toMatchObject({
+      status: 'not_applied',
+      code: 'unsupported'
+    })
+  })
+
+  it('观察进行中被接管后，迟到结果不会记成已应用', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markEntered = (): void => {}
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve
+    })
+    const control: BrowserPageControl = {
+      observe: async (_guest, fence) => {
+        markEntered()
+        await gate
+        const current = fence.stillCurrent()
+        if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+        return {
+          status: 'applied',
+          read: {
+            snapshot: {
+              url: 'https://example.com/app',
+              title: 'late',
+              summary: 'late',
+              truncated: false,
+              viewport: { width: 800, height: 600, device: 'desktop' },
+              interactive: []
+            },
+            refs: {}
+          }
+        }
+      },
+      act: async () => ({ status: 'not_applied', code: 'unavailable', detail: '无' }),
+      capture: async () => ({ status: 'not_applied', code: 'unavailable', detail: '无' }),
+      load: async () => ({ status: 'applied' }),
+      bindRefs: () => {},
+      release: () => {}
+    }
+    const harness = createHarness(new Map([[4, new FakeGuest({ id: 4 })]]), control)
+    const browserId = await openReady(harness, 4)
+    const pending = harness.host.observe({ browserId }, { sessionId: 'sess_1' })
+    await entered
+    await harness.host.claim({ browserId }, { sessionId: 'sess_1' })
+    release()
+    await expect(pending).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
   })
 })
 

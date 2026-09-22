@@ -1,6 +1,6 @@
 /**
  * 内置浏览器页面记录与 guest 生命周期的唯一 Owner。
- * 不执行 CDP 动作；不拥有模型循环或权限规则。
+ * CDP 与隔离世界交给 BrowserPageControl；这里不实现协议。
  */
 import {
   BROWSER_MAX_LIVE_PAGES,
@@ -41,6 +41,7 @@ import {
   type BrowserOpenCommand
 } from '../../shared/browser'
 import type { BrowserCommandContext, BrowserPort } from '../../runtime/browser'
+import type { BrowserControlFence, BrowserPageControl } from './controlPort'
 import { routeGuestPopup } from './webviewPolicy'
 import type { BrowserGuestContents } from './guestContents'
 
@@ -58,6 +59,7 @@ export interface BrowserSessionHostDeps {
   readonly onSnapshot?: (snapshot: BrowserSurfaceSnapshot) => void
   readonly onGuestMount?: (snapshot: BrowserGuestMountSnapshot) => void
   readonly getCurrentSessionId?: () => string | null
+  readonly control?: BrowserPageControl
   readonly identity?: BrowserIdentityLedger
   readonly allocatePartition?: (browserId: string) =>
     | { readonly partition: string }
@@ -223,6 +225,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
 
   function unbindGuest(record: PageRecord): void {
     const guest = record.guest
+    if (guest) deps.control?.release(guest)
     if (!guest) return
     for (const { event, listener } of record.guestListeners) {
       try {
@@ -568,6 +571,29 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     }
   }
 
+  function safeGuestUrl(guest: BrowserGuestContents): string {
+    try {
+      return guest.getURL()
+    } catch {
+      return ''
+    }
+  }
+
+  async function waitForCommittedDocument(
+    guest: BrowserGuestContents,
+    signal?: AbortSignal
+  ): Promise<ReturnType<typeof browserNotApplied> | null> {
+    const deadline = Date.now() + 8_000
+    while (Date.now() <= deadline) {
+      if (signal?.aborted) return browserNotApplied('cancelled', '命令已取消')
+      if (safeDestroyed(guest)) return browserNotApplied('page_closed', '页面已关闭')
+      const url = safeGuestUrl(guest)
+      if (!safeLoading(guest) && url.length > 0 && url !== 'about:blank') return null
+      await delay(50)
+    }
+    return browserNotApplied('timeout', '页面还没有完成当前加载')
+  }
+
   async function navigate(
     command: BrowserNavigateCommand,
     context: BrowserCommandContext
@@ -582,10 +608,23 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       try {
         const action = command.action
         if (action.kind === 'url') {
-          found.record.url = action.url
           found.record.loading = true
+          if (!deps.control) found.record.url = action.url
           emit()
-          await guest.loadURL(action.url)
+          if (deps.control) {
+            const identity = ledger.inspect(command.browserId, context.sessionId)
+            if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
+            const loaded = await deps.control.load(
+              guest,
+              navigationFence(command.browserId, context.sessionId, identity.value.generation, context.abortSignal),
+              action.url
+            )
+            if (loaded.status !== 'applied') return loaded
+            found.record.url = action.url
+            emit()
+          } else {
+            await guest.loadURL(action.url)
+          }
         } else if (action.kind === 'back') guest.goBack()
         else if (action.kind === 'forward') guest.goForward()
         else if (action.kind === 'reload') guest.reload()
@@ -694,6 +733,167 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     return Promise.resolve({ status: 'applied', snapshot: snapshot() })
   }
 
+  function navigationFence(
+    browserId: string,
+    sessionId: string,
+    generation: number,
+    signal?: AbortSignal
+  ): BrowserControlFence {
+    return {
+      generation,
+      documentEpoch: 0,
+      observationId: null,
+      signal,
+      stillCurrent() {
+        if (signal?.aborted) return { ok: false, code: 'cancelled' }
+        const record = pages.get(browserId)
+        if (!record || record.lifecycle === 'closing') return { ok: false, code: 'page_closed' }
+        if (record.lifecycle === 'crashed' || record.halted) return { ok: false, code: 'page_crashed' }
+        const now = ledger.inspect(browserId, sessionId)
+        if (!now.ok) return { ok: false, code: now.code === 'page_closed' ? 'page_closed' : 'not_owner' }
+        if (now.value.generation !== generation) return { ok: false, code: 'taken_over' }
+        return { ok: true }
+      }
+    }
+  }
+
+  function actionFence(
+    browserId: string,
+    sessionId: string,
+    start: { generation: number; documentEpoch: number },
+    observationId: string | null,
+    signal?: AbortSignal
+  ): BrowserControlFence {
+    return {
+      generation: start.generation,
+      documentEpoch: start.documentEpoch,
+      observationId,
+      signal,
+      stillCurrent() {
+        if (signal?.aborted) return { ok: false, code: 'cancelled' }
+        const record = pages.get(browserId)
+        if (!record || record.lifecycle === 'closing') return { ok: false, code: 'page_closed' }
+        if (record.lifecycle === 'crashed' || record.halted) return { ok: false, code: 'page_crashed' }
+        if (observationId) {
+          const matched = ledger.matchObservation(
+            {
+              browserId,
+              generation: start.generation,
+              documentEpoch: start.documentEpoch,
+              observationId
+            },
+            sessionId
+          )
+          if (!matched.ok) return { ok: false, code: matched.code }
+          return { ok: true }
+        }
+        const now = ledger.inspect(browserId, sessionId)
+        if (!now.ok) return { ok: false, code: now.code === 'page_closed' ? 'page_closed' : 'not_owner' }
+        if (now.value.generation !== start.generation) return { ok: false, code: 'taken_over' }
+        if (now.value.documentEpoch !== start.documentEpoch) return { ok: false, code: 'stale_observation' }
+        return { ok: true }
+      }
+    }
+  }
+
+  async function observe(
+    command: BrowserObserveCommand,
+    context: BrowserCommandContext
+  ): Promise<BrowserObserveResult> {
+    if (!deps.control) return CONTROL_UNAVAILABLE
+    const found = lookupPage(command.browserId, context.sessionId)
+    if ('status' in found) return found
+    return runSerial(found.record, async () => {
+      const guest = found.record.guest
+      if (!guest || safeDestroyed(guest)) return browserNotApplied('unavailable', '页面尚未挂载')
+      const settled = await waitForCommittedDocument(guest, context.abortSignal)
+      if (settled) return settled
+      const identity = ledger.inspect(command.browserId, context.sessionId)
+      if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
+      const fence = actionFence(
+        command.browserId,
+        context.sessionId,
+        identity.value,
+        null,
+        context.abortSignal
+      )
+      const read = await deps.control!.observe(guest, fence)
+      if (read.status !== 'applied') return read
+      const current = fence.stillCurrent()
+      if (!current.ok) return browserNotApplied(current.code, '观察结果已过期')
+      const issued = ledger.issueObservation(command.browserId)
+      if (!issued.ok) return browserNotApplied(issued.code, '无法签发观察')
+      deps.control!.bindRefs(issued.value.observationId, read.read.refs)
+      return { status: 'applied', observation: issued.value, snapshot: read.read.snapshot }
+    })
+  }
+
+  async function act(command: BrowserActCommand, context: BrowserCommandContext): Promise<ActionOutcome> {
+    if (!deps.control) return CONTROL_UNAVAILABLE
+    const matched = ledger.matchObservation(command.observation, context.sessionId)
+    if (!matched.ok) return browserNotApplied(matched.code, '观察已不能用于操作')
+    const found = lookupPage(command.observation.browserId, context.sessionId)
+    if ('status' in found) return found
+    return runSerial(found.record, async () => {
+      const again = ledger.matchObservation(command.observation, context.sessionId)
+      if (!again.ok) return browserNotApplied(again.code, '观察已不能用于操作')
+      const guest = found.record.guest
+      if (!guest || safeDestroyed(guest)) return browserNotApplied('unavailable', '页面尚未挂载')
+      const fence = actionFence(
+        command.observation.browserId,
+        context.sessionId,
+        command.observation,
+        command.observation.observationId,
+        context.abortSignal
+      )
+      const result = await deps.control!.act(guest, fence, command.action)
+      if (result.status !== 'applied') return result
+      const finalMatch = ledger.matchObservation(command.observation, context.sessionId)
+      if (!finalMatch.ok) {
+        return { status: 'outcome_unknown', detail: '动作已经发出，但不能写回当前页面' }
+      }
+      return { status: 'applied', observation: finalMatch.value, summary: result.summary }
+    })
+  }
+
+  async function capture(
+    command: BrowserCaptureCommand,
+    context: BrowserCommandContext
+  ): Promise<BrowserCaptureResult> {
+    if (!deps.control) return CONTROL_UNAVAILABLE
+    const matched = ledger.matchObservation(command.observation, context.sessionId)
+    if (!matched.ok) return browserNotApplied(matched.code, '观察已不能用于截图')
+    const found = lookupPage(command.observation.browserId, context.sessionId)
+    if ('status' in found) return found
+    return runSerial(found.record, async () => {
+      const again = ledger.matchObservation(command.observation, context.sessionId)
+      if (!again.ok) return browserNotApplied(again.code, '观察已不能用于截图')
+      const guest = found.record.guest
+      if (!guest || safeDestroyed(guest)) return browserNotApplied('unavailable', '页面尚未挂载')
+      const fence = actionFence(
+        command.observation.browserId,
+        context.sessionId,
+        command.observation,
+        command.observation.observationId,
+        context.abortSignal
+      )
+      const shot = await deps.control!.capture(guest, fence)
+      if (shot.status !== 'applied') return shot
+      const finalMatch = ledger.matchObservation(command.observation, context.sessionId)
+      if (!finalMatch.ok) {
+        return { status: 'outcome_unknown', detail: '截图已经发出，但不能写回当前页面' }
+      }
+      return {
+        status: 'applied',
+        observation: finalMatch.value,
+        width: shot.width,
+        height: shot.height,
+        capturedAt: Date.now(),
+        image: { mimeType: 'image/png', base64: shot.base64 }
+      }
+    })
+  }
+
   function noteRendererReloading(): void {
     for (const record of pages.values()) {
       if (record.lifecycle === 'closing' || record.lifecycle === 'failed') continue
@@ -737,9 +937,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   return {
     open,
     navigate,
-    observe: async (_command: BrowserObserveCommand): Promise<BrowserObserveResult> => CONTROL_UNAVAILABLE,
-    act: async (_command: BrowserActCommand): Promise<ActionOutcome> => CONTROL_UNAVAILABLE,
-    capture: async (_command: BrowserCaptureCommand): Promise<BrowserCaptureResult> => CONTROL_UNAVAILABLE,
+    observe,
+    act,
+    capture,
     close,
     listPages,
     claim,

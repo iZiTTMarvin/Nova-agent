@@ -3,6 +3,7 @@ import type { BrowserGuestMountSnapshot, BrowserSurfaceSnapshot } from '../../sh
 import { getMainWindow } from '../mainWindowRef'
 import { getSessionStore } from '../services/SessionStoreHost'
 import { getWorkspaceService } from '../services/WorkspaceService'
+import { createElectronBrowserDriver } from './electronDriver'
 import { lookupElectronGuest } from './guestContents'
 import { createBrowserPartitionSlotPool } from './partitionSlots'
 import { createBrowserSessionHost, type BrowserSessionHost } from './sessionHost'
@@ -51,6 +52,7 @@ export function initBrowserSessionHost(): BrowserSessionHost {
       void shell.openExternal(url)
     },
     getCurrentSessionId: () => getWorkspaceService().getState().currentSessionId,
+    control: createElectronBrowserDriver(),
     allocatePartition: (browserId) => {
       const got = slotPool.acquire(browserId)
       if (!got.ok) return { error: 'resource_limit' }

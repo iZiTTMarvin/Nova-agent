@@ -4,11 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BrowserPort } from '../../../src/runtime/browser'
 import { BROWSER_ENGINE_CAPABILITIES } from '../../../src/shared/browser'
 import {
+  BROWSER_ACT,
   BROWSER_ATTACH,
+  BROWSER_CAPTURE,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
   BROWSER_GET_SNAPSHOT,
   BROWSER_NAVIGATE,
+  BROWSER_OBSERVE,
   BROWSER_OPEN,
   BROWSER_RELEASE
 } from '../../../src/shared/ipc/channels'
@@ -97,9 +100,12 @@ describe('browserHandler 入参校验与转发', () => {
     expect([...mocks.handlers.keys()].sort()).toEqual([
       BROWSER_ATTACH,
       BROWSER_CLAIM,
+      BROWSER_ACT,
+      BROWSER_CAPTURE,
       BROWSER_CLOSE,
       BROWSER_GET_SNAPSHOT,
       BROWSER_NAVIGATE,
+      BROWSER_OBSERVE,
       BROWSER_OPEN,
       BROWSER_RELEASE
     ].sort())

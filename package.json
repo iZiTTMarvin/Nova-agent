@@ -60,6 +60,7 @@
     "gray-matter": "^4.0.3",
     "iconv-lite": "^0.7.2",
     "linkedom": "^0.18.13",
+    "playwright-core": "1.59.1",
     "quickjs-emscripten-core": "^0.32.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

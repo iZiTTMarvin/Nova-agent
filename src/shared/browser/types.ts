@@ -79,8 +79,8 @@ export interface BrowserCapabilityDescriptor {
   /** 同源 iframe 点击尚未有可靠路径，不得当成已支持 */
   readonly sameOriginIframeClicks: false
   readonly crossOriginOopif: false
-  /** 滚动真实生效路径未定案，失败不得报成已滚动 */
-  readonly scrollReliable: false
+  /** 隔离世界里 window.scrollBy，以 scrollY 真实变化为准 */
+  readonly scrollReliable: true
 }
 
 export const BROWSER_ENGINE_CAPABILITIES: BrowserCapabilityDescriptor = Object.freeze({
@@ -92,7 +92,7 @@ export const BROWSER_ENGINE_CAPABILITIES: BrowserCapabilityDescriptor = Object.f
   openShadowRoot: true,
   sameOriginIframeClicks: false,
   crossOriginOopif: false,
-  scrollReliable: false
+  scrollReliable: true
 })
 
 export type BrowserControlProjection =
@@ -306,6 +306,22 @@ export interface BrowserAttachIpcParams {
   readonly sessionId: string
   readonly browserId: string
   readonly webContentsId: number
+}
+
+export interface BrowserObserveIpcParams {
+  readonly sessionId: string
+  readonly browserId: string
+}
+
+export interface BrowserActIpcParams {
+  readonly sessionId: string
+  readonly observation: ObservationIdentity
+  readonly action: BrowserAction
+}
+
+export interface BrowserCaptureIpcParams {
+  readonly sessionId: string
+  readonly observation: ObservationIdentity
 }
 
 export type BrowserAttachResult =

@@ -16,6 +16,29 @@ export type BrowserGuestEvent =
   | 'page-title-updated'
   | 'page-favicon-updated'
 
+export interface BrowserGuestImage {
+  toPNG(): Buffer
+  getSize(): { readonly width: number; readonly height: number }
+}
+
+export interface BrowserGuestClip {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
+export interface BrowserGuestDebugger {
+  isAttached(): boolean
+  attach(protocol: string): void
+  detach(): void
+  sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
+  on(event: 'detach', listener: () => void): void
+  on(event: 'message', listener: (method: string, params: unknown) => void): void
+  off(event: 'detach', listener: () => void): void
+  off(event: 'message', listener: (method: string, params: unknown) => void): void
+}
+
 export interface BrowserGuestContents {
   readonly id: number
   getType(): string
@@ -29,11 +52,9 @@ export interface BrowserGuestContents {
   goForward(): void
   reload(): void
   stop(): void
+  capturePage(clip?: BrowserGuestClip): Promise<BrowserGuestImage>
   setWindowOpenHandler(handler: GuestWindowOpenHandler): void
-  debugger: {
-    isAttached(): boolean
-    detach(): void
-  }
+  debugger: BrowserGuestDebugger
   on(event: BrowserGuestEvent, listener: (...args: unknown[]) => void): void
   off(event: BrowserGuestEvent, listener: (...args: unknown[]) => void): void
 }
@@ -42,6 +63,62 @@ export function lookupElectronGuest(id: number): BrowserGuestContents | undefine
   const guest = webContents.fromId(id)
   if (!guest) return undefined
   return wrapElectronGuest(guest)
+}
+
+function wrapDebugger(guest: WebContents): BrowserGuestDebugger {
+  const detachListeners = new Map<() => void, () => void>()
+  const messageListeners = new Map<
+    (method: string, params: unknown) => void,
+    (event: unknown, method: string, params: unknown) => void
+  >()
+  return {
+    isAttached: () => {
+      try {
+        return guest.debugger.isAttached()
+      } catch {
+        return false
+      }
+    },
+    attach: (protocol) => {
+      guest.debugger.attach(protocol)
+    },
+    detach: () => {
+      guest.debugger.detach()
+    },
+    sendCommand: (method, params) => guest.debugger.sendCommand(method, params),
+    on: (event, listener) => {
+      if (event === 'detach') {
+        const detachListener = listener as () => void
+        const wrapped = (): void => {
+          detachListener()
+        }
+        detachListeners.set(detachListener, wrapped)
+        guest.debugger.on('detach', wrapped)
+        return
+      }
+      const messageListener = listener as (method: string, params: unknown) => void
+      const wrapped = (_event: unknown, method: string, params: unknown): void => {
+        messageListener(method, params)
+      }
+      messageListeners.set(messageListener, wrapped)
+      guest.debugger.on('message', wrapped)
+    },
+    off: (event, listener) => {
+      if (event === 'detach') {
+        const detachListener = listener as () => void
+        const wrapped = detachListeners.get(detachListener)
+        if (!wrapped) return
+        guest.debugger.off('detach', wrapped)
+        detachListeners.delete(detachListener)
+        return
+      }
+      const messageListener = listener as (method: string, params: unknown) => void
+      const wrapped = messageListeners.get(messageListener)
+      if (!wrapped) return
+      guest.debugger.off('message', wrapped)
+      messageListeners.delete(messageListener)
+    }
+  }
 }
 
 export function wrapElectronGuest(guest: WebContents): BrowserGuestContents {
@@ -71,18 +148,21 @@ export function wrapElectronGuest(guest: WebContents): BrowserGuestContents {
     setWindowOpenHandler: (handler) => {
       guest.setWindowOpenHandler((details) => handler({ url: details.url }))
     },
-    debugger: {
-      isAttached: () => {
-        try {
-          return guest.debugger.isAttached()
-        } catch {
-          return false
-        }
-      },
-      detach: () => {
-        guest.debugger.detach()
+    capturePage: async (clip) => {
+      const image = clip
+        ? await guest.capturePage({
+            x: Math.round(clip.x),
+            y: Math.round(clip.y),
+            width: Math.round(clip.width),
+            height: Math.round(clip.height)
+          })
+        : await guest.capturePage()
+      return {
+        toPNG: () => image.toPNG(),
+        getSize: () => image.getSize()
       }
     },
+    debugger: wrapDebugger(guest),
     on: (event, listener) => {
       guest.on(event as Parameters<WebContents['on']>[0], listener as never)
     },

@@ -2,13 +2,16 @@ import {
   browserNotApplied,
   type BrowserAction,
   type BrowserActCommand,
+  type BrowserActIpcParams,
   type BrowserAttachIpcParams,
+  type BrowserCaptureIpcParams,
   type BrowserClaimIpcParams,
   type BrowserCloseIpcParams,
   type BrowserNavigateAction,
   type BrowserNavigateIpcParams,
   type BrowserNotApplied,
   type BrowserObserveCommand,
+  type BrowserObserveIpcParams,
   type BrowserOpenIpcParams,
   type BrowserSnapshotIpcParams,
   type ObservationIdentity
@@ -271,4 +274,41 @@ export function parseBrowserAttachIpcParams(
     return failed('挂载上报需要非空身份与正整数 webContentsId')
   }
   return { ok: true, value: Object.freeze({ sessionId, browserId, webContentsId }) }
+}
+
+export function parseBrowserObserveIpcParams(
+  input: unknown
+): BrowserParseResult<BrowserObserveIpcParams> {
+  return parseSessionBrowserId(input, '观察命令')
+}
+
+export function parseBrowserActIpcParams(input: unknown): BrowserParseResult<BrowserActIpcParams> {
+  if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'observation', 'action'])) {
+    return failed('操作命令必须且只能包含 sessionId、observation 与 action')
+  }
+  const sessionId = readNonEmptyString(input, 'sessionId')
+  if (sessionId === null) return failed('操作命令需要非空 sessionId')
+  const command = parseBrowserActCommand({ observation: input.observation, action: input.action })
+  if (!command.ok) return command
+  return {
+    ok: true,
+    value: Object.freeze({
+      sessionId,
+      observation: command.value.observation,
+      action: command.value.action
+    })
+  }
+}
+
+export function parseBrowserCaptureIpcParams(
+  input: unknown
+): BrowserParseResult<BrowserCaptureIpcParams> {
+  if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'observation'])) {
+    return failed('截图命令必须且只能包含 sessionId 与 observation')
+  }
+  const sessionId = readNonEmptyString(input, 'sessionId')
+  if (sessionId === null) return failed('截图命令需要非空 sessionId')
+  const observation = parseObservationIdentity(input.observation)
+  if (!observation.ok) return observation
+  return { ok: true, value: Object.freeze({ sessionId, observation: observation.value }) }
 }
