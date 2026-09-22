@@ -199,6 +199,14 @@ export function snapshotExpression(): string {
     if (cut) break;
   }
 
+  // 截断后 dom 可能少了尾部语义行：elements 只保留 dom 里仍存在的 ref，维持一一对应
+  const finalDom = domParts.join('\\n');
+  const presentRefs = new Set();
+  let refScan;
+  const refPattern = /\\[ref=(e\\d+)\\]/g;
+  while ((refScan = refPattern.exec(finalDom)) !== null) presentRefs.add(refScan[1]);
+  const keptElements = elements.filter((item) => presentRefs.has(item.ref));
+
   return {
     url: String(location.href || ''),
     title: String(document.title || ''),
@@ -207,8 +215,8 @@ export function snapshotExpression(): string {
       height: Math.max(0, Math.round(window.innerHeight || 0))
     },
     scrollY: Math.round(window.scrollY || 0),
-    dom: domParts.join('\\n'),
-    elements,
+    dom: finalDom,
+    elements: keptElements,
     truncated,
     limits,
   };

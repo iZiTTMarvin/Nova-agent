@@ -351,6 +351,9 @@ async function fill(
   text: string,
   deadlineAt: number
 ): Promise<BrowserControlActResult> {
+  const checked = await locate(state, fence, selector, deadlineAt, false)
+  if ('failure' in checked) return checked.failure
+  if (checked.code !== 'ok') return browserNotApplied(checked.code, checked.detail ?? '目标不可填写')
   const read = await runInWorld(state, fence, fillExpression(selector, text), deadlineAt)
   if (!read.ok) return read.failure
   return appliedCount(read.value, '已填入文本')
@@ -363,6 +366,9 @@ async function select(
   values: readonly string[],
   deadlineAt: number
 ): Promise<BrowserControlActResult> {
+  const checked = await locate(state, fence, selector, deadlineAt, false)
+  if ('failure' in checked) return checked.failure
+  if (checked.code !== 'ok') return browserNotApplied(checked.code, checked.detail ?? '目标不可选择')
   const read = await runInWorld(state, fence, selectExpression(selector, values), deadlineAt)
   if (!read.ok) return read.failure
   if (isRecord(read.value) && read.value.error === 'not-select') {
@@ -416,11 +422,14 @@ async function locate(
 ): Promise<QueryHit | { failure: BrowserNotApplied }> {
   const read = await runInWorld(state, fence, actionabilityExpression(selector, hitTest), deadlineAt)
   if (!read.ok) return { failure: read.failure }
-  if (!isRecord(read.value) || typeof read.value.code !== 'string') {
+  if (!isRecord(read.value)) {
     return { failure: browserNotApplied('unavailable', '无法定位目标') }
   }
   if (read.value.error === 'missing-engine') {
     return { failure: browserNotApplied('unavailable', '隔离世界缺少定位脚本') }
+  }
+  if (typeof read.value.code !== 'string') {
+    return { failure: browserNotApplied('unavailable', '无法定位目标') }
   }
   const code = read.value.code
   if (code === 'ok') {

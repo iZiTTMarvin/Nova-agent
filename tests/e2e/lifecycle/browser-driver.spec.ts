@@ -43,6 +43,7 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
       <div id="slot"><input id="email" aria-label="邮箱"></div>
       <button id="replace" type="button">替换</button>
       <button id="save" type="button">保存</button>
+      <button id="push" type="button">跳转</button>
       <p id="out"></p>
       <script>
         document.getElementById('replace').onclick = () => {
@@ -55,6 +56,32 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
           const field = document.getElementById('email');
           document.getElementById('out').textContent = 'saved:' + (field && 'value' in field ? field.value : '');
         };
+        document.getElementById('push').onclick = () => {
+          history.pushState({}, '', '/spa?view=next');
+          document.getElementById('out').textContent = 'pushed';
+        };
+      </script>
+    `),
+    '/dupe': page('Dupe', `
+      <button id="spawn-hidden" type="button">克隆隐藏</button>
+      <button id="spawn-visible" type="button">克隆显示</button>
+      <div id="target-wrap"><button type="button">保存</button></div>
+      <p id="out">idle</p>
+      <script>
+        const spawn = (hidden) => {
+          const wrap = document.getElementById('target-wrap');
+          const copy = wrap.querySelector('button').cloneNode(true);
+          copy.style.display = hidden ? 'none' : '';
+          wrap.insertBefore(copy, wrap.querySelector('button'));
+          document.getElementById('out').textContent = 'spawned';
+        };
+        document.getElementById('spawn-hidden').onclick = () => spawn(true);
+        document.getElementById('spawn-visible').onclick = () => spawn(false);
+        document.getElementById('target-wrap').addEventListener('click', (event) => {
+          if (event.target instanceof HTMLButtonElement && event.target.textContent === '保存') {
+            document.getElementById('out').textContent = 'saved';
+          }
+        });
       </script>
     `),
     '/scroll': page('Scroll', `
@@ -370,6 +397,78 @@ test('导航后旧 ref 失效，动作返回 stale_observation', async ({ nova }
       action: { kind: 'click', ref: save!.ref }
     }) as { status: string; code?: string }
     expect(stale, JSON.stringify(stale)).toMatchObject({ status: 'not_applied', code: 'stale_observation' })
+
+    await nova.invoke(BROWSER_NAVIGATE, {
+      sessionId: opened.sessionId,
+      browserId: opened.browserId,
+      action: { kind: 'url', url: `${fixture.origin}/spa` }
+    })
+    const spa = await observePage(nova, opened.sessionId, opened.browserId)
+    const push = spa.snapshot.elements.find((item) => item.name === '跳转')
+    const spaSave = spa.snapshot.elements.find((item) => item.name === '保存')
+    expect(push && spaSave).toBeTruthy()
+    const pushed = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: spa.observation,
+      action: { kind: 'click', ref: push!.ref }
+    }) as { status: string }
+    // 点击本身触发页内导航：输入已发出，但所属观察同时失效，按设计不写回
+    expect(['applied', 'outcome_unknown']).toContain(pushed.status)
+    const staleAfterPush = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: spa.observation,
+      action: { kind: 'click', ref: spaSave!.ref }
+    }) as { status: string; code?: string }
+    expect(staleAfterPush, JSON.stringify(staleAfterPush)).toMatchObject({
+      status: 'not_applied',
+      code: 'stale_observation'
+    })
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('同选择器多匹配时唯一可见者优先，仍有歧义则拒绝', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/dupe`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    const save = view.snapshot.elements.find((item) => item.name === '保存' && item.role === 'button')
+    const spawnHidden = view.snapshot.elements.find((item) => item.name === '克隆隐藏')
+    const spawnVisible = view.snapshot.elements.find((item) => item.name === '克隆显示')
+    expect(save && spawnHidden && spawnVisible).toBeTruthy()
+
+    // 生成隐藏副本后旧选择器匹配两个：唯一可见者优先，点击应落在原按钮上
+    const hid = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: spawnHidden!.ref }
+    }) as { status: string }
+    expect(hid.status).toBe('applied')
+    const saved = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: save!.ref }
+    }) as { status: string; code?: string }
+    expect(saved, JSON.stringify(saved)).toMatchObject({ status: 'applied' })
+
+    // 再生成可见副本：两个都可见，必须拒绝而不是乱点
+    const shown = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: spawnVisible!.ref }
+    }) as { status: string }
+    expect(shown.status).toBe('applied')
+    const ambiguous = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: save!.ref }
+    }) as { status: string; code?: string }
+    expect(ambiguous, JSON.stringify(ambiguous)).toMatchObject({ status: 'not_applied', code: 'target_ambiguous' })
+
+    const after = await observePage(nova, opened.sessionId, opened.browserId)
+    expect(after.snapshot.elements.filter((item) => item.name === '保存').length).toBe(2)
   } finally {
     await fixture.close()
   }
