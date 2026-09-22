@@ -385,6 +385,65 @@ describe('planToolResultSupersession', () => {
     expect(planToolResultSupersession(tickMessages).size).toBe(0)
   })
 
+  it('browser_observe 同一页新快照覆盖旧快照', () => {
+    const messages: ChatMessage[] = [
+      asst('o1', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o1', 'snap 1'),
+      asst('o2', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o2', 'snap 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.get('o1')).toBe('idempotent_snapshot')
+    expect(plan.has('o2')).toBe(false)
+  })
+
+  it('browser_observe 不同 browserId 的快照互不覆盖', () => {
+    const messages: ChatMessage[] = [
+      asst('o1', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o1', 'page a'),
+      asst('o2', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_2' })),
+      tool('o2', 'page b')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('browser_observe list 不参与幂等快照覆盖', () => {
+    const messages: ChatMessage[] = [
+      asst('l1', 'browser_observe', JSON.stringify({ action: 'list' })),
+      tool('l1', 'pages 1'),
+      asst('l2', 'browser_observe', JSON.stringify({ action: 'list' })),
+      tool('l2', 'pages 2')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('browser_act 不覆盖 observe 快照', () => {
+    const messages: ChatMessage[] = [
+      asst('o1', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o1', 'snap'),
+      asst('a1', 'browser_act', JSON.stringify({
+        observation: { browserId: 'brw_1', generation: 1, documentEpoch: 1, observationId: 'obs_1' },
+        action: { kind: 'click', ref: 'e1' }
+      })),
+      tool('a1', 'clicked')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
+  it('较新失败的 observe 快照不能覆盖旧成功快照', () => {
+    const messages: ChatMessage[] = [
+      asst('o1', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o1', 'snap 1'),
+      asst('o2', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o2', '工具执行失败: [stale_observation] 观察已失效')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.size).toBe(0)
+  })
+
   it('offset 为负数或非有限数的 read 不参与覆盖判定', () => {
     const messages: ChatMessage[] = [
       asst('r1', 'read', readArgs({ offset: -1, limit: 50 })),

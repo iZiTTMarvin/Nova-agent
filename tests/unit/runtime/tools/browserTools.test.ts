@@ -84,6 +84,11 @@ describe('browser 工具契约', () => {
     expect(actAction.oneOf.length).toBe(6)
   })
 
+  it('observe 不声明 maxResultSizeChars，大快照走归档通道而不是执行器预截断', () => {
+    const observe = createBrowserObserveTool({ getPort: () => fakePort() })
+    expect(observe.maxResultSizeChars).toBeUndefined()
+  })
+
   it('observationId 未通过契约校验时不呼叫 Host', async () => {
     const port = fakePort()
     const act = createBrowserActTool({ getPort: () => port })

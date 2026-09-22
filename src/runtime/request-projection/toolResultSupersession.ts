@@ -18,7 +18,7 @@ export type SupersessionReason =
 export type SupersessionPlan = ReadonlyMap<string, SupersessionReason>
 
 /**
- * exact_duplicate 仅对纯读取工具生效；bash 的重复调用由
+ * exact_duplicate 仅对纯读取工具生效；bash 只读观察与 browser_observe 快照由
  * idempotent_snapshot 白名单单独判定，写工具与交互工具一律不触碰。
  */
 const EXACT_DUPLICATE_TOOLS = new Set([
@@ -247,6 +247,33 @@ function applyIdempotentSnapshot(
     g.push(e)
     groups.set(key, g)
   }
+  coverOlderWithLatestSuccess(groups, plan, 'idempotent_snapshot')
+}
+
+function applyBrowserObserveSnapshot(
+  entries: ToolResultEntry[],
+  plan: Map<string, SupersessionReason>
+): void {
+  const groups = new Map<string, ToolResultEntry[]>()
+  for (const e of entries) {
+    if (e.toolName !== 'browser_observe') continue
+    const rec = e.argRecord
+    if (!rec) continue
+    if (rec.action !== 'snapshot') continue
+    const browserId = rec.browserId
+    if (typeof browserId !== 'string' || browserId.length === 0) continue
+    const g = groups.get(browserId) ?? []
+    g.push(e)
+    groups.set(browserId, g)
+  }
+  coverOlderWithLatestSuccess(groups, plan, 'idempotent_snapshot')
+}
+
+function coverOlderWithLatestSuccess(
+  groups: Map<string, ToolResultEntry[]>,
+  plan: Map<string, SupersessionReason>,
+  reason: Extract<SupersessionReason, 'idempotent_snapshot'>
+): void {
   for (const g of groups.values()) {
     if (g.length < 2) continue
     g.sort((a, b) => a.index - b.index)
@@ -255,7 +282,7 @@ function applyIdempotentSnapshot(
     if (!coverer) continue
     for (const e of g) {
       if (e.index < coverer.index && !plan.has(e.toolCallId)) {
-        plan.set(e.toolCallId, 'idempotent_snapshot')
+        plan.set(e.toolCallId, reason)
       }
     }
   }
@@ -273,5 +300,6 @@ export function planToolResultSupersession(
   applyExactDuplicate(entries, plan)
   applyReadRangeCovered(entries, plan)
   applyIdempotentSnapshot(entries, plan)
+  applyBrowserObserveSnapshot(entries, plan)
   return plan
 }

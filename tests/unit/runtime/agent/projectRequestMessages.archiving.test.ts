@@ -222,6 +222,41 @@ describe('projectRequestMessages archiving', () => {
     }
   })
 
+  it('browser_observe 大快照走既有归档通道：当轮全文投递，滑出后成占位符且指引 archive_read 回读', async () => {
+    const body = `observationId: obs_1
+browserId: brw_1
+url: https://example.com
+title: Example
+
+dom:
+${'- button [ref=e1]: 保存\n'.repeat(2500)}`
+    const original: ChatMessage = { role: 'tool', toolCallId: 'bo1', content: body }
+    let archiveCalls = 0
+    const input = {
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => {
+        archiveCalls++
+        return { artifactId: 'bo-art' }
+      }
+    }
+
+    const current = await projectRequestMessages({
+      ...input,
+      messages: [original],
+      deferToolCallIds: new Set(['bo1'])
+    })
+    expect(current.messages[0].content).toBe(body)
+    expect(archiveCalls).toBe(0)
+
+    const next = await projectRequestMessages({ ...input, messages: [original] })
+    const placeholder = String(next.messages[0].content)
+    expect(isArchivedPlaceholder(placeholder)).toBe(true)
+    expect(archiveCalls).toBe(1)
+    expect(placeholder).toContain('archive_read')
+    expect(original.content).toBe(body)
+  })
+
   it('web_fetch 大页走既有归档通道：当轮全文投递，滑出后成占位符且指引 archive_read 回读', async () => {
     // 模拟 web_fetch 的返回格式（大页正文超过当轮归档阈值 2048 token ≈ 8K 字符）
     const body = `URL：https://docs.example.com/guide
@@ -389,6 +424,29 @@ describe('projectRequestMessages supersession 集成', () => {
     expect(result.diagnostics.prunedCount).toBe(1)
     expect(result.diagnostics.estimatedTokensSaved).toBeGreaterThan(0)
     // 权威原文未被 mutate
+    expect(messages[1].content).toBe(big)
+    expect(messages[3].content).toBe(big)
+  })
+
+  it('两次同一页 browser_observe 快照：第一次变占位符(superseded)，第二次保留原文', async () => {
+    const big = multilineBig()
+    const snapshotArgs = JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })
+    const messages: ChatMessage[] = [
+      asst('o1', 'browser_observe', snapshotArgs),
+      { role: 'tool', content: big, toolCallId: 'o1' },
+      asst('o2', 'browser_observe', snapshotArgs),
+      { role: 'tool', content: big, toolCallId: 'o2' }
+    ]
+    const result = await projectRequestMessages({
+      messages,
+      policy: { enabled: true },
+      archiveCache: createRequestProjectionArchiveCache(),
+      archive: async () => ({ artifactId: 'art1' })
+    })
+    expect(isArchivedPlaceholder(result.messages[1].content as string)).toBe(true)
+    const parsed = JSON.parse(result.messages[1].content as string) as ArchivedToolResultPlaceholder
+    expect(parsed.reason).toBe('superseded_by_newer_result')
+    expect(result.messages[3].content).toBe(big)
     expect(messages[1].content).toBe(big)
     expect(messages[3].content).toBe(big)
   })

@@ -18,7 +18,8 @@ const DESCRIPTION = `browser_observe — 读取当前任务里的网页。只读
 - snapshot + browserId：返回有界语义快照（dom 行带 ref，elements 含 selector/rect）
 
 后续点击/填写必须使用本次返回的 observationId。页面导航或用户接管后旧观察立即失效。
-iframe 内部内容不会进入快照。不要声明或期待完整 HTML。`
+iframe 内部内容不会进入快照。不要声明或期待完整 HTML。
+快照全文先投递一轮，滑出窗口后归档；同一页的新快照会覆盖旧快照。`
 
 export function createBrowserObserveTool(deps: BrowserToolDeps): ToolExecutor {
   return {
@@ -47,6 +48,8 @@ export function createBrowserObserveTool(deps: BrowserToolDeps): ToolExecutor {
       ]
     },
     executionMode: 'sequential',
+    // 有意不声明 maxResultSizeChars：执行器会在归档机制看到全文之前硬截断，
+    // 大快照走「先完整投递一轮、滑出窗口再归档」的既有通道。
     async execute(args, context): Promise<ToolResult> {
       const parsed = parseBrowserObserveToolArgs(args)
       if (!parsed.ok) return parseFail(parsed.detail)
