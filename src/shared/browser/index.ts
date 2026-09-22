@@ -12,6 +12,7 @@ export {
   BROWSER_PENDING_MAX,
   BROWSER_TOOL_NAMES,
   browserNotApplied,
+  formatBrowserViewport,
   isBrowserErrorCode,
   isBrowserObservationLimit,
   isBrowserToolName,
@@ -112,6 +113,15 @@ export {
   type BrowserPageProjectInput,
   type GuestLoadFailureFields
 } from './project'
+export {
+  canonicalizePreviewTarget,
+  classifyPreviewHostname,
+  decideBrowserNetworkRequest,
+  previewOriginsMatch,
+  type BrowserNetworkRequest,
+  type CanonicalPreviewTarget,
+  type PreviewAddressClass
+} from './previewOrigin'
 export {
   createBrowserIdentityLedger,
   type BrowserIdentityFailureCode,

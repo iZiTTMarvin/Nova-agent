@@ -138,7 +138,14 @@ describe('browser 工具契约', () => {
         snapshot: {
           url: 'https://example.com',
           title: 'Example',
-          viewport: { width: 800, height: 600, device: 'desktop' },
+          viewport: {
+            width: 800,
+            height: 600,
+            device: 'desktop',
+            deviceScaleFactor: 1,
+            simulated: false,
+            displayScale: null
+          },
           dom: '- button [ref=e1]: 保存',
           elements: [
             {
@@ -172,6 +179,14 @@ describe('browser 工具契约', () => {
         width: 1,
         height: 1,
         capturedAt: 1,
+        viewport: {
+          width: 1,
+          height: 1,
+          device: 'desktop',
+          deviceScaleFactor: 1,
+          simulated: false,
+          displayScale: null
+        },
         image: { mimeType: 'image/png', base64: png }
       }))
     })
@@ -200,6 +215,14 @@ describe('browser 工具契约', () => {
         width: 1,
         height: 1,
         capturedAt: 1,
+        viewport: {
+          width: 1,
+          height: 1,
+          device: 'desktop',
+          deviceScaleFactor: 1,
+          simulated: false,
+          displayScale: null
+        },
         image: { mimeType: 'image/png', base64: png }
       }))
     })

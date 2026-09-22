@@ -7,7 +7,8 @@ import type {
   BrowserErrorCode,
   BrowserNotApplied,
   BrowserObservationProjection,
-  BrowserUnknownOutcome
+  BrowserUnknownOutcome,
+  BrowserViewportProjection
 } from '../../shared/browser'
 import type { BrowserGuestContents } from './guestContents'
 
@@ -39,6 +40,7 @@ export type BrowserControlCaptureResult =
       readonly width: number
       readonly height: number
       readonly base64: string
+      readonly viewport: BrowserViewportProjection
     }
   | BrowserNotApplied
   | BrowserUnknownOutcome

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { ProcessRegistry } from '../../../../src/runtime/process'
 import type { BrowserPageControl } from '../../../../src/main/browser/controlPort'
+import {
+  createPreviewGrantStore,
+  type PreviewGrantStore
+} from '../../../../src/main/browser/previewGrants'
+import { findOwnedPreviewRef } from '../../../../src/main/browser/previewProcess'
 import {
   createBrowserSessionHost,
   type BrowserSessionHost
@@ -136,7 +142,14 @@ function createClock(): {
   }
 }
 
-function createHarness(guests: Map<number, FakeGuest>, control?: BrowserPageControl): {
+function createHarness(
+  guests: Map<number, FakeGuest>,
+  control?: BrowserPageControl,
+  extras?: {
+    previewGrants?: PreviewGrantStore
+    readDisplayScale?: () => number | null
+  }
+): {
   host: BrowserSessionHost
   snapshots: BrowserSurfaceSnapshot[]
   mounts: BrowserGuestMountSnapshot[]
@@ -155,6 +168,8 @@ function createHarness(guests: Map<number, FakeGuest>, control?: BrowserPageCont
     },
     delay: clock.delay,
     control,
+    previewGrants: extras?.previewGrants,
+    readDisplayScale: extras?.readDisplayScale,
     onSnapshot: (snapshot) => {
       snapshots.push(snapshot)
     },
@@ -526,7 +541,14 @@ describe('BrowserSessionHost 生命周期', () => {
               url: 'https://example.com/app',
               title: 'late',
               truncated: false,
-              viewport: { width: 800, height: 600, device: 'desktop' },
+              viewport: {
+                width: 800,
+                height: 600,
+                device: 'desktop',
+                deviceScaleFactor: 1,
+                simulated: false,
+                displayScale: null
+              },
               dom: '- heading "late"',
               elements: [],
               limits: []
@@ -696,6 +718,116 @@ describe('BrowserSessionHost 生命周期', () => {
     expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'none' })
     expect(latestLifecycle(harness.snapshots, browserId)).toBe('ready')
   })
+
+  it('云元数据地址不能打开，也不会占用页面名额', async () => {
+    const harness = createHarness(new Map())
+    const opened = await harness.host.open(
+      { url: 'http://169.254.169.254/latest/meta-data' },
+      { sessionId: 'sess_1' }
+    )
+    expect(opened).toMatchObject({ status: 'not_applied', code: 'invalid_request' })
+    expect(harness.host.livePageCount()).toBe(0)
+  })
+
+  it('观察结果带上显示器缩放', async () => {
+    const harness = createHarness(
+      new Map([[21, new FakeGuest({ id: 21 })]]),
+      immediateControl(),
+      { readDisplayScale: () => 1.5 }
+    )
+    const browserId = await openReady(harness, 21)
+    const observed = await harness.host.observe({ browserId }, { sessionId: 'sess_1' })
+    expect(observed.status).toBe('applied')
+    if (observed.status !== 'applied') return
+    expect(observed.snapshot.viewport).toMatchObject({
+      width: 800,
+      height: 600,
+      deviceScaleFactor: 1,
+      simulated: false,
+      displayScale: 1.5
+    })
+  })
+
+  it('接管后旧的视口恢复不会再写到页面上', async () => {
+    const applied: string[] = []
+    const harness = createHarness(new Map([[22, new FakeGuest({ id: 22 })]]), {
+      ...immediateControl(),
+      act: async (_guest, fence, action) => {
+        const current = fence.stillCurrent()
+        if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+        if (action.kind === 'viewport') applied.push(`${action.width}x${action.height}`)
+        return { status: 'applied', summary: 'viewport' }
+      }
+    })
+    const browserId = await openReady(harness, 22)
+    const observed = await harness.host.observe({ browserId }, agentContext())
+    expect(observed.status).toBe('applied')
+    if (observed.status !== 'applied') return
+    const set = await harness.host.act(
+      {
+        observation: observed.observation,
+        action: { kind: 'viewport', width: 390, height: 844, device: 'mobile' }
+      },
+      agentContext()
+    )
+    expect(set.status).toBe('applied')
+    await harness.host.claim({ browserId }, { sessionId: 'sess_1' })
+    const restore = await harness.host.act(
+      {
+        observation: observed.observation,
+        action: { kind: 'viewport', width: 1280, height: 800, device: 'desktop' }
+      },
+      agentContext()
+    )
+    expect(restore).toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    expect(applied).toEqual(['390x844'])
+  })
+
+  it('关掉预览页不会终止已绑定的开发服务器', async () => {
+    const registry = new ProcessRegistry({ terminateTimeoutMs: 20 })
+    let kills = 0
+    const child = {
+      exitCode: null as number | null,
+      signalCode: null as string | null,
+      once() {}
+    }
+    const handle = registry.register({
+      owner: { sessionId: 'sess_1', runId: 'run_1' },
+      source: 'main-run',
+      command: 'vite http://127.0.0.1:5173',
+      workdir: 'D:/workspace',
+      destructive: false,
+      seedOutput: '',
+      killTree: async () => {
+        kills += 1
+      },
+      writeStdin: async () => {},
+      child,
+      checkpointBaseline: null
+    })
+    const grants = createPreviewGrantStore({
+      findRunning: (sessionId, origin) => findOwnedPreviewRef(registry.listRunning(sessionId), origin)
+    })
+    const guest = new FakeGuest({ id: 23, url: 'http://127.0.0.1:5173/' })
+    const harness = createHarness(new Map([[23, guest]]), undefined, { previewGrants: grants })
+    const browserId = await openReady(harness, 23, 'http://127.0.0.1:5173/')
+    expect(grants.inspect()).toEqual([
+      expect.objectContaining({
+        origin: 'http://127.0.0.1:5173',
+        sessionId: 'sess_1',
+        workspaceKey: 'ws_a',
+        processRef: handle.ref
+      })
+    ])
+    const closing = harness.host.close({ browserId }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    harness.clock.flush(1000)
+    await Promise.resolve()
+    guest.destroy()
+    await expect(closing).resolves.toMatchObject({ status: 'applied' })
+    expect(kills).toBe(0)
+    expect(registry.describe(handle.ref, 'sess_1').state).toBe('running')
+  })
 })
 
 function latestBrowserId(snapshots: BrowserSurfaceSnapshot[]): string {
@@ -738,7 +870,14 @@ function appliedRead() {
         url: 'https://example.com/app',
         title: 'ok',
         truncated: false,
-        viewport: { width: 800, height: 600, device: 'desktop' as const },
+        viewport: {
+          width: 800,
+          height: 600,
+          device: 'desktop' as const,
+          deviceScaleFactor: 1,
+          simulated: false,
+          displayScale: null
+        },
         dom: '- heading "ok"',
         elements: [],
         limits: []

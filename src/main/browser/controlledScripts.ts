@@ -212,7 +212,8 @@ export function snapshotExpression(): string {
     title: String(document.title || ''),
     viewport: {
       width: Math.max(0, Math.round(window.innerWidth || 0)),
-      height: Math.max(0, Math.round(window.innerHeight || 0))
+      height: Math.max(0, Math.round(window.innerHeight || 0)),
+      devicePixelRatio: Number(window.devicePixelRatio || 1)
     },
     scrollY: Math.round(window.scrollY || 0),
     dom: finalDom,

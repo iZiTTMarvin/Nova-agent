@@ -15,6 +15,7 @@ import {
 } from '../../browser'
 import {
   browserNotApplied,
+  formatBrowserViewport,
   parseBrowserCaptureToolArgs
 } from '../../../shared/browser'
 import type { ModelClient } from '../../model/ModelClient'
@@ -110,7 +111,8 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
         `documentEpoch: ${captured.observation.documentEpoch}`,
         `capturedAt: ${captured.capturedAt}`,
         `size: ${constrained.width}x${constrained.height}`,
-        `bytes: ${constrained.bytes}`
+        `bytes: ${constrained.bytes}`,
+        `viewport: ${formatBrowserViewport(captured.viewport)}`
       ]
 
       const canSendImage = await probe(context.modelClient, { abortSignal: context.abortSignal })

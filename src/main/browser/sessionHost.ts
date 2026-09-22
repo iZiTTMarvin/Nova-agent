@@ -43,6 +43,7 @@ import {
 } from '../../shared/browser'
 import type { BrowserCommandContext, BrowserPort } from '../../runtime/browser'
 import type { BrowserControlFence, BrowserPageControl } from './controlPort'
+import { createPreviewGrantStore, type PreviewGrantStore } from './previewGrants'
 import { routeGuestPopup } from './webviewPolicy'
 import type { BrowserGuestContents } from './guestContents'
 
@@ -66,6 +67,8 @@ export interface BrowserSessionHostDeps {
     | { readonly partition: string }
     | { readonly error: 'resource_limit' }
   readonly releasePartition?: (browserId: string) => Promise<void>
+  readonly previewGrants?: PreviewGrantStore
+  readonly readDisplayScale?: () => number | null
 }
 
 export interface BrowserBindingInspection {
@@ -119,6 +122,7 @@ interface PageRecord {
   jobs: SerialJob[]
   serialActive: boolean
   halted: boolean
+  layoutViewport: { width: number; height: number } | null
 }
 
 function defaultDelay(ms: number): Promise<void> {
@@ -132,6 +136,7 @@ function uniquePartition(browserId: string): string {
 export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserSessionHost {
   const ledger = deps.identity ?? createBrowserIdentityLedger()
   const delay = deps.delay ?? defaultDelay
+  const previewGrants = deps.previewGrants ?? createPreviewGrantStore({ findRunning: () => null })
   const pages = new Map<string, PageRecord>()
   let sequence = 0
 
@@ -178,7 +183,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         sessionId: record.sessionId,
         src: record.url,
         partition: record.partition,
-        visible: record.visible
+        visible: record.visible,
+        layoutWidth: record.layoutViewport?.width ?? null,
+        layoutHeight: record.layoutViewport?.height ?? null
       })
     }
     return { sequence, guests }
@@ -591,6 +598,12 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (url === null) {
       return browserNotApplied('invalid_request', '只允许不含用户信息的 http 或 https 地址')
     }
+    const confirmed = previewGrants.confirm({
+      workspaceKey,
+      sessionId: context.sessionId,
+      url
+    })
+    if (!confirmed.ok) return browserNotApplied(confirmed.code, confirmed.detail)
     const issued = ledger.issuePage({ sessionId: context.sessionId, workspaceKey })
     if (!issued.ok) {
       if (issued.code === 'resource_limit') {
@@ -623,7 +636,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       guestListeners: [],
       jobs: [],
       serialActive: false,
-      halted: false
+      halted: false,
+      layoutViewport: null
     }
     pages.set(issued.value.browserId, record)
     emit()
@@ -810,6 +824,16 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       try {
         const action = command.action
         if (action.kind === 'url') {
+          const workspaceKey = deps.resolveWorkspaceKey(context.sessionId)
+          if (workspaceKey === null) {
+            return browserNotApplied('not_owner', '当前会话没有可绑定的工作区')
+          }
+          const confirmed = previewGrants.confirm({
+            workspaceKey,
+            sessionId: context.sessionId,
+            url: action.url
+          })
+          if (!confirmed.ok) return browserNotApplied(confirmed.code, confirmed.detail)
           found.record.loading = true
           if (!deps.control) found.record.url = action.url
           emit()
@@ -1035,7 +1059,15 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       const issued = ledger.issueObservation(command.browserId)
       if (!issued.ok) return browserNotApplied(issued.code, '无法签发观察')
       deps.control!.bindRefs(issued.value.observationId, read.read.refs)
-      return { status: 'applied', observation: issued.value, snapshot: read.read.snapshot }
+      const displayScale = deps.readDisplayScale?.() ?? read.read.snapshot.viewport.displayScale
+      return {
+        status: 'applied',
+        observation: issued.value,
+        snapshot: {
+          ...read.read.snapshot,
+          viewport: { ...read.read.snapshot.viewport, displayScale }
+        }
+      }
     })
   }
 
@@ -1058,7 +1090,19 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         command.observation.observationId,
         signal
       )
+      const previousLayout = found.record.layoutViewport
+      if (command.action.kind === 'viewport') {
+        found.record.layoutViewport = { width: command.action.width, height: command.action.height }
+        emit()
+      }
       const result = await deps.control!.act(guest, fence, command.action)
+      if (command.action.kind === 'viewport' && result.status !== 'applied') {
+        const lease = fence.stillCurrent()
+        if (lease.ok) {
+          found.record.layoutViewport = previousLayout
+          emit()
+        }
+      }
       if (result.status !== 'applied') return result
       if (signal.aborted) {
         return { status: 'outcome_unknown', detail: '动作已经发出，但命令已取消' }
@@ -1102,12 +1146,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       if (!finalMatch.ok) {
         return { status: 'outcome_unknown', detail: '截图已经发出，但不能写回当前页面' }
       }
+      const displayScale = deps.readDisplayScale?.() ?? shot.viewport.displayScale
       return {
         status: 'applied',
         observation: finalMatch.value,
         width: shot.width,
         height: shot.height,
         capturedAt: Date.now(),
+        viewport: { ...shot.viewport, displayScale },
         image: { mimeType: 'image/png', base64: shot.base64 }
       }
     })

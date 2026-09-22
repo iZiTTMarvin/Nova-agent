@@ -1,4 +1,5 @@
-import { session, shell, type BrowserWindow } from 'electron'
+import { screen, session, shell, type BrowserWindow } from 'electron'
+import { processRegistry } from '../../runtime/process'
 import type { BrowserGuestMountSnapshot, BrowserSurfaceSnapshot } from '../../shared/browser'
 import { getMainWindow } from '../mainWindowRef'
 import { getSessionStore } from '../services/SessionStoreHost'
@@ -6,6 +7,8 @@ import { getWorkspaceService } from '../services/WorkspaceService'
 import { createElectronBrowserDriver } from './electronDriver'
 import { lookupElectronGuest } from './guestContents'
 import { createBrowserPartitionSlotPool } from './partitionSlots'
+import { createPreviewGrantStore } from './previewGrants'
+import { createRegistryPreviewQuery } from './previewProcess'
 import { getBrowserSessionHost, setBrowserSessionHost } from './hostRef'
 import { createBrowserSessionHost, type BrowserSessionHost } from './sessionHost'
 import {
@@ -35,6 +38,18 @@ export async function cleanupBrowserPartition(partition: string): Promise<void> 
 
 const slotPool = createBrowserPartitionSlotPool(cleanupBrowserPartition)
 
+function readDisplayScale(): number | null {
+  try {
+    const win = getMainWindow()
+    const display = win && !win.isDestroyed()
+      ? screen.getDisplayMatching(win.getBounds())
+      : screen.getPrimaryDisplay()
+    return typeof display.scaleFactor === 'number' ? display.scaleFactor : null
+  } catch {
+    return null
+  }
+}
+
 function sendSnapshot(snapshot: BrowserSurfaceSnapshot): void {
   pushBrowserSurfaceSnapshot(getMainWindow(), snapshot)
 }
@@ -63,7 +78,11 @@ export function initBrowserSessionHost(): BrowserSessionHost {
       await slotPool.release(browserId)
     },
     onSnapshot: sendSnapshot,
-    onGuestMount: sendGuestMount
+    onGuestMount: sendGuestMount,
+    previewGrants: createPreviewGrantStore(
+      createRegistryPreviewQuery((sessionId) => processRegistry.listRunning(sessionId))
+    ),
+    readDisplayScale
   })
   setBrowserSessionHost(host)
   return host

@@ -158,6 +158,17 @@ export interface BrowserViewportProjection {
   readonly width: number
   readonly height: number
   readonly device: BrowserViewportDevice
+  /** 页面 devicePixelRatio。模拟视口时期望为捕获用的 1。 */
+  readonly deviceScaleFactor: number
+  /** 当前布局视口来自设备模拟，不是窗口本身的尺寸。 */
+  readonly simulated: boolean
+  /** 宿主显示器缩放。读不到时为 null，不能写成 1 冒充。 */
+  readonly displayScale: number | null
+}
+
+export function formatBrowserViewport(viewport: BrowserViewportProjection): string {
+  const scale = viewport.displayScale === null ? 'unknown' : String(viewport.displayScale)
+  return `${viewport.width}x${viewport.height} ${viewport.device} dpr=${viewport.deviceScaleFactor} simulated=${viewport.simulated ? 'yes' : 'no'} displayScale=${scale}`
 }
 
 export interface BrowserRect {
@@ -312,6 +323,7 @@ export type BrowserCaptureResult =
       readonly width: number
       readonly height: number
       readonly capturedAt: number
+      readonly viewport: BrowserViewportProjection
       readonly image: BrowserCaptureImage
     }
   | BrowserNotApplied
@@ -390,6 +402,9 @@ export interface BrowserGuestMount {
   readonly src: string
   readonly partition: string
   readonly visible: boolean
+  /** 模拟视口的 CSS 尺寸。null 表示跟着浏览舞台走。 */
+  readonly layoutWidth: number | null
+  readonly layoutHeight: number | null
 }
 
 export interface BrowserGuestMountSnapshot {

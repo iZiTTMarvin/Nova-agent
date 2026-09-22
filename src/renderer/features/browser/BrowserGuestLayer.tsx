@@ -37,6 +37,8 @@ export function BrowserGuestLayer(): ReactNode {
   const focused = pickFocusedPage(pages, focusedBrowserId, snapshot?.activeBrowserId ?? null)
   const shown = guestShownInSession(guests?.guests ?? [], sessionId, focused?.browserId ?? null)
   const overlayBlocksGuest = Boolean(focused?.loadError)
+  const layoutWidth = shown?.layoutWidth ?? null
+  const layoutHeight = shown?.layoutHeight ?? null
 
   useEffect(() => {
     const layer = layerRef.current
@@ -63,8 +65,14 @@ export function BrowserGuestLayer(): ReactNode {
       if (!visible || !box) return
       layer.style.top = `${box.top}px`
       layer.style.left = `${box.left}px`
-      layer.style.width = `${box.width}px`
-      layer.style.height = `${box.height}px`
+      const simulated = layoutWidth !== null && layoutHeight !== null && layoutWidth > 0 && layoutHeight > 0
+      layer.style.width = `${simulated ? layoutWidth : box.width}px`
+      layer.style.height = `${simulated ? layoutHeight : box.height}px`
+      const guest = layer.querySelector<HTMLElement>('.browser-guest:not(.is-hidden)')
+      if (guest) {
+        guest.style.width = simulated ? `${layoutWidth}px` : '100%'
+        guest.style.height = simulated ? `${layoutHeight}px` : '100%'
+      }
     }
     const schedule = (): void => {
       if (frame !== 0) return
@@ -84,7 +92,7 @@ export function BrowserGuestLayer(): ReactNode {
       visualViewport?.removeEventListener('resize', schedule)
       visualViewport?.removeEventListener('scroll', schedule)
     }
-  }, [surfaceOpen, shown?.browserId, sessionId, overlayBlocksGuest])
+  }, [surfaceOpen, shown?.browserId, sessionId, overlayBlocksGuest, layoutWidth, layoutHeight])
 
   useEffect(() => {
     return () => {

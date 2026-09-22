@@ -15,7 +15,7 @@ export interface BrowserDeviceMetrics {
   readonly height: number
   readonly deviceScaleFactor: typeof BROWSER_CAPTURE_DEVICE_SCALE
   readonly mobile: boolean
-  readonly dontSetVisibleSize: true
+  readonly dontSetVisibleSize: boolean
 }
 
 export type CdpSendResult =
@@ -29,7 +29,7 @@ export interface CdpSession {
     fence: BrowserControlFence,
     deadlineMs: number
   ): Promise<CdpSendResult>
-  setDeviceMetrics(metrics: BrowserDeviceMetrics): void
+  setDeviceMetrics(metrics: BrowserDeviceMetrics | null): void
   connectionEpoch(): number
   hasInflight(): boolean
   isExternallyDetached(): boolean

@@ -40,15 +40,15 @@ describe('浏览器快照按会话过滤', () => {
     expect(focused?.browserId).toBe('brw_b')
     expect(guestShownInSession(
       [
-        { browserId: 'brw_a', generation: 1, sessionId: 'sess_a', src: 'https://a.test', partition: 'p0', visible: true },
-        { browserId: 'brw_b', generation: 1, sessionId: 'sess_b', src: 'https://b.test', partition: 'p1', visible: true }
+        { browserId: 'brw_a', generation: 1, sessionId: 'sess_a', src: 'https://a.test', partition: 'p0', visible: true, layoutWidth: null, layoutHeight: null },
+        { browserId: 'brw_b', generation: 1, sessionId: 'sess_b', src: 'https://b.test', partition: 'p1', visible: true, layoutWidth: null, layoutHeight: null }
       ],
       'sess_b',
       'brw_b'
     )?.src).toBe('https://b.test')
     expect(guestShownInSession(
       [
-        { browserId: 'brw_a', generation: 1, sessionId: 'sess_a', src: 'https://a.test', partition: 'p0', visible: true }
+        { browserId: 'brw_a', generation: 1, sessionId: 'sess_a', src: 'https://a.test', partition: 'p0', visible: true, layoutWidth: null, layoutHeight: null }
       ],
       'sess_b',
       'brw_a'

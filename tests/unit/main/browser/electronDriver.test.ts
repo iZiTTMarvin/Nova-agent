@@ -16,6 +16,8 @@ class ScriptedDebugger implements BrowserGuestDebugger {
   private detachListeners = new Set<() => void>()
   private pending: ((value: unknown) => void) | null = null
   mode: 'ok' | 'hang' | 'scroll-still' | 'bad-png' | 'occluded' | 'ambiguous' = 'ok'
+  viewportProbe: { width: number; height: number; devicePixelRatio: number } | null = null
+  onProbe: (() => void) | null = null
 
   isAttached(): boolean {
     return this.attached
@@ -43,6 +45,16 @@ class ScriptedDebugger implements BrowserGuestDebugger {
     }
     if (method === 'Runtime.evaluate') {
       const expression = String(params?.expression ?? '')
+      if (expression.includes('novaViewportProbe')) {
+        this.onProbe?.()
+        return Promise.resolve({
+          result: {
+            value: this.viewportProbe
+              ? { novaViewportProbe: true, ...this.viewportProbe }
+              : { novaViewportProbe: true, width: 0, height: 0, devicePixelRatio: 1 }
+          }
+        })
+      }
       if (this.mode === 'hang' && expression.includes('incrementalAriaSnapshot')) {
         return new Promise((resolve) => {
           this.pending = resolve
@@ -360,6 +372,66 @@ describe('ElectronBrowserDriver', () => {
     guest.url = 'http://127.0.0.1/other'
     const missed = await driver.load(guest, openFence(), 'http://127.0.0.1/next')
     expect(missed).toMatchObject({ status: 'not_applied', code: 'navigation_failed' })
+    driver.release(guest)
+  })
+
+  it('视口只有在页面尺寸真的变成目标值后才算模拟成功', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.viewportProbe = { width: 390, height: 844, devicePixelRatio: 1 }
+    const driver = createElectronBrowserDriver({ idleMs: 60_000 })
+    const applied = await driver.act(guest, openFence(), {
+      kind: 'viewport',
+      width: 390,
+      height: 844,
+      device: 'mobile'
+    })
+    expect(applied).toMatchObject({ status: 'applied' })
+    expect(guest.debugger.calls.some((call) => call.method === 'Emulation.clearDeviceMetricsOverride')).toBe(true)
+    expect(guest.debugger.calls.some((call) => call.method === 'Emulation.setDeviceMetricsOverride')).toBe(false)
+    const observed = await driver.observe(guest, openFence())
+    expect(observed.status).toBe('applied')
+    if (observed.status === 'applied') {
+      expect(observed.read.snapshot.viewport).toMatchObject({
+        device: 'mobile',
+        simulated: true,
+        deviceScaleFactor: 1
+      })
+    }
+    driver.release(guest)
+  })
+
+  it('页面尺寸对不上时不把视口当成已验收，并清掉这次覆盖', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.viewportProbe = { width: 100, height: 100, devicePixelRatio: 1 }
+    const driver = createElectronBrowserDriver({ idleMs: 60_000 })
+    const missed = await driver.act(guest, openFence(), {
+      kind: 'viewport',
+      width: 390,
+      height: 844,
+      device: 'mobile'
+    })
+    expect(missed).toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    expect(guest.debugger.calls.some((call) => call.method === 'Emulation.clearDeviceMetricsOverride')).toBe(true)
+    driver.release(guest)
+  })
+
+  it('视口探测期间租约变化就停住，不再恢复旧尺寸', async () => {
+    const guest = new ScriptedGuest()
+    const fence = openFence()
+    guest.debugger.viewportProbe = { width: 390, height: 844, devicePixelRatio: 1 }
+    guest.debugger.onProbe = () => {
+      fence.allow = false
+    }
+    const driver = createElectronBrowserDriver({ idleMs: 60_000 })
+    const interrupted = await driver.act(guest, fence, {
+      kind: 'viewport',
+      width: 390,
+      height: 844,
+      device: 'mobile'
+    })
+    expect(interrupted).toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    expect(guest.debugger.calls.filter((call) => call.method === 'Emulation.clearDeviceMetricsOverride')).toHaveLength(1)
+    expect(guest.debugger.calls.filter((call) => call.method === 'Emulation.setDeviceMetricsOverride')).toHaveLength(0)
     driver.release(guest)
   })
 })

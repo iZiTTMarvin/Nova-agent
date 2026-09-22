@@ -1,5 +1,6 @@
 import {
   browserNotApplied,
+  formatBrowserViewport,
   type BrowserAuthority,
   type BrowserNotApplied,
   type BrowserPageProjection,
@@ -118,7 +119,7 @@ export function formatObservation(
     `documentEpoch: ${observation.documentEpoch}`,
     `url: ${snapshot.url}`,
     `title: ${snapshot.title}`,
-    `viewport: ${snapshot.viewport.width}x${snapshot.viewport.height} ${snapshot.viewport.device}`,
+    `viewport: ${formatBrowserViewport(snapshot.viewport)}`,
     `truncated: ${snapshot.truncated ? 'yes' : 'no'}`,
     `limits: ${limits}`,
     '',

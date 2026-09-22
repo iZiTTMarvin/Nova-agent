@@ -10,7 +10,8 @@ import {
   type BrowserElementDetail,
   type BrowserNotApplied,
   type BrowserObservationProjection,
-  type BrowserViewportDevice
+  type BrowserViewportDevice,
+  type BrowserViewportProjection
 } from '../../shared/browser'
 import { createCdpSession, type BrowserDeviceMetrics, type CdpSendResult, type CdpSession } from './cdpSession'
 import type {
@@ -54,6 +55,8 @@ interface GuestState {
   readonly onDialog: (method: string, params: unknown) => void
   metrics: BrowserDeviceMetrics | null
   device: BrowserViewportDevice
+  /** 只有视口动作确认页面尺寸真的变成目标值后才为 true。 */
+  emulated: boolean
 }
 
 type QueryFailureCode = 'target_missing' | 'target_ambiguous' | 'target_occluded' | 'unsupported' | 'unavailable'
@@ -88,7 +91,8 @@ export function createElectronBrowserDriver(
       world: null,
       onDialog,
       metrics: null,
-      device: 'desktop'
+      device: 'desktop',
+      emulated: false
     }
     guests.set(guest.id, created)
     return created
@@ -142,9 +146,11 @@ export function createElectronBrowserDriver(
         const deadlineAt = now() + deadlineMs
         const read = await evaluate(state, fence, snapshotExpression(), deadlineAt)
         if (!read.ok) return read.failure
-        const document = readDocument(read.value, state.device)
+        const document = readDocument(read.value, state)
         if (!document) return browserNotApplied('unavailable', '主 frame 文档无法读取')
-        const synced = await rememberViewport(
+        const synced = state.emulated
+          ? null
+          : await rememberViewport(
           state,
           fence,
           document.snapshot.viewport.width,
@@ -185,7 +191,7 @@ export function createElectronBrowserDriver(
         const read = await evaluate(
           state,
           fence,
-          `(() => ({ width: Math.round(window.innerWidth || 0), height: Math.round(window.innerHeight || 0) }))()`,
+          `(() => ({ width: Math.round(window.innerWidth || 0), height: Math.round(window.innerHeight || 0), devicePixelRatio: Number(window.devicePixelRatio || 1) }))()`,
           deadlineAt
         )
         if (!read.ok) return read.failure
@@ -194,7 +200,13 @@ export function createElectronBrowserDriver(
         if (!shot) return browserNotApplied('capture_not_ready', '截图不是有效的 PNG')
         const current = fence.stillCurrent()
         if (!current.ok) return browserNotApplied(current.code, '截图结果已过期')
-        return { status: 'applied', width: shot.width, height: shot.height, base64: shot.base64 }
+        return {
+          status: 'applied',
+          width: shot.width,
+          height: shot.height,
+          base64: shot.base64,
+          viewport: viewportProjection(shot.width, shot.height, state, clip?.devicePixelRatio ?? null)
+        }
       })
     },
 
@@ -288,30 +300,133 @@ async function scroll(
   return { status: 'applied', summary: `页面已滚动，scrollY ${read.value.before} → ${read.value.after}` }
 }
 
+function viewportProbeExpression(width: number, height: number): string {
+  return `(() => new Promise((resolve) => {
+    const read = () => ({
+      novaViewportProbe: true,
+      width: Math.round(window.innerWidth || 0),
+      height: Math.round(window.innerHeight || 0),
+      devicePixelRatio: Number(window.devicePixelRatio || 1)
+    })
+    const wantedW = ${width}
+    const wantedH = ${height}
+    let settled = false
+    let poll = 0
+    const stop = () => {
+      settled = true
+      window.removeEventListener('resize', finish)
+      clearInterval(poll)
+    }
+    const finish = () => {
+      if (settled) return
+      const current = read()
+      if (current.width !== wantedW || current.height !== wantedH) return
+      stop()
+      resolve(current)
+    }
+    window.addEventListener('resize', finish)
+    poll = setInterval(finish, 50)
+    finish()
+    setTimeout(() => {
+      if (settled) return
+      const current = read()
+      stop()
+      resolve(current)
+    }, 800)
+  }))()`
+}
+
 async function viewport(
   state: GuestState,
   fence: BrowserControlFence,
   action: Extract<BrowserAction, { kind: 'viewport' }>,
   deadlineAt: number
 ): Promise<BrowserControlActResult> {
-  const metrics: BrowserDeviceMetrics = {
-    width: action.width,
-    height: action.height,
-    deviceScaleFactor: BROWSER_CAPTURE_DEVICE_SCALE,
-    mobile: action.device === 'mobile',
-    dontSetVisibleSize: true
+  const previous = {
+    metrics: state.metrics,
+    device: state.device,
+    emulated: state.emulated
   }
-  state.metrics = metrics
-  state.device = action.device
-  state.session.setDeviceMetrics(metrics)
+  // webview 上 setDeviceMetricsOverride 会按宿主缩放改 innerWidth，尺寸只跟元素布局走。
+  state.session.setDeviceMetrics(null)
   const sent = await state.session.send(
-    'Emulation.setDeviceMetricsOverride',
-    { ...metrics },
+    'Emulation.clearDeviceMetricsOverride',
+    {},
     fence,
     Math.max(0, deadlineAt - Date.now())
   )
   if (!sent.ok) return sent.failure
+  const lease = fence.stillCurrent()
+  if (!lease.ok) {
+    forgetViewportReplay(state)
+    return browserNotApplied(lease.code, '视口检查已中断')
+  }
+  const probe = await runInWorld(state, fence, viewportProbeExpression(action.width, action.height), deadlineAt)
+  if (!probe.ok) {
+    if (probe.failure.code === 'taken_over' || probe.failure.code === 'cancelled') {
+      forgetViewportReplay(state)
+      return probe.failure
+    }
+    await restoreViewport(state, fence, previous, deadlineAt)
+    return browserNotApplied('unsupported', '不支持该尺寸的验收')
+  }
+  const size = readViewportProbe(probe.value)
+  const still = fence.stillCurrent()
+  if (!still.ok) {
+    forgetViewportReplay(state)
+    return browserNotApplied(still.code, '视口检查已中断')
+  }
+  if (!size || size.width !== action.width || size.height !== action.height) {
+    await restoreViewport(state, fence, previous, deadlineAt)
+    const actual = size ? `${size.width}×${size.height}` : '未知'
+    return browserNotApplied('unsupported', `不支持该尺寸的验收（页面仍是 ${actual}）`)
+  }
+  state.metrics = null
+  state.device = action.device
+  state.emulated = true
+  state.session.setDeviceMetrics(null)
   return { status: 'applied', summary: `视口已设为 ${action.width}×${action.height}` }
+}
+
+function forgetViewportReplay(state: GuestState): void {
+  state.metrics = null
+  state.emulated = false
+  state.session.setDeviceMetrics(null)
+}
+
+async function restoreViewport(
+  state: GuestState,
+  fence: BrowserControlFence,
+  previous: { metrics: BrowserDeviceMetrics | null; device: BrowserViewportDevice; emulated: boolean },
+  deadlineAt: number
+): Promise<void> {
+  if (!fence.stillCurrent().ok) {
+    forgetViewportReplay(state)
+    return
+  }
+  if (previous.emulated && previous.metrics) {
+    state.metrics = previous.metrics
+    state.device = previous.device
+    state.emulated = true
+    state.session.setDeviceMetrics(previous.metrics)
+    await state.session.send(
+      'Emulation.setDeviceMetricsOverride',
+      { ...previous.metrics },
+      fence,
+      Math.max(0, deadlineAt - Date.now())
+    )
+    return
+  }
+  state.metrics = null
+  state.device = 'desktop'
+  state.emulated = false
+  state.session.setDeviceMetrics(null)
+  await state.session.send(
+    'Emulation.clearDeviceMetricsOverride',
+    {},
+    fence,
+    Math.max(0, deadlineAt - Date.now())
+  )
 }
 
 async function click(
@@ -666,7 +781,7 @@ async function waitForDocument(
 
 function readDocument(
   value: unknown,
-  device: BrowserViewportDevice
+  state: GuestState
 ): { snapshot: BrowserObservationProjection; refs: Record<string, string> } | null {
   if (!isRecord(value)) return null
   if (value.error === 'missing-engine' || value.error === 'empty-document') return null
@@ -723,11 +838,12 @@ function readDocument(
     snapshot: {
       url: value.url,
       title: value.title,
-      viewport: {
-        width: viewport.width,
-        height: viewport.height,
-        device
-      },
+      viewport: viewportProjection(
+        viewport.width,
+        viewport.height,
+        state,
+        readScale(viewport.devicePixelRatio)
+      ),
       dom: value.dom,
       elements,
       truncated: value.truncated === true,
@@ -737,9 +853,35 @@ function readDocument(
   }
 }
 
-function readClip(value: unknown): { width: number; height: number } | null {
+function readClip(value: unknown): { width: number; height: number; devicePixelRatio: number | null } | null {
   if (!isRecord(value) || typeof value.width !== 'number' || typeof value.height !== 'number') return null
+  return { width: value.width, height: value.height, devicePixelRatio: readScale(value.devicePixelRatio) }
+}
+
+function readScale(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+}
+
+function readViewportProbe(value: unknown): { width: number; height: number } | null {
+  if (!isRecord(value) || value.novaViewportProbe !== true) return null
+  if (typeof value.width !== 'number' || typeof value.height !== 'number') return null
   return { width: value.width, height: value.height }
+}
+
+function viewportProjection(
+  width: number,
+  height: number,
+  state: GuestState,
+  pageDpr: number | null
+): BrowserViewportProjection {
+  return {
+    width,
+    height,
+    device: state.device,
+    deviceScaleFactor: pageDpr ?? BROWSER_CAPTURE_DEVICE_SCALE,
+    simulated: state.emulated,
+    displayScale: null
+  }
 }
 
 function readFrameId(value: unknown): string | null {

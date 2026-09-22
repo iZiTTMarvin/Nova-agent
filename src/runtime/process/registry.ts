@@ -170,6 +170,18 @@ export class ProcessRegistry {
     return { page: record.journal.readUnread(), exitCode: record.exitCode }
   }
 
+  /**
+   * 只读枚举仍在运行的进程。浏览器用它绑定预览身份，不得据此终止进程。
+   */
+  listRunning(sessionId: string): readonly { readonly ref: string; readonly command: string }[] {
+    const rows: { ref: string; command: string }[] = []
+    for (const record of this.records.values()) {
+      if (record.owner.sessionId !== sessionId || record.state !== 'running') continue
+      rows.push({ ref: record.ref, command: record.command })
+    }
+    return rows
+  }
+
   describe(ref: string, sessionId: string): SessionDescribe {
     const record = this.resolve(ref, sessionId)
     return {
