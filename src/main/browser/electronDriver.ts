@@ -23,8 +23,10 @@ import type {
   BrowserPageControl
 } from './controlPort'
 import {
+  BROWSER_CAPTURE_READY_BUDGET_MS,
   READY_EXPRESSION,
   actionabilityExpression,
+  captureReadinessProbeExpression,
   fillExpression,
   focusExpression,
   injectExpression,
@@ -188,6 +190,37 @@ export function createElectronBrowserDriver(
         if (closed) return closed
         const state = stateFor(guest)
         const deadlineAt = now() + deadlineMs
+        const readyDeadline = Math.min(now() + BROWSER_CAPTURE_READY_BUDGET_MS, deadlineAt)
+        // null = 尚未就绪过；就绪要清空，同一次截图内“未就绪→就绪”必须走成功分支
+        let notReadyReason: string | null = null
+        while (true) {
+          // 探测与轮询都受剩余就绪预算约束，挂死的探测不能吃掉整个命令时限
+          const probe = await evaluate(
+            state,
+            fence,
+            captureReadinessProbeExpression(),
+            Math.min(deadlineAt, readyDeadline)
+          )
+          if (!probe.ok) {
+            // 探测本身不等待，只有挂死才会超时：按等待到点处理
+            if (probe.failure.code === 'timeout') {
+              if (notReadyReason === null) notReadyReason = 'paint'
+              break
+            }
+            return probe.failure
+          }
+          const readiness = readCaptureReadiness(probe.value)
+          if (readiness.ready) {
+            notReadyReason = null
+            break
+          }
+          notReadyReason = readiness.reason
+          if (now() >= readyDeadline) break
+          await delay(80)
+        }
+        if (notReadyReason !== null) {
+          return browserNotApplied('capture_not_ready', `页面未就绪（${notReadyReason}）`)
+        }
         const read = await evaluate(
           state,
           fence,
@@ -667,7 +700,11 @@ function appliedCount(value: unknown, summary: string): BrowserControlActResult 
   if (!isRecord(value)) return browserNotApplied('unavailable', '页面没有返回结果')
   if (value.error === 'missing-engine') return browserNotApplied('unavailable', '隔离世界缺少定位脚本')
   if (typeof value.code === 'string') {
-    if (value.code === 'target_missing' || value.code === 'target_ambiguous') {
+    if (
+      value.code === 'target_missing'
+      || value.code === 'target_ambiguous'
+      || value.code === 'unsupported'
+    ) {
       return browserNotApplied(value.code, typeof value.detail === 'string' ? value.detail : '目标不可用')
     }
     return browserNotApplied('unavailable', '无法解析目标')
@@ -677,6 +714,16 @@ function appliedCount(value: unknown, summary: string): BrowserControlActResult 
     return browserNotApplied('target_ambiguous', '目标不唯一')
   }
   return { status: 'applied', summary }
+}
+
+function readCaptureReadiness(value: unknown): { ready: boolean; reason: string } {
+  if (!isRecord(value) || value.novaCaptureReadiness !== true) {
+    return { ready: false, reason: '无法确认页面绘制状态' }
+  }
+  return {
+    ready: value.ready === true,
+    reason: typeof value.reason === 'string' && value.reason.length > 0 ? value.reason : 'paint'
+  }
 }
 
 function unknownIfSent(failure: BrowserNotApplied): BrowserControlActResult {
@@ -1001,6 +1048,14 @@ async function awaitGuestNavigation(
       })
     : null
   try {
+    // 导航发出前先复核：取消或租约失效时不能把 loadURL 打出去
+    const blocked = fence.stillCurrent()
+    if (!blocked.ok) {
+      return { status: 'interrupted', result: browserNotApplied(blocked.code, '导航结果已过期') }
+    }
+    if (fence.signal?.aborted) {
+      return { status: 'interrupted', result: browserNotApplied('cancelled', '命令已取消') }
+    }
     const finished = navigate().then(
       (): GuestNavigationWait => ({ status: 'committed' }),
       (error: unknown): GuestNavigationWait => {

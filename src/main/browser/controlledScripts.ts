@@ -14,6 +14,8 @@ export const BROWSER_SNAPSHOT_NODE_LIMIT = 2000
 export const BROWSER_SNAPSHOT_TEXT_BYTES = 16 * 1024
 /** 页面线程上的观察时间预算 */
 export const BROWSER_SNAPSHOT_TIME_MS = 1500
+/** 截图前等待字体、可见图片与绘制机会的预算上限 */
+export const BROWSER_CAPTURE_READY_BUDGET_MS = 1_500
 
 /**
  * 两段快照：dom 语义行（带 ref）在前，elements 动作细节（selector/rect）在后。
@@ -266,13 +268,77 @@ function resolvePrelude(selector: string): string {
 }
 
 /**
+ * 敏感输入字段（密码、一次性验证码）标记检查：在实际解析到的目标上实时读取，
+ * 覆盖观察之后字段类型改变的情况；这类字段交给用户手动处理。
+ */
+const SENSITIVE_FIELD_GUARD = `  const sensitiveReason = (element, view) => {
+    if (!(element instanceof view.HTMLInputElement)) return null;
+    const type = String(element.type || 'text').toLowerCase();
+    if (type === 'password') return 'password';
+    const tokens = String(element.getAttribute('autocomplete') || '').toLowerCase().split(/[\\s,]+/);
+    if (tokens.includes('one-time-code')) return 'one-time-code';
+    return null;
+  };`
+
+/**
  * 动作前校验：可见/可用 + rAF 稳定帧，hitTest 时再做命中测试。
- * 返回 ok+坐标 或目标缺失/歧义/遮挡的明确错误。
+ * 点击目标按「窗口 + 全部裁剪祖先」的交集判定是否可见，必要时滚入，
+ * 点击点取最终交集中心；返回 ok+坐标 或目标缺失/歧义/遮挡的明确错误。
  */
 export function actionabilityExpression(selector: string, hitTest: boolean): string {
+  const viewport = `    const viewportWidth = Math.max(1, Math.round(window.innerWidth || document.documentElement.clientWidth || 0));
+    const viewportHeight = Math.max(1, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));`
+  const clipHelpers = hitTest
+    ? `    // 目标可能布局在窗口内却被内部滚动容器裁剪：交集要沿祖先裁剪区收缩
+    const clippedIntersection = (rect) => {
+      let left = Math.max(rect.left, 0);
+      let top = Math.max(rect.top, 0);
+      let right = Math.min(rect.right, viewportWidth);
+      let bottom = Math.min(rect.bottom, viewportHeight);
+      let node = element.parentElement;
+      while (node) {
+        if (node.nodeType === 1) {
+          const style = window.getComputedStyle(node);
+          const clipsX = /(auto|scroll|hidden|clip)/.test(style.overflowX);
+          const clipsY = /(auto|scroll|hidden|clip)/.test(style.overflowY);
+          if (clipsX || clipsY) {
+            const box = node.getBoundingClientRect();
+            if (clipsX) { left = Math.max(left, box.left); right = Math.min(right, box.right); }
+            if (clipsY) { top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom); }
+          }
+        }
+        node = node.parentElement;
+      }
+      return { left, top, right, bottom };
+    };`
+    : ''
+  const scrollIntoView = hitTest
+    ? `    const before = clippedIntersection(element.getBoundingClientRect());
+    if (before.right - before.left < 1 || before.bottom - before.top < 1) {
+      try {
+        element.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      } catch {
+        element.scrollIntoView();
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      if (!element.isConnected) return { code: 'target_missing', detail: '滚动后目标已不在页面上' };
+    }
+`
+    : ''
+  const point = hitTest
+    ? `    const visible = clippedIntersection(rect);
+    if (visible.right - visible.left < 1 || visible.bottom - visible.top < 1) {
+      return { code: 'target_missing', detail: '目标没有出现在可见区域内' };
+    }
+    const point = {
+      x: visible.left + (visible.right - visible.left) / 2,
+      y: visible.top + (visible.bottom - visible.top) / 2
+    };`
+    : `    const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };`
   return `(async () => {
 ${resolvePrelude(selector)}
-    const states = await injected.checkElementStates(element, ['visible', 'enabled', 'stable']).catch(() => 'check-failed');
+${hitTest ? viewport + clipHelpers : ''}
+${scrollIntoView}    const states = await injected.checkElementStates(element, ['visible', 'enabled', 'stable']).catch(() => 'check-failed');
     if (states === 'error:notconnected') return { code: 'target_missing', detail: '目标已不在页面上' };
     if (states === 'check-failed') return { code: 'unavailable', detail: '无法检查目标状态' };
     if (states && typeof states === 'object' && states.missingState) {
@@ -280,7 +346,7 @@ ${resolvePrelude(selector)}
     }
     const rect = element.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return { code: 'target_missing', detail: '目标没有可交互区域' };
-    const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+${point}
 ${hitTest ? `    const hit = injected.expectHitTarget(point, element);
     if (hit !== 'done') {
       return {
@@ -295,8 +361,16 @@ ${hitTest ? `    const hit = injected.expectHitTarget(point, element);
 export function fillExpression(selector: string, text: string): string {
   return `(() => {
 ${resolvePrelude(selector)}
+${SENSITIVE_FIELD_GUARD}
     const text = ${JSON.stringify(text)};
     const view = element.ownerDocument.defaultView || window;
+    const sensitive = sensitiveReason(element, view);
+    if (sensitive) {
+      return {
+        code: 'unsupported',
+        detail: sensitive === 'password' ? '密码字段需要用户手动填写' : '验证码字段需要用户手动填写'
+      };
+    }
     element.focus();
     try {
       if (typeof view.DataTransfer === 'function' && typeof view.ClipboardEvent === 'function') {
@@ -343,6 +417,12 @@ ${resolvePrelude(selector)}
 export function focusExpression(selector: string): string {
   return `(() => {
 ${resolvePrelude(selector)}
+${SENSITIVE_FIELD_GUARD}
+    const view = element.ownerDocument.defaultView || window;
+    const sensitive = sensitiveReason(element, view);
+    if (sensitive) {
+      return { code: 'unsupported', detail: '密码或验证码字段上的按键需要用户手动完成' };
+    }
     element.focus();
     return { count: 1 };
   })()`
@@ -365,4 +445,38 @@ export function scrollExpression(direction: 'up' | 'down', amount: 'page' | 'hal
     }
     return { before, after };
   })()`
+}
+
+/**
+ * 截图就绪探测：视口尺寸有效、字体加载完成、视口内可见图片加载完，再等两帧绘制机会。
+ * 只看当前视口内的资源；加载失败的图片不等。探测立即返回，等待节奏由驱动控制。
+ */
+export function captureReadinessProbeExpression(): string {
+  return `(() => new Promise((resolve) => {
+    const finish = (ready, reason) => resolve({ novaCaptureReadiness: true, ready: ready === true, reason: reason || null });
+    const viewportWidth = Math.max(0, Math.round(window.innerWidth || document.documentElement.clientWidth || 0));
+    const viewportHeight = Math.max(0, Math.round(window.innerHeight || document.documentElement.clientHeight || 0));
+    if (viewportWidth < 1 || viewportHeight < 1) {
+      finish(false, 'viewport');
+      return;
+    }
+    let reason = null;
+    if (document.fonts && document.fonts.status !== 'loaded') {
+      reason = 'fonts';
+    } else {
+      for (const image of document.images) {
+        if (image.complete) continue;
+        const rect = image.getBoundingClientRect();
+        if (rect.width < 1 || rect.height < 1) continue;
+        if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
+        reason = 'images';
+        break;
+      }
+    }
+    if (reason) {
+      finish(false, reason);
+      return;
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => finish(true, null)));
+  }))()`
 }

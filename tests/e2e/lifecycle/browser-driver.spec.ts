@@ -15,7 +15,7 @@ function page(title: string, body: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body>${body}</body></html>`
 }
 
-async function startFixture(): Promise<{ origin: string; held: () => boolean; releaseHold: () => void; close: () => Promise<void> }> {
+async function startFixture(): Promise<{ origin: string; held: () => boolean; releaseHold: () => void; slowServed: () => boolean; close: () => Promise<void> }> {
   let seenHold = false
   let releaseHold = (): void => {
     seenHold = true
@@ -145,8 +145,63 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
           document.getElementById('hit').textContent = 'clicked-under';
         };
       </script>
+    `),
+    '/deep': page('Deep', `
+      <p id="out">idle</p>
+      <div style="height:2400px"></div>
+      <button id="far" type="button">屏外按钮</button>
+      <div style="height:400px"></div>
+      <div id="scrollbox" style="height:200px;overflow:auto">
+        <div style="height:1200px"></div>
+        <button id="nested" type="button">嵌套滚动按钮</button>
+        <div style="height:1200px"></div>
+      </div>
+      <button id="huge" type="button" style="height:2600px;width:100%">超大按钮</button>
+      <div id="clipbox" style="height:150px;overflow:auto;margin-top:40px">
+        <div style="height:300px"></div>
+        <button id="clipped" type="button">被容器裁剪按钮</button>
+      </div>
+      <script>
+        const out = document.getElementById('out');
+        const clipbox = document.getElementById('clipbox');
+        for (const id of ['far', 'nested', 'huge', 'clipped']) {
+          document.getElementById(id).addEventListener('click', () => {
+            out.textContent += ' ' + id + ':ok';
+          });
+        }
+        window.novaClipScrollTop = () => Math.round(clipbox.scrollTop || 0);
+      </script>
+    `),
+    '/sensitive': page('Sensitive', `
+      <input id="email" aria-label="邮箱">
+      <input id="pass" type="password" aria-label="密码">
+      <input id="otp" autocomplete="one-time-code" aria-label="验证码">
+      <button id="make-secret" type="button">变成密码</button>
+      <p id="out">idle</p>
+      <script>
+        document.getElementById('make-secret').onclick = () => {
+          document.getElementById('email').type = 'password';
+          document.getElementById('out').textContent = 'converted';
+        };
+      </script>
+    `),
+    '/slowshot': page('SlowShot', `
+      <p id="styled">styled-text</p>
+      <img id="broken" src="/missing-img" width="120" height="60" alt="broken">
+      <button id="add-slow" type="button">添加慢图</button>
+      <script>
+        document.getElementById('add-slow').onclick = () => {
+          const img = document.createElement('img');
+          img.src = '/slow-img';
+          img.width = 120;
+          img.height = 60;
+          document.body.appendChild(img);
+          document.getElementById('styled').textContent = 'slow-added';
+        };
+      </script>
     `)
   }
+  let slowServed = false
   const server = http.createServer((req, res) => {
     const path = (req.url ?? '/').split('?')[0] ?? '/'
     if (path === '/hold') {
@@ -155,6 +210,18 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
         res.end(page('Held', '<p>held-page</p>'))
       })
+      return
+    }
+    if (path === '/slow-img' || path === '/slow-font') {
+      const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+      setTimeout(() => {
+        slowServed = true
+        res.writeHead(200, {
+          'content-type': path === '/slow-img' ? 'image/png' : 'font/woff2',
+          'content-length': Buffer.from(pngBase64, 'base64').length.toString()
+        })
+        res.end(Buffer.from(pngBase64, 'base64'))
+      }, 4_000)
       return
     }
     const html = routes[path]
@@ -172,6 +239,7 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
     origin: `http://127.0.0.1:${address.port}`,
     held: () => seenHold,
     releaseHold,
+    slowServed: () => slowServed,
     close: () => new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()))
     })
@@ -497,6 +565,125 @@ test('导航进行中接管后，迟到的加载不会记成成功', async ({ no
     const loaded = await pending as { status: string; code?: string }
     expect(loaded.status).not.toBe('applied')
     expect(loaded.code === 'taken_over' || loaded.code === 'cancelled' || loaded.status === 'outcome_unknown').toBe(true)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('屏外、嵌套滚动容器、被容器裁剪和超大目标在点击前先滚入并点在可见部分', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/deep`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    for (const name of ['屏外按钮', '嵌套滚动按钮', '超大按钮', '被容器裁剪按钮']) {
+      const target = view.snapshot.elements.find((item) => item.name === name)
+      expect(target, name).toBeTruthy()
+      const clicked = await nova.invoke(BROWSER_ACT, {
+        sessionId: opened.sessionId,
+        observation: view.observation,
+        action: { kind: 'click', ref: target!.ref }
+      }) as { status: string; code?: string; detail?: string }
+      expect(clicked, `${name}: ${JSON.stringify(clicked)}`).toMatchObject({ status: 'applied' })
+    }
+    const after = await observePage(nova, opened.sessionId, opened.browserId)
+    expect(after.snapshot.dom).toContain('far:ok')
+    expect(after.snapshot.dom).toContain('nested:ok')
+    expect(after.snapshot.dom).toContain('huge:ok')
+    expect(after.snapshot.dom).toContain('clipped:ok')
+    // 被裁剪的目标确实通过滚动内部容器进入可见区，而不是绕过命中
+    const clipScrollTop = await nova.page.locator('webview[data-browser-id]').evaluate((node) => {
+      const viewNode = node as unknown as { executeJavaScript?: (code: string) => Promise<unknown> }
+      return viewNode.executeJavaScript?.('window.novaClipScrollTop ? window.novaClipScrollTop() : -1') ?? -1
+    })
+    expect(Number(clipScrollTop)).toBeGreaterThan(0)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('密码与验证码字段拒绝代填代按，观察后变敏感同样拒绝', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/sensitive`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    const email = view.snapshot.elements.find((item) => item.name === '邮箱')
+    const pass = view.snapshot.elements.find((item) => item.name === '密码')
+    const otp = view.snapshot.elements.find((item) => item.name === '验证码')
+    const convert = view.snapshot.elements.find((item) => item.name === '变成密码')
+    expect(email && pass && otp && convert).toBeTruthy()
+
+    const fill = (ref: string, text: string) => nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'fill', ref, text }
+    }) as Promise<{ status: string; code?: string; detail?: string }>
+    const press = (ref: string, key: string) => nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'press', ref, key }
+    }) as Promise<{ status: string; code?: string; detail?: string }>
+
+    const passFilled = await fill(pass!.ref, 'secret')
+    expect(passFilled, JSON.stringify(passFilled)).toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    expect(passFilled.detail).toContain('用户')
+    const otpFilled = await fill(otp!.ref, '123456')
+    expect(otpFilled).toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    const passPressed = await press(pass!.ref, 'a')
+    expect(passPressed, JSON.stringify(passPressed)).toMatchObject({ status: 'not_applied', code: 'unsupported' })
+
+    // 普通文本输入不受影响
+    const emailFilled = await fill(email!.ref, 'a@b.c')
+    expect(emailFilled).toMatchObject({ status: 'applied' })
+
+    // 观察后字段变成密码：同一判定在写入点重新读取，仍然拒绝
+    const converted = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: convert!.ref }
+    }) as { status: string }
+    expect(converted.status).toBe('applied')
+    const staleFill = await fill(email!.ref, 'now-secret')
+    expect(staleFill, JSON.stringify(staleFill)).toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    const stalePress = await press(email!.ref, 'Enter')
+    expect(stalePress).toMatchObject({ status: 'not_applied', code: 'unsupported' })
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('截图等可见图片就绪；失败资源不阻塞', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/slowshot`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    const addSlow = view.snapshot.elements.find((item) => item.name === '添加慢图')
+    expect(addSlow).toBeTruthy()
+    // 点击后才插入 4s 慢图：capture 时图片确定在途
+    const clicked = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: addSlow!.ref }
+    }) as { status: string }
+    expect(clicked.status).toBe('applied')
+    const early = await nova.invoke(BROWSER_CAPTURE, {
+      sessionId: opened.sessionId,
+      observation: view.observation
+    }) as { status: string; code?: string; detail?: string }
+    expect(early, JSON.stringify(early)).toMatchObject({ status: 'not_applied', code: 'capture_not_ready' })
+    expect(early.detail ?? '').toMatch(/fonts|images/)
+
+    await expect.poll(() => fixture.slowServed(), { timeout: 8_000 }).toBe(true)
+    const ready = await nova.invoke(BROWSER_CAPTURE, {
+      sessionId: opened.sessionId,
+      observation: view.observation
+    }) as { status: string; code?: string; detail?: string; image?: { base64: string } }
+    // 404 图片不算未就绪；资源到齐后截图成功
+    expect(ready, JSON.stringify(ready)).toMatchObject({ status: 'applied' })
+    const png = Buffer.from(ready.image?.base64 ?? '', 'base64')
+    expect(png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true)
   } finally {
     await fixture.close()
   }

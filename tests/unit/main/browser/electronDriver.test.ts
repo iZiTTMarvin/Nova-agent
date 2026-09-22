@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { BrowserControlFence } from '../../../../src/main/browser/controlPort'
+import {
+  actionabilityExpression,
+  captureReadinessProbeExpression,
+  fillExpression,
+  focusExpression
+} from '../../../../src/main/browser/controlledScripts'
 import { createElectronBrowserDriver } from '../../../../src/main/browser/electronDriver'
 import type { BrowserGuestContents, BrowserGuestDebugger } from '../../../../src/main/browser/guestContents'
 import { readPngIhdr } from '../../../../src/main/browser/pngIhdr'
@@ -18,6 +24,10 @@ class ScriptedDebugger implements BrowserGuestDebugger {
   mode: 'ok' | 'hang' | 'scroll-still' | 'bad-png' | 'occluded' | 'ambiguous' = 'ok'
   viewportProbe: { width: number; height: number; devicePixelRatio: number } | null = null
   onProbe: (() => void) | null = null
+  readiness: { ready: boolean; reason: string | null } = { ready: true, reason: null }
+  readinessQueue: Array<{ ready: boolean; reason: string | null }> = []
+  readinessHang = false
+  sensitiveSelectors: string[] = []
 
   isAttached(): boolean {
     return this.attached
@@ -55,12 +65,21 @@ class ScriptedDebugger implements BrowserGuestDebugger {
           }
         })
       }
+      if (expression.includes('novaCaptureReadiness')) {
+        if (this.readinessHang) {
+          return new Promise(() => {})
+        }
+        const next = this.readinessQueue.shift() ?? this.readiness
+        return Promise.resolve({
+          result: { value: { novaCaptureReadiness: true, ready: next.ready, reason: next.reason } }
+        })
+      }
       if (this.mode === 'hang' && expression.includes('incrementalAriaSnapshot')) {
         return new Promise((resolve) => {
           this.pending = resolve
         })
       }
-      return Promise.resolve({ result: { value: valueFor(expression, this.mode) } })
+      return Promise.resolve({ result: { value: valueFor(expression, this) } })
     }
     return Promise.resolve({})
   }
@@ -99,21 +118,28 @@ function snapshotValue(mode: ScriptedDebugger['mode']): Record<string, unknown> 
   }
 }
 
-function valueFor(expression: string, mode: ScriptedDebugger['mode']): unknown {
+function valueFor(expression: string, dbg: ScriptedDebugger): unknown {
   if (expression.includes('InjectedScript')) return true
-  if (expression.includes('incrementalAriaSnapshot')) return snapshotValue(mode)
-  if (expression.includes('innerWidth')) return { width: 320, height: 240 }
+  if (expression.includes('incrementalAriaSnapshot')) return snapshotValue(dbg.mode)
+  if (expression.includes('sensitiveReason')) {
+    const sensitive = dbg.sensitiveSelectors.some((selector) =>
+      expression.includes(JSON.stringify(selector))
+    )
+    if (sensitive) return { code: 'unsupported', detail: '密码或验证码字段需要用户手动填写' }
+    return { count: 1, used: 'fallback' }
+  }
   if (expression.includes('checkElementStates')) {
-    if (mode === 'occluded') return { code: 'target_occluded', detail: '点击点被 div 遮挡' }
-    if (mode === 'ambiguous') return { code: 'target_ambiguous', detail: '目标不唯一' }
+    if (dbg.mode === 'occluded') return { code: 'target_occluded', detail: '点击点被 div 遮挡' }
+    if (dbg.mode === 'ambiguous') return { code: 'target_ambiguous', detail: '目标不唯一' }
     return { code: 'ok', x: 70, y: 22, width: 120, height: 24 }
   }
   if (expression.includes('scrollBy')) {
-    return mode === 'scroll-still' ? { before: 0, after: 0 } : { before: 0, after: 400 }
+    return dbg.mode === 'scroll-still' ? { before: 0, after: 0 } : { before: 0, after: 400 }
   }
   if (expression.includes('readyState')) {
     return { href: 'http://127.0.0.1/next', readyState: 'complete' }
   }
+  if (expression.includes('innerWidth')) return { width: 320, height: 240 }
   return { count: 1, used: 'fallback' }
 }
 
@@ -124,6 +150,7 @@ class ScriptedGuest implements BrowserGuestContents {
   loadError: unknown = null
   loadHang = false
   png: Buffer | null = PNG
+  readonly loadCalls: string[] = []
 
   constructor(dbg?: ScriptedDebugger) {
     this.debugger = dbg ?? new ScriptedDebugger()
@@ -154,6 +181,7 @@ class ScriptedGuest implements BrowserGuestContents {
   }
 
   async loadURL(url: string): Promise<void> {
+    this.loadCalls.push(url)
     if (this.loadHang) return new Promise(() => {})
     if (this.loadError) {
       if (this.url === 'http://127.0.0.1/doc') this.url = 'http://127.0.0.1/next'
@@ -276,6 +304,99 @@ describe('ElectronBrowserDriver', () => {
     const bad = await driver.capture(guest, openFence())
     expect(bad).toMatchObject({ status: 'not_applied', code: 'capture_not_ready' })
     driver.release(guest)
+  })
+
+  it('截图前等就绪：字体或图片未就绪时按具体原因拒绝', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.readiness = { ready: false, reason: 'fonts' }
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 1_000 })
+    const notReady = await driver.capture(guest, openFence())
+    expect(notReady).toMatchObject({ status: 'not_applied', code: 'capture_not_ready' })
+    if (notReady.status === 'not_applied') expect(notReady.detail).toContain('fonts')
+    guest.debugger.readiness = { ready: false, reason: 'images' }
+    const imagePending = await driver.capture(guest, openFence())
+    expect(imagePending).toMatchObject({ status: 'not_applied', code: 'capture_not_ready' })
+    if (imagePending.status === 'not_applied') expect(imagePending.detail).toContain('images')
+    guest.debugger.readiness = { ready: true, reason: null }
+    const ready = await driver.capture(guest, openFence())
+    expect(ready.status).toBe('applied')
+    driver.release(guest)
+  })
+
+  it('同一次截图内未就绪转就绪必须走成功分支', async () => {
+    const guest = new ScriptedGuest()
+    // 第一次探测 images 未就绪，轮询后第二次就绪：不能沿用旧原因拒绝
+    guest.debugger.readinessQueue = [
+      { ready: false, reason: 'images' },
+      { ready: true, reason: null }
+    ]
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 2_000 })
+    const captured = await driver.capture(guest, openFence())
+    expect(captured).toMatchObject({ status: 'applied' })
+    driver.release(guest)
+  })
+
+  it('挂起的就绪探测受就绪预算约束，不吃掉整个命令时限', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.readinessHang = true
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 5_000 })
+    const started = Date.now()
+    const result = await driver.capture(guest, openFence())
+    expect(Date.now() - started).toBeLessThan(3_000)
+    expect(result).toMatchObject({ status: 'not_applied', code: 'capture_not_ready' })
+    driver.release(guest)
+  })
+
+  it('导航发出前租约已失效时不调用 loadURL', async () => {
+    const guest = new ScriptedGuest()
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 1_000 })
+    const result = await driver.load(guest, openFence(false), 'http://127.0.0.1/gone')
+    expect(result).toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    expect(guest.loadCalls).toEqual([])
+    driver.release(guest)
+  })
+
+  it('密码与验证码字段拒绝代填和按键，普通输入保持原行为', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.sensitiveSelectors = ['css=#pass', 'css=#otp']
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 1_000 })
+    driver.bindRefs('obs_1', { pass: 'css=#pass', otp: 'css=#otp', email: 'css=#email', agree: 'css=#agree' })
+    await expect(driver.act(guest, openFence(), { kind: 'fill', ref: 'pass', text: 'secret' }))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    await expect(driver.act(guest, openFence(), { kind: 'fill', ref: 'otp', text: '123456' }))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    await expect(driver.act(guest, openFence(), { kind: 'press', ref: 'pass', key: 'a' }))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'unsupported' })
+    // 普通文本与点击不受影响
+    await expect(driver.act(guest, openFence(), { kind: 'fill', ref: 'email', text: 'a@b.c' }))
+      .resolves.toMatchObject({ status: 'applied' })
+    await expect(driver.act(guest, openFence(), { kind: 'press', ref: 'email', key: 'Enter' }))
+      .resolves.toMatchObject({ status: 'applied' })
+    await expect(driver.act(guest, openFence(), { kind: 'click', ref: 'agree' }))
+      .resolves.toMatchObject({ status: 'applied' })
+    driver.release(guest)
+  })
+
+  it('受控脚本带防护逻辑：点击前按裁剪交集滚入并取交集中心，填写前判敏感字段', () => {
+    const click = actionabilityExpression('css=#btn', true)
+    expect(click).toContain('scrollIntoView')
+    expect(click).toContain('clippedIntersection')
+    expect(click).toContain('getComputedStyle')
+    expect(click).toContain('overflowY')
+    expect(click).toContain('Math.max(rect.left, 0)')
+    expect(click).toContain('Math.min(rect.right, viewportWidth)')
+    const fillOnly = actionabilityExpression('css=#email', false)
+    expect(fillOnly).not.toContain('scrollIntoView')
+    expect(fillOnly).not.toContain('clippedIntersection')
+    const fill = fillExpression('css=#email', 'text')
+    expect(fill).toContain('sensitiveReason')
+    expect(fill.indexOf('sensitiveReason(element, view)')).toBeLessThan(fill.indexOf('element.focus()'))
+    const focus = focusExpression('css=#email')
+    expect(focus).toContain('sensitiveReason')
+    const readiness = captureReadinessProbeExpression()
+    expect(readiness).toContain('document.fonts')
+    expect(readiness).toContain('document.images')
+    expect(readiness).toContain('requestAnimationFrame')
   })
 
   it('世代变化后丢弃迟到的观察结果', async () => {

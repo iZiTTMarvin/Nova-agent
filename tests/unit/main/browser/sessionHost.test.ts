@@ -695,24 +695,270 @@ describe('BrowserSessionHost 生命周期', () => {
     await expect(closing).resolves.toEqual({ status: 'applied', browserId })
   })
 
-  it('用户导航会提升 generation；代理导航只取得租约', async () => {
+  it('用户导航会提升 generation 并接管；代理不能隐式夺回', async () => {
     const harness = createHarness(new Map([[10, new FakeGuest({ id: 10 })]]))
     const browserId = await openReady(harness, 10)
-    const before = harness.host.inspectBinding(browserId)?.generation
-    expect(before).toBe(1)
+    expect(harness.host.inspectBinding(browserId)?.generation).toBe(1)
     await harness.host.navigate({ browserId, action: { kind: 'reload' } }, { sessionId: 'sess_1' })
     expect(harness.host.inspectBinding(browserId)?.generation).toBe(2)
     expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'user' })
 
-    await harness.host.navigate(
+    await expect(harness.host.navigate(
       { browserId, action: { kind: 'reload' } },
       agentContext()
-    )
-    expect(harness.host.inspectBinding(browserId)?.generation).toBe(2)
+    )).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+
+    // 用户交还后代理才能取得租约；交还也提升世代
+    await harness.host.release({ browserId }, { sessionId: 'sess_1' })
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'none' })
+    await harness.host.navigate({ browserId, action: { kind: 'reload' } }, agentContext())
+    expect(harness.host.inspectBinding(browserId)?.generation).toBe(3)
     expect(latestPage(harness.snapshots, browserId)?.control).toEqual({
       holder: 'agent',
       runId: 'run_1'
     })
+  })
+
+  it('用户接管后 AI 重新观察也拿不到写资格；交还后重新观察可继续', async () => {
+    const harness = createHarness(new Map([[24, new FakeGuest({ id: 24 })]]), {
+      ...immediateControl(),
+      act: async () => ({ status: 'applied', summary: 'clicked' })
+    })
+    const browserId = await openReady(harness, 24)
+    const observed = await harness.host.observe({ browserId }, agentContext())
+    expect(observed.status).toBe('applied')
+    if (observed.status !== 'applied') return
+
+    await harness.host.claim({ browserId }, { sessionId: 'sess_1' })
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'user' })
+
+    // 接管期间观察保持只读：可用，但不取得控制权
+    const reObserved = await harness.host.observe({ browserId }, agentContext())
+    expect(reObserved.status).toBe('applied')
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'user' })
+    if (reObserved.status !== 'applied') return
+    await expect(harness.host.act(
+      { observation: reObserved.observation, action: { kind: 'click', ref: 'e1' } },
+      agentContext()
+    )).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    await expect(harness.host.navigate(
+      { browserId, action: { kind: 'reload' } },
+      agentContext()
+    )).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    await expect(harness.host.close({ browserId }, agentContext()))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+
+    // 用户自己关闭不受影响
+    // （关闭路径由既有用例覆盖，这里验证交还链路）
+    await harness.host.release({ browserId }, { sessionId: 'sess_1' })
+    // 交还后旧观察失效，必须重新观察
+    await expect(harness.host.act(
+      { observation: reObserved.observation, action: { kind: 'click', ref: 'e1' } },
+      agentContext()
+    )).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    const fresh = await harness.host.observe({ browserId }, agentContext())
+    expect(fresh.status).toBe('applied')
+    if (fresh.status !== 'applied') return
+    await expect(harness.host.act(
+      { observation: fresh.observation, action: { kind: 'click', ref: 'e1' } },
+      agentContext()
+    )).resolves.toMatchObject({ status: 'applied' })
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({
+      holder: 'agent',
+      runId: 'run_1'
+    })
+  })
+
+  it('等待打开确认期间取消运行或离开会话，不再创建页面', async () => {
+    const openGated = (): { grants: PreviewGrantStore; release: () => void } => {
+      let release = (): void => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      return {
+        grants: {
+          confirm: async () => {
+            await gate
+            return { ok: true as const, restricted: false as const }
+          },
+          grantedOrigins: () => [],
+          inspect: () => []
+        },
+        release
+      }
+    }
+
+    // 取消运行
+    const cancelledGate = openGated()
+    const harnessA = createHarness(new Map(), undefined, { previewGrants: cancelledGate.grants })
+    const openingA = harnessA.host.open({ url: 'https://example.com' }, agentContext())
+    await Promise.resolve()
+    harnessA.host.cancelRun('run_1')
+    cancelledGate.release()
+    await expect(openingA).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
+    expect(harnessA.host.livePageCount()).toBe(0)
+
+    // 离开会话
+    const sessionGate = openGated()
+    const harnessB = createHarness(new Map(), undefined, { previewGrants: sessionGate.grants })
+    const openingB = harnessB.host.open({ url: 'https://example.com' }, agentContext())
+    await Promise.resolve()
+    harnessB.host.revokeSession('sess_1')
+    sessionGate.release()
+    await expect(openingB).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    expect(harnessB.host.livePageCount()).toBe(0)
+  })
+
+  it('等待打开确认期间工作区失效或命令取消，提交前拒绝', async () => {
+    let gateRelease = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      gateRelease = resolve
+    })
+    let workspaceBound = true
+    const grants: PreviewGrantStore = {
+      confirm: async () => {
+        await gate
+        return { ok: true as const, restricted: false as const }
+      },
+      grantedOrigins: () => [],
+      inspect: () => []
+    }
+    const guests = new Map<number, FakeGuest>([[71, new FakeGuest({ id: 71 })]])
+    const host = createBrowserSessionHost({
+      resolveWorkspaceKey: (sessionId) => (sessionId.startsWith('sess') && workspaceBound ? 'ws_a' : null),
+      lookupGuest: (id) => guests.get(id),
+      previewGrants: grants
+    })
+    const opening = host.open({ url: 'https://example.com' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    workspaceBound = false
+    gateRelease()
+    await expect(opening).resolves.toMatchObject({ status: 'not_applied', code: 'not_owner' })
+    expect(host.livePageCount()).toBe(0)
+
+    // 命令自身的取消信号在提交前同样生效
+    let gateRelease2 = (): void => {}
+    const gate2 = new Promise<void>((resolve) => {
+      gateRelease2 = resolve
+    })
+    const abort = new AbortController()
+    abort.abort()
+    const grants2: PreviewGrantStore = {
+      confirm: async () => {
+        await gate2
+        return { ok: true as const, restricted: false as const }
+      },
+      grantedOrigins: () => [],
+      inspect: () => []
+    }
+    workspaceBound = true
+    const host2 = createBrowserSessionHost({
+      resolveWorkspaceKey: () => 'ws_a',
+      lookupGuest: (id) => guests.get(id),
+      previewGrants: grants2
+    })
+    const opening2 = host2.open(
+      { url: 'https://example.com' },
+      { sessionId: 'sess_1', abortSignal: abort.signal }
+    )
+    await Promise.resolve()
+    gateRelease2()
+    await expect(opening2).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
+    expect(host2.livePageCount()).toBe(0)
+  })
+
+  it('导航等待域名确认期间被接管，复核后不再执行导航', async () => {
+    let gateRelease = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      gateRelease = resolve
+    })
+    let markEntered = (): void => {}
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve
+    })
+    const loadedUrls: string[] = []
+    const grants: PreviewGrantStore = {
+      confirm: async (input) => {
+        if (input.url === 'https://example.com/app') return { ok: true as const, restricted: false as const }
+        markEntered()
+        await gate
+        return { ok: true as const, restricted: false as const }
+      },
+      grantedOrigins: () => [],
+      inspect: () => []
+    }
+    const harness = createHarness(
+      new Map([[72, new FakeGuest({ id: 72 })]]),
+      {
+        ...immediateControl(),
+        load: async (_guest, fence, url) => {
+          loadedUrls.push(url)
+          const current = fence.stillCurrent()
+          if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+          return { status: 'applied' }
+        }
+      },
+      { previewGrants: grants }
+    )
+    const browserId = await openReady(harness, 72)
+    const navigating = harness.host.navigate(
+      { browserId, action: { kind: 'url', url: 'https://target.test/page' } },
+      agentContext()
+    )
+    await entered
+    await harness.host.claim({ browserId }, { sessionId: 'sess_1' })
+    gateRelease()
+    await expect(navigating).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    expect(loadedUrls).toEqual([])
+    expect(latestPage(harness.snapshots, browserId)?.loading).toBe(false)
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'user' })
+  })
+
+  it('人工打开的页面从无人控制开始，AI 观察即可取得', async () => {
+    const harness = createHarness(new Map([[25, new FakeGuest({ id: 25 })]]), immediateControl())
+    const opening = harness.host.open({ url: 'https://example.com' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const browserId = latestBrowserId(harness.snapshots)
+    await harness.host.attach({ sessionId: 'sess_1', browserId, webContentsId: 25 })
+    await opening
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'none' })
+    const observed = await harness.host.observe({ browserId }, agentContext())
+    expect(observed.status).toBe('applied')
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({
+      holder: 'agent',
+      runId: 'run_1'
+    })
+  })
+
+  it('列表只返回所属会话的页面；全局广播与名额仍覆盖全部页面', async () => {
+    const guests = new Map<number, FakeGuest>([
+      [61, new FakeGuest({ id: 61, url: 'https://a.test/one' })],
+      [62, new FakeGuest({ id: 62, url: 'https://b.test/two' })]
+    ])
+    const harness = createHarness(guests)
+    const pageA = await openReady(harness, 61, 'https://a.test/one')
+    const openingB = harness.host.open({ url: 'https://b.test/two' }, { sessionId: 'sess_2' })
+    await Promise.resolve()
+    const pageB = harness.snapshots.at(-1)?.pages.find((page) => page.url.includes('/two'))?.browserId
+    expect(pageB).toBeTruthy()
+    await harness.host.attach({ sessionId: 'sess_2', browserId: pageB!, webContentsId: 62 })
+    await openingB
+
+    const listed = await harness.host.listPages({ sessionId: 'sess_1' }, { sessionId: 'sess_1' })
+    expect(listed.status).toBe('applied')
+    if (listed.status !== 'applied') return
+    expect(listed.snapshot.pages).toHaveLength(1)
+    expect(listed.snapshot.pages[0]?.browserId).toBe(pageA)
+    expect(listed.snapshot.pages[0]?.url).toBe('https://a.test/one')
+    expect(listed.snapshot.activeBrowserId).toBe(pageA)
+    expect(listed.snapshot.maxLivePages).toBe(2)
+
+    await expect(harness.host.listPages({ sessionId: 'sess_2' }, { sessionId: 'sess_1' }))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'not_owner' })
+
+    expect(harness.snapshots.at(-1)?.pages).toHaveLength(2)
+    expect(harness.mounts.at(-1)?.guests).toHaveLength(2)
+    expect(harness.host.livePageCount()).toBe(2)
   })
 
   it('轮次结束释放租约但页面保留；会话切换撤销控制', async () => {

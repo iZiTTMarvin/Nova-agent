@@ -369,6 +369,116 @@ test('观察与点击之间点接管，旧命令不能落到页面', async ({ no
   }
 })
 
+test('接管后重新观察也不能夺回；交还后重新观察可继续操作', async ({ nova }) => {
+  test.setTimeout(120_000)
+  const sessionId = await grantFullAccess(nova)
+  const fixture = await startFormFixture()
+  try {
+    const opened = await nova.invoke(BROWSER_OPEN, {
+      sessionId,
+      url: `${fixture.origin}/`
+    }) as { status: string; page?: { browserId: string } }
+    expect(opened.status).toBe('applied')
+    const browserId = opened.page!.browserId
+    await nova.page.locator('webview[data-browser-id]').waitFor()
+
+    const readObservation = (latest: string) => ({
+      browserId: field(latest, 'browserId') || browserId,
+      generation: Number(field(latest, 'generation') || '1'),
+      documentEpoch: Number(field(latest, 'documentEpoch') || '1'),
+      observationId: field(latest, 'observationId')
+    })
+    let step = 0
+    const toolResults: string[] = []
+    nova.provider.setTurnFactory(async (record) => {
+      const latest = toolTexts(record.body).at(-1) ?? ''
+      if (step > 0) toolResults.push(latest)
+      if (step === 0) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_observe',
+          arguments: { action: 'snapshot', browserId },
+          callId: 'e2e_lease_observe_1'
+        }
+      }
+      if (step === 1) {
+        step += 1
+        await nova.page.getByRole('button', { name: '接管页面' }).click()
+        return {
+          kind: 'tool',
+          name: 'browser_act',
+          arguments: {
+            observation: readObservation(latest),
+            action: { kind: 'click', ref: namedRef(latest, '保存') }
+          },
+          callId: 'e2e_lease_stale_click'
+        }
+      }
+      if (step === 2) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_observe',
+          arguments: { action: 'snapshot', browserId },
+          callId: 'e2e_lease_observe_2'
+        }
+      }
+      if (step === 3) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_act',
+          arguments: {
+            observation: readObservation(latest),
+            action: { kind: 'click', ref: namedRef(latest, '保存') }
+          },
+          callId: 'e2e_lease_denied_click'
+        }
+      }
+      if (step === 4) {
+        step += 1
+        await nova.page.getByRole('button', { name: '交还 AI 控制' }).click()
+        return {
+          kind: 'tool',
+          name: 'browser_observe',
+          arguments: { action: 'snapshot', browserId },
+          callId: 'e2e_lease_observe_3'
+        }
+      }
+      if (step === 5) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_act',
+          arguments: {
+            observation: readObservation(latest),
+            action: { kind: 'click', ref: namedRef(latest, '保存') }
+          },
+          callId: 'e2e_lease_final_click'
+        }
+      }
+      return { kind: 'text', text: 'NOVA_E2E_BROWSER_LEASE_OK' }
+    })
+
+    await nova.sendPrompt('点击保存按钮')
+    await expect(nova.page.getByText('NOVA_E2E_BROWSER_LEASE_OK', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    const all = toolResults.join('\n\n')
+    // 接管后：旧观察被拒；重新观察本身可用，但其后的操作仍被拒
+    expect(all).toMatch(/taken_over/)
+    expect(all).toContain('observationId:')
+    const finalView = await nova.invoke(BROWSER_OBSERVE, { sessionId, browserId }) as BrowserObserveResult
+    expect(finalView.status).toBe('applied')
+    if (finalView.status === 'applied') {
+      expect(finalView.snapshot.dom).toContain('saved:')
+    }
+  } finally {
+    nova.provider.setTurnFactory(null)
+    await fixture.close()
+  }
+})
+
 test('手机视口模拟可复核，接管后旧的恢复不会改回尺寸', async ({ nova }) => {
   test.setTimeout(90_000)
   const sessionId = await grantFullAccess(nova)

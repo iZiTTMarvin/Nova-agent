@@ -258,19 +258,31 @@ export function BrowserPanel(props: {
           }}
         />
         <span data-testid="browser-takeover">
-          <IconButton
-            label="接管页面"
-            icon={<HandIcon size={14} />}
-            variant="ghost"
-            size="sm"
-            isDisabled={!page || page.lifecycle === 'closing'}
-            tooltip={
-              page?.control.holder === 'agent'
-                ? '停止 AI 操作并接管页面'
-                : '接管页面'
-            }
-            onClick={() => void useBrowserStore.getState().claimFocused()}
-          />
+          {page?.control.holder === 'user' ? (
+            <IconButton
+              label="交还 AI 控制"
+              icon={<HandIcon size={14} />}
+              variant="ghost"
+              size="sm"
+              isDisabled={!page || page.lifecycle === 'closing'}
+              tooltip="交还后 AI 需重新观察页面才能继续操作"
+              onClick={() => void useBrowserStore.getState().releaseFocused()}
+            />
+          ) : (
+            <IconButton
+              label="接管页面"
+              icon={<HandIcon size={14} />}
+              variant="ghost"
+              size="sm"
+              isDisabled={!page || page.lifecycle === 'closing'}
+              tooltip={
+                page?.control.holder === 'agent'
+                  ? '停止 AI 操作并接管页面'
+                  : '接管页面'
+              }
+              onClick={() => void useBrowserStore.getState().claimFocused()}
+            />
+          )}
         </span>
         <IconButton
           label="关闭页面"

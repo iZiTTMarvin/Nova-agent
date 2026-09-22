@@ -118,10 +118,17 @@ export {
   canonicalizePreviewTarget,
   classifyPreviewHostname,
   decideBrowserNetworkRequest,
+  evaluatePreviewTarget,
+  normalizePreviewHostname,
+  previewHostnameNeedsResolution,
   previewOriginsMatch,
+  resolvePreviewAddressClass,
   type BrowserNetworkRequest,
   type CanonicalPreviewTarget,
-  type PreviewAddressClass
+  type PreviewAddressClass,
+  type PreviewHostResolution,
+  type PreviewHostResolver,
+  type PreviewTargetEvaluation
 } from './previewOrigin'
 export {
   createBrowserIdentityLedger,

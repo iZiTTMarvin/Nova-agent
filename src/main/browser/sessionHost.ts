@@ -132,6 +132,16 @@ interface PageRecord {
   notice: BrowserGuestNotice | null
 }
 
+/**
+ * 等待打开确认（域名地址解析）的命令。此时尚无页面记录，
+ * 取消与离开会话的撤销遍历不到它，须在这里登记后于提交前复核。
+ */
+interface PendingOpen {
+  readonly sessionId: string
+  readonly runId: string | null
+  revoked: ReturnType<typeof browserNotApplied> | null
+}
+
 function defaultDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -145,7 +155,20 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   const delay = deps.delay ?? defaultDelay
   const previewGrants = deps.previewGrants ?? createPreviewGrantStore({ findRunning: () => null })
   const pages = new Map<string, PageRecord>()
+  const pendingOpens = new Set<PendingOpen>()
   let sequence = 0
+
+  function revokePendingOpens(
+    result: ReturnType<typeof browserNotApplied>,
+    match: { readonly runId?: string; readonly sessionId?: string }
+  ): void {
+    for (const pending of pendingOpens) {
+      if (pending.revoked) continue
+      if (match.runId !== undefined && pending.runId !== match.runId) continue
+      if (match.sessionId !== undefined && pending.sessionId !== match.sessionId) continue
+      pending.revoked = result
+    }
+  }
 
   function emit(): void {
     sequence += 1
@@ -154,9 +177,22 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   }
 
   function snapshot(): BrowserSurfaceSnapshot {
+    return surfaceSnapshot(() => true)
+  }
+
+  /**
+   * 工具与快照查询只拿得到所属会话的页面投影；
+   * 全局 UI 广播与页面名额仍以全部页面为准。
+   */
+  function snapshotForSession(sessionId: string): BrowserSurfaceSnapshot {
+    return surfaceSnapshot((record) => record.sessionId === sessionId)
+  }
+
+  function surfaceSnapshot(include: (record: PageRecord) => boolean): BrowserSurfaceSnapshot {
     const list: BrowserPageProjection[] = []
     let activeBrowserId: string | null = null
     for (const [browserId, record] of pages) {
+      if (!include(record)) continue
       const identity = ledger.inspect(browserId, record.sessionId)
       if (!identity.ok) continue
       list.push(project(identity.value, record))
@@ -347,13 +383,25 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     record.jobs = keep
   }
 
-  function adoptAgentLease(record: PageRecord, context: BrowserCommandContext): void {
+  /**
+   * 控制权由 Host 统一决定：用户明确接管（holder=user）后，AI 命令不得隐式夺回，
+   * 只能等用户交还。返回是否取得或已持有控制资格。
+   */
+  function adoptAgentLease(record: PageRecord, context: BrowserCommandContext): boolean {
     const runId = context.authority?.runId?.trim()
-    if (!runId) return
+    if (!runId) return record.control.holder !== 'user'
     const current = record.control
-    if (current.holder === 'agent' && current.runId === runId) return
+    if (current.holder === 'agent' && current.runId === runId) return true
+    if (current.holder === 'user') return false
     record.control = { holder: 'agent', runId }
     emit()
+    return true
+  }
+
+  /** AI 写命令（带 authority）在入队与实际执行前的控制资格检查；用户接管期间一律拒绝。 */
+  function agentWriteDenied(record: PageRecord): ReturnType<typeof browserNotApplied> | null {
+    if (record.control.holder !== 'user') return null
+    return browserNotApplied('taken_over', '用户已接管此页面，需要用户交还后才能继续操作')
   }
 
   function revokeToUser(
@@ -373,6 +421,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     for (const record of pages.values()) {
       rejectPending(record, cancelled, runId)
     }
+    revokePendingOpens(cancelled, { runId })
   }
 
   function releaseAgent(runId: string): void {
@@ -397,6 +446,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       rejectPending(record, browserNotApplied('taken_over', '已离开该会话'))
       changed = true
     }
+    revokePendingOpens(browserNotApplied('taken_over', '已离开该会话'), { sessionId })
     if (changed) emit()
   }
 
@@ -662,11 +712,24 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (url === null) {
       return browserNotApplied('invalid_request', '只允许不含用户信息的 http 或 https 地址')
     }
-    const confirmed = previewGrants.confirm({
+    // 域名地址确认可能等待解析：登记进撤销生命周期，提交前复核运行、会话与工作区资格
+    const pending: PendingOpen = {
+      sessionId: context.sessionId,
+      runId: context.authority?.runId?.trim() ?? null,
+      revoked: null
+    }
+    pendingOpens.add(pending)
+    const confirmed = await previewGrants.confirm({
       workspaceKey,
       sessionId: context.sessionId,
       url
     })
+    pendingOpens.delete(pending)
+    if (context.abortSignal?.aborted) return browserNotApplied('cancelled', '命令已取消')
+    if (pending.revoked) return pending.revoked
+    if (deps.resolveWorkspaceKey(context.sessionId) === null) {
+      return browserNotApplied('not_owner', '当前会话没有可绑定的工作区')
+    }
     if (!confirmed.ok) return browserNotApplied(confirmed.code, confirmed.detail)
     const issued = ledger.issuePage({ sessionId: context.sessionId, workspaceKey })
     if (!issued.ok) {
@@ -689,9 +752,10 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       title: '',
       loading: true,
       lifecycle: 'opening',
+      // 人工打开只表示尚无人取得控制；明确接管只来自 claim 或用户主动导航
       control: context.authority?.runId
         ? { holder: 'agent', runId: context.authority.runId }
-        : { holder: 'user' },
+        : { holder: 'none' },
       faviconUrl: null,
       loadError: null,
       partition: allocated.partition,
@@ -908,9 +972,13 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       const revoked = revokeToUser(command.browserId, found.record)
       if (!revoked.ok) return browserNotApplied(revoked.code, '无法接管该页面')
     } else {
+      const denied = agentWriteDenied(found.record)
+      if (denied) return denied
       adoptAgentLease(found.record, context)
     }
     return enqueueSerial(found.record, context, async (signal) => {
+      const denied = context.authority ? agentWriteDenied(found.record) : null
+      if (denied) return denied
       const guest = found.record.guest
       if (!guest || safeDestroyed(guest)) {
         return browserNotApplied('unavailable', '页面尚未挂载')
@@ -927,12 +995,26 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
           if (workspaceKey === null) {
             return browserNotApplied('not_owner', '当前会话没有可绑定的工作区')
           }
-          const confirmed = previewGrants.confirm({
+          // 等待域名确认前固定身份；等待后写入授权与导航前复核
+          const beforeConfirm = ledger.inspect(command.browserId, context.sessionId)
+          if (!beforeConfirm.ok) {
+            return browserNotApplied(beforeConfirm.code, '页面不属于当前会话或已关闭')
+          }
+          const confirmed = await previewGrants.confirm({
             workspaceKey,
             sessionId: context.sessionId,
             url: action.url
           })
           if (!confirmed.ok) return browserNotApplied(confirmed.code, confirmed.detail)
+          // 复核顺序：先看身份（区分接管与页面失效），再看命令自身的取消信号
+          const afterConfirm = ledger.inspect(command.browserId, context.sessionId)
+          if (!afterConfirm.ok) {
+            return browserNotApplied(afterConfirm.code, '页面不属于当前会话或已关闭')
+          }
+          if (afterConfirm.value.generation !== beforeConfirm.value.generation) {
+            return browserNotApplied('taken_over', '页面控制已变化，导航没有执行')
+          }
+          if (signal.aborted) return browserNotApplied('cancelled', '命令已取消')
           found.record.loading = true
           if (!deps.control) found.record.url = action.url
           emit()
@@ -975,6 +1057,10 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
     const record = pages.get(command.browserId)
     if (!record) return browserNotApplied('page_closed', '页面记录已不存在')
+    if (context.authority) {
+      const denied = agentWriteDenied(record)
+      if (denied) return denied
+    }
     rejectPending(record, browserNotApplied('page_closed', '页面正在关闭'))
     return enqueueSerial(record, context, async () => {
       record.lifecycle = 'closing'
@@ -1040,11 +1126,12 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   ): Promise<BrowserClaimResult> {
     const found = lookupPage(command.browserId, context.sessionId)
     if ('status' in found) return found
+    // 交还同样提升世代：接管前的旧观察不得在交还后复活
+    const bumped = ledger.bumpGeneration(command.browserId)
+    if (!bumped.ok) return browserNotApplied(bumped.code, '无法交还该页面')
     found.record.control = { holder: 'none' }
-    const identity = ledger.inspect(command.browserId, context.sessionId)
-    if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
     emit()
-    return { status: 'applied', page: project(identity.value, found.record) }
+    return { status: 'applied', page: project(bumped.value, found.record) }
   }
 
   function listPages(
@@ -1055,7 +1142,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       return Promise.resolve(browserNotApplied('not_owner', '不能读取其它会话的页面'))
     }
     emit()
-    return Promise.resolve({ status: 'applied', snapshot: snapshot() })
+    return Promise.resolve({ status: 'applied', snapshot: snapshotForSession(context.sessionId) })
   }
 
   function navigationFence(
@@ -1130,6 +1217,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const found = lookupPage(command.browserId, context.sessionId)
     if ('status' in found) return found
     return enqueueSerial(found.record, context, async (signal) => {
+      // 观察只读：用户接管期间仍可看，但不因此取得控制权
       adoptAgentLease(found.record, context)
       const guest = found.record.guest
       if (!guest || safeDestroyed(guest)) return browserNotApplied('unavailable', '页面尚未挂载')
@@ -1177,7 +1265,11 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!matched.ok) return browserNotApplied(matched.code, '观察已不能用于操作')
     const found = lookupPage(command.observation.browserId, context.sessionId)
     if ('status' in found) return found
+    const deniedBefore = context.authority ? agentWriteDenied(found.record) : null
+    if (deniedBefore) return deniedBefore
     return enqueueSerial(found.record, context, async (signal) => {
+      const denied = context.authority ? agentWriteDenied(found.record) : null
+      if (denied) return denied
       adoptAgentLease(found.record, context)
       const again = ledger.matchObservation(command.observation, context.sessionId)
       if (!again.ok) return browserNotApplied(again.code, '观察已不能用于操作')
@@ -1223,6 +1315,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const found = lookupPage(command.observation.browserId, context.sessionId)
     if ('status' in found) return found
     return enqueueSerial(found.record, context, async (signal) => {
+      // 截图只读：用户接管期间仍可拍，但不因此取得控制权
       adoptAgentLease(found.record, context)
       const again = ledger.matchObservation(command.observation, context.sessionId)
       if (!again.ok) return browserNotApplied(again.code, '观察已不能用于截图')

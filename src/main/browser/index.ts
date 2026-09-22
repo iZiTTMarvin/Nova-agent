@@ -11,6 +11,7 @@ import { createRegistryPreviewQuery } from './previewProcess'
 import {
   guestDownloadMessage,
   guestPermissionMessage,
+  createPartitionHostResolver,
   installBrowserPartitionPolicy
 } from './networkPolicy'
 import { getBrowserSessionHost, setBrowserSessionHost } from './hostRef'
@@ -41,6 +42,9 @@ export async function cleanupBrowserPartition(partition: string): Promise<void> 
 }
 
 const slotPool = createBrowserPartitionSlotPool(cleanupBrowserPartition)
+
+// 打开确认与请求拦截共用同一份解析缓存，域名指向在期限内只查一次
+const partitionHostResolver = createPartitionHostResolver()
 
 function readDisplayScale(): number | null {
   try {
@@ -106,10 +110,11 @@ export function initBrowserSessionHost(): BrowserSessionHost {
             message: guestDownloadMessage(input.filename, input.url)
           })
         }
-      })
+      }, { resolveHost: partitionHostResolver })
     },
     previewGrants: createPreviewGrantStore(
-      createRegistryPreviewQuery((sessionId) => processRegistry.listRunning(sessionId))
+      createRegistryPreviewQuery((sessionId) => processRegistry.listRunning(sessionId)),
+      { resolveHost: partitionHostResolver }
     ),
     readDisplayScale
   })
