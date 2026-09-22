@@ -358,13 +358,13 @@ async function viewport(
   if (!sent.ok) return sent.failure
   const lease = fence.stillCurrent()
   if (!lease.ok) {
-    forgetViewportReplay(state)
+    retainViewport(state, previous)
     return browserNotApplied(lease.code, '视口检查已中断')
   }
   const probe = await runInWorld(state, fence, viewportProbeExpression(action.width, action.height), deadlineAt)
   if (!probe.ok) {
     if (probe.failure.code === 'taken_over' || probe.failure.code === 'cancelled') {
-      forgetViewportReplay(state)
+      retainViewport(state, previous)
       return probe.failure
     }
     await restoreViewport(state, fence, previous, deadlineAt)
@@ -373,7 +373,7 @@ async function viewport(
   const size = readViewportProbe(probe.value)
   const still = fence.stillCurrent()
   if (!still.ok) {
-    forgetViewportReplay(state)
+    retainViewport(state, previous)
     return browserNotApplied(still.code, '视口检查已中断')
   }
   if (!size || size.width !== action.width || size.height !== action.height) {
@@ -388,10 +388,14 @@ async function viewport(
   return { status: 'applied', summary: `视口已设为 ${action.width}×${action.height}` }
 }
 
-function forgetViewportReplay(state: GuestState): void {
-  state.metrics = null
-  state.emulated = false
-  state.session.setDeviceMetrics(null)
+function retainViewport(
+  state: GuestState,
+  previous: { metrics: BrowserDeviceMetrics | null; device: BrowserViewportDevice; emulated: boolean }
+): void {
+  state.metrics = previous.metrics
+  state.device = previous.device
+  state.emulated = previous.emulated
+  state.session.setDeviceMetrics(previous.metrics)
 }
 
 async function restoreViewport(
@@ -401,14 +405,11 @@ async function restoreViewport(
   deadlineAt: number
 ): Promise<void> {
   if (!fence.stillCurrent().ok) {
-    forgetViewportReplay(state)
+    retainViewport(state, previous)
     return
   }
   if (previous.emulated && previous.metrics) {
-    state.metrics = previous.metrics
-    state.device = previous.device
-    state.emulated = true
-    state.session.setDeviceMetrics(previous.metrics)
+    retainViewport(state, previous)
     await state.session.send(
       'Emulation.setDeviceMetricsOverride',
       { ...previous.metrics },
@@ -417,9 +418,8 @@ async function restoreViewport(
     )
     return
   }
-  state.metrics = null
-  state.device = 'desktop'
-  state.emulated = false
+  retainViewport(state, previous)
+  if (previous.emulated) return
   state.session.setDeviceMetrics(null)
   await state.session.send(
     'Emulation.clearDeviceMetricsOverride',

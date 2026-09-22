@@ -434,4 +434,39 @@ describe('ElectronBrowserDriver', () => {
     expect(guest.debugger.calls.filter((call) => call.method === 'Emulation.setDeviceMetricsOverride')).toHaveLength(0)
     driver.release(guest)
   })
+
+  it('已验收的模拟尺寸在下一次视口被接管时仍然保留', async () => {
+    const guest = new ScriptedGuest()
+    const fence = openFence()
+    guest.debugger.viewportProbe = { width: 390, height: 844, devicePixelRatio: 1 }
+    const driver = createElectronBrowserDriver({ idleMs: 60_000 })
+    const applied = await driver.act(guest, fence, {
+      kind: 'viewport',
+      width: 390,
+      height: 844,
+      device: 'mobile'
+    })
+    expect(applied).toMatchObject({ status: 'applied' })
+    guest.debugger.onProbe = () => {
+      fence.allow = false
+    }
+    const interrupted = await driver.act(guest, fence, {
+      kind: 'viewport',
+      width: 1280,
+      height: 800,
+      device: 'desktop'
+    })
+    expect(interrupted).toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    fence.allow = true
+    const observed = await driver.observe(guest, fence)
+    expect(observed.status).toBe('applied')
+    if (observed.status === 'applied') {
+      expect(observed.read.snapshot.viewport).toMatchObject({
+        device: 'mobile',
+        simulated: true
+      })
+    }
+    expect(guest.debugger.calls.filter((call) => call.method === 'Emulation.setDeviceMetricsOverride')).toHaveLength(0)
+    driver.release(guest)
+  })
 })

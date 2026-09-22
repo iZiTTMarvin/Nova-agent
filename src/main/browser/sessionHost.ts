@@ -1197,11 +1197,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       }
       const result = await deps.control!.act(guest, fence, command.action)
       if (command.action.kind === 'viewport' && result.status !== 'applied') {
-        const lease = fence.stillCurrent()
-        if (lease.ok) {
-          found.record.layoutViewport = previousLayout
-          emit()
-        }
+        // 尺寸只在验收后留下。租约中途失效时，这次提前写上的布局也要收回。
+        found.record.layoutViewport = previousLayout
+        emit()
       }
       if (result.status !== 'applied') return result
       if (signal.aborted) {

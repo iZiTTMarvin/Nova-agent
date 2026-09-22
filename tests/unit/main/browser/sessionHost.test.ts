@@ -798,6 +798,45 @@ describe('BrowserSessionHost 生命周期', () => {
     expect(applied).toEqual(['390x844'])
   })
 
+  it('进行中的视口恢复被接管后，页面仍停在已验收的尺寸', async () => {
+    let browserId = ''
+    const harness = createHarness(new Map([[23, new FakeGuest({ id: 23 })]]), {
+      ...immediateControl(),
+      act: async (_guest, fence, action) => {
+        if (action.kind === 'viewport' && action.width === 1280) {
+          await harness.host.claim({ browserId }, { sessionId: 'sess_1' })
+          const current = fence.stillCurrent()
+          if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+        }
+        return { status: 'applied', summary: 'viewport' }
+      }
+    })
+    browserId = await openReady(harness, 23)
+    const observed = await harness.host.observe({ browserId }, agentContext())
+    expect(observed.status).toBe('applied')
+    if (observed.status !== 'applied') return
+    const set = await harness.host.act(
+      {
+        observation: observed.observation,
+        action: { kind: 'viewport', width: 390, height: 844, device: 'mobile' }
+      },
+      agentContext()
+    )
+    expect(set.status).toBe('applied')
+    const restore = await harness.host.act(
+      {
+        observation: observed.observation,
+        action: { kind: 'viewport', width: 1280, height: 800, device: 'desktop' }
+      },
+      agentContext()
+    )
+    expect(restore).toMatchObject({ status: 'not_applied', code: 'taken_over' })
+    expect(harness.mounts.at(-1)?.guests[0]).toMatchObject({
+      layoutWidth: 390,
+      layoutHeight: 844
+    })
+  })
+
   it('关掉预览页不会终止已绑定的开发服务器', async () => {
     const registry = new ProcessRegistry({ terminateTimeoutMs: 20 })
     let kills = 0
