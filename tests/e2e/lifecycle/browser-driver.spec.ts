@@ -76,6 +76,48 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
           document.getElementById('state').textContent = 'alerted';
         };
       </script>
+    `),
+    '/budget': (() => {
+      const body = `
+      <div id="filler"></div>
+      <div id="controls"></div>
+      <script>
+        const params = new URLSearchParams(location.search);
+        const fillerCount = Number(params.get('filler') || '3000');
+        const buttonCount = Number(params.get('buttons') || '250');
+        const filler = document.getElementById('filler');
+        for (let index = 0; index < fillerCount; index += 1) {
+          const node = document.createElement('div');
+          node.className = 'fill';
+          node.textContent = 'filler-' + index;
+          filler.appendChild(node);
+        }
+        const controls = document.getElementById('controls');
+        for (let index = 0; index < buttonCount; index += 1) {
+          const node = document.createElement('button');
+          node.type = 'button';
+          node.textContent = 'btn-' + index;
+          controls.appendChild(node);
+        }
+      </script>
+    `
+      return page('Budget', body)
+    })(),
+    '/frames': page('Frames', `
+      <h1>外层页面</h1>
+      <iframe id="inner" src="/doc" title="同源子页"></iframe>
+    `),
+    '/cover': page('Cover', `
+      <div style="position:relative;height:120px">
+        <button id="under" type="button" style="position:absolute;top:0;left:0">被盖住的按钮</button>
+        <div id="veil" style="position:absolute;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.2)"></div>
+      </div>
+      <p id="hit">idle</p>
+      <script>
+        document.getElementById('under').onclick = () => {
+          document.getElementById('hit').textContent = 'clicked-under';
+        };
+      </script>
     `)
   }
   const server = http.createServer((req, res) => {
@@ -119,35 +161,42 @@ async function openPage(nova: NovaHarness, url: string): Promise<{ sessionId: st
   return { sessionId: sessionId!, browserId: opened.page!.browserId }
 }
 
+async function observePage(nova: NovaHarness, sessionId: string, browserId: string): Promise<Extract<BrowserObserveResult, { status: 'applied' }>> {
+  const view = await nova.invoke(BROWSER_OBSERVE, { sessionId, browserId }) as BrowserObserveResult
+  expect(view, JSON.stringify(view)).toMatchObject({ status: 'applied' })
+  if (view.status !== 'applied') throw new Error('观察失败')
+  return view
+}
+
 test('内置浏览器可以阅读、填写、在替换节点后定位、导航、滚动和截图', async ({ nova }) => {
   test.setTimeout(90_000)
   const fixture = await startFixture()
   try {
     const doc = await openPage(nova, `${fixture.origin}/doc`)
-    const observed = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(observed, JSON.stringify(observed)).toMatchObject({ status: 'applied' })
-    if (observed.status !== 'applied') return
+    const observed = await observePage(nova, doc.sessionId, doc.browserId)
     expect(observed.snapshot.title).toBe('DocTitle')
-    expect(observed.snapshot.summary).toContain('主框架正文-ALPHA')
+    expect(observed.snapshot.dom).toContain('主框架正文-ALPHA')
+    expect(observed.snapshot.truncated).toBe(false)
+    expect(observed.snapshot.limits).toEqual([])
+    expect(observed.snapshot.elements.length).toBe(1)
+    expect(observed.snapshot.elements[0]!.selector.length).toBeGreaterThan(0)
+    expect(observed.snapshot.elements[0]!.rect.width).toBeGreaterThan(0)
 
     const moved = await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: doc.sessionId,
       browserId: doc.browserId,
       action: { kind: 'url', url: `${fixture.origin}/form` }
-    })
-    const form = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(form, JSON.stringify({ moved, form })).toMatchObject({ status: 'applied' })
-    if (form.status !== 'applied') return
-    const email = form.snapshot.interactive.find((item) => item.name === '邮箱')
-    const save = form.snapshot.interactive.find((item) => item.name === '保存')
+    }) as { status: string }
+    expect(moved.status, '导航到表单页').toBe('applied')
+    const form = await observePage(nova, doc.sessionId, doc.browserId)
+    const email = form.snapshot.elements.find((item) => item.name === '邮箱')
+    const save = form.snapshot.elements.find((item) => item.name === '保存')
     expect(email).toBeTruthy()
     expect(save).toBeTruthy()
+    expect(email!.selector.length).toBeGreaterThan(0)
+    expect(email!.rect.width).toBeGreaterThan(0)
+    expect(form.snapshot.dom).toContain('[ref=' + email!.ref + ']')
+    expect(form.snapshot.dom).toContain('[ref=' + save!.ref + ']')
     const filled = await nova.invoke(BROWSER_ACT, {
       sessionId: doc.sessionId,
       observation: form.observation,
@@ -160,27 +209,18 @@ test('内置浏览器可以阅读、填写、在替换节点后定位、导航�
       action: { kind: 'click', ref: save!.ref }
     }) as { status: string }
     expect(saved.status).toBe('applied')
-    const formAfter = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(formAfter.status).toBe('applied')
-    if (formAfter.status === 'applied') expect(formAfter.snapshot.summary).toContain('saved:你好')
+    const formAfter = await observePage(nova, doc.sessionId, doc.browserId)
+    expect(formAfter.snapshot.dom).toContain('saved:你好')
 
     await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: doc.sessionId,
       browserId: doc.browserId,
       action: { kind: 'url', url: `${fixture.origin}/spa` }
     })
-    const spa = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(spa, JSON.stringify(spa)).toMatchObject({ status: 'applied' })
-    if (spa.status !== 'applied') return
-    const spaEmail = spa.snapshot.interactive.find((item) => item.name === '邮箱')
-    const replace = spa.snapshot.interactive.find((item) => item.name === '替换')
-    const spaSave = spa.snapshot.interactive.find((item) => item.name === '保存')
+    const spa = await observePage(nova, doc.sessionId, doc.browserId)
+    const spaEmail = spa.snapshot.elements.find((item) => item.name === '邮箱')
+    const replace = spa.snapshot.elements.find((item) => item.name === '替换')
+    const spaSave = spa.snapshot.elements.find((item) => item.name === '保存')
     expect(spaEmail && replace && spaSave).toBeTruthy()
     expect((await nova.invoke(BROWSER_ACT, {
       sessionId: doc.sessionId,
@@ -197,12 +237,8 @@ test('内置浏览器可以阅读、填写、在替换节点后定位、导航�
       observation: spa.observation,
       action: { kind: 'click', ref: spaSave!.ref }
     }) as { status: string }).status).toBe('applied')
-    const spaAfter = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(spaAfter.status).toBe('applied')
-    if (spaAfter.status === 'applied') expect(spaAfter.snapshot.summary).toContain('saved:之后')
+    const spaAfter = await observePage(nova, doc.sessionId, doc.browserId)
+    expect(spaAfter.snapshot.dom).toContain('saved:之后')
 
     const next = await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: doc.sessionId,
@@ -210,50 +246,30 @@ test('内置浏览器可以阅读、填写、在替换节点后定位、导航�
       action: { kind: 'url', url: `${fixture.origin}/next` }
     }) as { status: string }
     expect(next.status).toBe('applied')
-    const nextView = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(nextView.status).toBe('applied')
-    if (nextView.status === 'applied') expect(nextView.snapshot.title).toBe('NextTitle')
+    const nextView = await observePage(nova, doc.sessionId, doc.browserId)
+    expect(nextView.snapshot.title).toBe('NextTitle')
 
     await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: doc.sessionId,
       browserId: doc.browserId,
       action: { kind: 'url', url: `${fixture.origin}/scroll` }
     })
-    const beforeScroll = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(beforeScroll.status).toBe('applied')
-    if (beforeScroll.status !== 'applied') return
+    const beforeScroll = await observePage(nova, doc.sessionId, doc.browserId)
     const scrolled = await nova.invoke(BROWSER_ACT, {
       sessionId: doc.sessionId,
       observation: beforeScroll.observation,
       action: { kind: 'scroll', direction: 'down', amount: 'page' }
     }) as { status: string; summary?: string; detail?: string }
     expect(scrolled.status, scrolled.detail).toBe('applied')
-    const afterScroll = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(afterScroll.status).toBe('applied')
-    if (afterScroll.status === 'applied') {
-      expect(afterScroll.snapshot.summary).toMatch(/scrollpos:[1-9]/)
-    }
+    const afterScroll = await observePage(nova, doc.sessionId, doc.browserId)
+    expect(afterScroll.snapshot.dom).toMatch(/scrollpos:[1-9]/)
 
     await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: doc.sessionId,
       browserId: doc.browserId,
       action: { kind: 'url', url: `${fixture.origin}/shot` }
     })
-    const shotView = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(shotView.status).toBe('applied')
-    if (shotView.status !== 'applied') return
+    const shotView = await observePage(nova, doc.sessionId, doc.browserId)
     const firstShot = await nova.invoke(BROWSER_CAPTURE, {
       sessionId: doc.sessionId,
       observation: shotView.observation
@@ -270,6 +286,90 @@ test('内置浏览器可以阅读、填写、在替换节点后定位、导航�
     expect(png.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true)
     expect(png.readUInt32BE(16)).toBe(firstShot.width)
     expect(png.readUInt32BE(20)).toBe(firstShot.height)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('快照预算硬上限生效并如实标记截断', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/budget`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    expect(view.snapshot.truncated).toBe(true)
+    expect(view.snapshot.limits).toContain('node-budget')
+    expect(view.snapshot.limits).toContain('item-budget')
+    expect(view.snapshot.elements.length).toBeLessThanOrEqual(200)
+    expect(view.snapshot.elements.length).toBeGreaterThan(100)
+    const domBytes = Buffer.byteLength(view.snapshot.dom, 'utf8')
+    expect(domBytes).toBeLessThanOrEqual(16 * 1024)
+    const listedRefs = view.snapshot.elements.map((item) => item.ref)
+    for (const ref of listedRefs) {
+      expect(view.snapshot.dom).toContain('[ref=' + ref + ']')
+    }
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('子 frame 内容不进快照，受限范围如实返回', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/frames`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    expect(view.snapshot.limits).toContain('subframes')
+    expect(view.snapshot.dom).toContain('外层页面')
+    expect(view.snapshot.dom).not.toContain('主框架正文-ALPHA')
+    const frameRef = view.snapshot.elements.find((item) => item.role === 'iframe')
+    expect(frameRef).toBeTruthy()
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('点击被遮挡的目标返回 target_occluded，不误报成功', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/cover`)
+    const view = await observePage(nova, opened.sessionId, opened.browserId)
+    const under = view.snapshot.elements.find((item) => item.name === '被盖住的按钮')
+    expect(under).toBeTruthy()
+    const clicked = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: view.observation,
+      action: { kind: 'click', ref: under!.ref }
+    }) as { status: string; code?: string; detail?: string }
+    expect(clicked, JSON.stringify(clicked)).toMatchObject({ status: 'not_applied', code: 'target_occluded' })
+    const after = await observePage(nova, opened.sessionId, opened.browserId)
+    expect(after.snapshot.dom).toContain('idle')
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('导航后旧 ref 失效，动作返回 stale_observation', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const fixture = await startFixture()
+  try {
+    const opened = await openPage(nova, `${fixture.origin}/form`)
+    const form = await observePage(nova, opened.sessionId, opened.browserId)
+    const save = form.snapshot.elements.find((item) => item.name === '保存')
+    expect(save).toBeTruthy()
+    const moved = await nova.invoke(BROWSER_NAVIGATE, {
+      sessionId: opened.sessionId,
+      browserId: opened.browserId,
+      action: { kind: 'url', url: `${fixture.origin}/next` }
+    }) as { status: string }
+    expect(moved.status).toBe('applied')
+    const stale = await nova.invoke(BROWSER_ACT, {
+      sessionId: opened.sessionId,
+      observation: form.observation,
+      action: { kind: 'click', ref: save!.ref }
+    }) as { status: string; code?: string }
+    expect(stale, JSON.stringify(stale)).toMatchObject({ status: 'not_applied', code: 'stale_observation' })
   } finally {
     await fixture.close()
   }
@@ -314,13 +414,8 @@ test('对话框在 Page.enable 下能结束，DevTools 断开后不再挂起', a
     for (const page of nova.page.context().pages()) bindDialogs(page)
     const doc = await openPage(nova, `${fixture.origin}/dialog`)
     for (const page of nova.page.context().pages()) bindDialogs(page)
-    const view = await nova.invoke(BROWSER_OBSERVE, {
-      sessionId: doc.sessionId,
-      browserId: doc.browserId
-    }) as BrowserObserveResult
-    expect(view.status).toBe('applied')
-    if (view.status !== 'applied') return
-    const button = view.snapshot.interactive.find((item) => item.name === '弹出')
+    const view = await observePage(nova, doc.sessionId, doc.browserId)
+    const button = view.snapshot.elements.find((item) => item.name === '弹出')
     expect(button).toBeTruthy()
     const clicked = await nova.invoke(BROWSER_ACT, {
       sessionId: doc.sessionId,
@@ -331,7 +426,7 @@ test('对话框在 Page.enable 下能结束，DevTools 断开后不再挂起', a
       sessionId: doc.sessionId,
       browserId: doc.browserId
     }) as BrowserObserveResult
-    const summary = after.status === 'applied' ? after.snapshot.summary : ''
+    const summary = after.status === 'applied' ? after.snapshot.dom : ''
     console.log(JSON.stringify({
       dialogProduct: { click: clicked, observe: after.status, summary }
     }))

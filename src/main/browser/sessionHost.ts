@@ -333,6 +333,15 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       ledger.bumpDocumentEpoch(browserId)
       emit()
     })
+    listen(record, guest, 'did-navigate-in-page', () => {
+      try {
+        record.url = guest.getURL() || record.url
+      } catch {
+        // ignore
+      }
+      ledger.bumpDocumentEpoch(browserId)
+      emit()
+    })
     listen(record, guest, 'page-title-updated', (...args: unknown[]) => {
       if (typeof args[0] === 'string') record.title = args[0]
       else if (typeof args[1] === 'string') record.title = args[1]

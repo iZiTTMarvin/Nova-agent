@@ -15,7 +15,7 @@ class ScriptedDebugger implements BrowserGuestDebugger {
   readonly calls: Array<{ method: string; params?: Record<string, unknown> }> = []
   private detachListeners = new Set<() => void>()
   private pending: ((value: unknown) => void) | null = null
-  mode: 'ok' | 'hang' | 'scroll-still' | 'bad-png' = 'ok'
+  mode: 'ok' | 'hang' | 'scroll-still' | 'bad-png' | 'occluded' | 'ambiguous' = 'ok'
 
   isAttached(): boolean {
     return this.attached
@@ -43,7 +43,7 @@ class ScriptedDebugger implements BrowserGuestDebugger {
     }
     if (method === 'Runtime.evaluate') {
       const expression = String(params?.expression ?? '')
-      if (this.mode === 'hang' && expression.includes('innerText')) {
+      if (this.mode === 'hang' && expression.includes('incrementalAriaSnapshot')) {
         return new Promise((resolve) => {
           this.pending = resolve
         })
@@ -67,24 +67,42 @@ class ScriptedDebugger implements BrowserGuestDebugger {
   }
 }
 
+function snapshotValue(mode: ScriptedDebugger['mode']): Record<string, unknown> {
+  return {
+    url: 'http://127.0.0.1/doc',
+    title: 'Doc',
+    viewport: { width: 800, height: 600 },
+    scrollY: 0,
+    dom: mode === 'ambiguous'
+      ? '- textbox "邮箱" [ref=e1]\n- textbox "邮箱" [ref=e2]'
+      : '- textbox "邮箱" [ref=e1]',
+    elements: mode === 'ambiguous'
+      ? [
+          { ref: 'e1', role: 'textbox', name: '邮箱', selector: 'css=#email', rect: { x: 10, y: 10, width: 120, height: 24 } },
+          { ref: 'e2', role: 'textbox', name: '邮箱', selector: 'css=#email', rect: { x: 10, y: 40, width: 120, height: 24 } }
+        ]
+      : [{ ref: 'e1', role: 'textbox', name: '邮箱', selector: 'css=#email', rect: { x: 10, y: 10, width: 120, height: 24 } }],
+    truncated: false,
+    limits: []
+  }
+}
+
 function valueFor(expression: string, mode: ScriptedDebugger['mode']): unknown {
   if (expression.includes('InjectedScript')) return true
-  if (expression.includes('innerWidth') && !expression.includes('innerText')) return { width: 320, height: 240 }
+  if (expression.includes('incrementalAriaSnapshot')) return snapshotValue(mode)
+  if (expression.includes('innerWidth')) return { width: 320, height: 240 }
+  if (expression.includes('checkElementStates')) {
+    if (mode === 'occluded') return { code: 'target_occluded', detail: '点击点被 div 遮挡' }
+    if (mode === 'ambiguous') return { code: 'target_ambiguous', detail: '目标不唯一' }
+    return { code: 'ok', x: 70, y: 22, width: 120, height: 24 }
+  }
   if (expression.includes('scrollBy')) {
     return mode === 'scroll-still' ? { before: 0, after: 0 } : { before: 0, after: 400 }
   }
   if (expression.includes('readyState')) {
     return { href: 'http://127.0.0.1/next', readyState: 'complete' }
   }
-  return {
-    url: 'http://127.0.0.1/doc',
-    title: 'Doc',
-    summary: '主框架正文',
-    truncated: false,
-    viewport: { width: 800, height: 600 },
-    scrollY: 0,
-    interactive: [{ ref: 'e1', role: 'textbox', name: '邮箱', selector: 'css=#email' }]
-  }
+  return { count: 1, used: 'fallback' }
 }
 
 class ScriptedGuest implements BrowserGuestContents {
@@ -183,6 +201,44 @@ describe('ElectronBrowserDriver', () => {
     driver.release(guest)
   })
 
+  it('两段快照：语义行与元素细节都通过，refs 从元素细节提取', async () => {
+    const guest = new ScriptedGuest()
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 1_000 })
+    const result = await driver.observe(guest, openFence())
+    expect(result.status).toBe('applied')
+    if (result.status !== 'applied') return
+    expect(result.read.snapshot.dom).toContain('[ref=e1]')
+    expect(result.read.snapshot.elements[0]).toMatchObject({
+      ref: 'e1',
+      selector: 'css=#email',
+      rect: { x: 10, y: 10, width: 120, height: 24 }
+    })
+    expect(result.read.refs).toEqual({ e1: 'css=#email' })
+    driver.release(guest)
+  })
+
+  it('点击前命中测试被遮挡时返回 target_occluded，不派发鼠标事件', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.mode = 'occluded'
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 1_000 })
+    driver.bindRefs('obs_1', { e1: 'css=#email' })
+    const result = await driver.act(guest, openFence(), { kind: 'click', ref: 'e1' })
+    expect(result).toMatchObject({ status: 'not_applied', code: 'target_occluded' })
+    const mouse = guest.debugger.calls.filter((call) => call.method === 'Input.dispatchMouseEvent')
+    expect(mouse.length).toBe(0)
+    driver.release(guest)
+  })
+
+  it('目标不唯一时点击返回 target_ambiguous', async () => {
+    const guest = new ScriptedGuest()
+    guest.debugger.mode = 'ambiguous'
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 1_000 })
+    driver.bindRefs('obs_1', { e1: 'css=#email' })
+    const result = await driver.act(guest, openFence(), { kind: 'click', ref: 'e1' })
+    expect(result).toMatchObject({ status: 'not_applied', code: 'target_ambiguous' })
+    driver.release(guest)
+  })
+
   it('滚动没有改变 scrollY 时返回 not_applied', async () => {
     const guest = new ScriptedGuest()
     guest.debugger.mode = 'scroll-still'
@@ -221,10 +277,11 @@ describe('ElectronBrowserDriver', () => {
         value: {
           url: 'http://127.0.0.1/doc',
           title: 'late',
-          summary: '不应该被采纳',
-          truncated: false,
           viewport: { width: 10, height: 10 },
-          interactive: []
+          dom: '- heading "不应该被采纳"',
+          elements: [],
+          truncated: false,
+          limits: []
         }
       }
     })

@@ -135,19 +135,48 @@ export interface BrowserViewportProjection {
   readonly device: BrowserViewportDevice
 }
 
-export interface BrowserInteractiveItem {
+export interface BrowserRect {
+  readonly x: number
+  readonly y: number
+  readonly width: number
+  readonly height: number
+}
+
+/**
+ * 观察受限原因：subframes=iframe 内容未纳入（同源/跨域一致）；
+ * node/item/size/time=四类预算截断。
+ */
+export const BROWSER_OBSERVATION_LIMITS = Object.freeze([
+  'subframes',
+  'node-budget',
+  'item-budget',
+  'size-budget',
+  'time-budget'
+] as const)
+
+export type BrowserObservationLimit = (typeof BROWSER_OBSERVATION_LIMITS)[number]
+
+export function isBrowserObservationLimit(value: string): value is BrowserObservationLimit {
+  return (BROWSER_OBSERVATION_LIMITS as readonly string[]).includes(value)
+}
+
+/** 两段快照的动作细节段：ref 与 dom 段语义行一一对应 */
+export interface BrowserElementDetail {
   readonly ref: string
   readonly role: string
   readonly name: string
+  readonly selector: string
+  readonly rect: BrowserRect
 }
 
 export interface BrowserObservationProjection {
   readonly url: string
   readonly title: string
   readonly viewport: BrowserViewportProjection
-  readonly summary: string
-  readonly interactive: readonly BrowserInteractiveItem[]
+  readonly dom: string
+  readonly elements: readonly BrowserElementDetail[]
   readonly truncated: boolean
+  readonly limits: readonly BrowserObservationLimit[]
 }
 
 export type BrowserAction =

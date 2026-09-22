@@ -524,10 +524,11 @@ describe('BrowserSessionHost 生命周期', () => {
             snapshot: {
               url: 'https://example.com/app',
               title: 'late',
-              summary: 'late',
               truncated: false,
               viewport: { width: 800, height: 600, device: 'desktop' },
-              interactive: []
+              dom: '- heading "late"',
+              elements: [],
+              limits: []
             },
             refs: {}
           }

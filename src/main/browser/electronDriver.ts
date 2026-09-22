@@ -4,8 +4,9 @@
  */
 import {
   browserNotApplied,
+  isBrowserObservationLimit,
   type BrowserAction,
-  type BrowserInteractiveItem,
+  type BrowserElementDetail,
   type BrowserNotApplied,
   type BrowserObservationProjection,
   type BrowserViewportDevice
@@ -20,14 +21,14 @@ import type {
   BrowserPageControl
 } from './controlPort'
 import {
-  DOCUMENT_EXPRESSION,
   READY_EXPRESSION,
+  actionabilityExpression,
   fillExpression,
   focusExpression,
   injectExpression,
-  queryExpression,
   scrollExpression,
-  selectExpression
+  selectExpression,
+  snapshotExpression
 } from './controlledScripts'
 import type { BrowserGuestContents } from './guestContents'
 import { getPlaywrightInjectedScriptSource } from './injectedSource'
@@ -54,14 +55,11 @@ interface GuestState {
   device: BrowserViewportDevice
 }
 
-interface QueryHit {
-  readonly count: number
-  readonly x?: number
-  readonly y?: number
-  readonly width?: number
-  readonly height?: number
-  readonly error?: string
-}
+type QueryFailureCode = 'target_missing' | 'target_ambiguous' | 'target_occluded' | 'unsupported' | 'unavailable'
+
+type QueryHit =
+  | { readonly code: 'ok'; readonly x: number; readonly y: number }
+  | { readonly code: QueryFailureCode; readonly detail?: string }
 
 export function createElectronBrowserDriver(
   options: ElectronBrowserDriverOptions = {}
@@ -141,7 +139,7 @@ export function createElectronBrowserDriver(
         if (closed) return closed
         const state = stateFor(guest)
         const deadlineAt = now() + deadlineMs
-        const read = await evaluate(state, fence, DOCUMENT_EXPRESSION, deadlineAt)
+        const read = await evaluate(state, fence, snapshotExpression(), deadlineAt)
         if (!read.ok) return read.failure
         const document = readDocument(read.value, state.device)
         if (!document) return browserNotApplied('unavailable', '主 frame 文档无法读取')
@@ -318,20 +316,9 @@ async function click(
   selector: string,
   deadlineAt: number
 ): Promise<BrowserControlActResult> {
-  const hit = await locate(state, fence, selector, deadlineAt)
+  const hit = await locate(state, fence, selector, deadlineAt, true)
   if ('failure' in hit) return hit.failure
-  if (hit.count === 0) return browserNotApplied('target_missing', '目标已不在页面上')
-  if (hit.count !== 1) return browserNotApplied('target_ambiguous', '目标不唯一')
-  if (
-    typeof hit.x !== 'number'
-    || typeof hit.y !== 'number'
-    || typeof hit.width !== 'number'
-    || typeof hit.height !== 'number'
-    || hit.width < 1
-    || hit.height < 1
-  ) {
-    return browserNotApplied('target_missing', '目标没有可点击的区域')
-  }
+  if (hit.code !== 'ok') return browserNotApplied(hit.code, hit.detail ?? '目标不可点击')
   const point = { x: Math.round(hit.x), y: Math.round(hit.y) }
   const moved = await state.session.send(
     'Input.dispatchMouseEvent',
@@ -396,6 +383,9 @@ async function press(
 ): Promise<BrowserControlActResult> {
   const descriptor = keyDescriptor(key)
   if (!descriptor) return browserNotApplied('unsupported', '不支持该按键')
+  const checked = await locate(state, fence, selector, deadlineAt, false)
+  if ('failure' in checked) return checked.failure
+  if (checked.code !== 'ok') return browserNotApplied(checked.code, checked.detail ?? '目标不可聚焦')
   const focused = await runInWorld(state, fence, focusExpression(selector), deadlineAt)
   if (!focused.ok) return focused.failure
   const focusResult = appliedCount(focused.value, '已聚焦')
@@ -421,23 +411,36 @@ async function locate(
   state: GuestState,
   fence: BrowserControlFence,
   selector: string,
-  deadlineAt: number
+  deadlineAt: number,
+  hitTest: boolean
 ): Promise<QueryHit | { failure: BrowserNotApplied }> {
-  const read = await runInWorld(state, fence, queryExpression(selector), deadlineAt)
+  const read = await runInWorld(state, fence, actionabilityExpression(selector, hitTest), deadlineAt)
   if (!read.ok) return { failure: read.failure }
-  if (!isRecord(read.value) || typeof read.value.count !== 'number') {
+  if (!isRecord(read.value) || typeof read.value.code !== 'string') {
     return { failure: browserNotApplied('unavailable', '无法定位目标') }
   }
   if (read.value.error === 'missing-engine') {
     return { failure: browserNotApplied('unavailable', '隔离世界缺少定位脚本') }
   }
-  return {
-    count: read.value.count,
-    x: typeof read.value.x === 'number' ? read.value.x : undefined,
-    y: typeof read.value.y === 'number' ? read.value.y : undefined,
-    width: typeof read.value.width === 'number' ? read.value.width : undefined,
-    height: typeof read.value.height === 'number' ? read.value.height : undefined
+  const code = read.value.code
+  if (code === 'ok') {
+    const x = read.value.x
+    const y = read.value.y
+    if (typeof x !== 'number' || typeof y !== 'number') {
+      return { failure: browserNotApplied('unavailable', '目标没有可用的坐标') }
+    }
+    return { code, x, y }
   }
+  if (
+    code !== 'target_missing'
+    && code !== 'target_ambiguous'
+    && code !== 'target_occluded'
+    && code !== 'unsupported'
+    && code !== 'unavailable'
+  ) {
+    return { failure: browserNotApplied('unavailable', '无法定位目标') }
+  }
+  return { code, detail: typeof read.value.detail === 'string' ? read.value.detail : undefined }
 }
 
 async function runInWorld(
@@ -465,7 +468,14 @@ async function runInWorld(
     fence,
     Math.max(0, deadlineAt - Date.now())
   )
-  if (!sent.ok) return sent
+  if (!sent.ok) {
+    // 导航会销毁隔离世界：上下文失效时重建一次，不把旧世界当永久失败
+    if (allowRetry && sent.failure.code === 'unavailable' && /context/iu.test(sent.failure.detail)) {
+      state.world = null
+      return runInWorld(state, fence, expression, deadlineAt, false)
+    }
+    return sent
+  }
   const parsed = readEvaluation(sent.value)
   if (!parsed.ok) {
     state.world = null
@@ -528,6 +538,12 @@ function sharedInjection(): string {
 function appliedCount(value: unknown, summary: string): BrowserControlActResult {
   if (!isRecord(value)) return browserNotApplied('unavailable', '页面没有返回结果')
   if (value.error === 'missing-engine') return browserNotApplied('unavailable', '隔离世界缺少定位脚本')
+  if (typeof value.code === 'string') {
+    if (value.code === 'target_missing' || value.code === 'target_ambiguous') {
+      return browserNotApplied(value.code, typeof value.detail === 'string' ? value.detail : '目标不可用')
+    }
+    return browserNotApplied('unavailable', '无法解析目标')
+  }
   if (value.count === 0) return browserNotApplied('target_missing', '目标已不在页面上')
   if (typeof value.count === 'number' && value.count !== 1) {
     return browserNotApplied('target_ambiguous', '目标不唯一')
@@ -640,7 +656,8 @@ function readDocument(
   device: BrowserViewportDevice
 ): { snapshot: BrowserObservationProjection; refs: Record<string, string> } | null {
   if (!isRecord(value)) return null
-  if (typeof value.url !== 'string' || typeof value.title !== 'string' || typeof value.summary !== 'string') {
+  if (value.error === 'missing-engine' || value.error === 'empty-document') return null
+  if (typeof value.url !== 'string' || typeof value.title !== 'string' || typeof value.dom !== 'string') {
     return null
   }
   const viewport = value.viewport
@@ -648,28 +665,60 @@ function readDocument(
     return null
   }
   const refs: Record<string, string> = {}
-  const interactive: BrowserInteractiveItem[] = []
-  if (Array.isArray(value.interactive)) {
-    for (const item of value.interactive) {
+  const elements: BrowserElementDetail[] = []
+  if (Array.isArray(value.elements)) {
+    for (const item of value.elements) {
       if (!isRecord(item)) continue
-      if (typeof item.ref !== 'string' || typeof item.role !== 'string' || typeof item.name !== 'string') continue
-      if (typeof item.selector !== 'string' || item.selector.length === 0) continue
+      if (
+        typeof item.ref !== 'string'
+        || typeof item.role !== 'string'
+        || typeof item.name !== 'string'
+        || typeof item.selector !== 'string'
+        || item.selector.length === 0
+      ) {
+        continue
+      }
+      const rect = item.rect
+      if (
+        !isRecord(rect)
+        || typeof rect.x !== 'number'
+        || typeof rect.y !== 'number'
+        || typeof rect.width !== 'number'
+        || typeof rect.height !== 'number'
+      ) {
+        continue
+      }
       refs[item.ref] = item.selector
-      interactive.push({ ref: item.ref, role: item.role, name: item.name })
+      elements.push({
+        ref: item.ref,
+        role: item.role,
+        name: item.name,
+        selector: item.selector,
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      })
+    }
+  }
+  const limits: BrowserObservationProjection['limits'][number][] = []
+  if (Array.isArray(value.limits)) {
+    for (const limit of value.limits) {
+      if (typeof limit === 'string' && isBrowserObservationLimit(limit) && !limits.includes(limit)) {
+        limits.push(limit)
+      }
     }
   }
   return {
     snapshot: {
       url: value.url,
       title: value.title,
-      summary: value.summary,
-      truncated: value.truncated === true,
       viewport: {
         width: viewport.width,
         height: viewport.height,
         device
       },
-      interactive
+      dom: value.dom,
+      elements,
+      truncated: value.truncated === true,
+      limits
     },
     refs
   }

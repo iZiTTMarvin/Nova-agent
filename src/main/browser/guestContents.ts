@@ -10,6 +10,7 @@ export type BrowserGuestEvent =
   | 'render-process-gone'
   | 'will-navigate'
   | 'did-navigate'
+  | 'did-navigate-in-page'
   | 'did-start-loading'
   | 'did-stop-loading'
   | 'did-fail-load'
