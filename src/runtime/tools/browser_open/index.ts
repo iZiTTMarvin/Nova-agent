@@ -1,5 +1,5 @@
 import type { ToolExecutor, ToolResult } from '../types'
-import type { BrowserToolDeps } from '../../browser/toolSupport'
+import type { BrowserToolDeps } from '../../browser'
 import {
   failApplied,
   failUnknown,
@@ -8,7 +8,7 @@ import {
   requireBrowserPort,
   resolveBrowserCommandContext,
   unavailablePort
-} from '../../browser/toolSupport'
+} from '../../browser'
 import { parseBrowserOpenToolArgs } from '../../../shared/browser'
 
 const DESCRIPTION = `browser_open — 在 Nova 内打开或导航网页。创建页面、前进、后退、刷新、停止都走这一工具。

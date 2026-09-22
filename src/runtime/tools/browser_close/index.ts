@@ -1,5 +1,5 @@
 import type { ToolExecutor, ToolResult } from '../types'
-import type { BrowserToolDeps } from '../../browser/toolSupport'
+import type { BrowserToolDeps } from '../../browser'
 import {
   failApplied,
   failUnknown,
@@ -7,7 +7,7 @@ import {
   requireBrowserPort,
   resolveBrowserCommandContext,
   unavailablePort
-} from '../../browser/toolSupport'
+} from '../../browser'
 import { parseBrowserCloseToolArgs } from '../../../shared/browser'
 
 const DESCRIPTION = `browser_close — 关闭指定内置网页。未提交的表单状态可能丢失。

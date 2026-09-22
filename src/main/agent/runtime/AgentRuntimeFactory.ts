@@ -274,7 +274,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     saveBrowserCaptureEvidence: async ({ sessionId, mimeType, base64 }) => {
       try {
         return getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`).filePath
-      } catch {
+      } catch (error) {
+        console.error('[browser_capture] 截图证据落盘失败:', error)
         return null
       }
     },

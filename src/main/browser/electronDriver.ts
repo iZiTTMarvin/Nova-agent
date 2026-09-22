@@ -3,6 +3,7 @@
  * 页面脚本只在隔离世界执行；截图走 capturePage，不走会楔住的 CDP 截图。
  */
 import {
+  BROWSER_CAPTURE_DEVICE_SCALE,
   browserNotApplied,
   isBrowserObservationLimit,
   type BrowserAction,
@@ -114,7 +115,7 @@ export function createElectronBrowserDriver(
     const metrics: BrowserDeviceMetrics = {
       width,
       height,
-      deviceScaleFactor: 1,
+      deviceScaleFactor: BROWSER_CAPTURE_DEVICE_SCALE,
       mobile: device === 'mobile',
       dontSetVisibleSize: true
     }
@@ -293,7 +294,7 @@ async function viewport(
   const metrics: BrowserDeviceMetrics = {
     width: action.width,
     height: action.height,
-    deviceScaleFactor: 1,
+    deviceScaleFactor: BROWSER_CAPTURE_DEVICE_SCALE,
     mobile: action.device === 'mobile',
     dontSetVisibleSize: true
   }

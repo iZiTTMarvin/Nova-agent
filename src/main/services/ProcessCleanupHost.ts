@@ -1,5 +1,6 @@
 /** 持久进程注册表的生命周期接线：run 终态、会话删除、应用退出、headless 退出。 */
 import { processRegistry } from '../../runtime/process'
+import { releaseCaptureBudget } from '../../runtime/browser/captureBudget'
 import type { RunCoordinator } from '../../runtime/run'
 import { getRunCoordinator } from './RunCoordinatorHost'
 
@@ -13,10 +14,12 @@ import { getRunCoordinator } from './RunCoordinatorHost'
  */
 export function wireProcessCleanup(coord: Pick<RunCoordinator, 'onTerminalHook'>): void {
   coord.onTerminalHook('onCancel', (ctx) => {
+    releaseCaptureBudget(ctx.runId)
     return processRegistry.terminateForRun(ctx.snapshot.runId, { includeMainRun: true })
   })
   for (const hook of ['onComplete', 'onFail', 'onInterrupt'] as const) {
     coord.onTerminalHook(hook, (ctx) => {
+      releaseCaptureBudget(ctx.runId)
       return processRegistry.terminateForRun(ctx.snapshot.runId, { includeMainRun: false })
     })
   }

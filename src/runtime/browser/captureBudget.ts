@@ -42,6 +42,10 @@ export function tryConsumeCaptureBudget(
   return { ok: true }
 }
 
+export function releaseCaptureBudget(ownerId: string): void {
+  spendByOwner.delete(ownerId)
+}
+
 export function resetCaptureBudgetForTests(): void {
   spendByOwner.clear()
 }

@@ -1,5 +1,5 @@
 import type { ToolExecutor, ToolResult } from '../types'
-import type { BrowserToolDeps } from '../../browser/toolSupport'
+import type { BrowserToolDeps } from '../../browser'
 import {
   failApplied,
   formatList,
@@ -8,7 +8,7 @@ import {
   requireBrowserPort,
   resolveBrowserCommandContext,
   unavailablePort
-} from '../../browser/toolSupport'
+} from '../../browser'
 import { parseBrowserObserveToolArgs } from '../../../shared/browser'
 
 const DESCRIPTION = `browser_observe — 读取当前任务里的网页。只读，不滚动、不改焦点、不点击。

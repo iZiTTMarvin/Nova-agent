@@ -3,7 +3,7 @@
  * 空闲后主动 detach；外部 detach（例如 DevTools）后停控，不再抢 attach。
  * 重连必须先重放 Page.enable，以及已经设置过的视口覆盖。
  */
-import { browserNotApplied, type BrowserNotApplied } from '../../shared/browser'
+import { browserNotApplied, BROWSER_CAPTURE_DEVICE_SCALE, type BrowserNotApplied } from '../../shared/browser'
 import type { BrowserControlFence } from './controlPort'
 import type { BrowserGuestDebugger } from './guestContents'
 
@@ -13,7 +13,7 @@ export const BROWSER_CDP_PROTOCOL = '1.3'
 export interface BrowserDeviceMetrics {
   readonly width: number
   readonly height: number
-  readonly deviceScaleFactor: 1
+  readonly deviceScaleFactor: typeof BROWSER_CAPTURE_DEVICE_SCALE
   readonly mobile: boolean
   readonly dontSetVisibleSize: true
 }

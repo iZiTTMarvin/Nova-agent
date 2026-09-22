@@ -157,7 +157,7 @@ describe('browser 工具契约', () => {
     expect(result.output).toContain('- e1  button  保存')
   })
 
-  it('截图在模型不可用图片时降级为文字和本地证据，不把关键字当可用', async () => {
+  it('截图发图前做真实探测，关键字为 false 也不当作可用', async () => {
     const png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
     const port = fakePort({
@@ -175,7 +175,7 @@ describe('browser 工具契约', () => {
       probeVision: async () => false,
       saveEvidence: async () => 'D:\\\\captures\\\\shot.png'
     })
-    const result = await capture.execute({ observation }, context({ supportsVision: true }))
+    const result = await capture.execute({ observation }, context({ supportsVision: false }))
     expect(result.success).toBe(true)
     expect(result.images).toBeUndefined()
     expect(result.output).toContain('text_only')

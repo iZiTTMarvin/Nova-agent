@@ -8,6 +8,11 @@ import { join } from 'path'
 import { createRunCoordinator } from '../../../../src/runtime/run'
 import { processRegistry } from '../../../../src/runtime/process'
 import { wireProcessCleanup } from '../../../../src/main/services/ProcessCleanupHost'
+import {
+  inspectCaptureBudget,
+  resetCaptureBudgetForTests,
+  tryConsumeCaptureBudget
+} from '../../../../src/runtime/browser/captureBudget'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp/nova-test-userdata') },
@@ -28,6 +33,7 @@ describe('ProcessCleanupHost run 终态接线', () => {
   afterEach(() => {
     spy.mockRestore()
     processRegistry.resetForTests()
+    resetCaptureBudgetForTests()
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -82,5 +88,17 @@ describe('ProcessCleanupHost run 终态接线', () => {
       expect(spy).toHaveBeenCalledTimes(1)
       expect(spy).toHaveBeenCalledWith(runId, { includeMainRun: false })
     }
+  })
+
+  it('run 终态释放截图预算', async () => {
+    const coord = createRunCoordinator(join(tmpDir, 'runs'))
+    wireProcessCleanup(coord)
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId)
+    expect(tryConsumeCaptureBudget(snap.runId, 10).ok).toBe(true)
+    expect(inspectCaptureBudget(snap.runId).count).toBe(1)
+    coord.commitTerminal({ runId: snap.runId, status: 'completed' })
+    await coord.drainPendingOutbox()
+    expect(inspectCaptureBudget(snap.runId)).toEqual({ count: 0, bytes: 0 })
   })
 })

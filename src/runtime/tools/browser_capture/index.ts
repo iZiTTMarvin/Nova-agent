@@ -1,20 +1,18 @@
 import type { ToolExecutor, ToolResult } from '../types'
-import type { BrowserToolDeps } from '../../browser/toolSupport'
+import type { BrowserToolDeps } from '../../browser'
 import {
   buildAuthority,
+  captureBudgetOwnerId,
+  constrainBrowserCapture,
   failApplied,
   failUnknown,
   parseFail,
+  probeProviderVision,
   requireBrowserPort,
   resolveBrowserCommandContext,
+  tryConsumeCaptureBudget,
   unavailablePort
-} from '../../browser/toolSupport'
-import {
-  captureBudgetOwnerId,
-  tryConsumeCaptureBudget
-} from '../../browser/captureBudget'
-import { constrainBrowserCapture } from '../../browser/constrainCapture'
-import { probeProviderVision } from '../../browser/visionProbe'
+} from '../../browser'
 import {
   browserNotApplied,
   parseBrowserCaptureToolArgs
@@ -115,21 +113,15 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
         `bytes: ${constrained.bytes}`
       ]
 
-      const canSendImage =
-        context.supportsVision === true &&
-        (await probe(context.modelClient, { abortSignal: context.abortSignal }))
+      const canSendImage = await probe(context.modelClient, { abortSignal: context.abortSignal })
 
       if (!canSendImage) {
-        const reason =
-          context.supportsVision === true
-            ? '当前服务商未能接受图片（真实探测失败，不能只凭模型名判断）。视觉验收需换可看图的模型。'
-            : '当前模型不支持图片输入。视觉验收需换可看图的模型。'
         return {
           success: true,
           output: [
             ...header,
             `status: text_only`,
-            reason,
+            '当前服务商未能接受图片（真实探测失败，不能只凭模型名判断）。视觉验收需换可看图的模型。',
             evidencePath ? `localEvidence: ${evidencePath}` : 'localEvidence: (not saved)'
           ].join('\n')
         }

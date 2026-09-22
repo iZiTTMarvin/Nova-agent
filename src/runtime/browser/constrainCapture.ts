@@ -1,5 +1,6 @@
 import sharp from 'sharp'
 import {
+  BROWSER_CAPTURE_DEVICE_SCALE,
   BROWSER_CAPTURE_MAX_BYTES,
   BROWSER_CAPTURE_MAX_LONG_EDGE,
   BROWSER_CAPTURE_MAX_PIXELS
@@ -14,8 +15,8 @@ export interface ConstrainedCapture {
 }
 
 function targetSize(width: number, height: number): { width: number; height: number } {
-  let nextWidth = width
-  let nextHeight = height
+  let nextWidth = Math.max(1, Math.round(width / BROWSER_CAPTURE_DEVICE_SCALE))
+  let nextHeight = Math.max(1, Math.round(height / BROWSER_CAPTURE_DEVICE_SCALE))
   const longEdge = Math.max(nextWidth, nextHeight)
   if (longEdge > BROWSER_CAPTURE_MAX_LONG_EDGE) {
     const scale = BROWSER_CAPTURE_MAX_LONG_EDGE / longEdge
@@ -80,7 +81,8 @@ export async function constrainBrowserCapture(
       }
     }
     return null
-  } catch {
+  } catch (error) {
+    console.error('[browser_capture] 截图压缩失败:', error)
     return null
   }
 }

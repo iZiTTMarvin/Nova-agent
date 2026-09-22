@@ -1,5 +1,5 @@
 import type { ToolExecutor, ToolResult } from '../types'
-import type { BrowserToolDeps } from '../../browser/toolSupport'
+import type { BrowserToolDeps } from '../../browser'
 import {
   failApplied,
   failUnknown,
@@ -7,7 +7,7 @@ import {
   requireBrowserPort,
   resolveBrowserCommandContext,
   unavailablePort
-} from '../../browser/toolSupport'
+} from '../../browser'
 import { parseBrowserActCommand } from '../../../shared/browser'
 
 const DESCRIPTION = `browser_act — 对最近一次观察中的目标执行一次写入动作。

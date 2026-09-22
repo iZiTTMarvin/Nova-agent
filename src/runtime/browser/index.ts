@@ -48,3 +48,26 @@ export interface BrowserPort {
   claim(command: BrowserClaimCommand, context: BrowserCommandContext): Promise<BrowserClaimResult>
   release(command: BrowserClaimCommand, context: BrowserCommandContext): Promise<BrowserClaimResult>
 }
+
+export type { BrowserToolDeps } from './toolSupport'
+export {
+  buildAuthority,
+  failApplied,
+  failUnknown,
+  formatList,
+  formatObservation,
+  formatPage,
+  parseFail,
+  requireBrowserPort,
+  resolveBrowserCommandContext,
+  unavailablePort
+} from './toolSupport'
+export {
+  captureBudgetOwnerId,
+  inspectCaptureBudget,
+  releaseCaptureBudget,
+  resetCaptureBudgetForTests,
+  tryConsumeCaptureBudget
+} from './captureBudget'
+export { constrainBrowserCapture } from './constrainCapture'
+export { probeProviderVision, resetVisionProbeCacheForTests } from './visionProbe'

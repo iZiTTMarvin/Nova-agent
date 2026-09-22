@@ -5,15 +5,17 @@ export const BROWSER_VISION_PROBE_MARKER = 'NOVA_BROWSER_VISION_PROBE'
 const PROBE_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
-const probeCache = new WeakMap<ModelClient, boolean>()
+const probeByProvider = new Map<string, boolean>()
+const probeByClient = new WeakMap<ModelClient, boolean>()
 const testCache = new Map<string, boolean>()
 
 export function resetVisionProbeCacheForTests(): void {
+  probeByProvider.clear()
   testCache.clear()
 }
 
 /**
- * 对当前 client 做一次真实发图探测。关键字/注册表不得单独作为可用依据。
+ * 对当前活跃 provider 做一次真实发图探测。关键字/注册表不得单独作为可用依据。
  * 探测失败（含 4xx/5xx）视为不可用，调用方应降级为文字结果。
  */
 export async function probeProviderVision(
@@ -21,18 +23,37 @@ export async function probeProviderVision(
   options: { readonly cacheKey?: string; readonly abortSignal?: AbortSignal } = {}
 ): Promise<boolean> {
   if (!modelClient) return false
-  if (options.cacheKey) {
-    const cached = testCache.get(options.cacheKey)
+  const providerKey = options.cacheKey ?? activeProviderKey(modelClient)
+  if (providerKey) {
+    const cached = testCache.get(providerKey) ?? probeByProvider.get(providerKey)
     if (cached !== undefined) return cached
   } else {
-    const cached = probeCache.get(modelClient)
+    const cached = probeByClient.get(modelClient)
     if (cached !== undefined) return cached
   }
 
   const available = await runProbe(modelClient, options.abortSignal)
-  if (options.cacheKey) testCache.set(options.cacheKey, available)
-  else probeCache.set(modelClient, available)
+  if (providerKey) {
+    if (options.cacheKey) testCache.set(providerKey, available)
+    else probeByProvider.set(providerKey, available)
+  } else {
+    probeByClient.set(modelClient, available)
+  }
   return available
+}
+
+function activeProviderKey(client: ModelClient): string | null {
+  if (!('getActiveProvider' in client) || typeof client.getActiveProvider !== 'function') {
+    return null
+  }
+  const info: unknown = client.getActiveProvider()
+  if (!info || typeof info !== 'object') return null
+  const record = info as { baseUrl?: unknown; modelId?: unknown }
+  if (typeof record.baseUrl !== 'string' || typeof record.modelId !== 'string') return null
+  const baseUrl = record.baseUrl.trim()
+  const modelId = record.modelId.trim()
+  if (!baseUrl || !modelId) return null
+  return `${baseUrl}::${modelId}`
 }
 
 async function runProbe(modelClient: ModelClient, abortSignal?: AbortSignal): Promise<boolean> {
@@ -71,4 +92,3 @@ async function runProbe(modelClient: ModelClient, abortSignal?: AbortSignal): Pr
     return false
   }
 }
-
