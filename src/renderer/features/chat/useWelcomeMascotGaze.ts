@@ -1,14 +1,12 @@
 import { useEffect, type RefObject } from 'react'
 
-export const MASCOT_VIEWBOX = 128
-export const LEFT_EYE = { x: 53, y: 64 }
-export const RIGHT_EYE = { x: 72, y: 62 }
+export const LEFT_EYE = { x: 53, y: 56 }
+export const RIGHT_EYE = { x: 72, y: 54 }
 export const MAX_PUPIL = 2.4
 export const GAZE_RANGE_PX = 280
 const LERP = 0.16
 const IDLE_MS = 1500
 const SETTLE_EPS = 0.03
-const COMPOSER_LOOK = { x: 0, y: MAX_PUPIL }
 
 export function pupilOffset(
   dxPx: number,
@@ -29,13 +27,20 @@ function prefersReducedMotion(): boolean {
     && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-function svgPoint(svg: SVGSVGElement, x: number, y: number): { x: number; y: number } {
-  const rect = svg.getBoundingClientRect()
-  if (rect.width < 1 || rect.height < 1) return { x: 0, y: 0 }
+function svgPoint(matrix: DOMMatrix, x: number, y: number): { x: number; y: number } {
   return {
-    x: rect.left + (x / MASCOT_VIEWBOX) * rect.width,
-    y: rect.top + (y / MASCOT_VIEWBOX) * rect.height
+    x: matrix.a * x + matrix.c * y + matrix.e,
+    y: matrix.b * x + matrix.d * y + matrix.f
   }
+}
+
+function localGaze(matrix: DOMMatrix, dx: number, dy: number): { x: number; y: number } {
+  // 字标只等比缩放与旋转；屏幕方向须转回星星的局部坐标。
+  const scale = Math.hypot(matrix.a, matrix.b)
+  return pupilOffset(
+    (matrix.a * dx + matrix.b * dy) / scale,
+    (matrix.c * dx + matrix.d * dy) / scale
+  )
 }
 
 function lerp(from: number, to: number, t: number): number {
@@ -68,7 +73,7 @@ export function useWelcomeMascotGaze({
 
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
     let alive = true
-    let composerFocused = false
+    let lookingAtComposer = false
     let raf = 0
     let lastMoveAt = 0
     let lastBlinkAt = 0
@@ -92,21 +97,22 @@ export function useWelcomeMascotGaze({
     }
 
     const retarget = (): void => {
-      if (composerFocused) {
-        target.lx = COMPOSER_LOOK.x
-        target.ly = COMPOSER_LOOK.y
-        target.rx = COMPOSER_LOOK.x
-        target.ry = COMPOSER_LOOK.y
-        return
-      }
-      if (!pointer.has || Date.now() - lastMoveAt > IDLE_MS) {
+      if (!lookingAtComposer && (!pointer.has || Date.now() - lastMoveAt > IDLE_MS)) {
         target.lx = target.ly = target.rx = target.ry = 0
         return
       }
-      const left = svgPoint(svg, LEFT_EYE.x, LEFT_EYE.y)
-      const right = svgPoint(svg, RIGHT_EYE.x, RIGHT_EYE.y)
-      const lookL = pupilOffset(pointer.x - left.x, pointer.y - left.y)
-      const lookR = pupilOffset(pointer.x - right.x, pointer.y - right.y)
+      const matrix = svg.getScreenCTM()
+      if (!matrix) return
+      if (lookingAtComposer) {
+        const look = localGaze(matrix, 0, GAZE_RANGE_PX)
+        target.lx = target.rx = look.x
+        target.ly = target.ry = look.y
+        return
+      }
+      const left = svgPoint(matrix, LEFT_EYE.x, LEFT_EYE.y)
+      const right = svgPoint(matrix, RIGHT_EYE.x, RIGHT_EYE.y)
+      const lookL = localGaze(matrix, pointer.x - left.x, pointer.y - left.y)
+      const lookR = localGaze(matrix, pointer.x - right.x, pointer.y - right.y)
       target.lx = lookL.x
       target.ly = lookL.y
       target.rx = lookR.x
@@ -137,6 +143,8 @@ export function useWelcomeMascotGaze({
 
     const onPointerMove = (event: PointerEvent): void => {
       if (mq.matches) return
+      // 目光跟随最近的交互，不被输入框持续持有的焦点锁住。
+      lookingAtComposer = false
       pointer.x = event.clientX
       pointer.y = event.clientY
       pointer.has = true
@@ -149,16 +157,16 @@ export function useWelcomeMascotGaze({
       kick()
     }
 
-    const onFocusIn = (event: FocusEvent): void => {
+    const onComposerActivity = (event: Event): void => {
       const targetEl = event.target
       if (!(targetEl instanceof Node)) return
       const area = root.closest('.chat-panel__composer-area')
-      composerFocused = !!area?.contains(targetEl)
-      if (composerFocused) kick()
+      lookingAtComposer = !!area?.contains(targetEl)
+      if (lookingAtComposer) kick()
     }
 
     const onFocusOut = (): void => {
-      composerFocused = false
+      lookingAtComposer = false
       kick()
     }
 
@@ -214,7 +222,8 @@ export function useWelcomeMascotGaze({
 
     window.addEventListener('pointermove', onPointerMove, { passive: true })
     document.documentElement.addEventListener('pointerleave', onPointerLeave)
-    document.addEventListener('focusin', onFocusIn)
+    document.addEventListener('focusin', onComposerActivity)
+    document.addEventListener('input', onComposerActivity)
     document.addEventListener('focusout', onFocusOut)
     document.addEventListener('visibilitychange', onVisibility)
     mq.addEventListener('change', onReducedChange)
@@ -224,7 +233,8 @@ export function useWelcomeMascotGaze({
       alive = false
       window.removeEventListener('pointermove', onPointerMove)
       document.documentElement.removeEventListener('pointerleave', onPointerLeave)
-      document.removeEventListener('focusin', onFocusIn)
+      document.removeEventListener('focusin', onComposerActivity)
+      document.removeEventListener('input', onComposerActivity)
       document.removeEventListener('focusout', onFocusOut)
       document.removeEventListener('visibilitychange', onVisibility)
       mq.removeEventListener('change', onReducedChange)

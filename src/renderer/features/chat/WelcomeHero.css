@@ -1,7 +1,3 @@
-/*
- * 空会话背景：淡网格。吉祥物是可动的星，不再用水印四角星。
- */
-
 .welcome-hero-bg {
   position: absolute;
   top: 0;
@@ -26,22 +22,34 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  width: min(480px, 100%);
   margin-bottom: 1.5rem;
   pointer-events: none;
   user-select: none;
 }
 
-.welcome-mascot {
-  width: min(176px, 100%);
+.welcome-wordmark {
+  display: block;
+  width: 100%;
   height: auto;
-  aspect-ratio: 1;
-  flex: none;
+  overflow: visible;
+}
+
+.welcome-wordmark__letters {
+  color: light-dark(#777780, #85858e);
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.welcome-mascot {
   overflow: visible;
 }
 
 .welcome-mascot__body {
-  fill: color-mix(in srgb, var(--accent-purple) 7%, var(--surface-canvas));
-  stroke: color-mix(in srgb, var(--accent-purple) 22%, var(--surface-canvas));
+  fill: light-dark(#eae8fc, #3c394f);
+  stroke: light-dark(#c9c5ef, #645c80);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
@@ -49,7 +57,7 @@
 }
 
 .welcome-mascot__eye {
-  fill: color-mix(in srgb, var(--accent-purple) 35%, var(--text-muted));
+  fill: light-dark(#73669d, #c9c0f0);
   transform-box: fill-box;
   transform-origin: center;
   transition: transform 70ms ease-out;

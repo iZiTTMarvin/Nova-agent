@@ -3,7 +3,7 @@
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WelcomeHero } from '../../../src/renderer/features/chat/WelcomeHero'
-import { pupilOffset } from '../../../src/renderer/features/chat/useWelcomeMascotGaze'
+import { LEFT_EYE, MAX_PUPIL, pupilOffset } from '../../../src/renderer/features/chat/useWelcomeMascotGaze'
 import { act, renderDom } from './renderDom'
 
 function parseTranslate(el: Element | null): { x: number; y: number } {
@@ -30,7 +30,7 @@ describe('WelcomeHero 空态', () => {
   let rafCallbacks: FrameRequestCallback[] = []
   const originalRaf = globalThis.requestAnimationFrame
   const originalCancelRaf = globalThis.cancelAnimationFrame
-  const originalRect = SVGSVGElement.prototype.getBoundingClientRect
+  const originalScreenCTM = Object.getOwnPropertyDescriptor(SVGSVGElement.prototype, 'getScreenCTM')
 
   beforeEach(() => {
     rafCallbacks = []
@@ -41,23 +41,20 @@ describe('WelcomeHero 空态', () => {
     globalThis.cancelAnimationFrame = ((id: number) => {
       rafCallbacks = rafCallbacks.filter((_, index) => index + 1 !== id)
     }) as typeof globalThis.cancelAnimationFrame
-    SVGSVGElement.prototype.getBoundingClientRect = () => ({
-      x: 100,
-      y: 80,
-      width: 200,
-      height: 200,
-      top: 80,
-      left: 100,
-      right: 300,
-      bottom: 280,
-      toJSON: () => ({})
+    Object.defineProperty(SVGSVGElement.prototype, 'getScreenCTM', {
+      configurable: true,
+      value: () => ({ a: 200 / 128, b: 0, c: 0, d: 200 / 128, e: 100, f: 80 })
     })
   })
 
   afterEach(() => {
     globalThis.requestAnimationFrame = originalRaf
     globalThis.cancelAnimationFrame = originalCancelRaf
-    SVGSVGElement.prototype.getBoundingClientRect = originalRect
+    if (originalScreenCTM) {
+      Object.defineProperty(SVGSVGElement.prototype, 'getScreenCTM', originalScreenCTM)
+    } else {
+      Reflect.deleteProperty(SVGSVGElement.prototype, 'getScreenCTM')
+    }
   })
 
   function flushRaf(times = 16): void {
@@ -100,6 +97,30 @@ describe('WelcomeHero 空态', () => {
     const right = parseTranslate(pupils[1])
     expect(left.x).toBeGreaterThan(1)
     expect(right.x).toBeGreaterThan(1)
+    renderer.unmount()
+  })
+
+  it('星星旋转缩放后，目光仍沿屏幕方向追踪指针', () => {
+    const angle = Math.PI / 12
+    const scale = 0.7
+    const matrix = {
+      a: scale * Math.cos(angle), b: scale * Math.sin(angle),
+      c: -scale * Math.sin(angle), d: scale * Math.cos(angle), e: 350, f: 100
+    }
+    Object.defineProperty(SVGSVGElement.prototype, 'getScreenCTM', {
+      configurable: true,
+      value: () => matrix
+    })
+    const renderer = renderDom(<WelcomeHero />)
+    const eyeX = matrix.a * LEFT_EYE.x + matrix.c * LEFT_EYE.y + matrix.e
+    const eyeY = matrix.b * LEFT_EYE.x + matrix.d * LEFT_EYE.y + matrix.f
+    act(() => dispatchPointerMove(eyeX + 300, eyeY))
+    flushRaf(40)
+
+    const offset = parseTranslate(renderer.container.querySelector('.welcome-mascot__pupil'))
+    expect(offset.x).toBeCloseTo(MAX_PUPIL * Math.cos(angle), 1)
+    expect(offset.y).toBeCloseTo(-MAX_PUPIL * Math.sin(angle), 1)
+    expect(matrix.b * offset.x + matrix.d * offset.y).toBeCloseTo(0, 2)
     renderer.unmount()
   })
 
