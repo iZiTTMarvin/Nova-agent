@@ -8,6 +8,7 @@ import {
   BROWSER_GUEST_MOUNT,
   BROWSER_NAVIGATE,
   BROWSER_OPEN,
+  BROWSER_CLAIM,
   BROWSER_SNAPSHOT
 } from '../../../shared/ipc/channels'
 import {
@@ -36,6 +37,7 @@ interface BrowserStoreState {
   openUrl: (rawUrl: string) => Promise<void>
   retryFocused: () => Promise<void>
   navigateFocused: (action: BrowserNavigateAction) => Promise<void>
+  claimFocused: () => Promise<void>
   closePage: (browserId: string, options?: { keepSurface?: boolean }) => Promise<void>
   closeFocused: () => Promise<void>
 }
@@ -182,6 +184,21 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     if (result.status !== 'applied') {
       set({ lastError: result.detail })
     }
+  },
+
+  claimFocused: async () => {
+    const sessionId = currentSessionId()
+    const focusedId = get().focusedBrowserId
+    if (!sessionId || !focusedId) return
+    const result = await window.api.invoke(BROWSER_CLAIM, {
+      sessionId,
+      browserId: focusedId
+    })
+    if (result.status !== 'applied') {
+      set({ lastError: result.detail })
+      return
+    }
+    set({ lastError: null })
   },
 
   closePage: async (browserId, options) => {

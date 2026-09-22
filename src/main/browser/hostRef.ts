@@ -5,7 +5,7 @@ import type { BrowserSessionHost } from './sessionHost'
 
 let host: BrowserSessionHost | null = null
 
-export function setBrowserSessionHost(next: BrowserSessionHost): void {
+export function setBrowserSessionHost(next: BrowserSessionHost | null): void {
   host = next
 }
 

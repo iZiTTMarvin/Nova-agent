@@ -6,6 +6,7 @@ import {
 } from '../../../../src/main/browser/sessionHost'
 import type { BrowserGuestContents, BrowserGuestEvent } from '../../../../src/main/browser/guestContents'
 import type { BrowserGuestMountSnapshot, BrowserSurfaceSnapshot } from '../../../../src/shared/browser'
+import type { BrowserCommandContext } from '../../../../src/runtime/browser'
 
 class FakeGuest implements BrowserGuestContents {
   readonly id: number
@@ -548,6 +549,91 @@ describe('BrowserSessionHost 生命周期', () => {
     release()
     await expect(pending).resolves.toMatchObject({ status: 'not_applied', code: 'taken_over' })
   })
+
+  it('待执行超过四个时，后续代理命令返回 busy', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markEntered = (): void => {}
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve
+    })
+    const harness = createHarness(new Map([[8, new FakeGuest({ id: 8 })]]), gatedControl(gate, markEntered))
+    const browserId = await openReady(harness, 8)
+    const ctx = agentContext()
+    const first = harness.host.observe({ browserId }, ctx)
+    await entered
+    const queued = [0, 1, 2, 3].map(() => harness.host.observe({ browserId }, ctx))
+    await expect(harness.host.observe({ browserId }, ctx)).resolves.toMatchObject({
+      status: 'not_applied',
+      code: 'busy'
+    })
+    release()
+    await expect(first).resolves.toMatchObject({ status: 'applied' })
+    await Promise.all(queued)
+  })
+
+  it('取消会拒绝待执行，并让进行中的观察以 cancelled 结束', async () => {
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let markEntered = (): void => {}
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve
+    })
+    const harness = createHarness(new Map([[9, new FakeGuest({ id: 9 })]]), gatedControl(gate, markEntered))
+    const browserId = await openReady(harness, 9)
+    const ctx = agentContext()
+    const inFlight = harness.host.observe({ browserId }, ctx)
+    await entered
+    const pending = harness.host.observe({ browserId }, ctx)
+    harness.host.cancelRun('run_1')
+    await expect(pending).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
+    release()
+    await expect(inFlight).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
+    expect(latestPage(harness.snapshots, browserId)?.lifecycle).toBe('ready')
+  })
+
+  it('用户导航会提升 generation；代理导航只取得租约', async () => {
+    const harness = createHarness(new Map([[10, new FakeGuest({ id: 10 })]]))
+    const browserId = await openReady(harness, 10)
+    const before = harness.host.inspectBinding(browserId)?.generation
+    expect(before).toBe(1)
+    await harness.host.navigate({ browserId, action: { kind: 'reload' } }, { sessionId: 'sess_1' })
+    expect(harness.host.inspectBinding(browserId)?.generation).toBe(2)
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'user' })
+
+    await harness.host.navigate(
+      { browserId, action: { kind: 'reload' } },
+      agentContext()
+    )
+    expect(harness.host.inspectBinding(browserId)?.generation).toBe(2)
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({
+      holder: 'agent',
+      runId: 'run_1'
+    })
+  })
+
+  it('轮次结束释放租约但页面保留；会话切换撤销控制', async () => {
+    const harness = createHarness(new Map([[11, new FakeGuest({ id: 11 })]]), immediateControl())
+    const browserId = await openReady(harness, 11)
+    await harness.host.observe({ browserId }, agentContext())
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({
+      holder: 'agent',
+      runId: 'run_1'
+    })
+    harness.host.releaseAgent('run_1')
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'none' })
+    expect(latestLifecycle(harness.snapshots, browserId)).toBe('ready')
+
+    const generation = harness.host.inspectBinding(browserId)?.generation
+    harness.host.revokeSession('sess_1')
+    expect(harness.host.inspectBinding(browserId)?.generation).toBe((generation ?? 0) + 1)
+    expect(latestPage(harness.snapshots, browserId)?.control).toEqual({ holder: 'none' })
+    expect(latestLifecycle(harness.snapshots, browserId)).toBe('ready')
+  })
 })
 
 function latestBrowserId(snapshots: BrowserSurfaceSnapshot[]): string {
@@ -568,4 +654,66 @@ function latestPage(
   browserId: string
 ) {
   return snapshots.at(-1)?.pages.find((page) => page.browserId === browserId)
+}
+
+function agentContext(runId = 'run_1'): BrowserCommandContext {
+  return {
+    sessionId: 'sess_1',
+    authority: {
+      sessionId: 'sess_1',
+      runId,
+      resourceOwnerRunId: runId,
+      toolCallId: 'call_1'
+    }
+  }
+}
+
+function appliedRead() {
+  return {
+    status: 'applied' as const,
+    read: {
+      snapshot: {
+        url: 'https://example.com/app',
+        title: 'ok',
+        truncated: false,
+        viewport: { width: 800, height: 600, device: 'desktop' as const },
+        dom: '- heading "ok"',
+        elements: [],
+        limits: []
+      },
+      refs: {}
+    }
+  }
+}
+
+function immediateControl(): BrowserPageControl {
+  return {
+    observe: async (_guest, fence) => {
+      const current = fence.stillCurrent()
+      if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+      return appliedRead()
+    },
+    act: async () => ({ status: 'not_applied', code: 'unavailable', detail: '无' }),
+    capture: async () => ({ status: 'not_applied', code: 'unavailable', detail: '无' }),
+    load: async () => ({ status: 'applied' }),
+    bindRefs: () => {},
+    release: () => {}
+  }
+}
+
+function gatedControl(gate: Promise<void>, markEntered: () => void): BrowserPageControl {
+  return {
+    observe: async (_guest, fence) => {
+      markEntered()
+      await gate
+      const current = fence.stillCurrent()
+      if (!current.ok) return { status: 'not_applied', code: current.code, detail: '过期' }
+      return appliedRead()
+    },
+    act: async () => ({ status: 'not_applied', code: 'unavailable', detail: '无' }),
+    capture: async () => ({ status: 'not_applied', code: 'unavailable', detail: '无' }),
+    load: async () => ({ status: 'applied' }),
+    bindRefs: () => {},
+    release: () => {}
+  }
 }

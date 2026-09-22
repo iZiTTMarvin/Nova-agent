@@ -1,6 +1,6 @@
 /**
  * 人工浏览 chrome：标签条、地址栏、导航与加载失败态。
- * 接管仅占位；页面状态以 Host 快照为准。
+ * 接管按钮把控制交还用户并撤销当前世代。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -257,14 +257,21 @@ export function BrowserPanel(props: {
             commitAddress()
           }}
         />
-        <IconButton
-          label="接管页面"
-          icon={<HandIcon size={14} />}
-          variant="ghost"
-          size="sm"
-          isDisabled
-          tooltip="接管将在后续提供"
-        />
+        <span data-testid="browser-takeover">
+          <IconButton
+            label="接管页面"
+            icon={<HandIcon size={14} />}
+            variant="ghost"
+            size="sm"
+            isDisabled={!page || page.lifecycle === 'closing'}
+            tooltip={
+              page?.control.holder === 'agent'
+                ? '停止 AI 操作并接管页面'
+                : '接管页面'
+            }
+            onClick={() => void useBrowserStore.getState().claimFocused()}
+          />
+        </span>
         <IconButton
           label="关闭页面"
           icon={<CloseIcon size={14} />}

@@ -104,6 +104,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
     getMainWindow,
     getRunCoordinator,
     onSessionLeaving: (sessionId, workspaceRoot) => {
+      getBrowserSessionHost()?.revokeSession(sessionId)
       if (isMemoryExtractEnabled()) {
         extractOnSessionLeave(sessionId, workspaceRoot)
       } else {

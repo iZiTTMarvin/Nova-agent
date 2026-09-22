@@ -7,6 +7,9 @@ export const BROWSER_MAX_LIVE_PAGES = 2 as const
 
 export const BROWSER_PAGE_CAP_MESSAGE = '最多同时两个页面'
 
+/** 每页待执行（尚未开始）命令上限；超限返回 busy。 */
+export const BROWSER_PENDING_MAX = 4 as const
+
 /** 截图输出约束；数字是预算，不是建议。 */
 export const BROWSER_CAPTURE_DEVICE_SCALE = 1 as const
 export const BROWSER_CAPTURE_MAX_LONG_EDGE = 1440 as const
@@ -46,7 +49,8 @@ export const BROWSER_ERROR_CODES = Object.freeze([
   'resource_limit',
   'capture_not_ready',
   'budget_exceeded',
-  'invalid_request'
+  'invalid_request',
+  'busy'
 ] as const)
 
 export type BrowserErrorCode = (typeof BROWSER_ERROR_CODES)[number]

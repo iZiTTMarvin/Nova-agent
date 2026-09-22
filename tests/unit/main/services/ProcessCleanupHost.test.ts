@@ -19,6 +19,15 @@ vi.mock('electron', () => ({
   BrowserWindow: class {}
 }))
 
+const browserHost = vi.hoisted(() => ({
+  cancelRun: vi.fn(),
+  releaseAgent: vi.fn()
+}))
+
+vi.mock('../../../../src/main/browser/hostRef', () => ({
+  getBrowserSessionHost: () => browserHost
+}))
+
 type TerminateForRun = (runId: string, opts: { includeMainRun: boolean }) => Promise<void>
 
 describe('ProcessCleanupHost run 终态接线', () => {
@@ -35,6 +44,8 @@ describe('ProcessCleanupHost run 终态接线', () => {
     processRegistry.resetForTests()
     resetCaptureBudgetForTests()
     fs.rmSync(tmpDir, { recursive: true, force: true })
+    browserHost.cancelRun.mockReset()
+    browserHost.releaseAgent.mockReset()
   })
 
   async function driveToTerminal(status: 'cancelled' | 'completed' | 'failed' | 'interrupted'): Promise<string> {
@@ -100,5 +111,23 @@ describe('ProcessCleanupHost run 终态接线', () => {
     coord.commitTerminal({ runId: snap.runId, status: 'completed' })
     await coord.drainPendingOutbox()
     expect(inspectCaptureBudget(snap.runId)).toEqual({ count: 0, bytes: 0 })
+  })
+
+  it('取消时拒绝浏览器待执行并释放租约；完成只释放租约', async () => {
+    const cancelled = await driveToTerminal('cancelled')
+    expect(browserHost.cancelRun).toHaveBeenCalledWith(cancelled)
+    expect(browserHost.releaseAgent).toHaveBeenCalledWith(cancelled)
+
+    browserHost.cancelRun.mockClear()
+    browserHost.releaseAgent.mockClear()
+    const completed = await driveToTerminal('completed')
+    expect(browserHost.cancelRun).not.toHaveBeenCalled()
+    expect(browserHost.releaseAgent).toHaveBeenCalledWith(completed)
+
+    browserHost.cancelRun.mockClear()
+    browserHost.releaseAgent.mockClear()
+    const interrupted = await driveToTerminal('interrupted')
+    expect(browserHost.cancelRun).toHaveBeenCalledWith(interrupted)
+    expect(browserHost.releaseAgent).toHaveBeenCalledWith(interrupted)
   })
 })

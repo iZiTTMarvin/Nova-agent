@@ -5,6 +5,7 @@
 import {
   BROWSER_MAX_LIVE_PAGES,
   BROWSER_PAGE_CAP_MESSAGE,
+  BROWSER_PENDING_MAX,
   browserNotApplied,
   createBrowserIdentityLedger,
   parseBrowserHttpUrl,
@@ -84,6 +85,18 @@ export interface BrowserSessionHost extends BrowserPort {
   handlePopup(url: string, sessionId?: string): void
   inspectBinding(browserId: string): BrowserBindingInspection | null
   livePageCount(): number
+  cancelRun(runId: string): void
+  releaseAgent(runId: string): void
+  revokeSession(sessionId: string): void
+}
+
+interface SerialJob {
+  readonly runId: string | null
+  readonly abort: AbortController
+  started: boolean
+  abortReason: ReturnType<typeof browserNotApplied> | null
+  run: () => Promise<void>
+  settleNotApplied: (result: ReturnType<typeof browserNotApplied>) => void
 }
 
 interface PageRecord {
@@ -103,7 +116,8 @@ interface PageRecord {
     event: Parameters<BrowserGuestContents['on']>[0]
     listener: (...args: unknown[]) => void
   }>
-  serial: Promise<void>
+  jobs: SerialJob[]
+  serialActive: boolean
   halted: boolean
 }
 
@@ -214,13 +228,161 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     return { record, page: project(identity.value, record) }
   }
 
-  function runSerial<T>(record: PageRecord, task: () => Promise<T>): Promise<T> {
-    const next = record.serial.then(task, task)
-    record.serial = next.then(
-      () => undefined,
-      () => undefined
+  function bindCommandAbort(job: SerialJob, commandSignal?: AbortSignal): void {
+    if (!commandSignal) return
+    if (commandSignal.aborted) {
+      job.abortReason = browserNotApplied('cancelled', '命令已取消')
+      job.abort.abort()
+      return
+    }
+    commandSignal.addEventListener(
+      'abort',
+      () => {
+        job.abortReason = browserNotApplied('cancelled', '命令已取消')
+        job.abort.abort()
+      },
+      { once: true }
     )
-    return next
+  }
+
+  function enqueueSerial<T>(
+    record: PageRecord,
+    context: BrowserCommandContext | undefined,
+    task: (signal: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    const waiting = record.jobs.filter((job) => !job.started).length
+    if (context?.authority && waiting >= BROWSER_PENDING_MAX) {
+      return Promise.resolve(browserNotApplied('busy', '该页面待执行命令已满') as T)
+    }
+    return new Promise<T>((resolve) => {
+      const abort = new AbortController()
+      let settled = false
+      const finish = (value: T): void => {
+        if (settled) return
+        settled = true
+        resolve(value)
+      }
+      const job: SerialJob = {
+        runId: context?.authority?.runId ?? null,
+        abort,
+        started: false,
+        abortReason: null,
+        settleNotApplied(result) {
+          finish(result as T)
+        },
+        run: async () => {
+          job.started = true
+          if (job.abort.signal.aborted) {
+            finish((job.abortReason ?? browserNotApplied('taken_over', '页面控制已撤销')) as T)
+            return
+          }
+          try {
+            finish(await task(job.abort.signal))
+          } catch (error) {
+            finish(
+              browserNotApplied(
+                'unavailable',
+                error instanceof Error ? error.message : '命令失败'
+              ) as T
+            )
+          }
+        }
+      }
+      bindCommandAbort(job, context?.abortSignal)
+      record.jobs.push(job)
+      void pumpSerial(record)
+    })
+  }
+
+  async function pumpSerial(record: PageRecord): Promise<void> {
+    if (record.serialActive) return
+    const job = record.jobs[0]
+    if (!job) return
+    record.serialActive = true
+    try {
+      await job.run()
+    } finally {
+      const idx = record.jobs.indexOf(job)
+      if (idx >= 0) record.jobs.splice(idx, 1)
+      record.serialActive = false
+    }
+    await pumpSerial(record)
+  }
+
+  function rejectPending(
+    record: PageRecord,
+    result: ReturnType<typeof browserNotApplied>,
+    runId?: string
+  ): void {
+    const keep: SerialJob[] = []
+    for (const job of record.jobs) {
+      const match = runId === undefined || job.runId === runId
+      if (!match) {
+        keep.push(job)
+        continue
+      }
+      if (job.started) {
+        job.abortReason = result
+        job.abort.abort()
+        keep.push(job)
+      } else {
+        job.settleNotApplied(result)
+      }
+    }
+    record.jobs = keep
+  }
+
+  function adoptAgentLease(record: PageRecord, context: BrowserCommandContext): void {
+    const runId = context.authority?.runId?.trim()
+    if (!runId) return
+    const current = record.control
+    if (current.holder === 'agent' && current.runId === runId) return
+    record.control = { holder: 'agent', runId }
+    emit()
+  }
+
+  function revokeToUser(
+    browserId: string,
+    record: PageRecord
+  ): ReturnType<BrowserIdentityLedger['bumpGeneration']> {
+    const bumped = ledger.bumpGeneration(browserId)
+    if (!bumped.ok) return bumped
+    record.control = { holder: 'user' }
+    rejectPending(record, browserNotApplied('taken_over', '用户已接管此页面'))
+    emit()
+    return bumped
+  }
+
+  function cancelRun(runId: string): void {
+    const cancelled = browserNotApplied('cancelled', '任务已取消')
+    for (const record of pages.values()) {
+      rejectPending(record, cancelled, runId)
+    }
+  }
+
+  function releaseAgent(runId: string): void {
+    let changed = false
+    for (const record of pages.values()) {
+      if (record.control.holder === 'agent' && record.control.runId === runId) {
+        record.control = { holder: 'none' }
+        changed = true
+      }
+    }
+    if (changed) emit()
+  }
+
+  function revokeSession(sessionId: string): void {
+    let changed = false
+    for (const [browserId, record] of pages) {
+      if (record.sessionId !== sessionId) continue
+      if (record.lifecycle === 'closing') continue
+      const bumped = ledger.bumpGeneration(browserId)
+      if (!bumped.ok) continue
+      record.control = { holder: 'none' }
+      rejectPending(record, browserNotApplied('taken_over', '已离开该会话'))
+      changed = true
+    }
+    if (changed) emit()
   }
 
   function unbindGuest(record: PageRecord): void {
@@ -376,6 +538,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     record.halted = true
     record.lifecycle = 'crashed'
     record.loading = false
+    rejectPending(record, browserNotApplied('page_crashed', '页面已崩溃'))
     emit()
     await convergePending(record)
     if (!detachDebugger(record.guest)) {
@@ -448,7 +611,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       title: '',
       loading: true,
       lifecycle: 'opening',
-      control: { holder: 'user' },
+      control: context.authority?.runId
+        ? { holder: 'agent', runId: context.authority.runId }
+        : { holder: 'user' },
       faviconUrl: null,
       loadError: null,
       partition: allocated.partition,
@@ -456,7 +621,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       guest: null,
       attachWaiters: [],
       guestListeners: [],
-      serial: Promise.resolve(),
+      jobs: [],
+      serialActive: false,
       halted: false
     }
     pages.set(issued.value.browserId, record)
@@ -493,7 +659,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!record) return browserNotApplied('page_closed', '页面记录已不存在')
     const stale = rejectStaleAttach(record)
     if (stale) return stale
-    return runSerial(record, async () => {
+    return enqueueSerial(record, undefined, async () => {
       const rejected = rejectStaleAttach(record)
       if (rejected) return rejected
       const guest = deps.lookupGuest(params.webContentsId)
@@ -590,15 +756,36 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
 
   async function waitForCommittedDocument(
     guest: BrowserGuestContents,
-    signal?: AbortSignal
+    stillCurrent: BrowserControlFence['stillCurrent'],
+    signal: AbortSignal
   ): Promise<ReturnType<typeof browserNotApplied> | null> {
     const deadline = Date.now() + 8_000
     while (Date.now() <= deadline) {
-      if (signal?.aborted) return browserNotApplied('cancelled', '命令已取消')
+      const current = stillCurrent()
+      if (!current.ok) {
+        return browserNotApplied(
+          current.code,
+          current.code === 'cancelled' ? '命令已取消' : '页面控制已撤销'
+        )
+      }
       if (safeDestroyed(guest)) return browserNotApplied('page_closed', '页面已关闭')
       const url = safeGuestUrl(guest)
       if (!safeLoading(guest) && url.length > 0 && url !== 'about:blank') return null
-      await delay(50)
+      await new Promise<void>((resolve) => {
+        if (signal.aborted) {
+          resolve()
+          return
+        }
+        let settled = false
+        const finish = (): void => {
+          if (settled) return
+          settled = true
+          signal.removeEventListener('abort', finish)
+          resolve()
+        }
+        signal.addEventListener('abort', finish)
+        void delay(50).then(finish)
+      })
     }
     return browserNotApplied('timeout', '页面还没有完成当前加载')
   }
@@ -609,7 +796,13 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   ): Promise<BrowserNavigateResult> {
     const found = lookupPage(command.browserId, context.sessionId)
     if ('status' in found) return found
-    return runSerial(found.record, async () => {
+    if (!context.authority) {
+      const revoked = revokeToUser(command.browserId, found.record)
+      if (!revoked.ok) return browserNotApplied(revoked.code, '无法接管该页面')
+    } else {
+      adoptAgentLease(found.record, context)
+    }
+    return enqueueSerial(found.record, context, async (signal) => {
       const guest = found.record.guest
       if (!guest || safeDestroyed(guest)) {
         return browserNotApplied('unavailable', '页面尚未挂载')
@@ -625,7 +818,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
             if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
             const loaded = await deps.control.load(
               guest,
-              navigationFence(command.browserId, context.sessionId, identity.value.generation, context.abortSignal),
+              navigationFence(command.browserId, context.sessionId, identity.value.generation, signal),
               action.url
             )
             if (loaded.status !== 'applied') return loaded
@@ -658,7 +851,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
     const record = pages.get(command.browserId)
     if (!record) return browserNotApplied('page_closed', '页面记录已不存在')
-    return runSerial(record, async () => {
+    rejectPending(record, browserNotApplied('page_closed', '页面正在关闭'))
+    return enqueueSerial(record, context, async () => {
       record.lifecycle = 'closing'
       record.visible = false
       record.halted = true
@@ -690,7 +884,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   ): Promise<BrowserNavigateResult> {
     const found = lookupPage(browserId, sessionId)
     if ('status' in found) return found
-    return runSerial(found.record, async () => {
+    return enqueueSerial(found.record, undefined, async () => {
       if (found.record.lifecycle === 'crashed' || found.record.lifecycle === 'failed') {
         return browserNotApplied('page_crashed', '当前页面不能恢复显示')
       }
@@ -711,10 +905,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   ): Promise<BrowserClaimResult> {
     const found = lookupPage(command.browserId, context.sessionId)
     if ('status' in found) return found
-    const bumped = ledger.bumpGeneration(command.browserId)
+    const bumped = revokeToUser(command.browserId, found.record)
     if (!bumped.ok) return browserNotApplied(bumped.code, '无法接管该页面')
-    found.record.control = { holder: 'user' }
-    emit()
     return { status: 'applied', page: project(bumped.value, found.record) }
   }
 
@@ -754,13 +946,13 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       observationId: null,
       signal,
       stillCurrent() {
-        if (signal?.aborted) return { ok: false, code: 'cancelled' }
         const record = pages.get(browserId)
         if (!record || record.lifecycle === 'closing') return { ok: false, code: 'page_closed' }
         if (record.lifecycle === 'crashed' || record.halted) return { ok: false, code: 'page_crashed' }
         const now = ledger.inspect(browserId, sessionId)
         if (!now.ok) return { ok: false, code: now.code === 'page_closed' ? 'page_closed' : 'not_owner' }
         if (now.value.generation !== generation) return { ok: false, code: 'taken_over' }
+        if (signal?.aborted) return { ok: false, code: 'cancelled' }
         return { ok: true }
       }
     }
@@ -779,7 +971,6 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       observationId,
       signal,
       stillCurrent() {
-        if (signal?.aborted) return { ok: false, code: 'cancelled' }
         const record = pages.get(browserId)
         if (!record || record.lifecycle === 'closing') return { ok: false, code: 'page_closed' }
         if (record.lifecycle === 'crashed' || record.halted) return { ok: false, code: 'page_crashed' }
@@ -794,12 +985,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
             sessionId
           )
           if (!matched.ok) return { ok: false, code: matched.code }
+          if (signal?.aborted) return { ok: false, code: 'cancelled' }
           return { ok: true }
         }
         const now = ledger.inspect(browserId, sessionId)
         if (!now.ok) return { ok: false, code: now.code === 'page_closed' ? 'page_closed' : 'not_owner' }
         if (now.value.generation !== start.generation) return { ok: false, code: 'taken_over' }
         if (now.value.documentEpoch !== start.documentEpoch) return { ok: false, code: 'stale_observation' }
+        if (signal?.aborted) return { ok: false, code: 'cancelled' }
         return { ok: true }
       }
     }
@@ -812,10 +1005,19 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!deps.control) return CONTROL_UNAVAILABLE
     const found = lookupPage(command.browserId, context.sessionId)
     if ('status' in found) return found
-    return runSerial(found.record, async () => {
+    return enqueueSerial(found.record, context, async (signal) => {
+      adoptAgentLease(found.record, context)
       const guest = found.record.guest
       if (!guest || safeDestroyed(guest)) return browserNotApplied('unavailable', '页面尚未挂载')
-      const settled = await waitForCommittedDocument(guest, context.abortSignal)
+      const start = ledger.inspect(command.browserId, context.sessionId)
+      if (!start.ok) return browserNotApplied(start.code, '页面不属于当前会话或已关闭')
+      const waitFence = navigationFence(
+        command.browserId,
+        context.sessionId,
+        start.value.generation,
+        signal
+      )
+      const settled = await waitForCommittedDocument(guest, () => waitFence.stillCurrent(), signal)
       if (settled) return settled
       const identity = ledger.inspect(command.browserId, context.sessionId)
       if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
@@ -824,7 +1026,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         context.sessionId,
         identity.value,
         null,
-        context.abortSignal
+        signal
       )
       const read = await deps.control!.observe(guest, fence)
       if (read.status !== 'applied') return read
@@ -843,7 +1045,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!matched.ok) return browserNotApplied(matched.code, '观察已不能用于操作')
     const found = lookupPage(command.observation.browserId, context.sessionId)
     if ('status' in found) return found
-    return runSerial(found.record, async () => {
+    return enqueueSerial(found.record, context, async (signal) => {
+      adoptAgentLease(found.record, context)
       const again = ledger.matchObservation(command.observation, context.sessionId)
       if (!again.ok) return browserNotApplied(again.code, '观察已不能用于操作')
       const guest = found.record.guest
@@ -853,10 +1056,13 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         context.sessionId,
         command.observation,
         command.observation.observationId,
-        context.abortSignal
+        signal
       )
       const result = await deps.control!.act(guest, fence, command.action)
       if (result.status !== 'applied') return result
+      if (signal.aborted) {
+        return { status: 'outcome_unknown', detail: '动作已经发出，但命令已取消' }
+      }
       const finalMatch = ledger.matchObservation(command.observation, context.sessionId)
       if (!finalMatch.ok) {
         return { status: 'outcome_unknown', detail: '动作已经发出，但不能写回当前页面' }
@@ -874,7 +1080,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     if (!matched.ok) return browserNotApplied(matched.code, '观察已不能用于截图')
     const found = lookupPage(command.observation.browserId, context.sessionId)
     if ('status' in found) return found
-    return runSerial(found.record, async () => {
+    return enqueueSerial(found.record, context, async (signal) => {
+      adoptAgentLease(found.record, context)
       const again = ledger.matchObservation(command.observation, context.sessionId)
       if (!again.ok) return browserNotApplied(again.code, '观察已不能用于截图')
       const guest = found.record.guest
@@ -884,10 +1091,13 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         context.sessionId,
         command.observation,
         command.observation.observationId,
-        context.abortSignal
+        signal
       )
       const shot = await deps.control!.capture(guest, fence)
       if (shot.status !== 'applied') return shot
+      if (signal.aborted) {
+        return { status: 'outcome_unknown', detail: '截图已经发出，但命令已取消' }
+      }
       const finalMatch = ledger.matchObservation(command.observation, context.sessionId)
       if (!finalMatch.ok) {
         return { status: 'outcome_unknown', detail: '截图已经发出，但不能写回当前页面' }
@@ -959,6 +1169,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     noteRendererReloading,
     handlePopup,
     inspectBinding,
-    livePageCount
+    livePageCount,
+    cancelRun,
+    releaseAgent,
+    revokeSession
   }
 }

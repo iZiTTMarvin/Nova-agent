@@ -275,3 +275,68 @@ test('观察后接管或导航，旧动作不能落到新页', async ({ nova }) 
     await fixture.close()
   }
 })
+
+test('观察与点击之间点接管，旧命令不能落到页面', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const sessionId = await grantFullAccess(nova)
+  const fixture = await startFormFixture()
+  try {
+    const opened = await nova.invoke(BROWSER_OPEN, {
+      sessionId,
+      url: `${fixture.origin}/`
+    }) as { status: string; page?: { browserId: string } }
+    expect(opened.status).toBe('applied')
+    const browserId = opened.page!.browserId
+    await nova.page.locator('webview[data-browser-id]').waitFor()
+
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'browser_observe',
+        arguments: { action: 'snapshot', browserId },
+        callId: 'e2e_takeover_observe'
+      },
+      { kind: 'text', text: 'NOVA_E2E_BROWSER_TAKEOVER_OBSERVED' }
+    )
+    await nova.sendPrompt('先观察这个表单')
+    await expect(nova.page.getByText('NOVA_E2E_BROWSER_TAKEOVER_OBSERVED', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    const observed = toolTexts(nova.provider.requests[1]?.body).at(-1) ?? ''
+    const oldObservation = {
+      browserId: field(observed, 'browserId') || browserId,
+      generation: Number(field(observed, 'generation') || '1'),
+      documentEpoch: Number(field(observed, 'documentEpoch') || '1'),
+      observationId: field(observed, 'observationId')
+    }
+    const saveRef = namedRef(observed, '保存')
+    expect(oldObservation.observationId).toBeTruthy()
+    expect(saveRef).toBeTruthy()
+
+    await nova.page.getByRole('button', { name: '接管页面' }).click()
+
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'browser_act',
+        arguments: {
+          observation: oldObservation,
+          action: { kind: 'click', ref: saveRef }
+        },
+        callId: 'e2e_takeover_click'
+      },
+      { kind: 'text', text: 'NOVA_E2E_BROWSER_TAKEOVER_OK' }
+    )
+    await nova.sendPrompt('用刚才的观察去点击保存')
+    await expect(nova.page.getByText('NOVA_E2E_BROWSER_TAKEOVER_OK', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    const denied = toolTexts(nova.provider.requests.at(-1)?.body).join('\n')
+    expect(denied).toMatch(/stale_observation|taken_over/)
+    const view = await nova.invoke(BROWSER_OBSERVE, { sessionId, browserId }) as BrowserObserveResult
+    expect(view.status).toBe('applied')
+    if (view.status === 'applied') {
+      expect(view.snapshot.dom).not.toContain('saved:')
+    }
+  } finally {
+    await fixture.close()
+  }
+})
