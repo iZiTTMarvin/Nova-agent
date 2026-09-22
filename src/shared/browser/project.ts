@@ -8,6 +8,7 @@ import {
   type BrowserCapabilityDescriptor,
   type BrowserControlProjection,
   type BrowserLifecycleStatus,
+  type BrowserGuestNotice,
   type BrowserPageLoadError,
   type BrowserPageProjection
 } from './types'
@@ -31,6 +32,7 @@ export interface BrowserPageProjectInput {
   readonly control: BrowserControlProjection
   readonly faviconUrl: string | null
   readonly loadError: BrowserPageLoadError | null
+  readonly notice?: BrowserGuestNotice | null
   readonly capabilities?: BrowserCapabilityDescriptor
 }
 
@@ -112,6 +114,7 @@ export function projectBrowserPage(input: BrowserPageProjectInput): BrowserPageP
     control: input.control,
     capabilities: input.capabilities ?? BROWSER_ENGINE_CAPABILITIES,
     faviconUrl: input.faviconUrl,
-    loadError: input.loadError
+    loadError: input.loadError,
+    notice: input.notice ?? null
   }
 }

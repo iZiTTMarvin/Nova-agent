@@ -61,6 +61,7 @@ export {
   type BrowserOpenResult,
   type BrowserPageIdentity,
   type BrowserPageLoadError,
+  type BrowserGuestNotice,
   type BrowserPageProjection,
   type BrowserRect,
   type BrowserScrollAmount,

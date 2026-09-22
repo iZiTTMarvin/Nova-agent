@@ -1,14 +1,18 @@
-import { screen, session, shell, type BrowserWindow } from 'electron'
+import { screen, session, type BrowserWindow } from 'electron'
 import { processRegistry } from '../../runtime/process'
 import type { BrowserGuestMountSnapshot, BrowserSurfaceSnapshot } from '../../shared/browser'
 import { getMainWindow } from '../mainWindowRef'
 import { getSessionStore } from '../services/SessionStoreHost'
-import { getWorkspaceService } from '../services/WorkspaceService'
 import { createElectronBrowserDriver } from './electronDriver'
 import { lookupElectronGuest } from './guestContents'
 import { createBrowserPartitionSlotPool } from './partitionSlots'
 import { createPreviewGrantStore } from './previewGrants'
 import { createRegistryPreviewQuery } from './previewProcess'
+import {
+  guestDownloadMessage,
+  guestPermissionMessage,
+  installBrowserPartitionPolicy
+} from './networkPolicy'
 import { getBrowserSessionHost, setBrowserSessionHost } from './hostRef'
 import { createBrowserSessionHost, type BrowserSessionHost } from './sessionHost'
 import {
@@ -64,10 +68,6 @@ export function initBrowserSessionHost(): BrowserSessionHost {
   const host = createBrowserSessionHost({
     resolveWorkspaceKey: (sessionId) => getSessionStore().loadMetadata(sessionId)?.workspaceRoot ?? null,
     lookupGuest: lookupElectronGuest,
-    openExternal: (url) => {
-      void shell.openExternal(url)
-    },
-    getCurrentSessionId: () => getWorkspaceService().getState().currentSessionId,
     control: createElectronBrowserDriver(),
     allocatePartition: (browserId) => {
       const got = slotPool.acquire(browserId)
@@ -79,6 +79,35 @@ export function initBrowserSessionHost(): BrowserSessionHost {
     },
     onSnapshot: sendSnapshot,
     onGuestMount: sendGuestMount,
+    installPartitionPolicy: (partition) => {
+      installBrowserPartitionPolicy(partition, session.fromPartition(partition), {
+        grantsFor: (webContentsId) => {
+          const host = getBrowserSessionHost()
+          if (!host) return []
+          if (webContentsId !== undefined) {
+            const bound = host.grantsForGuest(webContentsId)
+            if (bound.length > 0) return bound
+          }
+          return host.grantsForPartition(partition)
+        },
+        onPermissionDenied: (input) => {
+          getBrowserSessionHost()?.noteGuestHandoff(input.webContentsId, {
+            kind: 'permission',
+            sourceUrl: input.requestingUrl,
+            targetUrl: null,
+            message: guestPermissionMessage(input.permission, input.requestingUrl)
+          })
+        },
+        onDownloadDenied: (input) => {
+          getBrowserSessionHost()?.noteGuestHandoff(input.webContentsId, {
+            kind: 'download',
+            sourceUrl: input.url,
+            targetUrl: null,
+            message: guestDownloadMessage(input.filename, input.url)
+          })
+        }
+      })
+    },
     previewGrants: createPreviewGrantStore(
       createRegistryPreviewQuery((sessionId) => processRegistry.listRunning(sessionId))
     ),
@@ -94,7 +123,7 @@ export function bindWebviewPolicy(win: BrowserWindow, sessionHost: BrowserSessio
   })
   win.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler((details) => {
-      sessionHost.handlePopup(details.url)
+      sessionHost.handlePopup(details.url, guest.id)
       return { action: 'deny' }
     })
   })

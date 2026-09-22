@@ -153,19 +153,14 @@ function createHarness(
   host: BrowserSessionHost
   snapshots: BrowserSurfaceSnapshot[]
   mounts: BrowserGuestMountSnapshot[]
-  externals: string[]
   clock: ReturnType<typeof createClock>
 } {
   const clock = createClock()
   const snapshots: BrowserSurfaceSnapshot[] = []
   const mounts: BrowserGuestMountSnapshot[] = []
-  const externals: string[] = []
   const host = createBrowserSessionHost({
     resolveWorkspaceKey: (sessionId) => (sessionId.startsWith('sess') ? 'ws_a' : null),
     lookupGuest: (id) => guests.get(id),
-    openExternal: (url) => {
-      externals.push(url)
-    },
     delay: clock.delay,
     control,
     previewGrants: extras?.previewGrants,
@@ -177,7 +172,7 @@ function createHarness(
       mounts.push(snapshot)
     }
   })
-  return { host, snapshots, mounts, externals, clock }
+  return { host, snapshots, mounts, clock }
 }
 
 async function openReady(
@@ -328,7 +323,7 @@ describe('BrowserSessionHost 生命周期', () => {
     expect(harness.host.inspectBinding(browserId)?.webContentsId).toBe(3)
   })
 
-  it('满员弹窗走系统浏览器，不新开窗口', async () => {
+  it('弹窗只记在来源页上，确认时页面身份变了就不再打开', async () => {
     const harness = createHarness(new Map([
       [11, new FakeGuest({ id: 11 })],
       [12, new FakeGuest({ id: 12 })]
@@ -340,10 +335,31 @@ describe('BrowserSessionHost 生命周期', () => {
     expect(id2).toBeTruthy()
     await harness.host.attach({ sessionId: 'sess_1', browserId: id2!, webContentsId: 12 })
     await second
-    harness.host.handlePopup('https://example.com/three', 'sess_1')
-    expect(harness.externals).toEqual(['https://example.com/three'])
-    harness.host.handlePopup('file:///tmp/x', 'sess_1')
-    expect(harness.externals).toEqual(['https://example.com/three'])
+    harness.host.handlePopup('https://example.com/three', 12)
+    harness.host.handlePopup('file:///tmp/x', 11)
+    const pages = harness.snapshots.at(-1)?.pages ?? []
+    const source = pages.find((page) => page.browserId === id2)
+    const other = pages.find((page) => page.browserId === id1)
+    expect(source?.notice).toMatchObject({
+      kind: 'popup',
+      sourceUrl: 'https://example.com',
+      targetUrl: 'https://example.com/three'
+    })
+    expect(other?.notice?.targetUrl).toBeNull()
+    expect(pages).toHaveLength(2)
+    const opened = await harness.host.navigate(
+      { browserId: id2!, action: { kind: 'accept-popup' } },
+      { sessionId: 'sess_1' }
+    )
+    expect(opened.status).toBe('applied')
+    if (opened.status === 'applied') expect(opened.page.url).toBe('https://example.com/three')
+    harness.host.handlePopup('https://example.com/four', 12)
+    await harness.host.claim({ browserId: id2! }, { sessionId: 'sess_1' })
+    const stale = await harness.host.navigate(
+      { browserId: id2!, action: { kind: 'accept-popup' } },
+      { sessionId: 'sess_1' }
+    )
+    expect(stale).toMatchObject({ status: 'not_applied', code: 'stale_observation' })
   })
 
   it('关闭后释放隔离槽，清理失败则不能把旧槽发给新页', async () => {
@@ -364,7 +380,6 @@ describe('BrowserSessionHost 生命周期', () => {
     const host = createBrowserSessionHost({
       resolveWorkspaceKey: () => 'ws_a',
       lookupGuest: (id) => guests.get(id),
-      openExternal: () => {},
       delay: clock.delay,
       onSnapshot: (snapshot) => {
         snapshots.push(snapshot)

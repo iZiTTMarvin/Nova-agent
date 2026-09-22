@@ -282,6 +282,29 @@ export function BrowserPanel(props: {
       </header>
       {loading && <div className="browser-panel__loading" aria-hidden />}
       {lastError && <div className="browser-panel__error" data-testid="browser-surface-error" role="status">{lastError}</div>}
+      {page?.notice && (
+        <div className="browser-panel__notice" data-testid="browser-guest-notice" role="status">
+          <p>{page.notice.message}</p>
+          <div className="browser-panel__notice-actions">
+            {page.notice.kind === 'popup' && page.notice.targetUrl && (
+              <button
+                type="button"
+                data-testid="browser-popup-open"
+                onClick={() => void useBrowserStore.getState().navigateFocused({ kind: 'accept-popup' })}
+              >
+                在当前页面打开
+              </button>
+            )}
+            <button
+              type="button"
+              data-testid="browser-notice-dismiss"
+              onClick={() => void useBrowserStore.getState().navigateFocused({ kind: 'dismiss-notice' })}
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
       <div className="browser-panel__stage" data-browser-guest-slot data-testid="browser-guest-slot">
         {loadError && page && !failed && (
           <BrowserLoadError

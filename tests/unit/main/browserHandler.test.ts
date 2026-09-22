@@ -54,7 +54,8 @@ function createPort(): BrowserPort {
         control: { holder: 'user' },
         capabilities: BROWSER_ENGINE_CAPABILITIES,
         faviconUrl: null,
-        loadError: null
+        loadError: null,
+        notice: null
       }
     })),
     navigate: vi.fn(async () => ({ status: 'not_applied', code: 'unavailable', detail: 'nav' })),

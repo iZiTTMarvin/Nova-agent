@@ -169,6 +169,38 @@
   flex-shrink: 0;
 }
 
+.browser-panel__notice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--nova-status-warning, #b54708) 10%, var(--bg-card));
+  flex-shrink: 0;
+}
+
+.browser-panel__notice p {
+  margin: 0;
+  word-break: break-all;
+}
+
+.browser-panel__notice-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.browser-panel__notice-actions button {
+  border: 1px solid var(--border-subtle, transparent);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
 .browser-panel__stage {
   position: relative;
   flex: 1;

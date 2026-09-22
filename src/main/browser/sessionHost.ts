@@ -25,6 +25,7 @@ import {
   type BrowserListResult,
   type BrowserNavigateResult,
   type BrowserOpenResult,
+  type BrowserGuestNotice,
   type BrowserPageLoadError,
   type BrowserPageProjection,
   type BrowserSurfaceSnapshot,
@@ -56,11 +57,9 @@ const CONTROL_UNAVAILABLE = browserNotApplied('unsupported', '页面观察与操
 export interface BrowserSessionHostDeps {
   readonly resolveWorkspaceKey: (sessionId: string) => string | null
   readonly lookupGuest: (webContentsId: number) => BrowserGuestContents | undefined
-  readonly openExternal: (url: string) => void
   readonly delay?: (ms: number) => Promise<void>
   readonly onSnapshot?: (snapshot: BrowserSurfaceSnapshot) => void
   readonly onGuestMount?: (snapshot: BrowserGuestMountSnapshot) => void
-  readonly getCurrentSessionId?: () => string | null
   readonly control?: BrowserPageControl
   readonly identity?: BrowserIdentityLedger
   readonly allocatePartition?: (browserId: string) =>
@@ -69,6 +68,7 @@ export interface BrowserSessionHostDeps {
   readonly releasePartition?: (browserId: string) => Promise<void>
   readonly previewGrants?: PreviewGrantStore
   readonly readDisplayScale?: () => number | null
+  readonly installPartitionPolicy?: (partition: string) => void
 }
 
 export interface BrowserBindingInspection {
@@ -85,7 +85,13 @@ export interface BrowserSessionHost extends BrowserPort {
   hide(browserId: string, sessionId: string): Promise<BrowserNavigateResult>
   restore(browserId: string, sessionId: string): Promise<BrowserNavigateResult>
   noteRendererReloading(): void
-  handlePopup(url: string, sessionId?: string): void
+  handlePopup(url: string, webContentsId?: number): void
+  grantsForGuest(webContentsId: number | undefined): readonly string[]
+  grantsForPartition(partition: string): readonly string[]
+  noteGuestHandoff(
+    webContentsId: number | undefined,
+    notice: Pick<BrowserGuestNotice, 'kind' | 'sourceUrl' | 'targetUrl' | 'message'>
+  ): void
   inspectBinding(browserId: string): BrowserBindingInspection | null
   livePageCount(): number
   cancelRun(runId: string): void
@@ -123,6 +129,7 @@ interface PageRecord {
   serialActive: boolean
   halted: boolean
   layoutViewport: { width: number; height: number } | null
+  notice: BrowserGuestNotice | null
 }
 
 function defaultDelay(ms: number): Promise<void> {
@@ -211,7 +218,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       lifecycle: record.lifecycle,
       control: record.control,
       faviconUrl: record.faviconUrl,
-      loadError: record.loadError
+      loadError: record.loadError,
+      notice: record.notice
     })
   }
 
@@ -469,7 +477,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     unbindGuest(record)
     record.guest = guest
     guest.setWindowOpenHandler((details) => {
-      handlePopup(details.url, sessionId)
+      handlePopup(details.url, guest.id)
       return { action: 'deny' }
     })
     listen(record, guest, 'will-navigate', (...args: unknown[]) => {
@@ -499,6 +507,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         // ignore
       }
       record.faviconUrl = null
+      record.notice = null
       ledger.bumpDocumentEpoch(browserId)
       emit()
     })
@@ -509,6 +518,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         // ignore
       }
       ledger.bumpDocumentEpoch(browserId)
+      record.notice = null
       emit()
     })
     listen(record, guest, 'page-title-updated', (...args: unknown[]) => {
@@ -556,15 +566,69 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     emit()
   }
 
-  function handlePopup(url: string, sessionId?: string): void {
-    const owner = sessionId && sessionId.length > 0 ? sessionId : deps.getCurrentSessionId?.() ?? null
-    const decision = routeGuestPopup(url, livePageCount())
-    if (decision.openInternal) {
-      if (owner === null) return
-      void open({ url: decision.openInternal }, { sessionId: owner })
-    } else if (decision.openExternal) {
-      deps.openExternal(decision.openExternal)
+  function handlePopup(url: string, webContentsId?: number): void {
+    if (webContentsId === undefined) return
+    const browserId = findOwnerByGuestId(webContentsId)
+    if (!browserId) return
+    const record = pages.get(browserId)
+    if (!record || record.lifecycle === 'closing') return
+    const identity = ledger.inspect(browserId, record.sessionId)
+    if (!identity.ok) return
+    const decision = routeGuestPopup(url)
+    record.notice = {
+      kind: 'popup',
+      sourceUrl: record.url,
+      targetUrl: decision.targetUrl,
+      message: decision.targetUrl
+        ? `已拒绝新窗口。来源 ${record.url}，目标 ${decision.targetUrl}。依赖原窗口通信的登录弹窗暂不支持。`
+        : `已拒绝新窗口。来源 ${record.url}，目标不是 http 或 https。`,
+      generation: identity.value.generation,
+      documentEpoch: identity.value.documentEpoch
     }
+    emit()
+  }
+
+  function grantsForGuest(webContentsId: number | undefined): readonly string[] {
+    if (webContentsId === undefined) return []
+    const browserId = findOwnerByGuestId(webContentsId)
+    if (!browserId) return []
+    return grantsForBrowser(browserId)
+  }
+
+  function grantsForPartition(partition: string): readonly string[] {
+    for (const [browserId, record] of pages) {
+      if (record.partition === partition && record.lifecycle !== 'closing') {
+        return grantsForBrowser(browserId)
+      }
+    }
+    return []
+  }
+
+  function grantsForBrowser(browserId: string): readonly string[] {
+    const record = pages.get(browserId)
+    if (!record) return []
+    const workspaceKey = deps.resolveWorkspaceKey(record.sessionId)
+    if (workspaceKey === null) return []
+    return previewGrants.grantedOrigins(workspaceKey, record.sessionId)
+  }
+
+  function noteGuestHandoff(
+    webContentsId: number | undefined,
+    notice: Pick<BrowserGuestNotice, 'kind' | 'sourceUrl' | 'targetUrl' | 'message'>
+  ): void {
+    if (webContentsId === undefined) return
+    const browserId = findOwnerByGuestId(webContentsId)
+    if (!browserId) return
+    const record = pages.get(browserId)
+    if (!record || record.lifecycle === 'closing') return
+    const identity = ledger.inspect(browserId, record.sessionId)
+    if (!identity.ok) return
+    record.notice = {
+      ...notice,
+      generation: identity.value.generation,
+      documentEpoch: identity.value.documentEpoch
+    }
+    emit()
   }
 
   function occupiesSlot(record: PageRecord): boolean {
@@ -618,6 +682,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       ledger.retire(issued.value.browserId)
       return browserNotApplied(allocated.error, '没有可复用的隔离资料槽')
     }
+    deps.installPartitionPolicy?.(allocated.partition)
     const record: PageRecord = {
       sessionId: context.sessionId,
       url,
@@ -637,7 +702,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       jobs: [],
       serialActive: false,
       halted: false,
-      layoutViewport: null
+      layoutViewport: null,
+      notice: null
     }
     pages.set(issued.value.browserId, record)
     emit()
@@ -810,6 +876,34 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   ): Promise<BrowserNavigateResult> {
     const found = lookupPage(command.browserId, context.sessionId)
     if ('status' in found) return found
+    if (command.action.kind === 'dismiss-notice') {
+      found.record.notice = null
+      emit()
+      const identity = ledger.inspect(command.browserId, context.sessionId)
+      if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
+      return { status: 'applied', page: project(identity.value, found.record) }
+    }
+    let action = command.action
+    let popupEpoch: number | null = null
+    if (action.kind === 'accept-popup') {
+      const identity = ledger.inspect(command.browserId, context.sessionId)
+      const notice = found.record.notice
+      if (
+        !identity.ok
+        || !notice
+        || notice.kind !== 'popup'
+        || notice.targetUrl === null
+        || notice.generation !== identity.value.generation
+        || notice.documentEpoch !== identity.value.documentEpoch
+      ) {
+        found.record.notice = null
+        emit()
+        return browserNotApplied('stale_observation', '弹窗来源已变化，没有打开')
+      }
+      popupEpoch = identity.value.documentEpoch
+      action = { kind: 'url', url: notice.targetUrl }
+      found.record.notice = null
+    }
     if (!context.authority) {
       const revoked = revokeToUser(command.browserId, found.record)
       if (!revoked.ok) return browserNotApplied(revoked.code, '无法接管该页面')
@@ -822,7 +916,12 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         return browserNotApplied('unavailable', '页面尚未挂载')
       }
       try {
-        const action = command.action
+        if (popupEpoch !== null) {
+          const current = ledger.inspect(command.browserId, context.sessionId)
+          if (!current.ok || current.value.documentEpoch !== popupEpoch) {
+            return browserNotApplied('stale_observation', '弹窗来源已变化，没有打开')
+          }
+        }
         if (action.kind === 'url') {
           const workspaceKey = deps.resolveWorkspaceKey(context.sessionId)
           if (workspaceKey === null) {
@@ -854,7 +953,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         } else if (action.kind === 'back') guest.goBack()
         else if (action.kind === 'forward') guest.goForward()
         else if (action.kind === 'reload') guest.reload()
-        else guest.stop()
+        else if (action.kind === 'stop') guest.stop()
+        else return browserNotApplied('invalid_request', '未知的导航动作')
       } catch (error) {
         return browserNotApplied(
           'navigation_failed',
@@ -1214,6 +1314,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     restore: (browserId, sessionId) => setVisible(browserId, sessionId, true),
     noteRendererReloading,
     handlePopup,
+    grantsForGuest,
+    grantsForPartition,
+    noteGuestHandoff,
     inspectBinding,
     livePageCount,
     cancelRun,

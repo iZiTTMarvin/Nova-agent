@@ -78,16 +78,13 @@ describe('webview 挂载硬化', () => {
     expect(isAllowedGuestSrc('https://user:pass@example.com')).toBe(false)
   })
 
-  it('弹窗：非 http 拒绝；有空位转内部页；满员走系统浏览器', () => {
-    expect(routeGuestPopup('file:///etc/passwd', 0)).toEqual({ action: 'deny' })
-    expect(routeGuestPopup('https://example.com/a', 1)).toEqual({
+  it('弹窗一律拒绝，http(s) 只留下可核对的目标', () => {
+    expect(routeGuestPopup('file:///etc/passwd')).toEqual({ action: 'deny', targetUrl: null })
+    expect(routeGuestPopup('https://example.com/a')).toEqual({
       action: 'deny',
-      openInternal: 'https://example.com/a'
+      targetUrl: 'https://example.com/a'
     })
-    expect(routeGuestPopup('https://example.com/b', 2)).toEqual({
-      action: 'deny',
-      openExternal: 'https://example.com/b'
-    })
+    expect(routeGuestPopup('javascript:alert(1)')).toEqual({ action: 'deny', targetUrl: null })
   })
 })
 

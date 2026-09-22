@@ -167,7 +167,14 @@ export function parseBrowserNavigateAction(input: unknown): BrowserParseResult<B
     if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
     return { ok: true, value: Object.freeze({ kind: 'url', url }) }
   }
-  if (kind === 'back' || kind === 'forward' || kind === 'reload' || kind === 'stop') {
+  if (
+    kind === 'back'
+    || kind === 'forward'
+    || kind === 'reload'
+    || kind === 'stop'
+    || kind === 'accept-popup'
+    || kind === 'dismiss-notice'
+  ) {
     if (!hasExactKeys(input, ['kind'])) return failed(`${kind} 不能带额外字段`)
     return { ok: true, value: Object.freeze({ kind }) }
   }

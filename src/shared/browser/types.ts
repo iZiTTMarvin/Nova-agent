@@ -132,6 +132,16 @@ export interface BrowserPageLoadError {
   readonly isCertificateError: boolean
 }
 
+/** 页面发起的新窗口、下载或设备权限被拒绝后，交给用户看的一条说明。 */
+export interface BrowserGuestNotice {
+  readonly kind: 'popup' | 'download' | 'permission'
+  readonly sourceUrl: string
+  readonly targetUrl: string | null
+  readonly message: string
+  readonly generation: number
+  readonly documentEpoch: number
+}
+
 export interface BrowserPageProjection {
   readonly browserId: string
   readonly generation: number
@@ -145,6 +155,7 @@ export interface BrowserPageProjection {
   readonly capabilities: BrowserCapabilityDescriptor
   readonly faviconUrl: string | null
   readonly loadError: BrowserPageLoadError | null
+  readonly notice: BrowserGuestNotice | null
 }
 
 export interface BrowserSurfaceSnapshot {
@@ -238,6 +249,8 @@ export type BrowserNavigateAction =
   | { readonly kind: 'forward' }
   | { readonly kind: 'reload' }
   | { readonly kind: 'stop' }
+  | { readonly kind: 'accept-popup' }
+  | { readonly kind: 'dismiss-notice' }
 
 export interface BrowserNotApplied {
   readonly status: 'not_applied'

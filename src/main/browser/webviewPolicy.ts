@@ -3,7 +3,6 @@
  * 远程 guest 不得携带 Nova preload，也不得自行关掉沙箱。
  */
 import { parseBrowserHttpUrl } from '../../shared/browser'
-import { BROWSER_MAX_LIVE_PAGES } from '../../shared/browser/types'
 
 export interface WebviewAttachPreferences {
   sandbox?: boolean
@@ -27,8 +26,7 @@ export interface WebviewAttachParams {
 
 export interface GuestPopupDecision {
   readonly action: 'deny'
-  readonly openInternal?: string
-  readonly openExternal?: string
+  readonly targetUrl: string | null
 }
 
 export function isAllowedGuestSrc(url: string | undefined): boolean {
@@ -62,16 +60,6 @@ export function hardenWebviewAttachment(
   return 'allowed'
 }
 
-export function routeGuestPopup(
-  url: string,
-  livePageCount: number
-): GuestPopupDecision {
-  const allowed = parseBrowserHttpUrl(url)
-  if (allowed === null) {
-    return { action: 'deny' }
-  }
-  if (livePageCount < BROWSER_MAX_LIVE_PAGES) {
-    return { action: 'deny', openInternal: allowed }
-  }
-  return { action: 'deny', openExternal: allowed }
+export function routeGuestPopup(url: string): GuestPopupDecision {
+  return { action: 'deny', targetUrl: parseBrowserHttpUrl(url) }
 }

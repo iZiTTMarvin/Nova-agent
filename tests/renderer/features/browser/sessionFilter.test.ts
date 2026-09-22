@@ -19,6 +19,7 @@ function page(partial: Partial<BrowserPageProjection> & { browserId: string; ses
     capabilities: BROWSER_ENGINE_CAPABILITIES,
     faviconUrl: null,
     loadError: null,
+    notice: null,
     ...partial
   }
 }
