@@ -96,6 +96,7 @@ test('Windows unpacked release 的内置网页不带应用桥，关掉后页面�
     const workspace = await nova.getWorkspace()
     const sessionId = workspace.currentSessionId
     expect(sessionId).toBeTruthy()
+    if (typeof sessionId !== 'string') throw new Error('打包检查没有可用会话')
     await nova.invoke(WORKSPACE_SET_PERMISSION_MODE, { sessionId, permissionMode: 'full_access' })
     const opened = await nova.invoke(BROWSER_OPEN, { sessionId, url: `${origin}/` })
     expect(opened.status).toBe('applied')
