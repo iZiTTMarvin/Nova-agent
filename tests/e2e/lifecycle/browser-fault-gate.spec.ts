@@ -32,7 +32,7 @@ function page(title: string, body: string): string {
 async function startReadyFixture(): Promise<{ origin: string; close: () => Promise<void> }> {
   const server = http.createServer((_req, res) => {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-    res.end(page('Gate', '<p id="copy">阶段B闸口</p>'))
+    res.end(page('Gate', '<p id="copy">fault-gate</p>'))
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const address = server.address() as AddressInfo
@@ -215,6 +215,7 @@ test('关闭进行中的加载时，旧命令不会落到已关页面', async ({
   const hung = await startHungFixture()
   try {
     const browserId = await openReadyPage(nova, sessionId, `${ready.origin}/`)
+    const started = Date.now()
     const hanging = nova.invoke(BROWSER_NAVIGATE, {
       sessionId,
       browserId,
@@ -223,9 +224,9 @@ test('关闭进行中的加载时，旧命令不会落到已关页面', async ({
     await delay(200)
     const closed = await nova.invoke(BROWSER_CLOSE, { sessionId, browserId })
     const navigated = await hanging
+    expect(Date.now() - started).toBeLessThan(4_000)
     expect(closed.status).toBe('applied')
-    expect(['page_closed', 'cancelled', 'timeout']).toContain(notAppliedCode(navigated) ?? 'applied')
-    expect(notAppliedCode(navigated)).not.toBeNull()
+    expect(['page_closed', 'cancelled']).toContain(notAppliedCode(navigated))
     const listed = await nova.invoke(BROWSER_GET_SNAPSHOT, { sessionId }) as BrowserListResult
     if (listed.status === 'applied') {
       expect(listed.snapshot.pages.some((item) => item.browserId === browserId)).toBe(false)
@@ -237,8 +238,8 @@ test('关闭进行中的加载时，旧命令不会落到已关页面', async ({
   }
 })
 
-test('记录 D-C 自动化附加内存，预算 40 MiB 不放宽', async ({ nova }) => {
-  test.setTimeout(180_000)
+test('记录观察附加内存，预算 40 MiB 不放宽', async ({ nova }) => {
+  test.setTimeout(90_000)
   const sessionId = await grantFullAccess(nova)
   const fixture = await startReadyFixture()
   const sampleTree = (label: string, index: number): Promise<TreeSample> =>
@@ -277,9 +278,12 @@ test('记录 D-C 自动化附加内存，预算 40 MiB 不放宽', async ({ nova
   try {
     const browserId = await openReadyPage(nova, sessionId, `${fixture.origin}/`)
     const samplesC = await sampleState('C')
-    const observed = await nova.invoke(BROWSER_OBSERVE, { sessionId, browserId }) as BrowserObserveResult
-    expect(observed.status).toBe('applied')
-    const samplesD = await sampleState('D')
+    const samplesD: TreeSample[] = []
+    for (let index = 0; index < MEMORY_TRIALS; index += 1) {
+      const observed = await nova.invoke(BROWSER_OBSERVE, { sessionId, browserId }) as BrowserObserveResult
+      expect(observed.status).toBe('applied')
+      samplesD.push(await sampleTree('D', index))
+    }
     const privateC = median(samplesC.map((row) => row.sumPrivateMiB))
     const privateD = median(samplesD.map((row) => row.sumPrivateMiB))
     const deltaDC = privateD - privateC
@@ -313,20 +317,20 @@ test('记录 D-C 自动化附加内存，预算 40 MiB 不放宽', async ({ nova
         D: { medianPrivateMiB: privateD, samples: samplesD },
         deltaDCMiB: deltaDC
       },
-      note: 'C=已打开页面未附 AI 观察；D=同页完成一次观察（调试器/隔离世界）。超 40 MiB 只归因不改预算。'
+      note: 'C=已打开页面、尚未观察；D=每次采样前先观察一次，使调试器与隔离世界仍附着。超过 40 MiB 只记录归因、不改预算。'
     }
     const reportDir = path.resolve(
       __dirname,
-      '../../../docs/Local_Docs/评估报告/2026-09-22-浏览器阶段B闸口'
+      '../../../docs/Local_Docs/评估报告/2026-09-22-浏览器观察附加内存'
     )
     await mkdir(reportDir, { recursive: true })
     await writeFile(path.join(reportDir, 'raw.json'), `${JSON.stringify(dump, null, 2)}\n`, 'utf8')
-    await test.info().attach('browser-phase-b-dc.json', {
+    await test.info().attach('browser-observe-extra-memory.json', {
       body: Buffer.from(JSON.stringify(dump, null, 2)),
       contentType: 'application/json'
     })
     console.log(
-      `phase-b-gate: D-C=${deltaDC.toFixed(2)} MiB C=${privateC.toFixed(2)} D=${privateD.toFixed(2)} budget=${DC_BUDGET_MIB}`
+      `observe-extra-memory: D-C=${deltaDC.toFixed(2)} MiB C=${privateC.toFixed(2)} D=${privateD.toFixed(2)} budget=${DC_BUDGET_MIB}`
     )
     expect(deltaDC, `D-C ${deltaDC.toFixed(2)} MiB 超过 ${DC_BUDGET_MIB} MiB，预算不放宽`).toBeLessThanOrEqual(DC_BUDGET_MIB)
   } finally {

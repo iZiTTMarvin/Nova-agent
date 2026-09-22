@@ -206,7 +206,14 @@ export function createElectronBrowserDriver(
         state.world = null
         const deadlineAt = now() + deadlineMs
         const previous = safeUrl(guest)
-        const navigated = await awaitGuestNavigation(guest, fence, deadlineAt, now, () => guest.loadURL(url))
+        const navigated = await awaitGuestNavigation(
+          guest,
+          fence,
+          url,
+          deadlineAt,
+          now,
+          () => guest.loadURL(url)
+        )
         if (navigated.status === 'interrupted') return navigated.result
         if (navigated.status === 'aborted') {
           const committed = await confirmAborted(state, guest, fence, url, previous, now() + abortedMs, now)
@@ -813,6 +820,7 @@ type GuestNavigationWait =
 async function awaitGuestNavigation(
   guest: BrowserGuestContents,
   fence: BrowserControlFence,
+  url: string,
   deadlineAt: number,
   now: () => number,
   navigate: () => Promise<void>
@@ -820,14 +828,21 @@ async function awaitGuestNavigation(
   let timer: ReturnType<typeof setTimeout> | undefined
   let timedOut = false
   let onAbort: (() => void) | undefined
+  const timeoutResult = (): GuestNavigationWait => {
+    const current = safeUrl(guest)
+    if (isEquivalentNavigationUrl(url, current) && !guestIsLoading(guest)) {
+      return { status: 'committed' }
+    }
+    return {
+      status: 'interrupted',
+      result: browserNotApplied('timeout', '页面没有在时限内就绪')
+    }
+  }
   const timeout = new Promise<GuestNavigationWait>((resolve) => {
     timer = setTimeout(() => {
       timedOut = true
       stopGuest(guest)
-      resolve({
-        status: 'interrupted',
-        result: browserNotApplied('timeout', '页面没有在时限内就绪')
-      })
+      resolve(timeoutResult())
     }, remaining(deadlineAt, now))
   })
   const cancelled = fence.signal
@@ -847,12 +862,7 @@ async function awaitGuestNavigation(
     const finished = navigate().then(
       (): GuestNavigationWait => ({ status: 'committed' }),
       (error: unknown): GuestNavigationWait => {
-        if (timedOut) {
-          return {
-            status: 'interrupted',
-            result: browserNotApplied('timeout', '页面没有在时限内就绪')
-          }
-        }
+        if (timedOut) return timeoutResult()
         if (fence.signal?.aborted) {
           return {
             status: 'interrupted',
@@ -873,6 +883,14 @@ async function awaitGuestNavigation(
   } finally {
     if (timer) clearTimeout(timer)
     if (onAbort) fence.signal?.removeEventListener('abort', onAbort)
+  }
+}
+
+function guestIsLoading(guest: BrowserGuestContents): boolean {
+  try {
+    return guest.isLoading()
+  } catch {
+    return false
   }
 }
 

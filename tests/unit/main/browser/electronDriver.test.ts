@@ -333,6 +333,20 @@ describe('ElectronBrowserDriver', () => {
     driver.release(guest)
   })
 
+  it('取消挂起的 loadURL 会 stop 并返回 cancelled', async () => {
+    const guest = new ScriptedGuest()
+    guest.loadHang = true
+    const abort = new AbortController()
+    const driver = createElectronBrowserDriver({ idleMs: 60_000, commandDeadlineMs: 2_000 })
+    const pending = driver.load(guest, openFence(true, abort.signal), 'http://127.0.0.1/hung')
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    abort.abort()
+    const started = Date.now()
+    await expect(pending).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
+    expect(Date.now() - started).toBeLessThan(500)
+    driver.release(guest)
+  })
+
   it('ERR_ABORTED 在地址和 readyState 对上时不算失败', async () => {
     const guest = new ScriptedGuest()
     guest.loadError = Object.assign(new Error('ERR_ABORTED (-3) loading'), { errno: -3 })
