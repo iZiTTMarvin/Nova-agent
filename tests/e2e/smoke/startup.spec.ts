@@ -100,6 +100,7 @@ test('欢迎页只移动目光，重载与深浅色窄窗口下仍可输入', as
         const window = BrowserWindow.getAllWindows()[0]
         window.setSize(dimensions.width, dimensions.height)
       }, size)
+      await page.setViewportSize(size)
       await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(size.width)
       await expect(wordmark).toBeVisible()
       await expect(mascot).toBeVisible()
@@ -139,6 +140,7 @@ test('欢迎页只移动目光，重载与深浅色窄窗口下仍可输入', as
   await nova.app.evaluate(({ BrowserWindow }) => {
     BrowserWindow.getAllWindows()[0].setSize(1200, 800)
   })
+  await page.setViewportSize({ width: 1200, height: 800 })
   await page.emulateMedia({ reducedMotion: 'no-preference' })
   await page.reload()
   await expect(input).toBeEditable()
