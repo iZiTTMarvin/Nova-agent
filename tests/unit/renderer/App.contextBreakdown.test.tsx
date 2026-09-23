@@ -149,6 +149,14 @@ describe('App agent:context-breakdown 监听', () => {
 
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.stubGlobal('ResizeObserver', class {
+      observe(): void {}
+      disconnect(): void {}
+    })
+    vi.stubGlobal('visualViewport', {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn()
+    })
   })
 
   afterEach(() => {
