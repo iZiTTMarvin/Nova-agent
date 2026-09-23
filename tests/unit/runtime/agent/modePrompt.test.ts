@@ -12,7 +12,7 @@ describe('buildStableSystemPrompt', () => {
     expect(prompt).toContain('D:\\work')
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。')
+    expect(prompt).toContain('compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.')
   })
 
   it('headless 运行面不注入交互模式与编排说明', () => {
@@ -22,10 +22,8 @@ describe('buildStableSystemPrompt', () => {
     })
 
     expect(prompt).toContain('/workspace')
-    expect(prompt).toContain('无界面 coding task')
-    expect(prompt).not.toContain('plan 模式')
-    expect(prompt).not.toContain('default 模式')
-    expect(prompt).not.toContain('compose 模式')
+    expect(prompt).toContain('Headless coding task')
+    expect(prompt).not.toContain('Nova runs in three modes')
   })
 })
 
@@ -34,7 +32,7 @@ describe('getStableSystemPrompt', () => {
     const prompt = getStableSystemPrompt()
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。')
+    expect(prompt).toContain('compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.')
   })
 
   it('多次调用返回逐字节相同内容', () => {

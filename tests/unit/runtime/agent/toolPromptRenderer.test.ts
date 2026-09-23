@@ -37,10 +37,28 @@ describe('toolPromptRenderer', () => {
 
   it('xml 模式给出完整 XML 调用示例和格式规则', () => {
     const out = renderToolInventory(sampleTools, { dialect: 'xml' })
-    expect(out).toContain('工具目录（XML inband 调用）')
+    expect(out).toContain('Tool catalog (XML inband calls)')
     expect(out).toContain('<invoke name="ls">')
     expect(out).toContain('<parameter name="path">src/example.ts</parameter>')
-    expect(out).toContain('`name` 必须是下面列出的工具名之一')
+    expect(out).toContain('`name` must be one of the tools listed below')
+  })
+
+  it('load_tools 可见时按需加载说明出现，不可见时不出现', () => {
+    const connector = {
+      name: 'load_tools',
+      description: '加载工具组',
+      parameters: { type: 'object' as const, properties: {} }
+    }
+    const withConnector = [...sampleTools, connector]
+
+    expect(renderToolInventory(withConnector, { dialect: 'native' }))
+      .toContain('Tool groups load on demand')
+    expect(renderToolInventory(sampleTools, { dialect: 'native' }))
+      .not.toContain('Tool groups load on demand')
+    expect(renderToolInventory(withConnector, { dialect: 'xml' }))
+      .toContain('Tool groups load on demand')
+    expect(renderToolInventory(sampleTools, { dialect: 'xml' }))
+      .not.toContain('Tool groups load on demand')
   })
 
   it('Plan 的 XML 工具目录不暴露写入、命令或子代理工具', () => {
@@ -94,7 +112,7 @@ describe('toolPromptRenderer', () => {
   it('renderWorkingDirectoryHint 返回工作区绝对路径', () => {
     const out = renderWorkingDirectoryHint('D:\\work\\project')
     expect(out).toContain('D:\\work\\project')
-    expect(out).toContain('相对路径都基于该绝对路径解析')
+    expect(out).toContain('resolve against this root')
   })
 
   it('xml 模式下 edit 示例不含旧版 path/old/new，避免模型漏传 filePath', () => {

@@ -18,24 +18,24 @@ const STABLE_SYSTEM_PROMPT: BuildStableSystemPromptOptions = {}
 
 export function buildStableSystemPrompt(options: BuildStableSystemPromptOptions): string {
   const parts: string[] = []
-  parts.push('你是 Nova 的编程助手。')
-  parts.push('你要基于当前工作区和工具结果回答，保持诚实、具体、可执行。')
+  parts.push('You are Nova, a collaborative coding agent working alongside the user in their workspace.')
+  parts.push('Ground every answer in the workspace and tool results; be honest, specific, and actionable.')
 
   if (options.workingDir) {
     parts.push('', renderWorkingDirectoryHint(options.workingDir))
   }
 
   if (options.surface === 'headless') {
-    parts.push('', '当前为无界面 coding task；直接使用工作区工具完成并验证任务。')
+    parts.push('', 'Headless coding task: use workspace tools directly to complete and verify the task.')
   } else {
     parts.push(
       '',
-      'Nova 有三种运行模式，当前激活的模式会在每轮对话中告知你：',
-      '- plan 模式：只读规划。你只能读取和分析项目，不能编辑、写入或执行命令。',
-      '- default 模式：默认模式。你可以读取、修改和验证工作区；工具批准策略由用户设置决定。',
-      '- compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。',
+      'Nova runs in three modes; the active mode and its constraints ride with each user message:',
+      '- plan — read-only analysis and planning; no edits, writes, or commands.',
+      '- default — read, modify, and verify the workspace; approvals follow user settings.',
+      '- compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.',
       '',
-      '请严格遵守当前模式的约束。如果在 plan 模式下被要求写入，请说明需要切换模式。'
+      "If a request exceeds the active mode's limits, say what switch is needed instead of working around it."
     )
   }
 

@@ -25,7 +25,8 @@ const DESCRIPTION = `browser_act — 在最近一次 browser_observe snapshot �
 完整示例：{"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"},"action":{"kind":"click","ref":"e3"}}
 
 ref 取自快照 dom 行。操作前会重新确认目标仍在、唯一、未被遮挡；页面跳转或内容明显变化后，先重新 snapshot 再继续。
-返回 outcome_unknown 时不要重放该动作，先重新观察。`
+返回 outcome_unknown 时不要重放该动作，先重新观察。
+动作已应用不等于复制、下载或保存成功；此类效果需根据权限通知与可核对的业务结果另行确认。`
 
 export function createBrowserActTool(deps: BrowserToolDeps): ToolExecutor {
   return {

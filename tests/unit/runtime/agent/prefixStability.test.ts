@@ -75,7 +75,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     expect(systemMsg).toBeTruthy()
     const frozen = extractTextFromContent(systemMsg!.content)
     expect(frozen).toContain('=== Base Rules ===')
-    expect(frozen).toContain('工具优先级')
+    expect(frozen).toContain('Tools and Exploration')
     // 模式指令不进 system
     expect(frozen).not.toContain('[当前模式: plan')
   })
@@ -125,7 +125,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     )
     // 模式指令在 user 尾部，Task Policy 只在 system，不随轮次重复注入
     expect(userText).toContain(getModeInstruction('plan'))
-    expect(userText).not.toContain('最小工程策略')
+    expect(userText).not.toContain('Minimal Engineering Policy')
   })
 
   it('modeInstruction 出现在 user 消息末尾而非 system', async () => {

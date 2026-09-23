@@ -19,13 +19,12 @@ describe('promptRenderer', () => {
     expect(estimateTokens(text)).toBeLessThan(1000)
   })
 
-  it('包含五条行为契约要点', () => {
+  it('包含四节行为契约要点', () => {
     const text = renderBaseRules()
-    expect(text).toContain('工具优先级')
-    expect(text).toContain('探索策略')
-    expect(text).toContain('完成度契约')
-    expect(text).toContain('yield 前')
-    expect(text).toContain('模式与写入')
+    expect(text).toContain('Tools and Exploration')
+    expect(text).toContain('Delegation')
+    expect(text).toContain('Done Means Verified')
+    expect(text).toContain('Before You Yield')
   })
 
   it('不包含模式指令正文（模式约束挂 user 尾部）', () => {
@@ -66,7 +65,7 @@ describe('renderMinimalEngineeringPolicy（最小工程策略）', () => {
 
   it('开头限定适用范围，非编码类子代理任务不受干扰', () => {
     const text = renderMinimalEngineeringPolicy()
-    expect(text).toContain('仅在任务涉及代码实现')
+    expect(text).toContain('Applies to implementation')
   })
 
   it('同版本内每次调用逐字节相同（缓存前缀契约）', () => {

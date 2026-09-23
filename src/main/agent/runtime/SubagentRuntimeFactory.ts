@@ -39,7 +39,7 @@ import { isBrowserToolName } from '../../../shared/browser'
 import { INSPECTION_REPORT_INSTRUCTION } from '../../../shared/composeLifecycle'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 
-const BASE_RULES_MINIMAL = '遵守工具结果，简洁汇报。你是子代理，不要反问父 agent。'
+const BASE_RULES_MINIMAL = 'Follow tool results and report concisely. You are a subagent; do not ask the parent agent questions.'
 
 export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
   readonly registry: LlmRegistry
