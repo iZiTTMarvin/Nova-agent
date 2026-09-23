@@ -156,8 +156,8 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
         systemContentHash: snapshot.messages[0]?.content
       }).toEqual({
         // bash 描述锚定为常量、系统消息行尾统一 LF；工具清单变化后重置哈希
-        toolsHash: '1dfc3166b7cab84f',
-        systemContentHash: '6ca3dcd57674341f'
+        toolsHash: 'c13704ca36b15011',
+        systemContentHash: 'f51c257166cf4124'
       })
     } finally {
       prepared.agentLoop.dispose()

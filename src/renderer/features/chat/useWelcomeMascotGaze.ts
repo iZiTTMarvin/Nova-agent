@@ -101,7 +101,7 @@ export function useWelcomeMascotGaze({
         target.lx = target.ly = target.rx = target.ry = 0
         return
       }
-      const matrix = svg.getScreenCTM()
+      const matrix = svg.getScreenCTM?.()
       if (!matrix) return
       if (lookingAtComposer) {
         const look = localGaze(matrix, 0, GAZE_RANGE_PX)
