@@ -6,6 +6,7 @@ import {
   constrainBrowserCapture,
   failApplied,
   failUnknown,
+  observationParameterSchema,
   parseFail,
   probeProviderVision,
   requireBrowserPort,
@@ -34,7 +35,8 @@ export interface BrowserCaptureToolDeps extends BrowserToolDeps {
 
 const DESCRIPTION = `browser_capture — 捕获当前已设置好的视口截图。不滚动、不改视口。
 
-必须带完整 observation。图片受预算约束：DPR=1、长边≤1440、≤2MP、单张≤1MiB、单轮≤6张。
+参数：{"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"}}，observation 原样复制最近一次 browser_observe snapshot 返回的 observation 行。
+图片受预算约束：DPR=1、长边≤1440、≤2MP、单张≤1MiB、单轮≤6张。
 当前模型不能消费图片时，返回文字说明和本地证据路径，不能把截图当作视觉验收已通过。
 多模态图片不会被归档，只靠本轮预算控制。`
 
@@ -47,17 +49,7 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
     parameters: {
       type: 'object',
       properties: {
-        observation: {
-          type: 'object',
-          properties: {
-            browserId: { type: 'string' },
-            generation: { type: 'integer', minimum: 1 },
-            documentEpoch: { type: 'integer', minimum: 1 },
-            observationId: { type: 'string' }
-          },
-          required: ['browserId', 'generation', 'documentEpoch', 'observationId'],
-          additionalProperties: false
-        }
+        observation: observationParameterSchema()
       },
       required: ['observation'],
       additionalProperties: false

@@ -51,6 +51,7 @@ export interface BrowserGuestContents {
   loadURL(url: string): Promise<void>
   goBack(): void
   goForward(): void
+  historyTarget(direction: 'back' | 'forward'): string | null
   reload(): void
   stop(): void
   capturePage(clip?: BrowserGuestClip): Promise<BrowserGuestImage>
@@ -143,6 +144,11 @@ export function wrapElectronGuest(guest: WebContents): BrowserGuestContents {
     },
     goForward: () => {
       if (guest.navigationHistory.canGoForward()) guest.navigationHistory.goForward()
+    },
+    historyTarget: (direction) => {
+      const history = guest.navigationHistory
+      const index = history.getActiveIndex() + (direction === 'back' ? -1 : 1)
+      return history.getAllEntries()[index]?.url ?? null
     },
     reload: () => guest.reload(),
     stop: () => guest.stop(),

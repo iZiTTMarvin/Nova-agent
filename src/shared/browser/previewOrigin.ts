@@ -184,7 +184,12 @@ export function decideBrowserNetworkRequest(input: BrowserNetworkRequest): 'allo
   if (canonical.addressClass === 'public') return 'allow'
   if (input.resourceType === 'mainFrame') {
     if (canonical.protocol !== 'http:' && canonical.protocol !== 'https:') return 'deny'
-    return input.grantedOrigins.some((origin) => origin === canonical.origin) ? 'allow' : 'deny'
+    if (!input.grantedOrigins.includes(canonical.origin)) return 'deny'
+    if (input.initiatorOrigin === null) return 'allow'
+    const initiator = evaluatePreviewTarget(input.initiatorOrigin, input.resolveHost)
+    return initiator?.resolution !== 'unresolved' && initiator?.canonical.origin === canonical.origin
+      ? 'allow'
+      : 'deny'
   }
   const initiatorEval = evaluatePreviewTarget(input.initiatorOrigin ?? '', input.resolveHost)
   if (!initiatorEval || initiatorEval.resolution === 'unresolved') return 'deny'

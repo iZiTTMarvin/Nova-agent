@@ -239,8 +239,9 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const action = typeof args.action === 'string' ? args.action : 'open'
       const url = typeof args.url === 'string' ? args.url : ''
       const display = url.length > 40 ? `${url.slice(0, 37)}...` : url
+      const inPlace = typeof args.browserId === 'string' && args.browserId.length > 0
+      if (action === 'open' && inPlace) return display ? `跳转网页 ${display}` : '跳转网页'
       if (action === 'open') return display ? `打开网页 ${display}` : '打开网页'
-      if (action === 'url') return display ? `跳转网页 ${display}` : '跳转网页'
       if (action === 'back') return '网页后退'
       if (action === 'forward') return '网页前进'
       if (action === 'reload') return '刷新网页'

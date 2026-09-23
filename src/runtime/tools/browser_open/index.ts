@@ -11,51 +11,37 @@ import {
 } from '../../browser'
 import { parseBrowserOpenToolArgs } from '../../../shared/browser'
 
-const DESCRIPTION = `browser_open — 在 Nova 内打开或导航网页。创建页面、前进、后退、刷新、停止都走这一工具。
+const DESCRIPTION = `browser_open — 在 Nova 内置浏览器里打开网页或控制已有页面的导航。
 
-参数是判别联合，只能选一种 action：
-- open + url：新建页面
-- url + browserId + url：在已有页面跳转
-- back / forward / reload / stop + browserId：导航控制
+用法（按需填写字段，用不到的字段不要传）：
+- 新建页面：{"action":"open","url":"https://example.com"}
+- 在已有页面跳转：{"action":"open","browserId":"<browserId>","url":"https://example.com/next"}
+- 后退 / 前进 / 刷新 / 停止：{"action":"back","browserId":"<browserId>"}，action 换成 forward / reload / stop
 
-只接受不含用户信息的 http(s) 地址。不要用它执行点击或填写。`
+browserId 来自本工具或 browser_observe list 的返回。已有页面时优先在原页面跳转，不要反复新建（最多同时 2 个页面）。
+只接受不含账号密码的 http(s) 地址。点击、填写等页面内操作用 browser_act。`
 
 export function createBrowserOpenTool(deps: BrowserToolDeps): ToolExecutor {
   return {
     name: 'browser_open',
     description: DESCRIPTION,
+    // 顶层保持扁平 object：多数服务商不支持顶层 oneOf，模型会看不到任何字段而乱猜。
     parameters: {
       type: 'object',
-      oneOf: [
-        {
-          type: 'object',
-          properties: {
-            action: { type: 'string', const: 'open', description: '新建页面' },
-            url: { type: 'string', description: 'http 或 https 地址' }
-          },
-          required: ['action', 'url'],
-          additionalProperties: false
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['open', 'back', 'forward', 'reload', 'stop'],
+          description: 'open=打开网址（带 browserId 时在该页跳转）；back/forward/reload/stop=控制已有页面'
         },
-        {
-          type: 'object',
-          properties: {
-            action: { type: 'string', const: 'url', description: '已有页面跳转' },
-            browserId: { type: 'string' },
-            url: { type: 'string', description: 'http 或 https 地址' }
-          },
-          required: ['action', 'browserId', 'url'],
-          additionalProperties: false
-        },
-        {
-          type: 'object',
-          properties: {
-            action: { type: 'string', enum: ['back', 'forward', 'reload', 'stop'] },
-            browserId: { type: 'string' }
-          },
-          required: ['action', 'browserId'],
-          additionalProperties: false
+        url: { type: 'string', description: 'action=open 时必填，http(s) 地址' },
+        browserId: {
+          type: 'string',
+          description: 'back/forward/reload/stop 必填；open 时可选，填写则在该页面跳转而不新建页面'
         }
-      ]
+      },
+      required: ['action'],
+      additionalProperties: false
     },
     executionMode: 'sequential',
     async execute(args, context): Promise<ToolResult> {
@@ -65,22 +51,30 @@ export function createBrowserOpenTool(deps: BrowserToolDeps): ToolExecutor {
       if (!port) return unavailablePort()
       const resolved = resolveBrowserCommandContext(context)
       if (!resolved.ok) return resolved.result
+      const request = parsed.value
       const result =
-        parsed.value.action === 'open'
-          ? await port.open({ url: parsed.value.url }, resolved.value)
+        request.action === 'open'
+          ? await port.open({ url: request.url }, resolved.value)
           : await port.navigate(
               {
-                browserId: parsed.value.browserId,
+                browserId: request.browserId,
                 action:
-                  parsed.value.action === 'url'
-                    ? { kind: 'url', url: parsed.value.url }
-                    : { kind: parsed.value.action }
+                  request.action === 'navigate'
+                    ? { kind: 'url', url: request.url }
+                    : { kind: request.action }
               },
               resolved.value
             )
       if (result.status === 'not_applied') return failApplied(result)
       if (result.status === 'outcome_unknown') return failUnknown(result)
-      return { success: true, output: formatPage(result.page) }
+      return {
+        success: true,
+        output: [
+          formatPage(result.page),
+          '',
+          `下一步：browser_observe {"action":"snapshot","browserId":"${result.page.browserId}"} 读取页面内容`
+        ].join('\n')
+      }
     }
   }
 }

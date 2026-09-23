@@ -68,9 +68,22 @@ class FakeGuest implements BrowserGuestContents {
     this.url = url
   }
 
-  goBack(): void {}
+  /** 可后退到的地址；null 表示没有历史 */
+  backTarget: string | null = null
+
+  goBack(): void {
+    if (this.backTarget === null) return
+    this.url = this.backTarget
+    this.backTarget = null
+    this.emit('did-navigate')
+  }
   goForward(): void {}
-  reload(): void {}
+  historyTarget(direction: 'back' | 'forward'): string | null {
+    return direction === 'back' ? this.backTarget : null
+  }
+  reload(): void {
+    this.emit('did-navigate')
+  }
   stop(): void {}
   setWindowOpenHandler(): void {}
 
@@ -442,14 +455,17 @@ describe('BrowserSessionHost 生命周期', () => {
 
   it('挂载超时后拒绝迟到绑定，关闭失败页才释放槽', async () => {
     const guest = new FakeGuest({ id: 31 })
-    const harness = createHarness(new Map([[31, guest]]))
-    const opening = harness.host.open({ url: 'https://example.com/late' }, { sessionId: 'sess_1' })
+    const grants = createPreviewGrantStore({ findRunning: () => null })
+    const harness = createHarness(new Map([[31, guest]]), undefined, { previewGrants: grants })
+    const opening = harness.host.open({ url: 'http://127.0.0.1:5173/late' }, { sessionId: 'sess_1' })
     await Promise.resolve()
     const browserId = latestBrowserId(harness.snapshots)
     harness.clock.flush(15_000)
     await expect(opening).resolves.toMatchObject({ status: 'not_applied', code: 'timeout' })
     expect(latestLifecycle(harness.snapshots, browserId)).toBe('failed')
     expect(harness.host.livePageCount()).toBe(1)
+    expect(harness.host.grantsForPartition(harness.mounts.at(-1)?.guests[0]?.partition ?? '')).toEqual([])
+    expect(grants.inspect()).toEqual([])
 
     const late = await harness.host.attach({
       sessionId: 'sess_1',
@@ -719,6 +735,48 @@ describe('BrowserSessionHost 生命周期', () => {
     })
   })
 
+  it('代理打开页面等首个文档提交后才回报，回报的是真实地址与标题', async () => {
+    const guest = new FakeGuest({ id: 30, url: 'about:blank' })
+    guest.loading = true
+    const harness = createHarness(new Map([[30, guest]]))
+    let settled = false
+    const opening = harness.host.open({ url: 'https://example.com/app' }, agentContext())
+    void opening.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    const browserId = latestBrowserId(harness.snapshots)
+    await harness.host.attach({ sessionId: 'sess_1', browserId, webContentsId: 30 })
+    harness.clock.flush(50)
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    guest.url = 'https://example.com/app'
+    guest.title = 'App'
+    guest.loading = false
+    guest.emit('did-stop-loading')
+    harness.clock.flush(50)
+    await expect(opening).resolves.toMatchObject({
+      status: 'applied',
+      page: { url: 'https://example.com/app', title: 'App', loading: false }
+    })
+  })
+
+  it('代理后退：没有历史时如实失败；有历史时等新文档提交后回报新地址', async () => {
+    const guest = new FakeGuest({ id: 31, url: 'https://example.com/next' })
+    const harness = createHarness(new Map([[31, guest]]))
+    const browserId = await openReady(harness, 31)
+
+    await expect(harness.host.navigate({ browserId, action: { kind: 'back' } }, agentContext()))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'navigation_failed' })
+
+    guest.backTarget = 'https://example.com/app'
+    const epochBefore = latestPage(harness.snapshots, browserId)?.documentEpoch ?? 0
+    const back = await harness.host.navigate({ browserId, action: { kind: 'back' } }, agentContext())
+    expect(back).toMatchObject({ status: 'applied', page: { url: 'https://example.com/app' } })
+    if (back.status === 'applied') expect(back.page.documentEpoch).toBeGreaterThan(epochBefore)
+  })
+
   it('用户接管后 AI 重新观察也拿不到写资格；交还后重新观察可继续', async () => {
     const harness = createHarness(new Map([[24, new FakeGuest({ id: 24 })]]), {
       ...immediateControl(),
@@ -781,6 +839,8 @@ describe('BrowserSessionHost 生命周期', () => {
             await gate
             return { ok: true as const, restricted: false as const }
           },
+          activate: () => {},
+          release: () => {},
           grantedOrigins: () => [],
           inspect: () => []
         },
@@ -820,6 +880,8 @@ describe('BrowserSessionHost 生命周期', () => {
         await gate
         return { ok: true as const, restricted: false as const }
       },
+      activate: () => {},
+      release: () => {},
       grantedOrigins: () => [],
       inspect: () => []
     }
@@ -848,6 +910,8 @@ describe('BrowserSessionHost 生命周期', () => {
         await gate2
         return { ok: true as const, restricted: false as const }
       },
+      activate: () => {},
+      release: () => {},
       grantedOrigins: () => [],
       inspect: () => []
     }
@@ -884,6 +948,8 @@ describe('BrowserSessionHost 生命周期', () => {
         await gate
         return { ok: true as const, restricted: false as const }
       },
+      activate: () => {},
+      release: () => {},
       grantedOrigins: () => [],
       inspect: () => []
     }
@@ -1127,6 +1193,96 @@ describe('BrowserSessionHost 生命周期', () => {
     await expect(closing).resolves.toMatchObject({ status: 'applied' })
     expect(kills).toBe(0)
     expect(registry.describe(handle.ref, 'sess_1').state).toBe('running')
+  })
+
+  it('本地授权只属于成功创建的页面；页数上限失败不授权，关闭即撤销', async () => {
+    const grants = createPreviewGrantStore({ findRunning: () => null })
+    const localGuest = new FakeGuest({ id: 81, url: 'http://127.0.0.1:5173/' })
+    const publicGuest = new FakeGuest({ id: 82, url: 'https://example.com/' })
+    const harness = createHarness(new Map([[81, localGuest], [82, publicGuest]]), undefined, {
+      previewGrants: grants
+    })
+    const localId = await openReady(harness, 81, 'http://127.0.0.1:5173/')
+    const openingPublic = harness.host.open({ url: 'https://example.com/' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const publicId = harness.snapshots.at(-1)?.pages.at(-1)?.browserId
+    expect(publicId).toBeDefined()
+    await expect(harness.host.attach({
+      sessionId: 'sess_1', browserId: publicId!, webContentsId: 82
+    })).resolves.toMatchObject({ status: 'applied' })
+    await expect(openingPublic).resolves.toMatchObject({ status: 'applied' })
+
+    expect(harness.host.grantsForGuest(81)).toEqual(['http://127.0.0.1:5173'])
+    expect(harness.host.grantsForGuest(82)).toEqual([])
+    await expect(harness.host.navigate({
+      browserId: localId, action: { kind: 'url', url: 'https://example.com/' }
+    }, { sessionId: 'sess_1' })).resolves.toMatchObject({ status: 'applied' })
+    localGuest.emit('did-fail-load', {}, -105, 'ERR_NAME_NOT_RESOLVED', 'http://127.0.0.1:5173/probe', true)
+    expect(harness.host.grantsForGuest(81)).toEqual([])
+    await expect(harness.host.open({ url: 'http://127.0.0.1:5174/' }, { sessionId: 'sess_1' }))
+      .resolves.toMatchObject({ status: 'not_applied', code: 'resource_limit' })
+    expect(grants.inspect()).toEqual([
+      expect.objectContaining({ origin: 'http://127.0.0.1:5173' })
+    ])
+
+    const closing = harness.host.close({ browserId: localId }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    harness.clock.flush(1000)
+    await Promise.resolve()
+    localGuest.destroy()
+    await expect(closing).resolves.toMatchObject({ status: 'applied' })
+    expect(grants.inspect()).toEqual([])
+  })
+
+  it('初次挂载仍在空白页时保留待加载的本机授权', async () => {
+    const grants = createPreviewGrantStore({ findRunning: () => null })
+    const guest = new FakeGuest({ id: 83, url: 'about:blank' })
+    const harness = createHarness(new Map([[83, guest]]), undefined, { previewGrants: grants })
+    const opening = harness.host.open({ url: 'http://127.0.0.1:5173/' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const browserId = latestBrowserId(harness.snapshots)
+    await expect(harness.host.attach({
+      sessionId: 'sess_1', browserId, webContentsId: 83
+    })).resolves.toMatchObject({ status: 'applied' })
+    await expect(opening).resolves.toMatchObject({ status: 'applied' })
+    expect(harness.host.grantsForGuest(83)).toEqual(['http://127.0.0.1:5173'])
+  })
+
+  it('关闭未确认时也撤销本机授权', async () => {
+    const grants = createPreviewGrantStore({ findRunning: () => null })
+    const guest = new FakeGuest({
+      id: 84,
+      url: 'http://127.0.0.1:5173/',
+      debuggerAttached: true,
+      detachImpl: () => {}
+    })
+    const harness = createHarness(new Map([[84, guest]]), undefined, { previewGrants: grants })
+    const browserId = await openReady(harness, 84, 'http://127.0.0.1:5173/')
+    expect(grants.inspect()).toHaveLength(1)
+    const closing = harness.host.close({ browserId }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    await Promise.resolve()
+    harness.clock.flush(1000)
+    await expect(closing)
+      .resolves.toMatchObject({ status: 'outcome_unknown' })
+    expect(grants.inspect()).toEqual([])
+    expect(harness.host.grantsForGuest(84)).toEqual([])
+  })
+
+  it('域名确认期间取消打开请求不会留下本地授权', async () => {
+    let finishLookup = (_addresses: readonly string[]): void => {}
+    const lookup = new Promise<readonly string[]>((resolve) => { finishLookup = resolve })
+    const grants = createPreviewGrantStore(
+      { findRunning: () => null },
+      { resolveHost: () => lookup }
+    )
+    const harness = createHarness(new Map(), undefined, { previewGrants: grants })
+    const opening = harness.host.open({ url: 'http://preview.test:5173/' }, agentContext())
+    harness.host.cancelRun('run_1')
+    finishLookup(['127.0.0.1'])
+    await expect(opening).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
+    expect(grants.inspect()).toEqual([])
+    expect(harness.host.livePageCount()).toBe(0)
   })
 })
 

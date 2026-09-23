@@ -397,6 +397,21 @@ describe('planToolResultSupersession', () => {
     expect(plan.has('o2')).toBe(false)
   })
 
+  it('browser_observe 省略 browserId 时按结果里的实际页面归组', () => {
+    const messages: ChatMessage[] = [
+      asst('o1', 'browser_observe', JSON.stringify({ action: 'snapshot' })),
+      tool('o1', 'observationId: obs_1\nbrowserId: brw_1\nsnap 1'),
+      asst('o2', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),
+      tool('o2', 'observationId: obs_2\nbrowserId: brw_1\nsnap 2'),
+      asst('o3', 'browser_observe', JSON.stringify({ action: 'snapshot' })),
+      tool('o3', 'observationId: obs_3\nbrowserId: brw_2\nother page')
+    ]
+    const plan = planToolResultSupersession(messages)
+    expect(plan.get('o1')).toBe('idempotent_snapshot')
+    expect(plan.has('o2')).toBe(false)
+    expect(plan.has('o3')).toBe(false)
+  })
+
   it('browser_observe 不同 browserId 的快照互不覆盖', () => {
     const messages: ChatMessage[] = [
       asst('o1', 'browser_observe', JSON.stringify({ action: 'snapshot', browserId: 'brw_1' })),

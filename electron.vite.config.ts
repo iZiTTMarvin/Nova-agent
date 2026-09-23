@@ -78,8 +78,13 @@ export default defineConfig({
     worker: {
       format: 'es'
     },
+    // 避开项目常用的 5173：Windows 上项目服务可在同端口监听 :: 而不报错，
+    // 内置浏览器访问 127.0.0.1 时会落到 Nova 自己的界面。
+    // strictPort：electron-vite 按配置端口生成 ELECTRON_RENDERER_URL，Vite 顺延端口会让主窗口加载错地址。
     server: {
-      host: '127.0.0.1'
+      host: '127.0.0.1',
+      port: 17380,
+      strictPort: true
     }
   }
 })

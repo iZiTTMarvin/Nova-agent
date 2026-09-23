@@ -12,7 +12,7 @@ import { parseBrowserCloseToolArgs } from '../../../shared/browser'
 
 const DESCRIPTION = `browser_close — 关闭指定内置网页。未提交的表单状态可能丢失。
 
-参数只能包含 browserId。`
+参数：{"browserId":"<browserId>"}，browserId 见 browser_open 或 browser_observe list 的返回。`
 
 export function createBrowserCloseTool(deps: BrowserToolDeps): ToolExecutor {
   return {
@@ -21,7 +21,7 @@ export function createBrowserCloseTool(deps: BrowserToolDeps): ToolExecutor {
     parameters: {
       type: 'object',
       properties: {
-        browserId: { type: 'string' }
+        browserId: { type: 'string', description: '要关闭的页面' }
       },
       required: ['browserId'],
       additionalProperties: false

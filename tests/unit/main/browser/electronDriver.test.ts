@@ -193,6 +193,7 @@ class ScriptedGuest implements BrowserGuestContents {
 
   goBack(): void {}
   goForward(): void {}
+  historyTarget(): string | null { return null }
   reload(): void {}
   stop(): void {}
   setWindowOpenHandler(): void {}

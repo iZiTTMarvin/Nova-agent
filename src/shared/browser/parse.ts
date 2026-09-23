@@ -320,9 +320,16 @@ export function parseBrowserCaptureIpcParams(
   return { ok: true, value: Object.freeze({ sessionId, observation: observation.value }) }
 }
 
+/*
+ * 工具入参来自模型，和上面来自 Renderer 的 IPC 入参分开处理：
+ * 只读取当前 action 用得到的字段，null / 空串按「未提供」处理，其余多填的字段忽略；
+ * 取出的值仍交给上面同一套严格校验。报错写明正确写法，让模型下一步就能改对，
+ * 而不是带着同样的参数重试。
+ */
+
 export type BrowserOpenToolArgs =
   | { readonly action: 'open'; readonly url: string }
-  | { readonly action: 'url'; readonly browserId: string; readonly url: string }
+  | { readonly action: 'navigate'; readonly browserId: string; readonly url: string }
   | { readonly action: 'back'; readonly browserId: string }
   | { readonly action: 'forward'; readonly browserId: string }
   | { readonly action: 'reload'; readonly browserId: string }
@@ -330,78 +337,222 @@ export type BrowserOpenToolArgs =
 
 export type BrowserObserveToolArgs =
   | { readonly action: 'list' }
-  | { readonly action: 'snapshot'; readonly browserId: string }
+  /** browserId 为 null 时由工具按当前会话的页面推断 */
+  | { readonly action: 'snapshot'; readonly browserId: string | null }
 
 export type BrowserCloseToolArgs = { readonly browserId: string }
 
 export type BrowserCaptureToolArgs = { readonly observation: ObservationIdentity }
 
+const OPEN_EXAMPLE = '{"action":"open","url":"https://example.com"}'
+const OBSERVATION_EXAMPLE =
+  '{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"}'
+const BAD_TOOL_URL = 'url 必须是 http(s) 地址且不含账号密码，例如 https://example.com'
+
+/** 模型惯用的跳转说法都折叠成 open：带 browserId 在该页跳转，不带则新建页面。 */
+const OPEN_ACTIONS: ReadonlySet<string> = new Set(['open', 'navigate', 'goto', 'url', 'visit'])
+const NAVIGATION_CONTROLS = ['back', 'forward', 'reload', 'stop'] as const
+type NavigationControl = (typeof NAVIGATION_CONTROLS)[number]
+const CONTROL_ALIASES: Readonly<Record<string, NavigationControl>> = { refresh: 'reload' }
+
+const URL_WITH_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i
+const BARE_HOST = /^(?:\[[0-9a-f:]+\]|[\w-]+(?:\.[\w-]+)*)(?::\d{1,5})?(?:[/?#]|$)/i
+const LOOPBACK_HOST = /^(?:localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0|\[::1\])(?::\d{1,5})?(?:[/?#]|$)/i
+
+function presentValue(record: Record<string, unknown>, key: string): unknown {
+  const value = record[key]
+  if (value === null || value === undefined) return undefined
+  if (typeof value === 'string' && value.trim().length === 0) return undefined
+  return value
+}
+
+function readToolString(record: Record<string, unknown>, key: string): string | null {
+  const value = presentValue(record, key)
+  return typeof value === 'string' ? value.trim() : null
+}
+
+function readToolInteger(record: Record<string, unknown>, key: string): number | null {
+  const value = presentValue(record, key)
+  if (typeof value === 'number') return value
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value.trim())
+  return null
+}
+
+function readToolActionName(record: Record<string, unknown>): string | null | undefined {
+  const value = presentValue(record, 'action')
+  if (value === undefined) return undefined
+  return typeof value === 'string' ? value.trim().toLowerCase() : null
+}
+
+/** 补全模型常省略的协议头；本机地址补 http，其余补 https。协议白名单仍由 parseBrowserHttpUrl 把关。 */
+function normalizeToolUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (trimmed.length === 0) return null
+  if (URL_WITH_SCHEME.test(trimmed)) return parseBrowserHttpUrl(trimmed)
+  if (!BARE_HOST.test(trimmed)) return null
+  const scheme = LOOPBACK_HOST.test(trimmed) ? 'http://' : 'https://'
+  return parseBrowserHttpUrl(`${scheme}${trimmed}`)
+}
+
+function isNavigationControl(value: string): value is NavigationControl {
+  return (NAVIGATION_CONTROLS as readonly string[]).includes(value)
+}
+
 export function parseBrowserOpenToolArgs(input: unknown): BrowserParseResult<BrowserOpenToolArgs> {
-  if (!isRecord(input)) return failed('打开命令必须是对象')
-  const action = input.action
-  if (action === 'open') {
-    if (!hasExactKeys(input, ['action', 'url'])) return failed('open 只能包含 action 与 url')
-    const url = parseBrowserHttpUrl(input.url)
-    if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
-    return { ok: true, value: Object.freeze({ action: 'open', url }) }
+  if (!isRecord(input)) return failed(`browser_open 的参数必须是对象，例如 ${OPEN_EXAMPLE}`)
+  const rawAction = readToolActionName(input)
+  if (rawAction === null) return failed(`action 必须是字符串，例如 ${OPEN_EXAMPLE}`)
+  const hasUrl = presentValue(input, 'url') !== undefined
+  if (rawAction === undefined && !hasUrl) {
+    return failed(
+      `缺少 action。新建页面用 ${OPEN_EXAMPLE}；导航控制用 {"action":"back","browserId":"<browserId>"}`
+    )
   }
-  if (action === 'url') {
-    if (!hasExactKeys(input, ['action', 'browserId', 'url'])) {
-      return failed('url 导航只能包含 action、browserId 与 url')
+  const action = rawAction === undefined ? 'open' : (CONTROL_ALIASES[rawAction] ?? rawAction)
+  const browserId = readToolString(input, 'browserId')
+
+  if (OPEN_ACTIONS.has(action)) {
+    if (!hasUrl) {
+      return failed(
+        `open 需要 url。新建页面：${OPEN_EXAMPLE}；在已有页面跳转：{"action":"open","browserId":"<browserId>","url":"https://example.com"}`
+      )
     }
-    const browserId = readNonEmptyString(input, 'browserId')
-    const url = parseBrowserHttpUrl(input.url)
-    if (browserId === null) return failed('url 导航需要非空 browserId')
-    if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
-    return { ok: true, value: Object.freeze({ action: 'url', browserId, url }) }
+    const url = normalizeToolUrl(input.url)
+    if (url === null) return failed(BAD_TOOL_URL)
+    return browserId === null
+      ? { ok: true, value: Object.freeze({ action: 'open', url }) }
+      : { ok: true, value: Object.freeze({ action: 'navigate', browserId, url }) }
   }
-  if (action === 'back' || action === 'forward' || action === 'reload' || action === 'stop') {
-    if (!hasExactKeys(input, ['action', 'browserId'])) {
-      return failed(`${action} 只能包含 action 与 browserId`)
+
+  if (isNavigationControl(action)) {
+    if (browserId === null) {
+      return failed(
+        `${action} 需要 browserId（见 browser_open 或 browser_observe list 的返回），例如 {"action":"${action}","browserId":"<browserId>"}`
+      )
     }
-    const browserId = readNonEmptyString(input, 'browserId')
-    if (browserId === null) return failed(`${action} 需要非空 browserId`)
     return { ok: true, value: Object.freeze({ action, browserId }) }
   }
-  return failed('未知的打开或导航动作')
+
+  return failed(
+    `未知的 action "${action}"。可选：open（需要 url；带 browserId 时在该页跳转）、back、forward、reload、stop`
+  )
 }
 
 export function parseBrowserObserveToolArgs(
   input: unknown
 ): BrowserParseResult<BrowserObserveToolArgs> {
-  if (!isRecord(input)) return failed('观察命令必须是对象')
-  const action = input.action
-  if (action === 'list') {
-    if (!hasExactKeys(input, ['action'])) return failed('list 不能带额外字段')
-    return { ok: true, value: Object.freeze({ action: 'list' }) }
+  if (!isRecord(input)) {
+    return failed('browser_observe 的参数必须是对象，例如 {"action":"snapshot","browserId":"<browserId>"}')
   }
-  if (action === 'snapshot') {
-    if (!hasExactKeys(input, ['action', 'browserId'])) {
-      return failed('snapshot 只能包含 action 与 browserId')
+  const action = readToolActionName(input)
+  if (action === 'list') return { ok: true, value: Object.freeze({ action: 'list' }) }
+  if (action === undefined || action === 'snapshot') {
+    return {
+      ok: true,
+      value: Object.freeze({ action: 'snapshot', browserId: readToolString(input, 'browserId') })
     }
-    const browserId = readNonEmptyString(input, 'browserId')
-    if (browserId === null) return failed('snapshot 需要非空 browserId')
-    return { ok: true, value: Object.freeze({ action: 'snapshot', browserId }) }
   }
-  return failed('未知的观察动作')
+  return failed(
+    '未知的 action。可选：list（列出页面，不需要其它参数）、snapshot（读取页面，配 browserId）'
+  )
 }
 
 export function parseBrowserCloseToolArgs(input: unknown): BrowserParseResult<BrowserCloseToolArgs> {
-  if (!isRecord(input) || !hasExactKeys(input, ['browserId'])) {
-    return failed('关闭命令只能包含 browserId')
+  const browserId = isRecord(input) ? readToolString(input, 'browserId') : null
+  if (browserId === null) {
+    return failed('browser_close 需要 browserId，例如 {"browserId":"<browserId>"}')
   }
-  const browserId = readNonEmptyString(input, 'browserId')
-  if (browserId === null) return failed('关闭命令需要非空 browserId')
   return { ok: true, value: Object.freeze({ browserId }) }
+}
+
+/** 观察身份优先读 observation 对象；模型把四个字段平铺在顶层时也接受。 */
+function readToolObservation(input: Record<string, unknown>): BrowserParseResult<ObservationIdentity> {
+  const source = isRecord(input.observation) ? input.observation : input
+  const browserId = readToolString(source, 'browserId')
+  const observationId = readToolString(source, 'observationId')
+  const generation = readToolInteger(source, 'generation')
+  const documentEpoch = readToolInteger(source, 'documentEpoch')
+  if (browserId === null || observationId === null || generation === null || documentEpoch === null) {
+    return failed(
+      `observation 需要 browserId、generation、documentEpoch、observationId 四项，原样复制最近一次 browser_observe snapshot 返回的 observation 行，例如 ${OBSERVATION_EXAMPLE}`
+    )
+  }
+  const parsed = parseObservationIdentity({ browserId, generation, documentEpoch, observationId })
+  if (!parsed.ok) return failed(`${parsed.detail}，例如 ${OBSERVATION_EXAMPLE}`)
+  return parsed
+}
+
+const ACTION_SHAPES: Readonly<Record<BrowserAction['kind'], { fields: readonly string[]; example: string }>> = {
+  click: { fields: ['ref'], example: '{"kind":"click","ref":"e3"}' },
+  fill: { fields: ['ref', 'text'], example: '{"kind":"fill","ref":"e3","text":"内容"}' },
+  select: { fields: ['ref', 'values'], example: '{"kind":"select","ref":"e3","values":["选项"]}' },
+  press: { fields: ['ref', 'key'], example: '{"kind":"press","ref":"e3","key":"Enter"}' },
+  scroll: { fields: ['direction', 'amount'], example: '{"kind":"scroll","direction":"down","amount":"page"}' },
+  viewport: {
+    fields: ['width', 'height', 'device'],
+    example: '{"kind":"viewport","width":390,"height":844,"device":"mobile"}'
+  }
+}
+
+function isActionKind(value: string): value is BrowserAction['kind'] {
+  return Object.prototype.hasOwnProperty.call(ACTION_SHAPES, value)
+}
+
+function coerceActionField(field: string, value: unknown): unknown {
+  if (field === 'values' && typeof value === 'string') return [value]
+  if ((field === 'width' || field === 'height') && typeof value === 'string' && /^\d+$/.test(value.trim())) {
+    return Number(value.trim())
+  }
+  return value
+}
+
+function readToolBrowserAction(input: Record<string, unknown>): BrowserParseResult<BrowserAction> {
+  const source = input.action
+  const kinds = Object.keys(ACTION_SHAPES).join('、')
+  if (!isRecord(source)) {
+    return failed(`缺少 action 对象，例如 ${ACTION_SHAPES.click.example}；kind 可选：${kinds}`)
+  }
+  const rawKind = typeof source.kind === 'string' ? source.kind.trim().toLowerCase() : ''
+  if (!isActionKind(rawKind)) return failed(`未知的 action.kind "${rawKind}"，可选：${kinds}`)
+  const shape = ACTION_SHAPES[rawKind]
+  const picked: Record<string, unknown> = { kind: rawKind }
+  for (const field of shape.fields) {
+    const value = source[field]
+    // fill 的 text 允许空串（清空输入框），所以这里只把 null / undefined 当作缺失
+    if (value === null || value === undefined) {
+      if (rawKind === 'scroll' && field === 'amount') {
+        picked.amount = 'page'
+        continue
+      }
+      return failed(`${rawKind} 需要 ${shape.fields.join('、')}，例如 ${shape.example}`)
+    }
+    picked[field] = coerceActionField(field, value)
+  }
+  const parsed = parseBrowserAction(picked)
+  if (!parsed.ok) return failed(`${parsed.detail}，例如 ${shape.example}`)
+  return parsed
+}
+
+export function parseBrowserActToolArgs(input: unknown): BrowserParseResult<BrowserActCommand> {
+  if (!isRecord(input)) return failed('browser_act 的参数必须是对象，包含 observation 与 action')
+  const observation = readToolObservation(input)
+  if (!observation.ok) return observation
+  const action = readToolBrowserAction(input)
+  if (!action.ok) return action
+  return {
+    ok: true,
+    value: Object.freeze({ observation: observation.value, action: action.value })
+  }
 }
 
 export function parseBrowserCaptureToolArgs(
   input: unknown
 ): BrowserParseResult<BrowserCaptureToolArgs> {
-  if (!isRecord(input) || !hasExactKeys(input, ['observation'])) {
-    return failed('截图命令只能包含 observation')
+  if (!isRecord(input)) {
+    return failed(`browser_capture 需要 observation，例如 {"observation":${OBSERVATION_EXAMPLE}}`)
   }
-  const observation = parseObservationIdentity(input.observation)
+  const observation = readToolObservation(input)
   if (!observation.ok) return observation
   return { ok: true, value: Object.freeze({ observation: observation.value }) }
 }

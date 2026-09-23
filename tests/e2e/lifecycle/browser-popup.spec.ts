@@ -1,21 +1,32 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { expect, test, type NovaHarness } from '../fixtures/nova'
-import { BROWSER_CLOSE, BROWSER_OPEN } from '../../../src/shared/ipc/channels'
+import { BROWSER_CLOSE, BROWSER_GET_SNAPSHOT, BROWSER_NAVIGATE, BROWSER_OPEN } from '../../../src/shared/ipc/channels'
 
-async function startPopupFixture(): Promise<{
+async function startPopupFixture(redirectTo?: string): Promise<{
   origin: string
   popupUrl: string
+  probeHits: () => number
+  redirectHits: () => number
   close: () => Promise<void>
 }> {
+  let probeHits = 0
+  let redirectHits = 0
   const server = http.createServer((req, res) => {
     const url = req.url ?? '/'
+    if (url.startsWith('/redirect-to-previous') && redirectTo) {
+      redirectHits += 1
+      res.writeHead(302, { location: `${redirectTo}/probe` })
+      res.end()
+      return
+    }
     if (url.startsWith('/popup')) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end('<!doctype html><title>popup</title><body><h1>popup</h1></body>')
       return
     }
     if (url.startsWith('/probe')) {
+      probeHits += 1
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       res.end('<!doctype html><title>probe</title><p id="out">pending</p>')
       return
@@ -29,6 +40,8 @@ async function startPopupFixture(): Promise<{
   return {
     origin,
     popupUrl: `${origin}/popup`,
+    probeHits: () => probeHits,
+    redirectHits: () => redirectHits,
     close: () => new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()))
     })
@@ -121,5 +134,53 @@ test('已确认的本机页面仍不能请求元数据或其它私网地址', as
     expect(await probeFetch(nova, 'http://192.168.1.20/secret')).toBe('blocked')
   } finally {
     await fixture.close()
+  }
+})
+
+test('本机预览授权不被后续页面重定向借用，后退前进仍可访问已打开页面', async ({ nova }) => {
+  const first = await startPopupFixture()
+  const second = await startPopupFixture(first.origin)
+  try {
+    const sessionId = (await nova.getWorkspace()).currentSessionId
+    expect(sessionId).toBeTruthy()
+    const opened = await nova.invoke(BROWSER_OPEN, { sessionId: sessionId!, url: `${first.origin}/probe` })
+    expect(opened.status).toBe('applied')
+    if (opened.status !== 'applied') return
+    const browserId = opened.page.browserId
+    const currentUrl = async (): Promise<string | null> => {
+      const result = await nova.invoke(BROWSER_GET_SNAPSHOT, { sessionId: sessionId! })
+      return result.status === 'applied'
+        ? result.snapshot.pages.find((page) => page.browserId === browserId)?.url ?? null
+        : null
+    }
+    await expect.poll(async () => nova.app.evaluate(({ webContents }) => {
+      const guest = webContents.getAllWebContents().find((item) => item.getType() === 'webview')
+      return guest?.navigationHistory.getAllEntries().at(-1)?.url ?? null
+    })).toBe(`${first.origin}/probe`)
+
+    await expect(nova.invoke(BROWSER_NAVIGATE, {
+      sessionId: sessionId!, browserId, action: { kind: 'url', url: second.popupUrl }
+    })).resolves.toMatchObject({ status: 'applied' })
+    await expect.poll(currentUrl).toBe(second.popupUrl)
+    await expect(nova.invoke(BROWSER_NAVIGATE, {
+      sessionId: sessionId!, browserId, action: { kind: 'back' }
+    })).resolves.toMatchObject({ status: 'applied' })
+    await expect.poll(currentUrl).toBe(`${first.origin}/probe`)
+    await expect(nova.invoke(BROWSER_NAVIGATE, {
+      sessionId: sessionId!, browserId, action: { kind: 'forward' }
+    })).resolves.toMatchObject({ status: 'applied' })
+    await expect.poll(currentUrl).toBe(second.popupUrl)
+
+    const beforeRedirect = first.probeHits()
+    await nova.invoke(BROWSER_NAVIGATE, {
+      sessionId: sessionId!, browserId,
+      action: { kind: 'url', url: `${second.origin}/redirect-to-previous` }
+    })
+    expect(second.redirectHits()).toBe(1)
+    expect(first.probeHits()).toBe(beforeRedirect)
+    await nova.invoke(BROWSER_CLOSE, { sessionId: sessionId!, browserId })
+  } finally {
+    await second.close()
+    await first.close()
   }
 })

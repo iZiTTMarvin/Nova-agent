@@ -576,3 +576,110 @@ test('手机视口模拟可复核，接管后旧的恢复不会改回尺寸', as
     await fixture.close()
   }
 })
+
+test('模型常见写法走通整条链路：多填字段、原页跳转、省略 browserId、复制 observation 行', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const sessionId = await grantFullAccess(nova)
+  const fixture = await startFormFixture()
+  try {
+    let step = 0
+    let browserId = ''
+    let backResult = ''
+    const failures: string[] = []
+    nova.provider.setTurnFactory((record) => {
+      const latest = toolTexts(record.body).at(-1) ?? ''
+      if (step > 0 && /\[(invalid_request|not_owner|stale_observation|navigation_failed|outcome_unknown|timeout)\]/.test(latest)) failures.push(latest)
+      if (step === 0) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_open',
+          arguments: { action: 'open', url: `${fixture.origin}/`, browserId: null },
+          callId: 'e2e_model_open'
+        }
+      }
+      if (step === 1) {
+        step += 1
+        browserId = field(latest, 'browserId')
+        // 代理打开要等首屏提交后回报，标题应已是页面真实标题
+        expect(field(latest, 'title')).toBe('Form')
+        return {
+          kind: 'tool',
+          name: 'browser_observe',
+          arguments: { action: 'list', browserId },
+          callId: 'e2e_model_list'
+        }
+      }
+      if (step === 2) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_open',
+          arguments: { action: 'open', browserId, url: `${fixture.origin}/next` },
+          callId: 'e2e_model_navigate'
+        }
+      }
+      if (step === 3) {
+        step += 1
+        return {
+          kind: 'tool',
+          name: 'browser_observe',
+          arguments: { action: 'snapshot' },
+          callId: 'e2e_model_snapshot'
+        }
+      }
+      if (step === 4) {
+        step += 1
+        expect(field(latest, 'url')).toBe(`${fixture.origin}/next`)
+        return {
+          kind: 'tool',
+          name: 'browser_act',
+          arguments: {
+            observation: JSON.parse(field(latest, 'observation')) as unknown,
+            action: { kind: 'click', ref: namedRef(latest, '保存'), text: null, values: null }
+          },
+          callId: 'e2e_model_click'
+        }
+      }
+      if (step === 5) {
+        step += 1
+        expect(latest).toContain('status: applied')
+        return {
+          kind: 'tool',
+          name: 'browser_open',
+          arguments: { action: 'back', browserId, url: '' },
+          callId: 'e2e_model_back'
+        }
+      }
+      if (step === 6) {
+        step += 1
+        backResult = latest
+        return {
+          kind: 'tool',
+          name: 'browser_open',
+          arguments: { action: 'reload', browserId },
+          callId: 'e2e_model_reload'
+        }
+      }
+      expect(latest).toContain('lifecycle: ready')
+      expect(field(latest, 'url')).toBe(`${fixture.origin}/`)
+      return { kind: 'text', text: 'NOVA_E2E_BROWSER_MODEL_ARGS_OK' }
+    })
+
+    await nova.sendPrompt('打开页面，跳到下一页点保存，再后退')
+    await expect(nova.page.getByText('NOVA_E2E_BROWSER_MODEL_ARGS_OK', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    expect(failures).toEqual([])
+    // 后退的回报必须已是后退后的地址，否则模型会以为没生效而重复后退
+    expect(field(backResult, 'url')).toBe(`${fixture.origin}/`)
+    const listed = await nova.invoke(BROWSER_GET_SNAPSHOT, { sessionId })
+    expect(listed.status).toBe('applied')
+    if (listed.status === 'applied') {
+      expect(listed.snapshot.pages.map((item) => item.browserId)).toEqual([browserId])
+      expect(listed.snapshot.pages[0]?.url).toBe(`${fixture.origin}/`)
+    }
+  } finally {
+    nova.provider.setTurnFactory(null)
+    await fixture.close()
+  }
+})

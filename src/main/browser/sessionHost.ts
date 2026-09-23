@@ -7,6 +7,7 @@ import {
   BROWSER_PAGE_CAP_MESSAGE,
   BROWSER_PENDING_MAX,
   browserNotApplied,
+  canonicalizePreviewTarget,
   createBrowserIdentityLedger,
   parseBrowserHttpUrl,
   projectBrowserPage,
@@ -29,6 +30,7 @@ import {
   type BrowserPageLoadError,
   type BrowserPageProjection,
   type BrowserSurfaceSnapshot,
+  type BrowserUnknownOutcome,
   type BrowserControlProjection,
   type ActionOutcome,
   type BrowserActCommand,
@@ -130,6 +132,7 @@ interface PageRecord {
   halted: boolean
   layoutViewport: { width: number; height: number } | null
   notice: BrowserGuestNotice | null
+  navigationTargetOrigin: string | null
 }
 
 /**
@@ -411,6 +414,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const bumped = ledger.bumpGeneration(browserId)
     if (!bumped.ok) return bumped
     record.control = { holder: 'user' }
+    record.navigationTargetOrigin = null
     rejectPending(record, browserNotApplied('taken_over', '用户已接管此页面'))
     emit()
     return bumped
@@ -420,6 +424,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const cancelled = browserNotApplied('cancelled', '任务已取消')
     for (const record of pages.values()) {
       rejectPending(record, cancelled, runId)
+      if (record.control.holder === 'agent' && record.control.runId === runId) {
+        record.navigationTargetOrigin = null
+      }
     }
     revokePendingOpens(cancelled, { runId })
   }
@@ -429,6 +436,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     for (const record of pages.values()) {
       if (record.control.holder === 'agent' && record.control.runId === runId) {
         record.control = { holder: 'none' }
+        record.navigationTargetOrigin = null
         changed = true
       }
     }
@@ -443,6 +451,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       const bumped = ledger.bumpGeneration(browserId)
       if (!bumped.ok) continue
       record.control = { holder: 'none' }
+      record.navigationTargetOrigin = null
       rejectPending(record, browserNotApplied('taken_over', '已离开该会话'))
       changed = true
     }
@@ -558,6 +567,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       }
       record.faviconUrl = null
       record.notice = null
+      record.navigationTargetOrigin = null
       ledger.bumpDocumentEpoch(browserId)
       emit()
     })
@@ -585,12 +595,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       if (!failure) return
       record.loadError = failure
       record.loading = false
+      record.navigationTargetOrigin = null
       if (failure.url.length > 0) record.url = failure.url
       emit()
     })
     listen(record, guest, 'destroyed', () => {
       if (record.lifecycle === 'closing') return
       unbindGuest(record)
+      record.navigationTargetOrigin = null
       if (record.lifecycle !== 'crashed') record.lifecycle = 'opening'
       emit()
     })
@@ -605,6 +617,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     record.halted = true
     record.lifecycle = 'crashed'
     record.loading = false
+    record.navigationTargetOrigin = null
+    previewGrants.release(browserId)
     rejectPending(record, browserNotApplied('page_crashed', '页面已崩溃'))
     emit()
     await convergePending(record)
@@ -657,9 +671,17 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   function grantsForBrowser(browserId: string): readonly string[] {
     const record = pages.get(browserId)
     if (!record) return []
+    if (record.halted || record.lifecycle === 'closing' || record.lifecycle === 'crashed') return []
     const workspaceKey = deps.resolveWorkspaceKey(record.sessionId)
     if (workspaceKey === null) return []
-    return previewGrants.grantedOrigins(workspaceKey, record.sessionId)
+    const guestUrl = record.guest ? safeGuestUrl(record.guest) : ''
+    const currentUrl = guestUrl && guestUrl !== 'about:blank'
+      ? guestUrl
+      : record.lifecycle === 'opening' ? record.url : ''
+    const origin = record.navigationTargetOrigin ?? canonicalizePreviewTarget(currentUrl)?.origin
+    if (!origin) return []
+    return previewGrants.grantedOrigins(browserId, workspaceKey, record.sessionId)
+      .filter((granted) => granted === origin)
   }
 
   function noteGuestHandoff(
@@ -767,15 +789,17 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       serialActive: false,
       halted: false,
       layoutViewport: null,
-      notice: null
+      notice: null,
+      navigationTargetOrigin: confirmed.restricted ? confirmed.grant.origin : null
     }
     pages.set(issued.value.browserId, record)
+    if (confirmed.restricted) previewGrants.activate(issued.value.browserId, confirmed.grant)
     emit()
     const attached = new Promise<BrowserAttachResult>((resolve) => {
       record.attachWaiters.push(resolve)
     })
     const browserId = issued.value.browserId
-    return Promise.race([
+    const mounted = await Promise.race([
       attached,
       delay(BROWSER_ATTACH_TIMEOUT_MS).then((): BrowserAttachResult => {
         const current = pages.get(browserId)
@@ -786,6 +810,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
           record.lifecycle = 'failed'
           record.halted = true
           record.loading = false
+          previewGrants.release(browserId)
           const timeout = browserNotApplied('timeout', '页面未能在时限内挂载')
           failAttachWaiters(record, timeout)
           emit()
@@ -794,6 +819,30 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         return browserNotApplied('timeout', '页面未能在时限内挂载')
       })
     ])
+    if (mounted.status !== 'applied' || !context.authority) return mounted
+    return settleAgentOpen(browserId, record, context, mounted)
+  }
+
+  /**
+   * 代理打开的页面要等首个文档提交后再回报：挂载时首屏往往还没提交，紧接着的跳转会把它从历史里顶掉
+   * （之后后退无效），回报的地址和标题也不真实。等待失败不改变「页面已打开」的事实，只体现在加载状态里。
+   * 人工打开不等待，面板靠快照推送渲染。
+   */
+  async function settleAgentOpen(
+    browserId: string,
+    record: PageRecord,
+    context: BrowserCommandContext,
+    mounted: Extract<BrowserAttachResult, { status: 'applied' }>
+  ): Promise<BrowserOpenResult> {
+    const guest = record.guest
+    const identity = ledger.inspect(browserId, context.sessionId)
+    if (!guest || !identity.ok) return mounted
+    const signal = context.abortSignal ?? new AbortController().signal
+    const fence = navigationFence(browserId, context.sessionId, identity.value.generation, context.abortSignal)
+    await waitForCommittedDocument(guest, () => fence.stillCurrent(), signal)
+    const latest = ledger.inspect(browserId, context.sessionId)
+    if (!latest.ok || pages.get(browserId) !== record) return mounted
+    return { status: 'applied', page: project(latest.value, record) }
   }
 
   async function attach(params: BrowserAttachIpcParams): Promise<BrowserAttachResult> {
@@ -915,23 +964,58 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       if (safeDestroyed(guest)) return browserNotApplied('page_closed', '页面已关闭')
       const url = safeGuestUrl(guest)
       if (!safeLoading(guest) && url.length > 0 && url !== 'about:blank') return null
-      await new Promise<void>((resolve) => {
-        if (signal.aborted) {
-          resolve()
-          return
-        }
-        let settled = false
-        const finish = (): void => {
-          if (settled) return
-          settled = true
-          signal.removeEventListener('abort', finish)
-          resolve()
-        }
-        signal.addEventListener('abort', finish)
-        void delay(50).then(finish)
-      })
+      await pollPause(signal)
     }
     return browserNotApplied('timeout', '页面还没有完成当前加载')
+  }
+
+  /**
+   * 代理发起的后退、前进、刷新要等新文档提交并加载结束再回报，否则回报的仍是旧地址，
+   * 模型会以为没生效而重复操作。did-navigate / did-navigate-in-page 会推进 documentEpoch，以此判断已提交。
+   * 动作已经发出，所以等不到结果时只能报「结果未确认」，不能报「没有执行」。
+   */
+  async function waitForHistoryNavigation(
+    browserId: string,
+    sessionId: string,
+    guest: BrowserGuestContents,
+    from: { generation: number; documentEpoch: number },
+    signal: AbortSignal
+  ): Promise<BrowserUnknownOutcome | null> {
+    const fence = navigationFence(browserId, sessionId, from.generation, signal)
+    const unknown = (reason: string): BrowserUnknownOutcome => ({
+      status: 'outcome_unknown',
+      detail: `导航已经发出，但${reason}`
+    })
+    const deadline = Date.now() + 8_000
+    while (Date.now() <= deadline) {
+      const current = fence.stillCurrent()
+      if (!current.ok) return unknown(current.code === 'cancelled' ? '命令已取消' : '页面控制已变化')
+      const identity = ledger.inspect(browserId, sessionId)
+      if (identity.ok && identity.value.documentEpoch !== from.documentEpoch) {
+        const settled = await waitForCommittedDocument(guest, () => fence.stillCurrent(), signal)
+        return settled ? unknown(settled.detail) : null
+      }
+      await pollPause(signal)
+    }
+    return unknown('页面没有在时限内完成导航')
+  }
+
+  function pollPause(signal: AbortSignal): Promise<void> {
+    return new Promise<void>((resolve) => {
+      if (signal.aborted) {
+        resolve()
+        return
+      }
+      let settled = false
+      const finish = (): void => {
+        if (settled) return
+        settled = true
+        signal.removeEventListener('abort', finish)
+        resolve()
+      }
+      signal.addEventListener('abort', finish)
+      void delay(50).then(finish)
+    })
   }
 
   async function navigate(
@@ -1015,6 +1099,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
             return browserNotApplied('taken_over', '页面控制已变化，导航没有执行')
           }
           if (signal.aborted) return browserNotApplied('cancelled', '命令已取消')
+          if (confirmed.restricted) previewGrants.activate(command.browserId, confirmed.grant)
+          found.record.navigationTargetOrigin = canonicalizePreviewTarget(action.url)?.origin ?? null
           found.record.loading = true
           if (!deps.control) found.record.url = action.url
           emit()
@@ -1026,18 +1112,53 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
               navigationFence(command.browserId, context.sessionId, identity.value.generation, signal),
               action.url
             )
-            if (loaded.status !== 'applied') return loaded
-            found.record.url = action.url
+            if (loaded.status !== 'applied') {
+              found.record.navigationTargetOrigin = null
+              return loaded
+            }
+            found.record.url = safeGuestUrl(guest) || action.url
+            found.record.navigationTargetOrigin = null
             emit()
           } else {
             await guest.loadURL(action.url)
+            found.record.navigationTargetOrigin = null
           }
-        } else if (action.kind === 'back') guest.goBack()
-        else if (action.kind === 'forward') guest.goForward()
-        else if (action.kind === 'reload') guest.reload()
-        else if (action.kind === 'stop') guest.stop()
+        } else if (action.kind === 'back' || action.kind === 'forward' || action.kind === 'reload') {
+          const before = ledger.inspect(command.browserId, context.sessionId)
+          if (!before.ok) return browserNotApplied(before.code, '页面不属于当前会话或已关闭')
+          if (action.kind === 'reload') {
+            found.record.navigationTargetOrigin = canonicalizePreviewTarget(found.record.url)?.origin ?? null
+            guest.reload()
+          } else {
+            const target = guest.historyTarget(action.kind)
+            if (target === null) {
+              return browserNotApplied(
+                'navigation_failed',
+                action.kind === 'back' ? '没有可后退的页面' : '没有可前进的页面'
+              )
+            }
+            found.record.navigationTargetOrigin = canonicalizePreviewTarget(target)?.origin ?? null
+            if (action.kind === 'back') guest.goBack()
+            else guest.goForward()
+          }
+          // 人工导航不等待：面板靠快照推送渲染，后续人工操作会直接接管
+          if (context.authority) {
+            const unsettled = await waitForHistoryNavigation(
+              command.browserId,
+              context.sessionId,
+              guest,
+              before.value,
+              signal
+            )
+            if (unsettled) return unsettled
+          }
+        } else if (action.kind === 'stop') {
+          found.record.navigationTargetOrigin = null
+          guest.stop()
+        }
         else return browserNotApplied('invalid_request', '未知的导航动作')
       } catch (error) {
+        found.record.navigationTargetOrigin = null
         return browserNotApplied(
           'navigation_failed',
           error instanceof Error ? error.message : '导航失败'
@@ -1066,6 +1187,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       record.lifecycle = 'closing'
       record.visible = false
       record.halted = true
+      record.navigationTargetOrigin = null
+      previewGrants.release(command.browserId)
       emit()
       await convergePending(record)
       if (!detachDebugger(record.guest)) {

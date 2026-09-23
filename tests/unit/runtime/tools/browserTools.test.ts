@@ -10,7 +10,9 @@ import {
   browserNotApplied,
   type ActionOutcome,
   type BrowserCaptureResult,
+  type BrowserListResult,
   type BrowserObserveResult,
+  type BrowserPageProjection,
   type ObservationIdentity
 } from '../../../../src/shared/browser'
 import type { BrowserPort } from '../../../../src/runtime/browser'
@@ -62,7 +64,7 @@ afterEach(() => {
 })
 
 describe('browser 工具契约', () => {
-  it('五个工具都是 sequential，schema 用判别联合', () => {
+  it('五个工具都是 sequential', () => {
     const port = fakePort()
     const tools = [
       createBrowserOpenTool({ getPort: () => port }),
@@ -74,14 +76,45 @@ describe('browser 工具契约', () => {
     for (const tool of tools) {
       expect(tool.executionMode).toBe('sequential')
     }
-    expect(createBrowserOpenTool({ getPort: () => port }).parameters).toHaveProperty('oneOf')
-    expect(createBrowserObserveTool({ getPort: () => port }).parameters).toHaveProperty('oneOf')
-    const actAction = (
-      createBrowserActTool({ getPort: () => port }).parameters as {
-        properties: { action: { oneOf: unknown[] } }
-      }
-    ).properties.action
-    expect(actAction.oneOf.length).toBe(6)
+  })
+
+  it('open 带 browserId 时在原页面跳转，不新建页面', async () => {
+    const port = fakePort({
+      navigate: vi.fn(async () => browserNotApplied('busy', '页面忙'))
+    })
+    const open = createBrowserOpenTool({ getPort: () => port })
+    const result = await open.execute(
+      { action: 'open', browserId: 'brw_1', url: 'https://example.com/next' },
+      context()
+    )
+    expect(port.open).not.toHaveBeenCalled()
+    expect(port.navigate).toHaveBeenCalledWith(
+      { browserId: 'brw_1', action: { kind: 'url', url: 'https://example.com/next' } },
+      expect.objectContaining({ sessionId: 'sess_1' })
+    )
+    expect(result.error).toContain('[busy] 页面忙')
+    expect(result.error).toContain('等上一条完成后再试')
+  })
+
+  it('snapshot 省略 browserId：只有一个页面时读它，没有页面时提示先打开', async () => {
+    const page = { browserId: 'brw_only' } as BrowserPageProjection
+    const surface = (pages: BrowserPageProjection[]): BrowserListResult => ({
+      status: 'applied',
+      snapshot: { sequence: 1, pages, activeBrowserId: null, maxLivePages: 2 }
+    })
+    const listPages = vi.fn(async () => surface([page]))
+    const observe = vi.fn(async () => browserNotApplied('page_closed', '已关闭'))
+    const port = fakePort({ listPages, observe })
+    const tool = createBrowserObserveTool({ getPort: () => port })
+
+    await tool.execute({ action: 'snapshot' }, context())
+    expect(observe).toHaveBeenCalledWith({ browserId: 'brw_only' }, expect.anything())
+
+    listPages.mockResolvedValueOnce(surface([]))
+    const empty = await tool.execute({ action: 'snapshot' }, context())
+    expect(empty.success).toBe(false)
+    expect(empty.error).toContain('browser_open')
+    expect(observe).toHaveBeenCalledTimes(1)
   })
 
   it('observe 不声明 maxResultSizeChars，大快照走归档通道而不是执行器预截断', () => {
@@ -117,7 +150,8 @@ describe('browser 工具契约', () => {
       { observation, action: { kind: 'click', ref: 'e1' } },
       context()
     )
-    expect(missing.error).toBe('[target_occluded] 目标被挡住')
+    expect(missing.error).toContain('[target_occluded] 目标被挡住')
+    expect(missing.error).toContain('重新观察')
     expect(port.act).toHaveBeenCalledTimes(1)
 
     const unknown = await act.execute(
@@ -165,6 +199,9 @@ describe('browser 工具契约', () => {
     const result = await observe.execute({ action: 'snapshot', browserId: 'brw_1' }, context())
     expect(result.success).toBe(true)
     expect(result.output).toContain('observationId: obs_1')
+    expect(result.output).toContain(
+      'observation: {"browserId":"brw_1","generation":1,"documentEpoch":1,"observationId":"obs_1"}'
+    )
     expect(result.output).toContain('limits: subframes')
     expect(result.output).toContain('- e1  button  保存')
   })

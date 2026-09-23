@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseBrowserAction,
   parseBrowserActCommand,
+  parseBrowserActToolArgs,
   parseBrowserAttachIpcParams,
   parseBrowserCaptureToolArgs,
   parseBrowserCloseToolArgs,
@@ -157,22 +158,69 @@ describe('browser 导航与打开入参', () => {
   })
 })
 
-describe('browser 工具入参判别联合', () => {
-  it('open / 导航动作互斥，拒绝危险地址', () => {
+describe('browser 工具入参（来自模型）', () => {
+  const observation = {
+    browserId: 'brw_1',
+    generation: 1,
+    documentEpoch: 1,
+    observationId: 'obs_1'
+  }
+
+  it('open 不带 browserId 新建页面，带 browserId 在该页跳转', () => {
     expect(parseBrowserOpenToolArgs({ action: 'open', url: 'https://example.com' })).toEqual({
       ok: true,
       value: { action: 'open', url: 'https://example.com' }
     })
-    expect(parseBrowserOpenToolArgs({ action: 'back', browserId: 'brw_1' })).toEqual({
+    expect(parseBrowserOpenToolArgs({
+      action: 'open',
+      url: 'https://example.com/next',
+      browserId: 'brw_1'
+    })).toEqual({
+      ok: true,
+      value: { action: 'navigate', browserId: 'brw_1', url: 'https://example.com/next' }
+    })
+    expect(parseBrowserOpenToolArgs({ action: 'navigate', url: 'https://a.test', browserId: 'brw_1' })).toEqual({
+      ok: true,
+      value: { action: 'navigate', browserId: 'brw_1', url: 'https://a.test' }
+    })
+    // 模型把无关字段填成 null / 空串时按未提供处理
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'https://example.com', browserId: '' })).toEqual({
+      ok: true,
+      value: { action: 'open', url: 'https://example.com' }
+    })
+    expect(parseBrowserOpenToolArgs({ action: 'back', browserId: 'brw_1', url: null })).toEqual({
       ok: true,
       value: { action: 'back', browserId: 'brw_1' }
     })
-    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'javascript:alert(1)' }).ok).toBe(false)
-    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'https://example.com', browserId: 'brw_1' }).ok).toBe(false)
   })
 
-  it('observe 只接受 list 或 snapshot', () => {
-    expect(parseBrowserObserveToolArgs({ action: 'list' })).toEqual({
+  it('省略协议头时补全，但危险 scheme 与账号密码仍被拒绝', () => {
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'example.com/a' })).toEqual({
+      ok: true,
+      value: { action: 'open', url: 'https://example.com/a' }
+    })
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'localhost:5173' })).toEqual({
+      ok: true,
+      value: { action: 'open', url: 'http://localhost:5173' }
+    })
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'javascript:alert(1)' }).ok).toBe(false)
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'file:///C:/secret.html' }).ok).toBe(false)
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'user:pass@example.com' }).ok).toBe(false)
+    expect(parseBrowserOpenToolArgs({ action: 'open', url: 'https://user:pass@example.com' }).ok).toBe(false)
+  })
+
+  it('缺字段时报错里给出正确写法', () => {
+    const back = parseBrowserOpenToolArgs({ action: 'back' })
+    expect(back.ok).toBe(false)
+    if (!back.ok) expect(back.detail).toContain('{"action":"back","browserId":"<browserId>"}')
+    const noUrl = parseBrowserOpenToolArgs({ action: 'open' })
+    expect(noUrl.ok).toBe(false)
+    if (!noUrl.ok) expect(noUrl.detail).toContain('"url"')
+    expect(parseBrowserOpenToolArgs({ action: 'click', browserId: 'brw_1' }).ok).toBe(false)
+  })
+
+  it('observe 的 list 忽略多填的 browserId；snapshot 可省略 browserId', () => {
+    expect(parseBrowserObserveToolArgs({ action: 'list', browserId: 'brw_1' })).toEqual({
       ok: true,
       value: { action: 'list' }
     })
@@ -180,20 +228,65 @@ describe('browser 工具入参判别联合', () => {
       ok: true,
       value: { action: 'snapshot', browserId: 'brw_1' }
     })
-    expect(parseBrowserObserveToolArgs({ action: 'list', browserId: 'brw_1' }).ok).toBe(false)
+    expect(parseBrowserObserveToolArgs({ action: 'snapshot' })).toEqual({
+      ok: true,
+      value: { action: 'snapshot', browserId: null }
+    })
+    expect(parseBrowserObserveToolArgs({ action: 'evaluate' }).ok).toBe(false)
   })
 
-  it('close / capture 字段精确', () => {
-    expect(parseBrowserCloseToolArgs({ browserId: 'brw_1' }).ok).toBe(true)
-    expect(parseBrowserCloseToolArgs({ browserId: 'brw_1', force: true }).ok).toBe(false)
-    expect(parseBrowserCaptureToolArgs({
-      observation: {
-        browserId: 'brw_1',
-        generation: 1,
-        documentEpoch: 1,
-        observationId: 'obs_1'
-      }
-    }).ok).toBe(true)
+  it('act 只取当前 kind 需要的字段，其余字段与 null 不影响', () => {
+    expect(parseBrowserActToolArgs({
+      observation,
+      action: { kind: 'click', ref: 'e1', text: '', values: [], key: null, url: 'x' }
+    })).toEqual({ ok: true, value: { observation, action: { kind: 'click', ref: 'e1' } } })
+    // fill 允许空串，用于清空输入框
+    expect(parseBrowserActToolArgs({ observation, action: { kind: 'fill', ref: 'e1', text: '' } })).toEqual({
+      ok: true,
+      value: { observation, action: { kind: 'fill', ref: 'e1', text: '' } }
+    })
+    expect(parseBrowserActToolArgs({ observation, action: { kind: 'select', ref: 'e1', values: 'a' } })).toEqual({
+      ok: true,
+      value: { observation, action: { kind: 'select', ref: 'e1', values: ['a'] } }
+    })
+    expect(parseBrowserActToolArgs({ observation, action: { kind: 'scroll', direction: 'down' } })).toEqual({
+      ok: true,
+      value: { observation, action: { kind: 'scroll', direction: 'down', amount: 'page' } }
+    })
+  })
+
+  it('act 接受平铺在顶层或数字写成字符串的观察身份', () => {
+    expect(parseBrowserActToolArgs({
+      ...observation,
+      action: { kind: 'click', ref: 'e1' }
+    })).toEqual({ ok: true, value: { observation, action: { kind: 'click', ref: 'e1' } } })
+    expect(parseBrowserActToolArgs({
+      observation: { ...observation, generation: '1', documentEpoch: '1' },
+      action: { kind: 'click', ref: 'e1' }
+    })).toEqual({ ok: true, value: { observation, action: { kind: 'click', ref: 'e1' } } })
+  })
+
+  it('act 缺观察身份或动作字段时拒绝并给出示例', () => {
+    const noObservation = parseBrowserActToolArgs({ action: { kind: 'click', ref: 'e1' } })
+    expect(noObservation.ok).toBe(false)
+    if (!noObservation.ok) expect(noObservation.detail).toContain('observationId')
+    const noText = parseBrowserActToolArgs({ observation, action: { kind: 'fill', ref: 'e1' } })
+    expect(noText.ok).toBe(false)
+    if (!noText.ok) expect(noText.detail).toContain('{"kind":"fill","ref":"e3","text":"内容"}')
+    expect(parseBrowserActToolArgs({ observation, action: { kind: 'evaluate', ref: 'e1' } }).ok).toBe(false)
+    expect(parseBrowserActToolArgs({
+      observation: { ...observation, generation: 0 },
+      action: { kind: 'click', ref: 'e1' }
+    }).ok).toBe(false)
+  })
+
+  it('close / capture 只看必需字段', () => {
+    expect(parseBrowserCloseToolArgs({ browserId: 'brw_1', force: true })).toEqual({
+      ok: true,
+      value: { browserId: 'brw_1' }
+    })
+    expect(parseBrowserCloseToolArgs({}).ok).toBe(false)
+    expect(parseBrowserCaptureToolArgs({ observation }).ok).toBe(true)
     expect(parseBrowserCaptureToolArgs({ observationId: 'obs_1' }).ok).toBe(false)
   })
 })

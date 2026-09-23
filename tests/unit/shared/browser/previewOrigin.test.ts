@@ -21,6 +21,12 @@ describe('预览 origin 归一化', () => {
   it('公网页面不能借用预览授权访问私网、元数据或另一种 loopback', () => {
     const granted = ['http://127.0.0.1:5173']
     expect(decideBrowserNetworkRequest({
+      targetUrl: 'http://127.0.0.1:5173/submit',
+      initiatorOrigin: 'https://example.com',
+      resourceType: 'mainFrame',
+      grantedOrigins: granted
+    })).toBe('deny')
+    expect(decideBrowserNetworkRequest({
       targetUrl: 'http://10.0.0.8/secret',
       initiatorOrigin: 'https://example.com',
       resourceType: 'xhr',

@@ -58,6 +58,17 @@ function readDisplayScale(): number | null {
   }
 }
 
+/** 开发模式下主窗口从本机渲染服务加载；打包后走本地文件，没有需要避让的端口。 */
+function rendererServerOrigins(): readonly string[] {
+  const url = process.env.ELECTRON_RENDERER_URL
+  if (!url) return []
+  try {
+    return [new URL(url).origin]
+  } catch {
+    return []
+  }
+}
+
 function sendSnapshot(snapshot: BrowserSurfaceSnapshot): void {
   pushBrowserSurfaceSnapshot(getMainWindow(), snapshot)
 }
@@ -114,7 +125,7 @@ export function initBrowserSessionHost(): BrowserSessionHost {
     },
     previewGrants: createPreviewGrantStore(
       createRegistryPreviewQuery((sessionId) => processRegistry.listRunning(sessionId)),
-      { resolveHost: partitionHostResolver }
+      { resolveHost: partitionHostResolver, reservedOrigins: rendererServerOrigins() }
     ),
     readDisplayScale
   })

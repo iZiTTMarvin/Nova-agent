@@ -37,6 +37,7 @@ interface ToolResultEntry {
   toolName: string
   args: string
   argRecord: Record<string, unknown> | undefined
+  contentText: string
   success: boolean
   index: number
 }
@@ -84,6 +85,7 @@ function buildToolResultEntries(
       toolName: meta.toolName,
       args: meta.args,
       argRecord: parseArgsRecord(meta.args),
+      contentText,
       success: !isToolFailureText(contentText),
       index: i
     })
@@ -250,6 +252,21 @@ function applyIdempotentSnapshot(
   coverOlderWithLatestSuccess(groups, plan, 'idempotent_snapshot')
 }
 
+const SNAPSHOT_BROWSER_ID_LINE = /^browserId: (\S+)$/m
+
+/**
+ * 快照所属页面：优先取参数里的 browserId；省略时（工具按唯一页面推断）
+ * 只从成功结果里读回实际页面，失败结果不猜。
+ */
+function snapshotPageKey(e: ToolResultEntry): string | null {
+  const rec = e.argRecord
+  if (!rec) return null
+  if (rec.action !== undefined && rec.action !== null && rec.action !== 'snapshot') return null
+  if (typeof rec.browserId === 'string' && rec.browserId.length > 0) return rec.browserId
+  if (!e.success) return null
+  return SNAPSHOT_BROWSER_ID_LINE.exec(e.contentText)?.[1] ?? null
+}
+
 function applyBrowserObserveSnapshot(
   entries: ToolResultEntry[],
   plan: Map<string, SupersessionReason>
@@ -257,11 +274,8 @@ function applyBrowserObserveSnapshot(
   const groups = new Map<string, ToolResultEntry[]>()
   for (const e of entries) {
     if (e.toolName !== 'browser_observe') continue
-    const rec = e.argRecord
-    if (!rec) continue
-    if (rec.action !== 'snapshot') continue
-    const browserId = rec.browserId
-    if (typeof browserId !== 'string' || browserId.length === 0) continue
+    const browserId = snapshotPageKey(e)
+    if (!browserId) continue
     const g = groups.get(browserId) ?? []
     g.push(e)
     groups.set(browserId, g)

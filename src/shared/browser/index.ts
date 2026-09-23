@@ -78,6 +78,7 @@ export {
   invalidBrowserRequest,
   parseBrowserActCommand,
   parseBrowserActIpcParams,
+  parseBrowserActToolArgs,
   parseBrowserAction,
   parseBrowserAttachIpcParams,
   parseBrowserCaptureIpcParams,

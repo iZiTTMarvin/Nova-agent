@@ -14,9 +14,38 @@ describe('预览授权', () => {
     expect(confirmed.ok).toBe(true)
     if (!confirmed.ok || !confirmed.restricted) return
     expect(confirmed.grant.processRef).toBeNull()
-    expect(store.grantedOrigins('ws', 'sess')).toEqual(['http://localhost:5173'])
-    expect(store.grantedOrigins('ws', 'other')).toEqual([])
-    expect(store.grantedOrigins('other', 'sess')).toEqual([])
+    expect(store.grantedOrigins('page-a', 'ws', 'sess')).toEqual([])
+    store.activate('page-a', confirmed.grant)
+    expect(store.grantedOrigins('page-a', 'ws', 'sess')).toEqual(['http://localhost:5173'])
+    expect(store.grantedOrigins('page-b', 'ws', 'sess')).toEqual([])
+    expect(store.grantedOrigins('page-a', 'ws', 'other')).toEqual([])
+    expect(store.grantedOrigins('page-a', 'other', 'sess')).toEqual([])
+    store.release('page-a')
+    expect(store.grantedOrigins('page-a', 'ws', 'sess')).toEqual([])
+  })
+
+  it('Nova 自身界面占用的本机端口不能作为预览，任何 loopback 写法都拒绝', async () => {
+    const store = createPreviewGrantStore(
+      { findRunning: () => null },
+      {
+        reservedOrigins: ['http://127.0.0.1:17380'],
+        resolveHost: async (hostname) => (hostname === 'lvh.test' ? ['127.0.0.1'] : null)
+      }
+    )
+    for (const url of [
+      'http://127.0.0.1:17380/',
+      'http://localhost:17380/',
+      'http://[::1]:17380/',
+      'http://lvh.test:17380/'
+    ]) {
+      const refused = await store.confirm({ workspaceKey: 'ws', sessionId: 'sess', url })
+      expect(refused).toMatchObject({ ok: false, code: 'invalid_request' })
+      if (!refused.ok) expect(refused.detail).toContain('Nova 自身界面')
+    }
+    const otherPort = await store.confirm({ workspaceKey: 'ws', sessionId: 'sess', url: 'http://127.0.0.1:5173/' })
+    expect(otherPort).toMatchObject({ ok: true, restricted: true })
+    const privateHost = await store.confirm({ workspaceKey: 'ws', sessionId: 'sess', url: 'http://192.168.1.5:17380/' })
+    expect(privateHost).toMatchObject({ ok: true, restricted: true })
   })
 
   it('命令行里的 origin 唯一命中才绑定，多个或没有都不猜', () => {
