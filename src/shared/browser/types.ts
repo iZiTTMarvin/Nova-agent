@@ -224,6 +224,15 @@ export interface BrowserObservationProjection {
   readonly elements: readonly BrowserElementDetail[]
   readonly truncated: boolean
   readonly limits: readonly BrowserObservationLimit[]
+  readonly scope?:
+    | { readonly kind: 'full' }
+    | { readonly kind: 'focused' }
+    | { readonly kind: 'full_fallback'; readonly reason: 'missing' | 'ambiguous' | 'unsupported' | 'node-budget' | 'time-budget' | 'incomplete' }
+}
+
+export interface BrowserObservationFocus {
+  readonly role: string
+  readonly name: string
 }
 
 export type BrowserAction =
@@ -283,6 +292,7 @@ export interface BrowserNavigateCommand {
 
 export interface BrowserObserveCommand {
   readonly browserId: string
+  readonly focus?: BrowserObservationFocus
 }
 
 export interface BrowserActCommand {
@@ -321,6 +331,7 @@ export type BrowserObserveResult =
       readonly status: 'applied'
       readonly observation: ObservationIdentity
       readonly snapshot: BrowserObservationProjection
+      readonly notice: BrowserGuestNotice | null
     }
   | BrowserNotApplied
 

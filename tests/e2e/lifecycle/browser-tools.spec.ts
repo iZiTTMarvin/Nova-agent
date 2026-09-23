@@ -304,6 +304,56 @@ test('观察后接管或导航，旧动作不能落到新页', async ({ nova }) 
   }
 })
 
+test('命名目标聚焦观察只交付目标语义', async ({ nova }) => {
+  test.setTimeout(90_000)
+  const sessionId = await grantFullAccess(nova)
+  const fixture = await startFormFixture()
+  try {
+    const opened = await nova.invoke(BROWSER_OPEN, { sessionId, url: `${fixture.origin}/` }) as {
+      status: string
+      page?: { browserId: string }
+    }
+    expect(opened.status).toBe('applied')
+    const browserId = opened.page!.browserId
+    await nova.page.locator('webview[data-browser-id]').waitFor()
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'browser_observe',
+        arguments: { action: 'snapshot', browserId, focus: { role: 'button', name: '保存' } },
+        callId: 'e2e_focused_observe'
+      },
+      { kind: 'text', text: 'NOVA_E2E_FOCUS_OK' }
+    )
+    await nova.sendPrompt('只观察保存按钮')
+    await expect(nova.page.getByText('NOVA_E2E_FOCUS_OK', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    const observed = toolTexts(nova.provider.requests[1]?.body).at(-1) ?? ''
+    expect(observed).toContain('scope: focused')
+    expect(observed).toContain('保存')
+    expect(observed).not.toContain('邮箱')
+
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'browser_observe',
+        arguments: { action: 'snapshot', browserId, focus: { role: 'button', name: '不存在' } },
+        callId: 'e2e_focus_fallback'
+      },
+      { kind: 'text', text: 'NOVA_E2E_FALLBACK_OK' }
+    )
+    await nova.sendPrompt('观察不存在的按钮并回退')
+    await expect(nova.page.getByText('NOVA_E2E_FALLBACK_OK', { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+    const fallback = toolTexts(nova.provider.requests.at(-1)?.body).at(-1) ?? ''
+    expect(fallback).toContain('scope: full_fallback (missing)')
+    expect(fallback).toContain('邮箱')
+    expect(field(fallback, 'observationId')).not.toBe(field(observed, 'observationId'))
+  } finally {
+    await fixture.close()
+  }
+})
+
 test('观察与点击之间点接管，旧命令不能落到页面', async ({ nova }) => {
   test.setTimeout(90_000)
   const sessionId = await grantFullAccess(nova)

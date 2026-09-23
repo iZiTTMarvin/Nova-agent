@@ -15,6 +15,7 @@ const DESCRIPTION = `browser_observe — 读取当前任务里的网页。只读
 
 用法（用不到的字段不要传）：
 - 读取页面快照：{"action":"snapshot","browserId":"<browserId>"}；只开了一个页面时可省略 browserId
+- 聚焦命名区域：{"action":"snapshot","focus":{"role":"region","name":"Production Status"}}；仅在目标唯一且结果完整时返回局部观察
 - 列出已打开页面：{"action":"list"}
 
 快照里 dom 行带 ref，并返回一行 observation。之后 browser_act / browser_capture 原样带上这行 observation 和 ref。
@@ -73,6 +74,16 @@ export function createBrowserObserveTool(deps: BrowserToolDeps): ToolExecutor {
         browserId: {
           type: 'string',
           description: 'snapshot 要读取的页面；只开了一个页面时可省略。list 不需要'
+        },
+        focus: {
+          type: 'object',
+          description: '可选：按可访问 role 与精确名称聚焦观察；目标不唯一或不完整时回退整页',
+          properties: {
+            role: { type: 'string', maxLength: 60 },
+            name: { type: 'string', maxLength: 120 }
+          },
+          required: ['role', 'name'],
+          additionalProperties: false
         }
       },
       required: ['action'],
@@ -102,11 +113,11 @@ export function createBrowserObserveTool(deps: BrowserToolDeps): ToolExecutor {
         if (!target.ok) return target.result
         browserId = target.browserId
       }
-      const observed = await port.observe({ browserId }, resolved.value)
+      const observed = await port.observe({ browserId, ...(parsed.value.focus ? { focus: parsed.value.focus } : {}) }, resolved.value)
       if (observed.status !== 'applied') return failApplied(observed)
       return {
         success: true,
-        output: formatObservation(observed.observation, observed.snapshot)
+        output: formatObservation(observed.observation, observed.snapshot, observed.notice)
       }
     }
   }

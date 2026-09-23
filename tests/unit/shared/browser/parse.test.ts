@@ -235,6 +235,16 @@ describe('browser 工具入参（来自模型）', () => {
     expect(parseBrowserObserveToolArgs({ action: 'evaluate' }).ok).toBe(false)
   })
 
+  it('focus 仅接受精确 role/name 且只用于 snapshot', () => {
+    expect(parseBrowserObserveToolArgs({ action: 'snapshot', focus: { role: 'region', name: ' Production Status ' } })).toEqual({
+      ok: true,
+      value: { action: 'snapshot', browserId: null, focus: { role: 'region', name: 'Production Status' } }
+    })
+    expect(parseBrowserObserveToolArgs({ action: 'snapshot', focus: { role: 'region', name: '' } }).ok).toBe(false)
+    expect(parseBrowserObserveToolArgs({ action: 'snapshot', focus: { role: 'region', name: 'x', selector: 'css=*' } }).ok).toBe(false)
+    expect(parseBrowserObserveToolArgs({ action: 'list', focus: { role: 'region', name: 'x' } }).ok).toBe(false)
+  })
+
   it('act 只取当前 kind 需要的字段，其余字段与 null 不影响', () => {
     expect(parseBrowserActToolArgs({
       observation,

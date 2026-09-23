@@ -169,6 +169,14 @@ describe('browser 工具契约', () => {
       observe: vi.fn(async (): Promise<BrowserObserveResult> => ({
         status: 'applied',
         observation,
+        notice: {
+          kind: 'permission',
+          sourceUrl: 'https://example.com',
+          targetUrl: null,
+          message: '剪贴板写入被拒绝',
+          generation: 1,
+          documentEpoch: 1
+        },
         snapshot: {
           url: 'https://example.com',
           title: 'Example',
@@ -191,7 +199,8 @@ describe('browser 工具契约', () => {
             }
           ],
           truncated: false,
-          limits: ['subframes']
+          limits: ['subframes'],
+          scope: { kind: 'focused' }
         }
       }))
     })
@@ -203,6 +212,8 @@ describe('browser 工具契约', () => {
       'observation: {"browserId":"brw_1","generation":1,"documentEpoch":1,"observationId":"obs_1"}'
     )
     expect(result.output).toContain('limits: subframes')
+    expect(result.output).toContain('scope: focused')
+    expect(result.output).toContain('notice: permission: 剪贴板写入被拒绝')
     expect(result.output).toContain('- e1  button  保存')
   })
 

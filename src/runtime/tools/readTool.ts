@@ -50,6 +50,9 @@ const MAX_OUTPUT_BYTES = 100 * 1024
 const MAX_OUTPUT_LINES = 2000
 /** 单行字符上限，超出后截断并追加标记 */
 const MAX_LINE_LENGTH = 1000
+const PREVIEW_MIN_BYTES = 12 * 1024
+const PREVIEW_MAX_LINES = 100
+const PREVIEW_MAX_BODY_BYTES = 40_000
 /** 支持读取的图片扩展名（走 MIME 检测路径，不走二进制拒绝路径） */
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp'])
 /** artifact 虚拟路径前缀，用于续读 bash/grep 等大输出 */
@@ -211,7 +214,8 @@ async function processTextLines(
   paramLimit: number | undefined,
   readStateKey: string,
   readStateTimestamp: number,
-  context: ToolContext
+  context: ToolContext,
+  preservePreviewCoverage = false
 ): Promise<ToolResult> {
   const totalLineCount = countEffectiveLines(allLines)
 
@@ -236,12 +240,87 @@ async function processTextLines(
 
   // readState 保存真实切片（截断前），不影响 edit 工具的"先读后改"校验
   const readStateContent = slicedLines.join('\n')
-  context.readState.set(readStateKey, {
-    content: readStateContent,
-    timestamp: readStateTimestamp
-  })
+  const result = await buildReadToolResult(`${linesText}${hint}`, context)
+  const previous = preservePreviewCoverage ? context.readState.get(readStateKey) : undefined
+  if (previous?.visibleRange) {
+    const start = paramOffset > 0
+      ? allLines.slice(0, paramOffset).join('\n').length + 1
+      : 0
+    const visible = slicedLines.slice(0, shownLineCount)
+    const firstClipped = visible.findIndex((line) => line.length > MAX_LINE_LENGTH)
+    const intact = result.truncationMeta?.truncated
+      ? []
+      : firstClipped < 0 ? visible : visible.slice(0, firstClipped)
+    context.readState.set(readStateKey, {
+      content: allLines.join('\n'),
+      timestamp: readStateTimestamp,
+      visibleRange: { start, end: start + intact.join('\n').length }
+    })
+  } else {
+    context.readState.set(readStateKey, {
+      content: readStateContent,
+      timestamp: readStateTimestamp
+    })
+  }
+  return result
+}
 
-  return buildReadToolResult(`${linesText}${hint}`, context)
+function markdownOutline(lines: string[]): string[] {
+  const headings: string[] = []
+  for (let i = 0; i < lines.length && headings.length < 24; i++) {
+    const match = /^(#{1,6})\s+(.+)$/.exec(lines[i])
+    if (match) headings.push(`${i + 1}: ${match[1]} ${match[2].slice(0, 120)}`)
+  }
+  return headings
+}
+
+async function processPreview(
+  allLines: string[],
+  normalized: string,
+  absolutePath: string,
+  fileSize: number,
+  timestamp: number,
+  context: ToolContext
+): Promise<ToolResult> {
+  const total = countEffectiveLines(allLines)
+  const shown: string[] = []
+  let bytes = 0
+  for (const line of allLines.slice(0, Math.min(total, PREVIEW_MAX_LINES))) {
+    const display = line.length > MAX_LINE_LENGTH ? `${line.slice(0, MAX_LINE_LENGTH)}...[截断]` : line
+    const next = Buffer.byteLength(`${display}\n`, 'utf8')
+    if (bytes + next > PREVIEW_MAX_BODY_BYTES) break
+    shown.push(display)
+    bytes += next
+  }
+  const headingLines = /\.(?:md|mdx|markdown)$/i.test(absolutePath)
+    ? markdownOutline(allLines)
+    : []
+  const outline = headingLines.length > 0 ? `\nheadings:\n${headingLines.join('\n')}` : ''
+  const endLine = shown.length
+  const more = endLine < total
+  const body = [
+    '[read mode: preview]',
+    `path: ${absolutePath}`,
+    `bytes: ${fileSize}`,
+    `lines: ${total}`,
+    `shown: ${endLine > 0 ? `1-${endLine}` : 'none'}`,
+    `truncated: ${more || shown.some((line) => line.endsWith('...[截断]')) ? 'yes' : 'no'}`,
+    ...(outline ? [outline] : []),
+    '',
+    'content:',
+    shown.join('\n'),
+    ...(more ? [`[使用 read {"path":${JSON.stringify(absolutePath)},"offset":${endLine},"limit":100} 继续读取；使用 full:true 请求未压缩读取]`] : [])
+  ].join('\n')
+  const result = await buildReadToolResult(body, context)
+  const firstClipped = shown.findIndex((line) => line.endsWith('...[截断]'))
+  const intactCount = firstClipped < 0 ? shown.length : firstClipped
+  context.readState.set(absolutePath, {
+    content: normalized,
+    timestamp,
+    size: fileSize,
+    visibleRange: { start: 0, end: allLines.slice(0, intactCount).join('\n').length }
+  })
+  return result
 }
 
 /**
@@ -337,7 +416,7 @@ async function readFromArtifact(
 
 export const readTool: ToolExecutor = {
   name: 'read',
-  description: '读取指定文件的内容。支持文本文件和图片（jpg、png、gif、webp）。图片以 base64 编码发送给模型。编辑文件前必须先读取。支持 offset/limit 分页读取长文件。',
+  description: '读取指定文件的内容。中等文本默认返回预览，可用 offset/limit 续读或 full:true 请求未压缩读取。编辑预览外内容前须先读取目标范围。支持图片输入。',
   executionMode: 'parallel',
   isConcurrencySafe: () => true,
   parameters: {
@@ -356,6 +435,10 @@ export const readTool: ToolExecutor = {
         type: 'number',
         description:
           '最多读取的行数。与 offset 配合使用实现分页。',
+      },
+      full: {
+        type: 'boolean',
+        description: '无 offset/limit 时请求未压缩文本读取；仍受文件大小和单次输出安全上限约束。'
       },
     },
     required: ['path'],
@@ -382,10 +465,18 @@ export const readTool: ToolExecutor = {
     const paramOffset = Math.max(0, typeof args.offset === 'number' ? args.offset : 0)
     const rawLimit = args.limit
     const paramLimit = typeof rawLimit === 'number' && rawLimit >= 1 ? rawLimit : undefined
+    if ('full' in args && typeof args.full !== 'boolean') {
+      return { success: false, output: '', error: 'full 必须是布尔值' }
+    }
+    const full = args.full === true
+    if (full && ('offset' in args || 'limit' in args)) {
+      return { success: false, output: '', error: 'full:true 不能与 offset/limit 同时使用' }
+    }
 
     // artifact:// 续读路径：不走工作区路径校验
     const artifactRef = parseArtifactPath(inputPath)
     if (artifactRef) {
+      if (full) return { success: false, output: '', error: 'full:true 不适用于 artifact 引用' }
       return readFromArtifact(
         artifactRef.artifactId,
         artifactRef.sha256,
@@ -431,6 +522,9 @@ export const readTool: ToolExecutor = {
       // ── 图片 MIME 检测（基于文件头签名，优先于二进制扩展名检测） ──
       // 只有图片扩展名才走 MIME 检测，避免对每个文件都读头部
       const ext = extname(absolutePath).toLowerCase()
+      if (full && IMAGE_EXTENSIONS.has(ext)) {
+        return { success: false, output: '', error: 'full:true 只适用于文本文件' }
+      }
       if (IMAGE_EXTENSIONS.has(ext)) {
         const mimeType = await detectImageMimeTypeFromFile(absolutePath)
         if (mimeType) {
@@ -490,7 +584,7 @@ export const readTool: ToolExecutor = {
       // 摘要路径：在拒绝大文件之前尝试结构化摘要（任务 12）
       // 非摘要候选仍走原有「无分页则拒绝 >256KB」逻辑
       const needsFullReadForSummary =
-        isSummarizableExtension(ext) &&
+        !full && isSummarizableExtension(ext) &&
         paramLimit === undefined &&
         paramOffset === 0
 
@@ -528,7 +622,7 @@ export const readTool: ToolExecutor = {
       const lineCount = countEffectiveLines(allLines)
 
       // ── 结构化摘要路径 ──
-      if (shouldUseStructureSummary(ext, paramOffset, paramLimit, fileStat.size, lineCount)) {
+      if (!full && shouldUseStructureSummary(ext, paramOffset, paramLimit, fileStat.size, lineCount)) {
         const summaryResult = await processStructureSummary(
           normalized,
           absolutePath,
@@ -549,13 +643,18 @@ export const readTool: ToolExecutor = {
         }
       }
 
+      if (!full && !('offset' in args) && !('limit' in args) && fileStat.size >= PREVIEW_MIN_BYTES) {
+        return processPreview(allLines, normalized, absolutePath, fileStat.size, fileStat.mtimeMs, context)
+      }
+
       return processTextLines(
         allLines,
         paramOffset,
         paramLimit,
         absolutePath,
         fileStat.mtimeMs,
-        context
+        context,
+        'offset' in args || 'limit' in args
       )
     } catch (err) {
       const nodeErr = err as NodeJS.ErrnoException & Error

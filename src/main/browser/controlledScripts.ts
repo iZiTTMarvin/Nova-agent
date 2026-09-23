@@ -21,9 +21,10 @@ export const BROWSER_CAPTURE_READY_BUDGET_MS = 1_500
  * 两段快照：dom 语义行（带 ref）在前，elements 动作细节（selector/rect）在后。
  * 预算作用于实际工作量：候选节点先数后取、分段快照、逐项让出页面线程。
  */
-export function snapshotExpression(): string {
+export function snapshotExpression(focus?: { readonly role: string; readonly name: string }): string {
   return `(async () => {
   const injected = ${ENGINE};
+  const focus = ${JSON.stringify(focus ?? null)};
   if (!injected || typeof injected.incrementalAriaSnapshot !== 'function' || typeof injected.parseSelector !== 'function' || typeof injected.generateSelectorSimple !== 'function') {
     return { error: 'missing-engine' };
   }
@@ -82,7 +83,29 @@ export function snapshotExpression(): string {
   };
 
   const sections = [];
-  if (countCandidates(body, NODE_LIMIT) <= NODE_LIMIT) {
+  let scope = { kind: 'full' };
+  let focusRoot = null;
+  if (focus) {
+    try {
+      const selector = 'internal:role=' + focus.role + '[name=' + JSON.stringify(focus.name) + 's]';
+      const matches = injected.querySelectorAll(injected.parseSelector(selector), document);
+      let reason = null;
+      if (overTime()) reason = 'time-budget';
+      else if (document.querySelector('iframe')) reason = 'unsupported';
+      else if (matches.length === 0) reason = 'missing';
+      else if (matches.length !== 1) reason = 'ambiguous';
+      else if (countCandidates(matches[0], NODE_LIMIT) > NODE_LIMIT) reason = 'node-budget';
+      else if (overTime()) reason = 'time-budget';
+      if (reason) scope = { kind: 'full_fallback', reason };
+      else { focusRoot = matches[0]; scope = { kind: 'focused' }; }
+    } catch { scope = { kind: 'full_fallback', reason: 'unsupported' }; }
+  }
+  if (overTime()) {
+    limits.push('time-budget');
+    truncated = true;
+  } else if (focusRoot) {
+    sections.push(focusRoot);
+  } else if (countCandidates(body, NODE_LIMIT) <= NODE_LIMIT) {
     sections.push(body);
   } else {
     limits.push('node-budget');
@@ -222,6 +245,7 @@ export function snapshotExpression(): string {
     elements: keptElements,
     truncated,
     limits,
+    scope,
   };
 })()`
 }

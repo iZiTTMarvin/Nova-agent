@@ -24,6 +24,7 @@ import type {
 } from './controlPort'
 import {
   BROWSER_CAPTURE_READY_BUDGET_MS,
+  BROWSER_SNAPSHOT_TIME_MS,
   READY_EXPRESSION,
   actionabilityExpression,
   captureReadinessProbeExpression,
@@ -140,16 +141,29 @@ export function createElectronBrowserDriver(
   }
 
   return {
-    async observe(guest, fence) {
+    async observe(guest, fence, focus) {
       return guard(async () => {
         const closed = closedGuest(guest)
         if (closed) return closed
         const state = stateFor(guest)
         const deadlineAt = now() + deadlineMs
-        const read = await evaluate(state, fence, snapshotExpression(), deadlineAt)
+        const extractionDeadline = focus
+          ? Math.min(deadlineAt, now() + BROWSER_SNAPSHOT_TIME_MS)
+          : deadlineAt
+        const read = await evaluate(state, fence, snapshotExpression(focus), extractionDeadline)
         if (!read.ok) return read.failure
-        const document = readDocument(read.value, state)
+        let document = readDocument(read.value, state)
         if (!document) return browserNotApplied('unavailable', '主 frame 文档无法读取')
+        if (focus && document.snapshot.scope?.kind === 'focused' && document.snapshot.truncated) {
+          const fallback = await evaluate(state, fence, snapshotExpression(), extractionDeadline)
+          if (!fallback.ok) return fallback.failure
+          const full = readDocument(fallback.value, state)
+          if (!full) return browserNotApplied('unavailable', '回退快照无法读取')
+          document = {
+            ...full,
+            snapshot: { ...full.snapshot, scope: { kind: 'full_fallback', reason: 'incomplete' } }
+          }
+        }
         const synced = state.emulated
           ? null
           : await rememberViewport(
@@ -894,10 +908,24 @@ function readDocument(
       dom: value.dom,
       elements,
       truncated: value.truncated === true,
-      limits
+      limits,
+      scope: readObservationScope(value.scope)
     },
     refs
   }
+}
+
+function readObservationScope(value: unknown): BrowserObservationProjection['scope'] {
+  if (!isRecord(value) || typeof value.kind !== 'string') return { kind: 'full' }
+  if (value.kind === 'focused') return { kind: 'focused' }
+  if (value.kind === 'full_fallback') {
+    const reason = value.reason
+    if (reason === 'missing' || reason === 'ambiguous' || reason === 'unsupported'
+      || reason === 'node-budget' || reason === 'time-budget' || reason === 'incomplete') {
+      return { kind: 'full_fallback', reason }
+    }
+  }
+  return { kind: 'full' }
 }
 
 function readClip(value: unknown): { width: number; height: number; devicePixelRatio: number | null } | null {

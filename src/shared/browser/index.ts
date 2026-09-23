@@ -52,6 +52,7 @@ export {
   type BrowserNavigateResult,
   type BrowserNotApplied,
   type BrowserObservationLimit,
+  type BrowserObservationFocus,
   type BrowserObservationProjection,
   type BrowserObserveCommand,
   type BrowserObserveIpcParams,

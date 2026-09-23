@@ -5,6 +5,7 @@ import {
   type BrowserErrorCode,
   type BrowserNotApplied,
   type BrowserPageProjection,
+  type BrowserGuestNotice,
   type BrowserSurfaceSnapshot,
   type BrowserUnknownOutcome,
   type BrowserObservationProjection,
@@ -100,7 +101,18 @@ export function formatPage(page: BrowserPageProjection): string {
   if (page.loadError) {
     lines.push(`loadError: ${page.loadError.message}`)
   }
+  if (page.notice?.generation === page.generation && page.notice.documentEpoch === page.documentEpoch) {
+    lines.push(...formatNotice(page.notice))
+  }
   return lines.join('\n')
+}
+
+function formatNotice(notice: BrowserGuestNotice): string[] {
+  return [
+    `notice: ${notice.kind}: ${notice.message}`,
+    `noticeSource: ${notice.sourceUrl}`,
+    ...(notice.targetUrl ? [`noticeTarget: ${notice.targetUrl}`] : [])
+  ]
 }
 
 export function formatList(snapshot: BrowserSurfaceSnapshot): string {
@@ -146,7 +158,8 @@ export function formatObservationArg(observation: ObservationIdentity): string {
 
 export function formatObservation(
   observation: ObservationIdentity,
-  snapshot: BrowserObservationProjection
+  snapshot: BrowserObservationProjection,
+  notice: BrowserGuestNotice | null = null
 ): string {
   const limits = snapshot.limits.length > 0 ? snapshot.limits.join(', ') : 'none'
   const elements = snapshot.elements
@@ -164,6 +177,8 @@ export function formatObservation(
     `viewport: ${formatBrowserViewport(snapshot.viewport)}`,
     `truncated: ${snapshot.truncated ? 'yes' : 'no'}`,
     `limits: ${limits}`,
+    `scope: ${snapshot.scope?.kind ?? 'full'}${snapshot.scope?.kind === 'full_fallback' ? ` (${snapshot.scope.reason})` : ''}`,
+    ...(notice ? formatNotice(notice) : []),
     '',
     'dom:',
     snapshot.dom,

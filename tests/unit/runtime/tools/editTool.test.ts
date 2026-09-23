@@ -51,6 +51,28 @@ describe('editTool 集成测试', () => {
     rmSync(TMP, { recursive: true, force: true })
   })
 
+  it('预览后隐藏位置须先读取目标范围才能编辑', async () => {
+    const lines = Array.from({ length: 170 }, (_, i) => `line ${i}: ${'x'.repeat(90)}`)
+    lines[130] = 'line 130: hidden-target=before'
+    const path = join(TMP, 'handbook.md')
+    writeFileSync(path, lines.join('\n'))
+    const preview = await readTool.execute({ path: 'handbook.md' }, createContext())
+    expect(preview.output).toContain('[read mode: preview]')
+
+    const edit = { filePath: 'handbook.md', edits: [{ oldText: 'hidden-target=before', newText: 'hidden-target=after' }] }
+    const denied = await editTool.execute(edit, createContext())
+    expect(denied.success).toBe(false)
+    expect(denied.error).toContain('目标行')
+    expect(readFileSync(path, 'utf8')).toContain('hidden-target=before')
+
+    const range = await readTool.execute({ path: 'handbook.md', offset: 125, limit: 10 }, createContext())
+    expect(range.success).toBe(true)
+    expect(range.output).toContain('hidden-target=before')
+    const applied = await editTool.execute(edit, createContext())
+    expect(applied.success).toBe(true)
+    expect(readFileSync(path, 'utf8')).toContain('hidden-target=after')
+  })
+
   it('基本单点替换（新格式 edits[]）', async () => {
     writeFileSync(join(TMP, 'a.ts'), 'const x = 1\nconst y = 2\n')
     await readTool.execute({ path: 'a.ts' }, createContext())

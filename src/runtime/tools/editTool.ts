@@ -71,6 +71,8 @@ export interface ReadStateEntry {
   contentHash: string
   /** 全文；预算外或被 LRU 淘汰后为 undefined */
   content?: string
+  /** 预览模式实际展示的 UTF-16 正文区间；缺省保持既有读取语义。 */
+  visibleRange?: { readonly start: number; readonly end: number }
 }
 
 /** 对外暴露的缓存统计 */
@@ -85,7 +87,7 @@ export interface ReadStateStats {
 
 export interface ReadState {
   get(path: string): ReadStateEntry | undefined
-  set(path: string, entry: ReadStateEntry | { content: string; timestamp: number; size?: number }): void
+  set(path: string, entry: ReadStateEntry | { content: string; timestamp: number; size?: number; visibleRange?: ReadStateEntry['visibleRange'] }): void
   has(path: string): boolean
   clear(): void
   /** 深拷贝：用于 sub agent 创建独立 readState，避免污染父 agent */
@@ -171,7 +173,7 @@ class ReadStateMap implements ReadState {
 
   set(
     path: string,
-    raw: ReadStateEntry | { content: string; timestamp: number; size?: number }
+    raw: ReadStateEntry | { content: string; timestamp: number; size?: number; visibleRange?: ReadStateEntry['visibleRange'] }
   ): void {
     const key = normalizeReadStateKey(path)
     const content = 'content' in raw ? raw.content : undefined
@@ -208,7 +210,8 @@ class ReadStateMap implements ReadState {
       timestamp,
       size,
       contentHash,
-      ...(keepContent !== undefined ? { content: keepContent } : {})
+      ...(keepContent !== undefined ? { content: keepContent } : {}),
+      ...(keepContent !== undefined && raw.visibleRange ? { visibleRange: raw.visibleRange } : {})
     }
     this.store.set(key, entry)
     this.totalBytes += bytes
@@ -603,7 +606,7 @@ async function safetyGate(
   rs: ReadState,
   ops: EditOperations,
   currentNormalizedContent: string,
-): Promise<void> {
+): Promise<ReadStateEntry> {
   const lastRead = rs.get(path)
   // get() 在 content 被淘汰时返回 undefined → 要求重新 read
   if (!lastRead || lastRead.content === undefined) {
@@ -635,6 +638,7 @@ async function safetyGate(
       `File is too large to edit (${stat.size} bytes). Maximum is ${MAX_EDIT_FILE_SIZE} bytes.`
     )
   }
+  return lastRead
 }
 
 function normalizeInput(args: Record<string, unknown>): {
@@ -808,10 +812,17 @@ export const editTool: ToolExecutor = {
         const readResult = await readFileForEdit(ops, absolutePath)
         throwIfAborted()
 
-        await safetyGate(absolutePath, context.readState, ops, readResult.normalized)
+        const lastRead = await safetyGate(absolutePath, context.readState, ops, readResult.normalized)
         throwIfAborted()
 
         const resolved = resolveEdits(readResult.normalized, input.edits, absolutePath)
+        const visibleRange = lastRead.visibleRange
+        if (visibleRange && resolved.some((edit) =>
+          edit.startOffset < visibleRange.start
+          || edit.startOffset + edit.actualOldText.length > visibleRange.end
+        )) {
+          throw new Error('编辑位置不在最近一次 read 展示的正文范围内。请先用 offset/limit 读取目标行。')
+        }
         throwIfAborted()
 
         const newContent = applyResolvedEdits(readResult.normalized, resolved)

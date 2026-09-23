@@ -11,6 +11,7 @@ import {
   type BrowserNavigateIpcParams,
   type BrowserNotApplied,
   type BrowserObserveCommand,
+  type BrowserObservationFocus,
   type BrowserObserveIpcParams,
   type BrowserOpenIpcParams,
   type BrowserSnapshotIpcParams,
@@ -338,7 +339,7 @@ export type BrowserOpenToolArgs =
 export type BrowserObserveToolArgs =
   | { readonly action: 'list' }
   /** browserId 为 null 时由工具按当前会话的页面推断 */
-  | { readonly action: 'snapshot'; readonly browserId: string | null }
+  | { readonly action: 'snapshot'; readonly browserId: string | null; readonly focus?: BrowserObservationFocus }
 
 export type BrowserCloseToolArgs = { readonly browserId: string }
 
@@ -446,11 +447,29 @@ export function parseBrowserObserveToolArgs(
     return failed('browser_observe 的参数必须是对象，例如 {"action":"snapshot","browserId":"<browserId>"}')
   }
   const action = readToolActionName(input)
-  if (action === 'list') return { ok: true, value: Object.freeze({ action: 'list' }) }
+  if (action === 'list') {
+    if ('focus' in input) return failed('list 不接受 focus')
+    return { ok: true, value: Object.freeze({ action: 'list' }) }
+  }
   if (action === undefined || action === 'snapshot') {
+    if (Object.keys(input).some((key) => !['action', 'browserId', 'focus'].includes(key))) {
+      return failed('snapshot 含有未知参数')
+    }
+    let focus: BrowserObservationFocus | undefined
+    if ('focus' in input) {
+      const raw = input.focus
+      if (!isRecord(raw) || !hasExactKeys(raw, ['role', 'name'])) return failed('focus 只能包含 role 和 name')
+      const role = raw.role
+      const name = raw.name
+      if (typeof role !== 'string' || !/^[a-z][a-z0-9-]{0,59}$/.test(role)
+        || typeof name !== 'string' || name.trim().length === 0 || name.length > 120) {
+        return failed('focus 需要有效的 role（最多 60 字符）和非空 name（最多 120 字符）')
+      }
+      focus = Object.freeze({ role, name: name.trim().replace(/\s+/g, ' ') })
+    }
     return {
       ok: true,
-      value: Object.freeze({ action: 'snapshot', browserId: readToolString(input, 'browserId') })
+      value: Object.freeze({ action: 'snapshot', browserId: readToolString(input, 'browserId'), ...(focus ? { focus } : {}) })
     }
   }
   return failed(

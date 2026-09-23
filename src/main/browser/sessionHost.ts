@@ -1363,7 +1363,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
         null,
         signal
       )
-      const read = await deps.control!.observe(guest, fence)
+      const read = await deps.control!.observe(guest, fence, command.focus)
       if (read.status !== 'applied') return read
       const current = fence.stillCurrent()
       if (!current.ok) return browserNotApplied(current.code, '观察结果已过期')
@@ -1374,6 +1374,10 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       return {
         status: 'applied',
         observation: issued.value,
+        notice: found.record.notice?.generation === issued.value.generation
+          && found.record.notice.documentEpoch === issued.value.documentEpoch
+          ? found.record.notice
+          : null,
         snapshot: {
           ...read.read.snapshot,
           viewport: { ...read.read.snapshot.viewport, displayScale }

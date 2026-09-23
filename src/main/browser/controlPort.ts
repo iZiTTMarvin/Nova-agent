@@ -7,6 +7,7 @@ import type {
   BrowserErrorCode,
   BrowserNotApplied,
   BrowserObservationProjection,
+  BrowserObservationFocus,
   BrowserUnknownOutcome,
   BrowserViewportProjection
 } from '../../shared/browser'
@@ -51,7 +52,7 @@ export type BrowserControlLoadResult =
   | BrowserUnknownOutcome
 
 export interface BrowserPageControl {
-  observe(guest: BrowserGuestContents, fence: BrowserControlFence): Promise<BrowserControlReadResult>
+  observe(guest: BrowserGuestContents, fence: BrowserControlFence, focus?: BrowserObservationFocus): Promise<BrowserControlReadResult>
   act(
     guest: BrowserGuestContents,
     fence: BrowserControlFence,
