@@ -180,6 +180,7 @@ export async function launchNova(
   })
 
   const page = await app.firstWindow()
+  await page.setViewportSize({ width: 1200, height: 800 })
   page.on('pageerror', error => {
     pageErrors.push(error.stack ?? error.message)
   })
