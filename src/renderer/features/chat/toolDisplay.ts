@@ -27,6 +27,10 @@ export function getToolDisplayName(toolName: string): string {
       return '调度子代理 (task)'
     case 'task_followup':
       return '继续既有子代理 (task_followup)'
+    case 'task_wait':
+      return '等待子任务 (task_wait)'
+    case 'subagent_read':
+      return '回读子代理证据 (subagent_read)'
     case 'batch_task':
       return '并行调度子代理批次 (batch_task)'
     case 'agent_list':
@@ -39,6 +43,18 @@ export function getToolDisplayName(toolName: string): string {
       return '更新任务列表 (todo_write)'
     case 'web_search':
       return '联网搜索 (web_search)'
+    case 'web_fetch':
+      return '读取网页 (web_fetch)'
+    case 'browser_open':
+      return '打开网页 (browser_open)'
+    case 'browser_observe':
+      return '观察网页 (browser_observe)'
+    case 'browser_act':
+      return '操作网页 (browser_act)'
+    case 'browser_close':
+      return '关闭网页 (browser_close)'
+    case 'browser_capture':
+      return '截取网页 (browser_capture)'
     case 'archive_read':
       return '读取归档内容 (archive_read)'
     case 'history_read':
@@ -47,6 +63,8 @@ export function getToolDisplayName(toolName: string): string {
       return '运行探索代码 (run_code)'
     case 'memory_search':
       return '检索记忆 (memory_search)'
+    case 'memory_manage':
+      return '更新长期记忆 (memory_manage)'
     case 'code_context':
       return '查询代码上下文 (code_context)'
     case 'askQuestion':
@@ -152,6 +170,9 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const display = description.length > 60 ? description.slice(0, 57) + '...' : description
       return display ? `运行探索代码：${display}` : '运行探索代码'
     }
+    case 'memory_manage': {
+      return args.action === 'forget' ? '正在撤回长期记忆' : '正在记录长期记忆'
+    }
     case 'code_context': {
       const query = typeof args.query === 'string' ? args.query : ''
       const display = query.length > 60 ? `${query.slice(0, 57)}...` : query
@@ -176,6 +197,19 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (childDisplay) return `续跑子代理 ${childDisplay}`
       return display || '继续既有子代理'
     }
+    case 'task_wait': {
+      const runIds = Array.isArray(args.run_ids) ? args.run_ids.filter((id): id is string => typeof id === 'string') : []
+      if (args.all_unfinished === true) return '等待全部未完成子任务'
+      return runIds.length > 0 ? `等待 ${runIds.length} 个子任务` : '等待子任务'
+    }
+    case 'subagent_read': {
+      const child = (args.child_session_id as string) || ''
+      const childDisplay = child.length > 12 ? `${child.slice(0, 12)}...` : child
+      const operation = (args.operation as string) || 'inspect'
+      return childDisplay
+        ? `回读子代理 ${childDisplay}（${operation}）`
+        : `回读子代理证据（${operation}）`
+    }
     case 'batch_task': {
       const items = Array.isArray(args.items) ? args.items : []
       const first = items[0] && typeof items[0] === 'object' ? (items[0] as Record<string, unknown>).task : ''
@@ -196,6 +230,38 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const display = query.length > 60 ? query.slice(0, 57) + '...' : query
       return display ? `搜索 "${display}"` : '联网搜索'
     }
+    case 'web_fetch': {
+      const url = (args.url as string) || ''
+      const display = url.length > 60 ? url.slice(0, 57) + '...' : url
+      return display ? `读取网页 ${display}` : '读取网页'
+    }
+    case 'browser_open': {
+      const action = typeof args.action === 'string' ? args.action : 'open'
+      const url = typeof args.url === 'string' ? args.url : ''
+      const display = url.length > 40 ? `${url.slice(0, 37)}...` : url
+      const inPlace = typeof args.browserId === 'string' && args.browserId.length > 0
+      if (action === 'open' && inPlace) return display ? `跳转网页 ${display}` : '跳转网页'
+      if (action === 'open') return display ? `打开网页 ${display}` : '打开网页'
+      if (action === 'back') return '网页后退'
+      if (action === 'forward') return '网页前进'
+      if (action === 'reload') return '刷新网页'
+      if (action === 'stop') return '停止加载网页'
+      return '打开网页'
+    }
+    case 'browser_observe': {
+      return args.action === 'list' ? '列出打开的网页' : '观察网页'
+    }
+    case 'browser_act': {
+      const action = args.action && typeof args.action === 'object'
+        ? (args.action as Record<string, unknown>).kind
+        : ''
+      if (typeof action === 'string' && action.length > 0) return `操作网页：${action}`
+      return '操作网页'
+    }
+    case 'browser_close':
+      return '关闭网页'
+    case 'browser_capture':
+      return '截取网页'
     case 'askQuestion': {
       // 取首题问题文本作摘要；多题时附带题数，便于不展开卡片就知道在问什么
       const questions = Array.isArray(args.questions) ? args.questions : []

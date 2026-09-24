@@ -4,6 +4,7 @@ import {
   resolveSubagentProfileSnapshot
 } from '../../../../src/runtime/subagents'
 import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentConfig'
+import { toolHasWriteCapability } from '../../../../src/shared/permissions/toolEffects'
 
 describe('resolveSubagentProfileSnapshot', () => {
   it('校验 unknown 输入并冻结稳定 profile snapshot 与 configHash', () => {
@@ -97,6 +98,26 @@ describe('resolveSubagentProfileSnapshot', () => {
         modelId: 'api-model'
       }
     }, 'code')).toThrow(/modelEntryId/)
+  })
+
+  it('写能力推断覆盖网络写入，只读网络读取不抬升 ceiling', () => {
+    expect(toolHasWriteCapability('browser_act')).toBe(true)
+    expect(toolHasWriteCapability('browser_open')).toBe(true)
+    expect(toolHasWriteCapability('browser_close')).toBe(true)
+    expect(toolHasWriteCapability('browser_observe')).toBe(false)
+    expect(toolHasWriteCapability('browser_capture')).toBe(false)
+    expect(toolHasWriteCapability('web_search')).toBe(false)
+  })
+
+  it('浏览器工具即使写在 allowedTools 里也不会进入子代理快照', () => {
+    const snapshot = resolveSubagentProfileSnapshot({
+      id: 'code',
+      name: 'code',
+      description: 'writes code',
+      prompt: 'do the work',
+      allowedTools: ['read', 'browser_observe', 'browser_act']
+    }, 'code')
+    expect(snapshot.toolNames).toEqual(['read'])
   })
 
   it('read_only profile 永久剥离写工具与递归 delegation 工具', () => {

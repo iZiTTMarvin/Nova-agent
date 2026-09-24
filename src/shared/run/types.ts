@@ -216,6 +216,12 @@ export interface RunSnapshot {
    * grace 超时 / 强制中断后递增或清零，使旧 continuation 失效。
    */
   executionGeneration?: number
+  /** 子 run 的版本化派遣关联；仅 SubagentExecutionService 写入。 */
+  dispatch?: SubagentRunDispatch
+  /** 源 run 投递控制（绑定/暂停/失效），终态后仍可更新，不是执行状态。 */
+  deliveryBinding?: SubagentDeliveryBinding
+  /** 空闲接力预约：仅内部接力父 run 携带，随 queued run 同次提交且此后冻结。 */
+  relayTrigger?: SubagentRelayTrigger
 }
 
 /** append-only 事件（落盘 events.jsonl） */
@@ -232,6 +238,9 @@ interface StartRunBase {
   workspaceId: string
   sessionId: string
   messageId?: string
+  dispatch?: SubagentRunDispatch
+  /** 内部接力预约：与 queued run 同次持久提交；仅接力入场携带。 */
+  relayTrigger?: SubagentRelayTrigger
 }
 
 /** 启动 Run 的参数。 */
@@ -279,6 +288,245 @@ export type InteractionAnswerResult =
       firstApplied: boolean
       duplicate?: boolean
     }
+
+/** 每次子 run 的版本化派遣关联；SubagentExecutionService 是唯一写入方。 */
+export const SUBAGENT_RUN_DISPATCH_VERSION = 1
+
+export type SubagentRunDispatchCallKind = 'task' | 'batch_task' | 'task_followup' | 'skill_fork'
+
+export interface SubagentRunDispatch {
+  readonly version: 1
+  readonly callKind: SubagentRunDispatchCallKind
+  readonly parentSessionId: string
+  readonly parentRunId: string
+  readonly parentMessageId: string
+  readonly parentToolCallId?: string
+  readonly execution: 'sync' | 'background_read_only'
+  readonly topParentSessionId: string
+  readonly originUserMessageId?: string
+  /** 显式恢复来源；仅 resume 时携带。 */
+  readonly sourceChildRunId?: string
+}
+
+/**
+ * 失败关闭的 dispatch decoder。
+ * raw == null → undefined；损坏/格式错误 → throw。
+ */
+export function decodeSubagentRunDispatch(
+  raw: unknown
+): SubagentRunDispatch | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('dispatch: not an object')
+  const d = raw as Record<string, unknown>
+  if (typeof d.version !== 'number' || d.version !== 1) {
+    throw new Error(`dispatch: unsupported version ${d.version}`)
+  }
+  const required: Array<keyof SubagentRunDispatch> = [
+    'callKind',
+    'parentSessionId',
+    'parentRunId',
+    'parentMessageId',
+    'execution',
+    'topParentSessionId'
+  ]
+  for (const key of required) {
+    const v = d[key]
+    if (typeof v !== 'string' || v.trim() === '') {
+      throw new Error(`dispatch: missing or empty required field "${String(key)}"`)
+    }
+  }
+  const callKind = d.callKind as string
+  if (
+    callKind !== 'task' &&
+    callKind !== 'batch_task' &&
+    callKind !== 'task_followup' &&
+    callKind !== 'skill_fork'
+  ) {
+    throw new Error(`dispatch: invalid callKind "${callKind}"`)
+  }
+  const execution = d.execution as string
+  if (execution !== 'sync' && execution !== 'background_read_only') {
+    throw new Error(`dispatch: invalid execution "${execution}"`)
+  }
+  const strFields: Array<keyof SubagentRunDispatch> = [
+    'parentToolCallId',
+    'originUserMessageId',
+    'sourceChildRunId'
+  ]
+  for (const key of strFields) {
+    const v = d[key]
+    if (v !== undefined && v !== null && typeof v !== 'string') {
+      throw new Error(`dispatch: "${String(key)}" must be a string if present`)
+    }
+  }
+  return {
+    version: 1,
+    callKind: callKind as SubagentRunDispatch['callKind'],
+    parentSessionId: d.parentSessionId as string,
+    parentRunId: d.parentRunId as string,
+    parentMessageId: d.parentMessageId as string,
+    parentToolCallId: d.parentToolCallId as string | undefined,
+    execution: execution as SubagentRunDispatch['execution'],
+    topParentSessionId: d.topParentSessionId as string,
+    originUserMessageId: d.originUserMessageId as string | undefined,
+    sourceChildRunId: d.sourceChildRunId as string | undefined
+  }
+}
+
+export const SUBAGENT_DELIVERY_BINDING_VERSION = 1
+
+/**
+ * 源 run 的投递控制：绑定的父接收位置/接力 run、暂停、失效原因。
+ * 它不是第二份 child 执行状态；pending/已处理从源终态与父接收事实派生。
+ */
+export interface SubagentDeliveryBinding {
+  readonly version: 1
+  /** 绑定的父侧接收 run 或接力 run；未绑定时缺省。 */
+  readonly boundRunId?: string
+  readonly boundSessionId?: string
+  /** 用户暂停：不进入自动接力，不删除结果。 */
+  readonly paused?: boolean
+  /** 失效原因（停止/分支失效/删除）；只影响通知资格，不删除 child 结果。 */
+  readonly invalidatedReason?: string
+  readonly updatedAt: number
+}
+
+/**
+ * 失败关闭的 deliveryBinding decoder。
+ * raw == null → undefined；损坏/未知版本 → throw。
+ */
+export function decodeSubagentDeliveryBinding(
+  raw: unknown
+): SubagentDeliveryBinding | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('deliveryBinding: not an object')
+  const d = raw as Record<string, unknown>
+  if (typeof d.version !== 'number' || d.version !== SUBAGENT_DELIVERY_BINDING_VERSION) {
+    throw new Error(`deliveryBinding: unsupported version ${d.version}`)
+  }
+  if (typeof d.updatedAt !== 'number') {
+    throw new Error('deliveryBinding: updatedAt must be a number')
+  }
+  const strFields = ['boundRunId', 'boundSessionId', 'invalidatedReason'] as const
+  for (const key of strFields) {
+    const v = d[key]
+    if (v !== undefined && v !== null && (typeof v !== 'string' || v.trim() === '')) {
+      throw new Error(`deliveryBinding: "${key}" must be a non-empty string if present`)
+    }
+  }
+  if (d.paused !== undefined && d.paused !== null && typeof d.paused !== 'boolean') {
+    throw new Error('deliveryBinding: "paused" must be a boolean if present')
+  }
+  return {
+    version: 1,
+    boundRunId: (d.boundRunId ?? undefined) as string | undefined,
+    boundSessionId: (d.boundSessionId ?? undefined) as string | undefined,
+    paused: (d.paused ?? undefined) as boolean | undefined,
+    invalidatedReason: (d.invalidatedReason ?? undefined) as string | undefined,
+    updatedAt: d.updatedAt
+  }
+}
+
+/** 通知 id = childRunId + terminalTransitionId 的稳定组合；空输入拒绝。 */
+export function deriveSubagentNotificationId(
+  childRunId: string,
+  terminalTransitionId: string
+): string {
+  if (typeof childRunId !== 'string' || childRunId.trim() === '') {
+    throw new Error('notificationId: childRunId 必须为非空字符串')
+  }
+  if (typeof terminalTransitionId !== 'string' || terminalTransitionId.trim() === '') {
+    throw new Error('notificationId: terminalTransitionId 必须为非空字符串')
+  }
+  return `ntf_${childRunId}_${terminalTransitionId}`
+}
+
+export const SUBAGENT_RELAY_TRIGGER_VERSION = 1
+
+/** 接力预约的冻结批次项：通知身份与正文一经持久不再重算。 */
+export interface SubagentRelayTriggerItem {
+  readonly notificationId: string
+  readonly sourceRunId: string
+  readonly content: string
+}
+
+/**
+ * 空闲自动接力的持久预约：随 queued 父 run 同次提交。
+ * 重复接纳复用同一 run（requestId === runId）；预算计数从已持久 trigger 派生。
+ */
+export interface SubagentRelayTrigger {
+  readonly version: 1
+  /** 预约 id，与所属 relay run 的 runId 相同。 */
+  readonly requestId: string
+  /** 接收消息身份：携带冻结 runtime_input 块的内部接力消息 id。 */
+  readonly receiveMessageId: string
+  /** 发起用户消息 id：接力预算链的归属。 */
+  readonly originUserMessageId: string
+  /** 入场时的消息锚点（激活叶子），供分支资格对账；无叶子时为 null。 */
+  readonly anchorMessageId: string | null
+  /** 冻结批次：成员、正文与顺序在首次持久后冻结。 */
+  readonly items: readonly SubagentRelayTriggerItem[]
+  readonly createdAt: number
+}
+
+/**
+ * 失败关闭的 relayTrigger decoder。
+ * raw == null → undefined；损坏/未知版本 → throw。
+ */
+export function decodeSubagentRelayTrigger(raw: unknown): SubagentRelayTrigger | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== 'object') throw new Error('relayTrigger: not an object')
+  const t = raw as Record<string, unknown>
+  if (t.version !== SUBAGENT_RELAY_TRIGGER_VERSION) {
+    throw new Error(`relayTrigger: unsupported version ${String(t.version)}`)
+  }
+  for (const key of ['requestId', 'receiveMessageId', 'originUserMessageId'] as const) {
+    if (typeof t[key] !== 'string' || (t[key] as string).trim() === '') {
+      throw new Error(`relayTrigger: "${key}" must be a non-empty string`)
+    }
+  }
+  if (t.anchorMessageId !== null && typeof t.anchorMessageId !== 'string') {
+    throw new Error('relayTrigger: "anchorMessageId" must be a string or null')
+  }
+  if (!Array.isArray(t.items) || t.items.length === 0) {
+    throw new Error('relayTrigger: "items" must be a non-empty array')
+  }
+  const items: SubagentRelayTriggerItem[] = t.items.map((item, index) => {
+    if (!item || typeof item !== 'object') {
+      throw new Error(`relayTrigger: item[${index}] is not an object`)
+    }
+    const it = item as Record<string, unknown>
+    for (const key of ['notificationId', 'sourceRunId', 'content'] as const) {
+      if (typeof it[key] !== 'string' || (it[key] as string).trim() === '') {
+        throw new Error(`relayTrigger: item[${index}]."${key}" must be a non-empty string`)
+      }
+    }
+    return {
+      notificationId: it.notificationId as string,
+      sourceRunId: it.sourceRunId as string,
+      content: it.content as string
+    }
+  })
+  if (typeof t.createdAt !== 'number' || !Number.isFinite(t.createdAt)) {
+    throw new Error('relayTrigger: "createdAt" must be a finite number')
+  }
+  return {
+    version: 1,
+    requestId: t.requestId as string,
+    receiveMessageId: t.receiveMessageId as string,
+    originUserMessageId: t.originUserMessageId as string,
+    anchorMessageId: (t.anchorMessageId ?? null) as string | null,
+    items,
+    createdAt: t.createdAt
+  }
+}
+
+/** 无 dispatch 的旧记录归一化为同步执行。 */
+export function resolveDispatchExecution(snapshot: {
+  dispatch?: SubagentRunDispatch
+}): SubagentRunDispatch['execution'] {
+  return snapshot.dispatch?.execution ?? 'sync'
+}
 
 /** 允许的状态转换表 */
 export const RUN_STATUS_TRANSITIONS: Readonly<Record<RunStatus, ReadonlyArray<RunStatus>>> = {

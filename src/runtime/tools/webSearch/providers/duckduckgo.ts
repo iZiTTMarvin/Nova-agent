@@ -5,6 +5,7 @@
 import type { SearchProvider, SearchQueryParams, SearchResponse } from '../types'
 import { providerError } from './base'
 import { parseDdgHtml } from '../scraper/ddgParser'
+import { withScraperResponse } from '../scraper/http'
 
 /** DDG HTML 搜索端点 */
 const DDG_SEARCH_URL = 'https://html.duckduckgo.com/html/'
@@ -53,29 +54,25 @@ export const duckduckgoProvider: SearchProvider = {
 
     let html: string
     try {
-      const response = await fetch(DDG_SEARCH_URL, {
-        method: 'POST',
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Encoding': 'identity'
+      html = await withScraperResponse(
+        DDG_SEARCH_URL,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: body.toString(),
+          signal
         },
-        body: body.toString(),
-        signal
-      })
-
-      if (!response.ok) {
-        markDdgUnavailable()
-        throw providerError(
-          'duckduckgo',
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status
-        )
-      }
-
-      html = await response.text()
+        async response => {
+          if (!response.ok) {
+            throw providerError(
+              'duckduckgo',
+              `HTTP ${response.status}: ${response.statusText}`,
+              response.status
+            )
+          }
+          return await response.text()
+        }
+      )
     } catch (err) {
       // 用户取消不触发冷却
       if (isAbortError(err, signal)) {

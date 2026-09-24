@@ -23,4 +23,14 @@ describe('retainCommittedBlocksForRetry', () => {
       { type: 'tool', toolCallId: 'tc1', status: 'success' }
     ])
   })
+
+  it('重试时保留已持久接收的运行时输入', () => {
+    const blocks = [
+      { type: 'text', content: '完成一步' },
+      { type: 'tool', toolCallId: 'tc1', status: 'success' as const },
+      { type: 'runtime_input', notificationId: 'ntf1' },
+      { type: 'thinking', content: '失败 attempt 的思考' }
+    ]
+    expect(retainCommittedBlocksForRetry(blocks)).toEqual(blocks.slice(0, 3))
+  })
 })

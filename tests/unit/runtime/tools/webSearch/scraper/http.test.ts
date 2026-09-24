@@ -1,88 +1,144 @@
 /**
  * scraper/http.ts 单元测试
- * 直接覆盖 UA、Accept-Encoding、超时、取消等核心行为
+ * 通过本地 HTTP fixture 覆盖请求头、正文超时、取消与资源释放。
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { scraperFetch } from '../../../../../../src/runtime/tools/webSearch/scraper/http'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo, Socket } from 'node:net'
+import {
+  scraperFetch,
+  withScraperResponse
+} from '../../../../../../src/runtime/tools/webSearch/scraper/http'
 
-const mockFetch = vi.fn<typeof fetch>()
+let server: Server
+let baseUrl: string
+const sockets = new Set<Socket>()
+const releasedPaths: string[] = []
 
-beforeEach(() => {
-  mockFetch.mockReset()
-  vi.stubGlobal('fetch', mockFetch)
-  vi.useFakeTimers()
+beforeAll(async () => {
+  server = createServer((req, res) => {
+    if (req.url === '/ok') {
+      expect(req.headers['user-agent']).toContain('Chrome')
+      expect(req.headers['accept-encoding']).toBe('identity')
+      res.writeHead(200, { 'content-type': 'text/html' })
+      res.end('<html>ok</html>')
+      return
+    }
+
+    if (req.url === '/header-hang') return
+
+    if (req.url === '/connection-fail') {
+      req.socket.destroy()
+      return
+    }
+
+    if (req.url === '/slow-body') {
+      res.writeHead(200, { 'content-type': 'text/plain' })
+      res.flushHeaders()
+      const timer = setTimeout(() => res.end('late body'), 150)
+      res.on('close', () => clearTimeout(timer))
+      return
+    }
+
+    if (req.url === '/trickle' || req.url === '/cancel-body' || req.url === '/release') {
+      res.writeHead(req.url === '/release' ? 503 : 200, { 'content-type': 'text/plain' })
+      res.flushHeaders()
+      res.write('chunk')
+      const timer = setInterval(() => res.write('.'), 20)
+      res.on('close', () => {
+        clearInterval(timer)
+        if (!res.writableEnded) releasedPaths.push(req.url ?? '')
+      })
+      return
+    }
+
+    res.writeHead(404).end()
+  })
+  server.on('connection', socket => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+  })
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
+  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 })
 
-afterEach(() => {
-  vi.unstubAllGlobals()
-  vi.useRealTimers()
+afterAll(async () => {
+  for (const socket of sockets) socket.destroy()
+  await new Promise<void>(resolve => server.close(() => resolve()))
 })
+
+async function waitForRelease(path: string): Promise<void> {
+  const deadline = Date.now() + 1_000
+  while (!releasedPaths.includes(path)) {
+    if (Date.now() >= deadline) throw new Error(`未释放响应：${path}`)
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}
 
 describe('scraperFetch', () => {
-  it('正常 GET 返回 HTML 文本', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      text: () => Promise.resolve('<html>ok</html>')
-    } as Response)
-
-    const html = await scraperFetch('https://example.com/search')
-    expect(html).toBe('<html>ok</html>')
+  it('正常 GET 返回 HTML，并发送浏览器请求头', async () => {
+    await expect(scraperFetch(`${baseUrl}/ok`)).resolves.toBe('<html>ok</html>')
   })
 
-  it('请求头包含浏览器 UA 与 Accept-Encoding: identity', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      text: () => Promise.resolve('')
-    } as Response)
-
-    await scraperFetch('https://example.com/search')
-
-    const [, init] = mockFetch.mock.calls[0]
-    const headers = (init as RequestInit).headers as Record<string, string>
-    expect(headers['User-Agent']).toContain('Chrome')
-    expect(headers['Accept-Encoding']).toBe('identity')
+  it('响应头一直未到时按 deadline 超时', async () => {
+    await expect(
+      scraperFetch(`${baseUrl}/header-hang`, { timeoutMs: 40 })
+    ).rejects.toThrow('请求超时（40ms）')
   })
 
-  it('超时后抛出超时错误', async () => {
-    mockFetch.mockImplementation(
-      (_url, init) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('Aborted', 'AbortError'))
-          })
-        })
-    )
-
-    const promise = scraperFetch('https://example.com/slow', { timeoutMs: 1000 })
-    const assertion = expect(promise).rejects.toThrow('请求超时（1000ms）')
-    await vi.advanceTimersByTimeAsync(1001)
-    await assertion
+  it('连接在响应头前断开时返回网络失败', async () => {
+    await expect(scraperFetch(`${baseUrl}/connection-fail`)).rejects.toThrow()
   })
 
-  it('外部 abort 时抛出取消错误', async () => {
+  it('响应头已到但正文过慢时仍按同一 deadline 超时', async () => {
+    await expect(
+      scraperFetch(`${baseUrl}/slow-body`, { timeoutMs: 40 })
+    ).rejects.toThrow('请求超时（40ms）')
+  })
+
+  it('持续 trickle 不能无限续命', async () => {
+    await expect(
+      scraperFetch(`${baseUrl}/trickle`, { timeoutMs: 70 })
+    ).rejects.toThrow('请求超时（70ms）')
+    await waitForRelease('/trickle')
+  })
+
+  it('正文消费期间响应父 signal 取消并释放连接', async () => {
     const controller = new AbortController()
-    mockFetch.mockImplementation(
-      (_url, init) =>
-        new Promise((_resolve, reject) => {
-          init?.signal?.addEventListener('abort', () => {
-            reject(new DOMException('Aborted', 'AbortError'))
-          })
-        })
-    )
+    const pending = scraperFetch(`${baseUrl}/cancel-body`, { signal: controller.signal })
+    setTimeout(() => controller.abort(), 40)
 
-    const promise = scraperFetch('https://example.com/search', { signal: controller.signal })
-    controller.abort()
-    await expect(promise).rejects.toThrow('请求已取消')
+    await expect(pending).rejects.toThrow('请求已取消')
+    await waitForRelease('/cancel-body')
   })
 
-  it('调用前 signal 已中止时立即抛出取消错误', async () => {
+  it('非 2xx 响应不读取正文时仍释放连接', async () => {
+    await expect(scraperFetch(`${baseUrl}/release`)).rejects.toThrow('HTTP 503')
+    await waitForRelease('/release')
+  })
+
+  it('消费者提前返回时仍释放未读正文', async () => {
+    const status = await withScraperResponse(
+      `${baseUrl}/release`,
+      {},
+      async response => response.status
+    )
+
+    expect(status).toBe(503)
+  })
+
+  it('调用前 signal 已中止时不发起请求', async () => {
     const controller = new AbortController()
     controller.abort()
 
     await expect(
-      scraperFetch('https://example.com/search', { signal: controller.signal })
+      scraperFetch(`${baseUrl}/ok`, { signal: controller.signal })
     ).rejects.toThrow('请求已取消')
-
-    expect(mockFetch).not.toHaveBeenCalled()
   })
 })

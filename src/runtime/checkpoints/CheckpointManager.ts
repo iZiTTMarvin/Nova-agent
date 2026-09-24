@@ -70,7 +70,7 @@ export class CheckpointManager {
         this.config.checkpointDir,
         this.config.sessionId,
         keepRecent - 1,
-        this.config.getActivePathMessageIds?.()
+        this.config.getActivePathMessageIds
       )
     }
   }

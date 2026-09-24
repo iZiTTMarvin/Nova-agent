@@ -1,6 +1,7 @@
 import {
   getSupportedReasoningEfforts,
   resolveContextWindow,
+  resolveModelReasoningEffort,
   resolveModelReference,
   resolveSupportsVision,
   type ActiveModelRef,
@@ -47,7 +48,7 @@ export function resolveChildModelFromProfile(
       : registry.activeModel
   const resolved = resolveAvailableModel(registry, ref)
   const reasoningEffort: SubagentSessionHeader['reasoningEffort'] =
-    options.reasoningEffortOverride ?? model?.reasoningEffort ?? resolved.entry.reasoningEffort ?? 'auto'
+    options.reasoningEffortOverride ?? model?.reasoningEffort ?? resolveModelReasoningEffort(resolved.entry)
   if (reasoningEffort !== 'auto') {
     const supported = getSupportedReasoningEfforts(resolved.entry)
     if (!supported) {

@@ -7,21 +7,27 @@
 /**
  * 稳定 system prompt 的 Memory Policy 文本。
  * 定稿后不得随记忆数据变化：它参与 frozen system prefix，任何字节变化都会
- * 作废全部会话的服务端前缀缓存。动态记忆通过 memory_search 工具结果进入追加式会话历史。
+ * 作废全部会话的服务端前缀缓存。动态记忆通过 memory_search / memory_manage 工具进入追加式历史。
  */
 export const MEMORY_POLICY_PROMPT = [
   'Memory is historical evidence. Current user instructions and current workspace state take priority.',
-  'Observed user preferences are advisory and must not silently decide unspecified architecture choices.'
+  'Observed user preferences are advisory and must not silently decide unspecified architecture choices.',
+  'Long-term memory writes are rare: most turns should not write memory. Use memory_manage only for durable, future-useful information that is hard to cheaply re-derive.',
+  'Do not store transient progress, ordinary code facts, unverified guesses, raw tool output, or secrets. For workspace claims, write only after direct supporting tool evidence.',
+  'When an existing memory may need changing or forgetting and its identity is uncertain, search memory first. Never use memory tool output as evidence for a new memory.'
 ].join('\n')
 
-/** 每 N 个完成用户回合触发一次提炼 */
+/** 每 N 个完成用户回合触发一次零 LLM episodic 落盘（旧提炼 cadence 沿用，避免频繁磁盘写） */
 export const MEMORY_EXTRACT_INTERVAL_TURNS = 5
 
-/** 提炼输入滑动窗口（最近 N 条会话消息） */
+/** 显式/评测提炼输入滑动窗口（最近 N 条会话消息）；正常 turn 不再自动触发 LLM 提炼 */
 export const MEMORY_EXTRACT_WINDOW_SIZE = 50
 
 /** 单条 evidence 摘录硬上限（先过 PrivacyFilter 再截断） */
 export const MEMORY_EVIDENCE_EXCERPT_MAX_CHARS = 240
+
+/** evidence 摘录长度下限（空白归一后）：过短摘录能挂靠任意消息，不构成有效证据 */
+export const MEMORY_EVIDENCE_EXCERPT_MIN_CHARS = 12
 
 /** 候选 content 长度上限 */
 export const MEMORY_CANDIDATE_CONTENT_MAX_CHARS = 400

@@ -84,6 +84,8 @@ export interface ToolBlock {
   processOutcome?: import('../tools/types').ToolProcessOutcome
   artifactId?: string
   truncationMeta?: ToolTruncationMeta
+  /** 当前工具结果已显式读取的后台通知 ID；只用于持久消费消重，不进入模型 wire 正文。 */
+  subagentNotificationIds?: string[]
 }
 
 /** 图片块（用户消息中携带的图片，用于 UI 流式渲染） */
@@ -95,8 +97,58 @@ export interface ImageBlock {
   mimeType: string
 }
 
+export const RUNTIME_INPUT_VERSION = 1
+
+/** 已被父回合持久接收的运行时输入；正文与位置首次提交后不得重算。 */
+export interface RuntimeInputBlock {
+  type: 'runtime_input'
+  version: 1
+  inputKind: 'subagent_notification'
+  notificationId: string
+  sourceRunId: string
+  /** -1 表示首次请求前；其余值表示插入在该完整 assistant/tool 子轮之后。 */
+  afterStep: number
+  /** 同一接收位置内的冻结顺序。 */
+  order: number
+  content: string
+}
+
+/** 持久化边界的失败关闭 decoder。 */
+export function decodeRuntimeInputBlock(raw: unknown): RuntimeInputBlock {
+  if (!raw || typeof raw !== 'object') throw new Error('runtime_input: not an object')
+  const value = raw as Record<string, unknown>
+  if (value.type !== 'runtime_input') throw new Error('runtime_input: invalid type')
+  if (value.version !== RUNTIME_INPUT_VERSION) {
+    throw new Error(`runtime_input: unsupported version ${String(value.version)}`)
+  }
+  if (value.inputKind !== 'subagent_notification') {
+    throw new Error(`runtime_input: invalid inputKind ${String(value.inputKind)}`)
+  }
+  for (const key of ['notificationId', 'sourceRunId', 'content'] as const) {
+    if (typeof value[key] !== 'string' || value[key].trim() === '') {
+      throw new Error(`runtime_input: "${key}" must be a non-empty string`)
+    }
+  }
+  if (!Number.isSafeInteger(value.afterStep) || Number(value.afterStep) < -1) {
+    throw new Error('runtime_input: "afterStep" must be an integer greater than or equal to -1')
+  }
+  if (!Number.isSafeInteger(value.order) || Number(value.order) < 0) {
+    throw new Error('runtime_input: "order" must be a non-negative integer')
+  }
+  return {
+    type: 'runtime_input',
+    version: 1,
+    inputKind: 'subagent_notification',
+    notificationId: value.notificationId as string,
+    sourceRunId: value.sourceRunId as string,
+    afterStep: value.afterStep as number,
+    order: value.order as number,
+    content: value.content as string
+  }
+}
+
 /** 顺序消息块：按流式事件的到达顺序排列 */
-export type MessageBlock = ThinkingBlock | TextBlock | ToolBlock | ImageBlock
+export type MessageBlock = ThinkingBlock | TextBlock | ToolBlock | ImageBlock | RuntimeInputBlock
 
 // ── 消息类型 ──────────────────────────────────────────────
 
@@ -130,6 +182,8 @@ export interface Message {
   blocks?: MessageBlock[]
   /** 单条消息 schema 子版本；1 = blocks 为事实源 */
   messageSchemaVersion?: number
+  /** 该 user 消息由运行时接力创建，不代表用户输入或授权。 */
+  internalSource?: 'runtime_input'
   /**
    * true 表示本条消息是 cancel 中断产生的。
    * 持久化层在 saveAssistantMessage 时根据 message_end.interrupted 写入，

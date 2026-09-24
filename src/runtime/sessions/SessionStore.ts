@@ -44,18 +44,20 @@ import type {
   TouchedFilesSnapshot,
   SessionToolAvailabilityState
 } from './types'
-import type { MessageOrigin } from '../model/types'
+import { isSameMessageOrigin, type MessageOrigin } from '../model/types'
 import {
   SESSION_DATA_FILE,
   SESSION_MESSAGES_FILE,
   SESSION_CONTEXT_SNAPSHOT_FILE,
   CONTEXT_SNAPSHOT_VERSION,
+  decodeSessionControlIntent,
   extractTextFromSerializableContent,
-  generateSessionTitleFromText
+  generateSessionTitleFromText,
+  type SessionControlIntent
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
-import type { Mode, PermissionMode } from '../../shared/session'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { Mode, PermissionMode, RuntimeInputBlock } from '../../shared/session'
+import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import {
   applyStageTransition,
@@ -69,7 +71,8 @@ import {
   computeMessageCount,
   resolveCurrentLeafId,
   ensureMessageParentChain,
-  attachBranchMeta
+  attachBranchMeta,
+  getSessionActiveMessages
 } from './tree'
 import { atomicWriteFileSync } from '../storage/atomicFile'
 import { metricSessionAppend } from '../../shared/diagnostics/metrics'
@@ -126,7 +129,7 @@ const LEDGER_TRIGGERS = ['threshold', 'mid-turn', 'overflow', 'idle'] as const
 
 function parseMessageOrigin(value: unknown): MessageOrigin | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null
-  const candidate = value as { messageId?: unknown; step?: unknown }
+  const candidate = value as { messageId?: unknown; step?: unknown; runtimeInputId?: unknown }
   if (
     typeof candidate.messageId !== 'string'
     || candidate.messageId.length === 0
@@ -135,7 +138,13 @@ function parseMessageOrigin(value: unknown): MessageOrigin | null {
   ) {
     return null
   }
-  return { messageId: candidate.messageId, step: candidate.step as number }
+  if (candidate.runtimeInputId !== undefined &&
+      (typeof candidate.runtimeInputId !== 'string' || candidate.runtimeInputId.length === 0)) return null
+  return {
+    messageId: candidate.messageId,
+    step: candidate.step as number,
+    ...(candidate.runtimeInputId ? { runtimeInputId: candidate.runtimeInputId } : {})
+  }
 }
 
 function parseTouchedFilesSnapshot(value: unknown): TouchedFilesSnapshot | null {
@@ -317,8 +326,15 @@ function parseCompactionLedger(value: unknown): CompactionLedger | null {
 
 }
 
+/** 冻结目标集合等价：顺序敏感的逐项比较（目标以提交时顺序冻结）。 */
+function sameFrozenTargets(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
 export class SessionStore {
   private readonly sessionsDir: string
+  // 写盘失败的意图仅用于维持本进程冻结；重试仍须真正提交，不能作为持久回执。
+  private readonly unpersistedControlIntents = new Map<string, SessionControlIntent>()
 
   constructor(appDataPath: string) {
     this.sessionsDir = path.join(appDataPath, 'sessions')
@@ -350,6 +366,10 @@ export class SessionStore {
     options: {
       readonly codeIndexEnabled?: boolean
       readonly permissionMode?: PermissionMode
+      /** 新会话的模型覆盖；缺省跟随注册表全局最近选择 */
+      readonly modelOverride?: ActiveModelRef
+      /** 新会话的思考强度覆盖；缺省跟随模型默认 */
+      readonly reasoningEffortOverride?: ReasoningEffort
     } = {}
   ): SessionData {
     const now = Date.now()
@@ -367,7 +387,11 @@ export class SessionStore {
       title: SESSION_PLACEHOLDER_TITLE,
       titleSource: 'placeholder',
       messageCount: 0,
-      codeIndexEnabled: options.codeIndexEnabled === true
+      codeIndexEnabled: options.codeIndexEnabled === true,
+      ...(options.modelOverride ? { modelOverride: options.modelOverride } : {}),
+      ...(options.reasoningEffortOverride
+        ? { reasoningEffortOverride: options.reasoningEffortOverride }
+        : {})
     }
 
     this.save(session)
@@ -794,7 +818,8 @@ export class SessionStore {
           ...(data.pinned ? { pinned: true } : {}),
           ...(data.reasoningEffortOverride
             ? { reasoningEffortOverride: data.reasoningEffortOverride }
-            : {})
+            : {}),
+          ...(data.modelOverride ? { modelOverride: data.modelOverride } : {})
         }
         if (data.kind === 'subagent') {
           summaries.push({
@@ -862,6 +887,49 @@ export class SessionStore {
       }
     }
     return active
+  }
+
+  /** 查询当前激活路径已接收的运行时输入；正式消息是接收凭据，不另建消重表。 */
+  findRuntimeInputFact(
+    sessionId: string,
+    notificationId: string
+  ): { messageId: string; input: RuntimeInputBlock } | null {
+    if (!notificationId) return null
+    const session = this.load(sessionId)
+    if (!session) return null
+    for (const message of getSessionActiveMessages(session)) {
+      for (const block of message.blocks ?? []) {
+        if (block.type === 'runtime_input' && block.notificationId === notificationId) {
+          return { messageId: message.id, input: structuredClone(block) }
+        }
+      }
+    }
+    return null
+  }
+
+  /**
+   * 查询当前激活路径上是否有 task_wait 结果已显式消费某后台通知。
+   * 仅扫 task_wait success ToolBlock 且 subagentNotificationIds 包含目标 ID；
+   * 不扫旧分支，不另建索引，不从 result 文本反推。
+   */
+  findSubagentNotificationReceipt(
+    sessionId: string,
+    notificationId: string
+  ): { messageId: string; toolCallId: string } | null {
+    if (!notificationId) return null
+    const session = this.load(sessionId)
+    if (!session) return null
+    for (const message of getSessionActiveMessages(session)) {
+      for (const block of message.blocks ?? []) {
+        if (block.type !== 'tool') continue
+        if (block.toolName !== 'task_wait') continue
+        if (block.status !== 'success') continue
+        if (block.subagentNotificationIds?.includes(notificationId)) {
+          return { messageId: message.id, toolCallId: block.toolCallId }
+        }
+      }
+    }
+    return null
   }
 
   /**
@@ -1194,14 +1262,39 @@ export class SessionStore {
   /**
    * 更新会话思考强度覆盖并持久化（只写 session.json 元数据）。
    * effort 为 null 时清除覆盖，回落模型默认思考强度。
+   * 高频交互路径：只读元数据，不加载完整对话记录。
    */
   updateReasoningEffortOverride(
     sessionId: string,
     effort: ReasoningEffort | null
   ): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
+    if (effort === null) {
+      delete session.reasoningEffortOverride
+    } else {
+      session.reasoningEffortOverride = effort
+    }
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return session
+  }
+
+  /** 原子更新会话模型与其兼容的思考强度（只读/只写元数据，不加载对话记录）。 */
+  updateModelSelection(
+    sessionId: string,
+    ref: ActiveModelRef | null,
+    effort: ReasoningEffort | null
+  ): SessionData | null {
+    const session = this.loadMetadata(sessionId)
+    if (!session) return null
+
+    if (ref === null) {
+      delete session.modelOverride
+    } else {
+      session.modelOverride = { providerId: ref.providerId, modelEntryId: ref.modelEntryId }
+    }
     if (effort === null) {
       delete session.reasoningEffortOverride
     } else {
@@ -1279,6 +1372,79 @@ export class SessionStore {
     session.pinned = pinned
     this.saveMetadata(session)
     return session
+  }
+
+  /** 读取用于冻结接纳的控制意图，包括本进程尚未成功写盘的意图。 */
+  getControlIntent(sessionId: string): SessionControlIntent | null {
+    const pending = this.unpersistedControlIntents.get(sessionId)
+    if (pending) return decodeSessionControlIntent(pending) ?? null
+    const meta = this.loadMetadata(sessionId)
+    if (!meta) return null
+    return decodeSessionControlIntent(meta.controlIntent) ?? null
+  }
+
+  /**
+   * 写入会话冷窗口控制意图（同一会话至多一个）。
+   * 已有意图时按 operationId + 冻结目标判身份：不一致即 conflict，不覆盖。
+   */
+  setControlIntent(
+    sessionId: string,
+    intent: SessionControlIntent
+  ): { ok: true } | { ok: false; code: 'not_found' | 'conflict'; current?: SessionControlIntent } {
+    const session = this.load(sessionId)
+    if (!session) return { ok: false, code: 'not_found' }
+    const pending = this.unpersistedControlIntents.get(sessionId)
+    const existing = pending ?? decodeSessionControlIntent(session.controlIntent)
+    if (existing) {
+      if (
+        existing.operationId !== intent.operationId ||
+        existing.kind !== intent.kind ||
+        !sameFrozenTargets(existing.targetRunIds, intent.targetRunIds) ||
+        !sameFrozenTargets(existing.targetSessionIds, intent.targetSessionIds)
+      ) {
+        return { ok: false, code: 'conflict', current: existing }
+      }
+      if (!pending) return { ok: true }
+    }
+    const validated = decodeSessionControlIntent(intent)!
+    this.unpersistedControlIntents.set(sessionId, validated)
+    session.controlIntent = validated
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    this.unpersistedControlIntents.delete(sessionId)
+    return { ok: true }
+  }
+
+  /** 清除指定操作的控制意图；会话已删或无意图幂等返回 true，不得清除他人意图。 */
+  clearControlIntent(sessionId: string, operationId: string): boolean {
+    if (this.unpersistedControlIntents.has(sessionId)) return false
+    const session = this.load(sessionId)
+    if (!session) return true
+    const existing = decodeSessionControlIntent(session.controlIntent)
+    if (!existing) return true
+    if (existing.operationId !== operationId) return false
+    delete session.controlIntent
+    session.updatedAt = Date.now()
+    this.saveMetadata(session)
+    return true
+  }
+
+  /**
+   * 启动重放入口：枚举所有携带控制意图的会话；不进入对外列表契约。
+   * 非法意图让 decoder 抛错——启动重放必须显式失败，不静默丢弃用户指令。
+   */
+  listControlIntents(): Array<{ sessionId: string; intent: SessionControlIntent }> {
+    if (!fs.existsSync(this.sessionsDir)) return []
+    const result: Array<{ sessionId: string; intent: SessionControlIntent }> = []
+    for (const entry of fs.readdirSync(this.sessionsDir, { withFileTypes: true })) {
+      // 点开头目录是内部暂存区（如原子创建的 .child-creates），不是会话
+      if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+      const meta = this.loadMetadata(entry.name)
+      if (!meta) continue
+      const intent = decodeSessionControlIntent(meta.controlIntent)
+      if (intent) result.push({ sessionId: entry.name, intent })
+    }
+    return result
   }
 
   /**
@@ -1460,7 +1626,11 @@ export class SessionStore {
    * 不重写 messages.jsonl；同一会话树分支共享此 key。
    */
   ensureCacheRoutingKey(sessionId: string): string | null {
-    const session = this.load(sessionId)
+    // 迁移入口会补写计数；在迁移前识别旧元数据，保留完整历史恢复路径。
+    const metadata = this.loadMetadataOnly(sessionId)
+    const session = metadata && typeof metadata.messageCount !== 'number'
+      ? this.load(sessionId)
+      : this.loadMetadata(sessionId)
     if (!session) return null
 
     if (typeof session.cacheRoutingKey === 'string' && session.cacheRoutingKey.length > 0) {
@@ -1561,10 +1731,10 @@ export class SessionStore {
     const session = this.load(sessionId)
     if (!session || classifyLedgerRestore(session, ledger) !== 'restored') return false
     const visible = messages.filter(message => message.role !== 'system' && !message.internal)
-    const cut = visible.findIndex(message => message.origin && ledger.tailFrom && message.origin.messageId === ledger.tailFrom.messageId && message.origin.step === ledger.tailFrom.step)
+    const cut = visible.findIndex(message => isSameMessageOrigin(message.origin, ledger.tailFrom))
     if (cut <= 0 || cut > durableCompactionPrefixLength(session, visible, projection)) return false
     const covered = visible[cut - 1].origin
-    if (!covered || covered.messageId !== ledger.state?.coversThrough.messageId || covered.step !== ledger.state.coversThrough.step) return false
+    if (!isSameMessageOrigin(covered, ledger.state?.coversThrough)) return false
     this.saveContextSnapshot(sessionId, ledger)
     return true
   }

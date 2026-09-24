@@ -11,7 +11,13 @@ export {
   type ThinkingBlock,
   type TextBlock,
   type ToolBlock,
+  type RuntimeInputBlock,
   type MessageBlock
+} from './types'
+
+export {
+  RUNTIME_INPUT_VERSION,
+  decodeRuntimeInputBlock
 } from './types'
 
 export {

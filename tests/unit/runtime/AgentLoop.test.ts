@@ -1,3 +1,4 @@
+import { formatTerminalErrorMessage } from '../../../src/shared/session/terminalErrorBlocks'
 import { describe, it, expect, vi } from 'vitest'
 import { AgentLoop } from '../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../src/runtime/agent/EventBus'
@@ -153,9 +154,11 @@ describe('AgentLoop', () => {
 
     await loop.sendMessage('hello', agentRoute())
 
+    // 事件发原始文本（带 ModelFailure 前缀），翻译统一在展示边界
     expect(events.filter(e => e.type === 'error')).toEqual([
-      expect.objectContaining({ error: 'API 错误 401' })
+      expect.objectContaining({ error: 'ModelFailure:unknown:API 错误 401' })
     ])
+    expect(formatTerminalErrorMessage('ModelFailure:unknown:API 错误 401')).toBe('出了个没识别出来的问题，可以导出诊断包帮忙定位。')
     expect(loop.getState()).toBe('error')
   })
 
@@ -179,9 +182,12 @@ describe('AgentLoop', () => {
 
     expect(events.filter(e => e.type === 'error')).toEqual([
       expect.objectContaining({
-        error: '对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。'
+        // unknown 前缀包裹内层旧家族；展示边界的翻译回退到内层语义
+        error: 'ModelFailure:unknown:ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'
       })
     ])
+    expect(formatTerminalErrorMessage('ModelFailure:unknown:ContextBudgetExceeded: estimatedTokens=120 serializedBytes=480 attemptedCompaction=true'))
+      .toBe('对话内容已超过模型上下文预算。请移除部分图片、缩短消息，或新建会话后重试。')
     expect(loop.getState()).toBe('error')
   })
 
@@ -988,8 +994,8 @@ describe('AgentLoop', () => {
     const history: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
       history.push(
-        { role: 'user', content: 'x'.repeat(3_300) },
-        { role: 'assistant', content: 'y'.repeat(3_300) }
+        { role: 'user', content: 'x'.repeat(700) },
+        { role: 'assistant', content: 'y'.repeat(700) }
       )
     }
     loop.injectHistory(history)
@@ -1065,8 +1071,8 @@ describe('AgentLoop', () => {
     const recentMessages: ChatMessage[] = []
     for (let i = 0; i < 24; i++) {
       recentMessages.push(
-        { role: 'user', content: 'x'.repeat(3_300) },
-        { role: 'assistant', content: 'y'.repeat(3_300) }
+        { role: 'user', content: 'x'.repeat(700) },
+        { role: 'assistant', content: 'y'.repeat(700) }
       )
     }
 

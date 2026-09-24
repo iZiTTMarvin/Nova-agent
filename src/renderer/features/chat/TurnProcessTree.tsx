@@ -12,6 +12,7 @@ import { formatWorkedHeader, MISSING_ANSWER_TEXT } from './turnSummaryDisplay'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { TurnRenderModel, TurnTimelineSegment } from './turnProcessModel'
 import type { RendererMessageBlock } from '../../stores/types'
+import { useSubagentProjectionStore, isSubagentActive } from '../subagents/projection'
 import './TurnProcessTree.css'
 
 export interface TurnProcessTreeProps {
@@ -104,10 +105,34 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
     })
   }, [onUserOpenChange])
 
-  const headerTitle = formatWorkedHeader({
+  const activeSubagentsInTurn = useSubagentProjectionStore((state) => {
+    if (!sessionId) return 0
+    let count = 0
+    for (const block of blocks) {
+      if (
+        block.type === 'tool' &&
+        (block.toolName === 'task' || block.toolName === 'batch_task' || block.toolName === 'task_followup')
+      ) {
+        const childRunId = state.childRunIdByParentToolCallId[block.toolCallId]
+        if (childRunId) {
+          const projection = state.byChildRunId[childRunId]
+          if (projection && projection.execution === 'background_read_only' && isSubagentActive(projection.status)) {
+            count++
+          }
+        }
+      }
+    }
+    return count
+  })
+
+  const baseHeaderTitle = formatWorkedHeader({
     phase: model.phase,
     durationMs: model.durationMs
   })
+  const headerTitle =
+    activeSubagentsInTurn > 0
+      ? `${baseHeaderTitle} · ${activeSubagentsInTurn} 个后台任务进行中`
+      : baseHeaderTitle
 
   const groups = groupTimeline(model.timeline)
   const trace = (segments: TurnTimelineSegment[]) => (

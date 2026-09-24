@@ -6,12 +6,14 @@
  * 2. 按文件拒绝（reject-file）：从 checkpoint 恢复单个文件
  * 3. 接受文件改动（accept-file）：标记文件已审查
  */
-import { app } from 'electron'
+import { app, clipboard, dialog } from 'electron'
 import { recoverSessionTurnDrafts } from '../../runtime/sessions'
+import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
 import { getRunCoordinator } from '../services/RunCoordinatorHost'
 import { handle } from './secureIpc'
 import {
   LOAD_SESSIONS,
+  SESSION_EXPORT_MARKDOWN,
   LOAD_SESSION,
   LOAD_SESSION_MESSAGES,
   CREATE_SESSION,
@@ -33,6 +35,8 @@ import {
   type SessionMessage
 } from '../../runtime/sessions/types'
 import { getSessionActiveMessages, attachBranchMeta, ensureMessageParentChain, resolveCurrentLeafId } from '../../runtime/sessions/tree'
+import { exportSessionToMarkdown } from '../../runtime/sessions/sessionMarkdown'
+import { writeFileSync } from 'fs'
 import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS, GET_SESSION_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
@@ -131,10 +135,41 @@ export function registerSessionHandler(): void {
     return summaries
   })
 
+  // 会话导出 Markdown：主进程一次性读全量（renderer 是分页加载的），
+  // 只导出激活路径（messages 是树，直接顺序导会把废弃分支也倒出来）
+  handle(SESSION_EXPORT_MARKDOWN, async (_event, params: { sessionId: string; target: 'clipboard' | 'file' }) => {
+    if (typeof params?.sessionId !== 'string' || (params.target !== 'clipboard' && params.target !== 'file')) {
+      throw new Error('session:export-markdown 参数不合法')
+    }
+    try {
+      const session = sessionStore.load(params.sessionId)
+      if (!session) return { status: 'failed' as const, error: '会话不存在' }
+      const active = getSessionActiveMessages(session)
+      const markdown = exportSessionToMarkdown(active, session.title)
+      if (params.target === 'clipboard') {
+        await clipboard.writeText(markdown)
+        return { status: 'copied' as const }
+      }
+      const picked = await dialog.showSaveDialog({
+        title: '导出会话为 Markdown',
+        defaultPath: `${(session.title || session.id).replace(/[\/:*?"<>|]/g, '_')}.md`,
+        filters: [{ name: 'Markdown', extensions: ['md'] }]
+      })
+      if (picked.canceled || !picked.filePath) return { status: 'cancelled' as const }
+      writeFileSync(picked.filePath, markdown, 'utf8')
+      return { status: 'saved' as const, filePath: picked.filePath }
+    } catch (err) {
+      return { status: 'failed' as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
 
   // 加载单个会话的展示页（尾部消息）；上下文拆分延后全量计算后推送
   handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
-    recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
+    // 与启动归档、sendAgentMessage 注入同一结算闭包：打开会话触发的归档同样要精确结算
+    const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+      settleSubagentToolCall({ sessionStore, runCoordinator: getRunCoordinator() }, input)
+    recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator(), settle)
     const display = sessionStore.loadForDisplay(params.sessionId, {
       tailLimit: INITIAL_SESSION_DISPLAY_PAGE_SIZE
     })

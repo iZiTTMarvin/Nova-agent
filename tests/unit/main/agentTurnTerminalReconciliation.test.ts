@@ -10,13 +10,16 @@ const snapHolder = vi.hoisted(() => ({
   current: {
     runId: 'run-agent', kind: 'agent', status: 'running',
     sessionId: 'sess-1', workspaceId: '/tmp/ws'
-  } as Record<string, unknown> | null
+  } as Record<string, unknown> | null,
+  // 按 runId 分派的显式快照：接力预约与父 turn 必须看到各自的状态
+  byRunId: new Map<string, Record<string, unknown>>()
 }))
 const coordinator = vi.hoisted(() => ({
   listActiveRuns: vi.fn(() => [] as any[]),
   listSnapshotsForSession: vi.fn(() => [] as any[]),
   getSnapshotForSession: vi.fn(() => null),
-  getSnapshot: vi.fn(() => snapHolder.current),
+  getSnapshot: vi.fn((runId?: string) =>
+    (runId ? snapHolder.byRunId.get(runId) : undefined) ?? snapHolder.current),
   startRun: vi.fn((params: any) => ({
     runId: 'run-agent', kind: params.kind, status: 'queued',
     sessionId: params.sessionId, workspaceId: params.workspaceId
@@ -40,7 +43,19 @@ const extractSpy = vi.hoisted(() => vi.fn())
 
 const registryHolder = vi.hoisted(() => ({ current: null as any }))
 
+// 投递协调器是外部状态 Owner：这里只记录调用并给出受控返回值。
+const deliveryCoordinator = vi.hoisted(() => ({
+  createActiveTurnReceiver: vi.fn(() => ({ receive: vi.fn(async () => []) })),
+  noteExecutionSettled: vi.fn(),
+  admitIdleRelay: vi.fn(() => null as { relayRunId: string } | null),
+  settleRelayReservation: vi.fn(),
+  supersedeQueuedRelayReservations: vi.fn(),
+  reconcileDeliveryOnStartup: vi.fn(() => [] as string[]),
+  listSessionsAwaitingRelay: vi.fn(() => [] as string[])
+}))
+
 const stubAgentLoop = vi.hoisted(() => ({
+  setRuntimeInputReceiver: vi.fn(),
   setRunRef: vi.fn(),
   setExecutionIdentity: vi.fn(),
   setExecutionFence: vi.fn(),
@@ -58,6 +73,11 @@ vi.mock('electron', () => ({
 vi.mock('../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => coordinator,
   getRunExecutionRegistry: () => executionRegistry
+}))
+
+vi.mock('../../../src/main/services/SubagentDeliveryCoordinatorHost', () => ({
+  getSubagentDeliveryCoordinator: () => deliveryCoordinator,
+  setIdleRelayCallback: vi.fn()
 }))
 
 vi.mock('../../../src/main/services/WorkspaceService', () => ({
@@ -141,7 +161,16 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
   ensureSkillRegistryForWorkspace: vi.fn(() => registryHolder.current)
 }))
 
-import { sendAgentMessage } from '../../../src/main/agent/turn/AgentTurnService'
+import {
+  sendAgentMessage,
+  configureIdleRelay,
+  resumeIdleRelaysAfterStartup
+} from '../../../src/main/agent/turn/AgentTurnService'
+import {
+  enqueueSteeringMessage,
+  hasSteeringMessage,
+  resetSteeringQueueForTests
+} from '../../../src/main/agent/turn/SteeringQueue'
 
 function makeSession(mode: 'default' | 'compose' = 'default') {
   return {
@@ -183,8 +212,12 @@ beforeEach(() => {
   registryHolder.current = null
   coordinator.listActiveRuns.mockReturnValue([])
   coordinator.getSnapshotForSession.mockReturnValue(null)
+  snapHolder.byRunId.clear()
   sessionStore.load.mockReturnValue(makeSession())
   stubAgentLoop.sendMessage.mockResolvedValue({ status: 'completed' })
+  deliveryCoordinator.admitIdleRelay.mockReturnValue(null)
+  deliveryCoordinator.listSessionsAwaitingRelay.mockReturnValue([])
+  resetSteeringQueueForTests()
 })
 
 describe('agent/compose run 按 outcome 提交终态', () => {
@@ -272,5 +305,102 @@ describe('sendMessage rejection 与记忆提炼门控', () => {
     })
     await sendAgentMessage({ sessionId: 'sess-1', content: '你好' }, deps)
     expect(extractSpy).not.toHaveBeenCalled()
+  })
+})
+
+describe('空闲接力在 turn 正常收敛后才接管', () => {
+  const sessionId = 'sess-idle'
+  const relayRunId = 'relay-idle'
+  const trigger = {
+    version: 1,
+    requestId: relayRunId,
+    receiveMessageId: `msg_relay_${relayRunId}`,
+    originUserMessageId: 'user-origin',
+    anchorMessageId: null,
+    items: [{ notificationId: 'ntf_child', sourceRunId: 'run-child', content: '后台结果' }],
+    createdAt: 1
+  }
+
+  /** 登记一个未执行的接力预约快照，并让接纳返回它。 */
+  const admitRelay = (): void => {
+    snapHolder.byRunId.set(relayRunId, {
+      runId: relayRunId, kind: 'agent', status: 'queued',
+      sessionId, workspaceId: '/tmp/ws', relayTrigger: trigger
+    })
+    deliveryCoordinator.admitIdleRelay.mockReturnValue({ relayRunId })
+  }
+
+  it('父 turn completed 时接纳并接管同一预约 run', async () => {
+    admitRelay()
+    configureIdleRelay(deps)
+    snapHolder.current = {
+      runId: 'run-agent', kind: 'agent', status: 'completed',
+      sessionId: 'sess-1', workspaceId: '/tmp/ws'
+    }
+
+    await sendAgentMessage({ sessionId, content: '你好' }, deps)
+
+    expect(deliveryCoordinator.admitIdleRelay).toHaveBeenCalledTimes(1)
+    expect(deliveryCoordinator.admitIdleRelay).toHaveBeenCalledWith(sessionId)
+    // 接管复用预约身份，不新开 run
+    expect(coordinator.startRun).toHaveBeenCalledWith(expect.objectContaining({ runId: relayRunId }))
+  })
+
+  it.each(['failed', 'cancelled', 'interrupted'])('父 turn %s 后不自动接力', async status => {
+    admitRelay()
+    configureIdleRelay(deps)
+    snapHolder.current = {
+      runId: 'run-agent', kind: 'agent', status,
+      sessionId: 'sess-1', workspaceId: '/tmp/ws'
+    }
+
+    await sendAgentMessage({ sessionId, content: '你好' }, deps)
+
+    expect(deliveryCoordinator.admitIdleRelay).not.toHaveBeenCalled()
+  })
+
+  it('同会话排队的用户消息优先：当前 turn 不抢先接纳接力', async () => {
+    admitRelay()
+    configureIdleRelay(deps)
+    snapHolder.current = {
+      runId: 'run-agent', kind: 'agent', status: 'completed',
+      sessionId: 'sess-1', workspaceId: '/tmp/ws'
+    }
+    enqueueSteeringMessage(sessionId, { sessionId, content: '排队消息' })
+
+    await sendAgentMessage({ sessionId, content: '你好' }, deps)
+    await vi.waitFor(() =>
+      expect(coordinator.startRun).toHaveBeenCalledWith(expect.objectContaining({ runId: relayRunId }))
+    )
+
+    // 排队消息先出队执行：接纳发生在那之后，当前 turn 没有抢先接力
+    expect(hasSteeringMessage(sessionId)).toBe(false)
+    const sendOrders = stubAgentLoop.sendMessage.mock.invocationCallOrder
+    expect(sendOrders.length).toBeGreaterThanOrEqual(2)
+    expect(deliveryCoordinator.admitIdleRelay.mock.invocationCallOrder[0])
+      .toBeGreaterThan(sendOrders[1])
+    expect(deliveryCoordinator.admitIdleRelay.mock.calls[0]).toEqual([sessionId])
+  })
+
+  it('启动恢复对仍待接力的会话逐个触发接管', async () => {
+    // 两个会话都登记了同一份未执行预约：接管按会话逐个发起，不遗漏也不重复
+    snapHolder.byRunId.set(relayRunId, {
+      runId: relayRunId, kind: 'agent', status: 'queued',
+      sessionId, workspaceId: '/tmp/ws', relayTrigger: trigger
+    })
+    deliveryCoordinator.listSessionsAwaitingRelay.mockReturnValue([sessionId, 'sess-other'])
+    deliveryCoordinator.admitIdleRelay.mockReturnValue({ relayRunId })
+    configureIdleRelay(deps)
+
+    resumeIdleRelaysAfterStartup()
+    await vi.waitFor(() => expect(stubAgentLoop.sendMessage).toHaveBeenCalledTimes(1))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(deliveryCoordinator.listSessionsAwaitingRelay).toHaveBeenCalledTimes(1)
+    // 两个会话都被查询接纳，不遗漏
+    expect(deliveryCoordinator.admitIdleRelay.mock.calls).toEqual([[sessionId], ['sess-other']])
+    // 同一 relayRunId 的接管单飞：第二次触发 join 已有接管，不重复执行
+    expect(coordinator.startRun.mock.calls.filter(call => call[0]?.runId === relayRunId)).toHaveLength(1)
+    expect(stubAgentLoop.sendMessage).toHaveBeenCalledTimes(1)
   })
 })

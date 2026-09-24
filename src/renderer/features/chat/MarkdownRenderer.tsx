@@ -22,6 +22,7 @@ import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
 import { splitIncrementalMarkdown } from './incrementalMarkdown'
+import { MarkdownLink } from './MarkdownLink'
 import './MarkdownRenderer.css'
 
 const LANG_EXT_MAP: Record<string, string> = {
@@ -164,14 +165,10 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
         return <CodeBlock language={language ?? ''} code={code} isStreaming={isStreaming} />
       },
       link({ href, children }) {
-        if (!isSafeMarkdownHref(href)) {
+        if (!href || !isSafeMarkdownHref(href)) {
           return <span className="markdown-link-text">{children}</span>
         }
-        return (
-          <a className="markdown-link" href={href} target="_blank" rel="noreferrer noopener">
-            {children}
-          </a>
-        )
+        return <MarkdownLink href={href}>{children}</MarkdownLink>
       }
     }),
     [isStreaming]

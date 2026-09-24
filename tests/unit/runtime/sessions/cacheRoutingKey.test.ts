@@ -2,7 +2,7 @@
  * 会话 cacheRoutingKey 懒生成 / 持久化 / ChatOptions 透传
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import * as fs from 'fs'
+import fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
@@ -27,12 +27,74 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   resetSessionIndexHostForTests()
   fs.rmSync(tmpDir, { recursive: true, force: true })
   vi.useRealTimers()
 })
 
 describe('cacheRoutingKey 会话路由 key', () => {
+  it('完整元数据生成与复用 key 均不读取历史，保留分支和其他元数据', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    store.appendMessage(session.id, { id: 'root', role: 'user', content: 'root', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'old', role: 'assistant', content: 'old branch', timestamp: 2 })
+    store.setCurrentLeaf(session.id, 'root')
+    store.appendMessage(session.id, { id: 'new', role: 'assistant', content: 'new branch', timestamp: 3 })
+    const metadata = store.loadMetadata(session.id)!
+    const dir = path.join(store.getSessionsDir(), session.id)
+    const history = fs.readFileSync(path.join(dir, 'messages.jsonl'))
+    const read = vi.spyOn(fs, 'readFileSync')
+    const load = vi.spyOn(store, 'load')
+    const key = store.ensureCacheRoutingKey(session.id)
+    expect(key).toMatch(/^[0-9a-f-]{36}$/)
+    const after = store.loadMetadata(session.id)!
+    expect(after).toEqual({ ...metadata, cacheRoutingKey: key, updatedAt: after.updatedAt })
+    expect(after.messageCount).toBe(2)
+    const write = vi.spyOn(fs, 'writeFileSync')
+    expect(store.ensureCacheRoutingKey(session.id)).toBe(key)
+    expect(write).not.toHaveBeenCalled()
+    expect(load).not.toHaveBeenCalled()
+    expect(read.mock.calls.every(([file]) => String(file).endsWith('session.json'))).toBe(true)
+    read.mockRestore()
+    expect(fs.readFileSync(path.join(dir, 'messages.jsonl'))).toEqual(history)
+    expect(store.loadActivePath(session.id)?.messages.map(message => message.id)).toEqual(['root', 'new'])
+  })
+
+  it('旧 metadata 缺 messageCount 时全量加载回算激活分支，不能写回 0', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    store.appendMessage(session.id, { id: 'root', role: 'user', content: 'root', timestamp: 1 })
+    store.appendMessage(session.id, { id: 'old', role: 'assistant', content: 'old', timestamp: 2 })
+    store.setCurrentLeaf(session.id, 'root')
+    const metadata = store.loadMetadata(session.id)!
+    delete metadata.messageCount
+    const file = path.join(store.getSessionsDir(), session.id, 'session.json')
+    fs.writeFileSync(file, JSON.stringify(metadata))
+    const load = vi.spyOn(store, 'load')
+    const key = store.ensureCacheRoutingKey(session.id)
+    expect(load).toHaveBeenCalledTimes(1)
+    expect(store.loadMetadata(session.id)).toMatchObject({ cacheRoutingKey: key, messageCount: 1, currentLeafId: 'root' })
+    expect(store.load(session.id)?.messages.map(message => message.id)).toEqual(['root', 'old'])
+  })
+
+  it('已有 key 且缺计数时保留 key 并恢复计数；损坏元数据仍返回 null', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    const metadata = store.loadMetadata(session.id)!
+    delete metadata.messageCount
+    metadata.cacheRoutingKey = 'existing'
+    const file = path.join(store.getSessionsDir(), session.id, 'session.json')
+    fs.writeFileSync(file, JSON.stringify(metadata))
+    expect(store.ensureCacheRoutingKey(session.id)).toBe('existing')
+    expect(store.loadMetadata(session.id)).toMatchObject({ cacheRoutingKey: 'existing', messageCount: 0 })
+    fs.writeFileSync(file, '{broken')
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(store.ensureCacheRoutingKey(session.id)).toBeNull()
+    expect(store.load(session.id)).toBeNull()
+    expect(fs.readFileSync(file, 'utf8')).toBe('{broken')
+  })
+
   it('懒生成后持久化；新 SessionStore 重启后同 session key 不变', () => {
     const store1 = new SessionStore(tmpDir)
     const session = store1.create('/ws/a')

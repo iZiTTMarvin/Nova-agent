@@ -70,7 +70,7 @@ describe('archiveReadTool', () => {
     expect(parsed.totalLines).toBe(100)
   })
 
-  it('任意 limit 下响应序列化长度 <= 7500', async () => {
+  it('任意 limit 下响应序列化长度不超过上限', async () => {
     const lines = Array.from({ length: 5000 }, (_, i) => `line ${i + 1} with some extra text here`)
     const content = lines.join('\n')
     const meta = await store.write(sessionId, content, { toolName: 'test' })

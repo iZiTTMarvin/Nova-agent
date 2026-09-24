@@ -9,7 +9,7 @@ import { lookupModelCapability } from './modelRegistry'
 export type CacheStrategy = 'auto' | 'anthropic'
 
 /** 'auto' 不发送参数，其余值显式控制推理深度。 */
-export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'max'
+export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 /**
  * 缓存档案标识（与 runtime/model/cacheProfile.ts 对齐）。
@@ -73,7 +73,7 @@ export interface ModelConfig {
   toolDialect?: 'auto' | 'native' | 'xml'
   /**
    * 思考强度（reasoning effort）覆盖。
-   * 缺省或 'auto' 时不发送该参数；'low'/'medium'/'high'/'max' 显式控制推理深度。
+   * 缺省或 'auto' 时不发送该参数；其余值显式控制推理深度。
    * 运行时按 provider 方言注入 reasoning_effort（GLM 额外带 thinking 对象）。
    */
   reasoningEffort?: ReasoningEffort

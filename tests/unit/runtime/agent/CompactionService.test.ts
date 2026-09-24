@@ -14,6 +14,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { identitySummaryProjection } from '../../../../src/test-support/builders/identitySummaryProjection'
 import { makeCompactionLedger, handoffJson } from '../../../../src/test-support/builders/compactionLedger'
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
+import { measureRequestBudget } from '../../../../src/runtime/model/requestBudget'
 import { getMetricBuffer, registerMetricSink, resetMetricsForTests } from '../../../../src/shared/diagnostics/metrics'
 
 /** 恒等投影：单测里摘要输入与权威消息逐条一致，便于断言服务侧行为 */
@@ -112,18 +113,76 @@ describe('CompactionService', () => {
     [{ type: 'context_overflow', rawError: 'too long' }, 'request-overflow'],
     [{ type: 'message_end', finishReason: 'stop' }, 'empty-summary'],
     [{ type: 'text_delta', delta: 'invalid JSON' }, 'invalid-summary']
-  ] as const)('摘要失败保留原因和历史，不误报为用户消息过长：%s', async (event, reason) => {
+  ] as const)('compact 下摘要失败放行主请求且原因不丢：%s', async (event, reason) => {
+    const previous = process.env.NOVA_METRICS
+    process.env.NOVA_METRICS = '1'
+    registerMetricSink(() => {})
+    try {
+      const context = createContext(createMessages(60))
+      const original = context.messages
+      const client = new MockModelClient()
+        .addResponse({ events: [{ type: 'text_delta', delta: 'stub' }] })
+        .addResponse({ events: [event] })
+        .addResponse({ events: [{ type: 'text_delta', delta: 'still invalid JSON' }] })
+      const { service } = createService({ context, contextWindow: 2_000, client })
+      await expect(service.prepareMainRequest(original, undefined, identitySummaryProjection))
+        .resolves.toMatchObject({ status: 'within' })
+      expect(context.messages).toBe(original)
+      expect(context.compactionState).toBeNull()
+      const failOpen = getMetricBuffer()
+        .filter(e => e.category === 'compaction.rejected' && e.tags?.reason === 'fail-open')
+      expect(failOpen.at(-1)?.tags?.failure).toBe(reason)
+      service.dispose()
+    } finally {
+      resetMetricsForTests()
+      if (previous === undefined) delete process.env.NOVA_METRICS
+      else process.env.NOVA_METRICS = previous
+    }
+  })
+  it('fail-open 后估算未明显增长时不再重试摘要，增长 ≥ 2% 窗口后重试', async () => {
     const context = createContext(createMessages(60))
-    const original = context.messages
     const client = new MockModelClient()
       .addResponse({ events: [{ type: 'text_delta', delta: 'stub' }] })
-      .addResponse({ events: [event] })
+      .addResponse({ events: [{ type: 'text_delta', delta: 'invalid JSON' }] })
       .addResponse({ events: [{ type: 'text_delta', delta: 'still invalid JSON' }] })
     const { service } = createService({ context, contextWindow: 2_000, client })
-    await expect(service.prepareMainRequest(original, undefined, identitySummaryProjection))
-      .rejects.toThrow(`ContextRecoveryFailed: ${reason}`)
+
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection))
+      .resolves.toMatchObject({ status: 'within' })
+    const afterFailure = client.getCalls().length
+    expect(afterFailure).toBe(3)
+
+    // 相同估算处于退避窗口内：不再发出摘要调用
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection))
+      .resolves.toMatchObject({ status: 'within' })
+    expect(client.getCalls().length).toBe(afterFailure)
+
+    // 估算增长超过窗口 2%（2_000 × 0.02 = 40 token）后重试压缩
+    for (let index = 0; index < 4; index++) {
+      context.messages.push({ role: 'user', content: `grow-${index}-${'g'.repeat(160)}` })
+    }
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection))
+      .resolves.toMatchObject({ status: 'within' })
+    expect(client.getCalls().length).toBeGreaterThan(afterFailure)
+    service.dispose()
+  })
+  it('blocked 状态摘要失败仍抛出，fail-open 只豁免 compact', async () => {
+    const context = createContext(createMessages(60))
+    const original = context.messages
+    // 同一请求已被 provider 实测 5_000 input token，高于高水位（2_000 - 300 预留）→ blocked
+    const request = measureRequestBudget({ messages: context.messages }, 'unknown', 2_000)
+    const client = new MockModelClient()
+      .addResponse({ events: [{ type: 'text_delta', delta: 'stub' }] })
+      .addResponse({ events: [{ type: 'text_delta', delta: 'invalid JSON' }] })
+      .addResponse({ events: [{ type: 'text_delta', delta: 'still invalid JSON' }] })
+    const { service } = createService({ context, contextWindow: 2_000, client })
+    expect(service.observeMainRequest(5_000, request, {
+      logicalRequestId: 'main-1', physicalAttemptId: 'attempt-1',
+      routeId: 'unknown', purpose: 'main'
+    }, 0)).toBe(true)
+    await expect(service.prepareMainRequest(context.messages, undefined, identitySummaryProjection))
+      .rejects.toThrow('ContextRecoveryFailed: invalid-summary')
     expect(context.messages).toBe(original)
-    expect(context.compactionState).toBeNull()
     service.dispose()
   })
   it('恢复后的无锚点长历史先压缩可归档前缀，再允许主请求', async () => {

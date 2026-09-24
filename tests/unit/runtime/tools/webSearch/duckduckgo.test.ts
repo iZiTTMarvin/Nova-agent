@@ -60,18 +60,24 @@ describe('duckduckgoProvider', () => {
     expect((init as RequestInit).method).toBe('POST')
   })
 
-  it('失败后进入冷却期', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
+  it('失败后进入冷却期并释放未读取的响应正文', async () => {
+    let bodyCancelled = false
+    const body = new ReadableStream({
+      cancel: () => {
+        bodyCancelled = true
+      }
+    })
+    mockFetch.mockResolvedValueOnce(new Response(body, {
       status: 503,
       statusText: 'Service Unavailable'
-    } as Response)
+    }))
 
     await expect(
       duckduckgoProvider.search({ query: 'fail' }, new AbortController().signal)
     ).rejects.toMatchObject({ provider: 'duckduckgo' })
 
     expect(duckduckgoProvider.isAvailable()).toBe(false)
+    expect(bodyCancelled).toBe(true)
   })
 
   it('零结果时不触发冷却（由工具层 fallback）', async () => {
@@ -87,15 +93,27 @@ describe('duckduckgoProvider', () => {
     expect(duckduckgoProvider.isAvailable()).toBe(true)
   })
 
-  it('用户取消时不触发冷却', async () => {
+  it('正文消费期间用户取消时不触发冷却', async () => {
     const controller = new AbortController()
+    mockFetch.mockImplementationOnce((_url, init) => {
+      let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+      const body = new ReadableStream<Uint8Array>({
+        start(innerController) {
+          streamController = innerController
+          innerController.enqueue(new TextEncoder().encode('<html>'))
+        }
+      })
+      init?.signal?.addEventListener('abort', () => {
+        streamController?.error(new DOMException('Aborted', 'AbortError'))
+      })
+      return Promise.resolve(new Response(body, { status: 200 }))
+    })
+
+    const pending = duckduckgoProvider.search({ query: 'cancel' }, controller.signal)
+    await Promise.resolve()
     controller.abort()
-    mockFetch.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'))
 
-    await expect(
-      duckduckgoProvider.search({ query: 'cancel' }, controller.signal)
-    ).rejects.toMatchObject({ provider: 'duckduckgo', message: '请求已取消' })
-
+    await expect(pending).rejects.toMatchObject({ provider: 'duckduckgo', message: '请求已取消' })
     expect(duckduckgoProvider.isAvailable()).toBe(true)
   })
 })

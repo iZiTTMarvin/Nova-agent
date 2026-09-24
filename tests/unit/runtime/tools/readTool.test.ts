@@ -71,6 +71,23 @@ describe('readTool', () => {
   // ── 基础读取 ────────────────────────────────────────────
 
   describe('基础功能', () => {
+    it('中等 Markdown 默认给出有界预览与准确续读入口，full 可恢复未压缩读取', async () => {
+      const lines = ['# Release overview', '- owner: Morgan Lee', ...Array.from({ length: 180 }, (_, i) => `line ${i}: ${'x'.repeat(90)}`)]
+      writeFileSync(join(TMP, 'handbook.md'), lines.join('\n'))
+      const preview = await readTool.execute({ path: 'handbook.md' }, createContext())
+      expect(preview.success).toBe(true)
+      expect(preview.output).toContain('[read mode: preview]')
+      expect(preview.output).toContain('shown: 1-100')
+      expect(preview.output).toContain('"offset":100')
+      expect(preview.output).not.toContain('line 150:')
+      expect(testReadState.get(join(TMP, 'handbook.md'))?.visibleRange).toBeDefined()
+
+      const full = await readTool.execute({ path: 'handbook.md', full: true }, createContext())
+      expect(full.success).toBe(true)
+      expect(full.output).toContain('line 150:')
+      expect(testReadState.get(join(TMP, 'handbook.md'))?.visibleRange).toBeUndefined()
+      expect((await readTool.execute({ path: 'handbook.md', full: true, offset: 0 }, createContext())).success).toBe(false)
+    })
     it('读取文本文件内容', async () => {
       writeFileSync(join(TMP, 'hello.txt'), 'hello world\nline2\nline3\n')
       const result = await readTool.execute({ path: 'hello.txt' }, createContext())
@@ -231,7 +248,7 @@ describe('readTool', () => {
     it('超过 2000 行自动截断 + 续读提示', async () => {
       const lines = Array.from({ length: 2500 }, (_, i) => `line ${i}`)
       writeFileSync(join(TMP, 'long.txt'), lines.join('\n'))
-      const result = await readTool.execute({ path: 'long.txt' }, createContext())
+      const result = await readTool.execute({ path: 'long.txt', full: true }, createContext())
       expect(result.success).toBe(true)
 
       const outputLines = result.output.split('\n')
@@ -272,7 +289,7 @@ describe('readTool', () => {
       const line = 'x'.repeat(199) + '\n'
       const content = Array.from({ length: 800 }, () => line).join('')
       writeFileSync(join(TMP, 'bigbytes.txt'), content)
-      const result = await readTool.execute({ path: 'bigbytes.txt' }, createContext())
+      const result = await readTool.execute({ path: 'bigbytes.txt', full: true }, createContext())
       expect(result.success).toBe(true)
       expect(result.output).toContain('[显示')
       const outputBytes = Buffer.byteLength(result.output, 'utf-8')
@@ -536,7 +553,7 @@ describe('readTool', () => {
 
       try {
         const result = await readTool.execute(
-          { path: 'huge.txt' },
+          { path: 'huge.txt', full: true },
           createContext({ artifactStore: store, sessionId })
         )
 
@@ -561,7 +578,7 @@ describe('readTool', () => {
       writeFileSync(join(TMP, 'huge-no-store.txt'), content)
 
       const result = await readTool.execute(
-        { path: 'huge-no-store.txt' },
+        { path: 'huge-no-store.txt', full: true },
         createContext()
       )
 

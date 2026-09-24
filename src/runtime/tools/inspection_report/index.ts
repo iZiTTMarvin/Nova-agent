@@ -5,13 +5,13 @@ import { assertSideEffectAllowed, type ToolExecutor } from '../types'
 /** 结果随当前工具消息持久化；不写平行的验收状态或工作区报告文件。 */
 export const inspectionReportTool: ToolExecutor = {
   name: 'inspection_report',
-  description: 'inspector 提交当前 XForge 验收结论。先实际操作核验；提交 pass 或 fail 和核验依据，随后用自然语言汇报。主代理不能代交。',
+  description: 'The inspector submits the current XForge acceptance verdict. Verify by actually operating first; submit pass or fail with the verification basis, then report in natural language. The main agent cannot submit on its behalf.',
   executionMode: 'sequential',
   parameters: {
     type: 'object',
     properties: {
-      verdict: { type: 'string', enum: ['pass', 'fail'], description: '全部验收项通过选 pass；有未通过或未验证项选 fail。' },
-      summary: { type: 'string', minLength: 1, maxLength: 8000, description: '实际核验了什么、观察到什么，以及未通过或未验证项。' }
+      verdict: { type: 'string', enum: ['pass', 'fail'], description: 'Choose pass when all acceptance items pass; choose fail when something failed or remains unverified.' },
+      summary: { type: 'string', minLength: 1, maxLength: 8000, description: 'What was actually verified, what was observed, and any failed or unverified items.' }
     },
     required: ['verdict', 'summary'],
     additionalProperties: false

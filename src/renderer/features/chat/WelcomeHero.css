@@ -1,0 +1,78 @@
+.welcome-hero-bg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  background-image:
+    linear-gradient(to right, var(--grid-line-color) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line-color) 1px, transparent 1px);
+  background-size: 32px 32px;
+  opacity: 0.55;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 85%);
+  -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 40%, black 20%, transparent 85%);
+}
+
+.welcome-mascot-slot {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(480px, 100%);
+  margin-bottom: 1.5rem;
+  pointer-events: none;
+  user-select: none;
+}
+
+.welcome-wordmark {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.welcome-wordmark__letters {
+  color: light-dark(#777780, #85858e);
+  fill: currentColor;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.welcome-mascot {
+  overflow: visible;
+}
+
+.welcome-mascot__body {
+  fill: light-dark(#eae8fc, #3c394f);
+  stroke: light-dark(#c9c5ef, #645c80);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.welcome-mascot__eye {
+  fill: light-dark(#73669d, #c9c0f0);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 70ms ease-out;
+}
+
+.welcome-mascot--blink .welcome-mascot__eye {
+  transform: scaleY(0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome-mascot__eye {
+    transition: none;
+  }
+
+  .welcome-mascot--blink .welcome-mascot__eye {
+    transform: none;
+  }
+}

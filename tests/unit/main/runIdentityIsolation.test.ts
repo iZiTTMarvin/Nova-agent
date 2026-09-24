@@ -75,7 +75,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const settle of settlements.splice(0)) settle()
   await Promise.resolve()
-  for (const sessionId of new Set(['session-A', 'session-B', ...[...pendingAskQuestions.values()].map(entry => entry.sessionId)])) {
+  for (const sessionId of new Set(['session-A', 'session-B', ...store.list().map(session => session.id), ...[...pendingAskQuestions.values()].map(entry => entry.sessionId)])) {
     dismissPendingAskQuestionsForSession(sessionId)
     clearSteeringQueue(sessionId)
   }
@@ -166,8 +166,10 @@ describe('main run identity isolation', () => {
   })
 
   it('取消 A 在执行收敛前清空 A 队列，不等待 B 也不触碰 B 的提问和队列', async () => {
-    const a = start('A', 'session-A')
-    const b = start('B', 'session-B')
+    const sessionA = store.create(host.root).id
+    const sessionB = store.create(host.root).id
+    const a = start('A', sessionA)
+    const b = start('B', sessionB)
     const answerA = a.ask('question-A', [])
     const answerB = b.ask('question-B', [])
     const handle = getRunExecutionRegistry().get('A')!
@@ -176,18 +178,19 @@ describe('main run identity isolation', () => {
       abort: () => {},
       settled: answerA.then(() => {})
     })
-    enqueueSteeringMessage('session-A', { sessionId: 'session-A', content: 'queued A' })
-    enqueueSteeringMessage('session-B', { sessionId: 'session-B', content: 'queued B' })
+    enqueueSteeringMessage(sessionA, { sessionId: sessionA, content: 'queued A' })
+    enqueueSteeringMessage(sessionB, { sessionId: sessionB, content: 'queued B' })
     const beforeB = getRunCoordinator().getSnapshot('B')
     const cancelling = cancelExecution({ runId: 'A' })
-    expect(dequeueSteeringMessage('session-A')).toBeUndefined()
+    expect(dequeueSteeringMessage(sessionA)).toBeUndefined()
     await expect(cancelling).resolves.toEqual({ runId: 'A', status: 'cancelled' })
     await expect(answerA).resolves.toEqual([])
+    expect(store.getControlIntent(sessionA)).toBeNull()
     expect(getRunCoordinator().getSnapshot('B')).toEqual(beforeB)
     expect(getRunExecutionRegistry().listActiveRunIds()).toEqual(['B'])
-    expect(dequeueSteeringMessage('session-B')?.content).toBe('queued B')
+    expect(dequeueSteeringMessage(sessionB)?.content).toBe('queued B')
     expect(pendingAskQuestions.has('question-B')).toBe(true)
-    dismissPendingAskQuestionsForSession('session-B')
+    dismissPendingAskQuestionsForSession(sessionB)
     await expect(answerB).resolves.toEqual([])
   })
 
@@ -254,7 +257,8 @@ describe('main run identity isolation', () => {
   })
 
   it('无效取消身份明确失败；旧终态取消不能清掉同会话的新 turn 队列', async () => {
-    const a = start('A', 'session-A')
+    const sessionA = store.create(host.root).id
+    const a = start('A', sessionA)
     const before = getRunCoordinator().getSnapshot('A')
     for (const runId of ['', '  ', 'missing']) {
       await expect(cancelExecution({ runId })).rejects.toThrow(/取消执行/)
@@ -264,10 +268,10 @@ describe('main run identity isolation', () => {
     getRunCoordinator().commitTerminal({ runId: 'A', status: 'completed' })
     a.settle()
     await a.settled
-    start('next-A', 'session-A')
-    enqueueSteeringMessage('session-A', { sessionId: 'session-A', content: 'next queued' })
+    start('next-A', sessionA)
+    enqueueSteeringMessage(sessionA, { sessionId: sessionA, content: 'next queued' })
     await expect(cancelExecution({ runId: 'A' })).resolves.toEqual({ runId: 'A', status: 'completed' })
-    expect(isSessionTurnInProgress('session-A')).toBe(true)
-    expect(dequeueSteeringMessage('session-A')?.content).toBe('next queued')
+    expect(isSessionTurnInProgress(sessionA)).toBe(true)
+    expect(dequeueSteeringMessage(sessionA)?.content).toBe('next queued')
   })
 })

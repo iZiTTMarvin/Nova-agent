@@ -378,6 +378,14 @@ describe('PermissionManager', () => {
       readonlyQuery('task', { subagent_type: 'explore', task: 'x' }),
       'default'
     ).decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('task_followup', { child_session_id: 'sess-child', task: 'continue' }),
+      'default'
+    ).decision).toBe('deny')
+    expect(manager.check(
+      readonlyQuery('shell_session', { action: 'unknown', ref: 'p' }),
+      'default'
+    ).decision).toBe('deny')
     // 只读观察不受上限影响
     expect(manager.check(readonlyQuery('read', { path: 'a.ts' }), 'default').decision).toBe('allow')
     expect(manager.check(readonlyQuery('web_search', { query: 'nova' }), 'default').decision).toBe('allow')
@@ -387,6 +395,26 @@ describe('PermissionManager', () => {
     ).decision).toBe('allow')
     // 无法解析副作用的工具在只读上限下 fail closed
     expect(manager.check(readonlyQuery('unknown_tool', {}), 'default').decision).toBe('deny')
+  })
+
+  it.each([
+    ['read_only', 'browser_observe', 'allow'],
+    ['read_only', 'browser_capture', 'allow'],
+    ['read_only', 'browser_open', 'deny'],
+    ['read_only', 'browser_act', 'deny'],
+    ['read_only', 'browser_close', 'deny'],
+    ['plan', 'browser_observe', 'allow'],
+    ['plan', 'browser_capture', 'allow'],
+    ['plan', 'browser_open', 'deny'],
+    ['plan', 'browser_act', 'deny'],
+    ['plan', 'browser_close', 'deny']
+  ] as const)('%s 对 %s → %s', (constraint, toolName, expected) => {
+    const q =
+      constraint === 'read_only'
+        ? { ...query(toolName, {}, 'full_access'), capabilityCeiling: 'read_only' as const }
+        : query(toolName, {}, 'full_access')
+    const mode = constraint === 'plan' ? 'plan' : 'default'
+    expect(manager.check(q, mode).decision).toBe(expected)
   })
 
   it('network.write 在自动档仍需确认，完全访问才放行', () => {

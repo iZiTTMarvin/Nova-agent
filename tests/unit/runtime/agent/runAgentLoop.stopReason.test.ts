@@ -18,7 +18,7 @@ import { MockModelClient } from '../../../../src/test-support/builders/MockModel
 import { createAgentContext } from '../../../../src/runtime/agent/core/AgentContext'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
-import type { ChatEvent } from '../../../../src/runtime/model/types'
+import type { ChatEvent, ChatMessage } from '../../../../src/runtime/model/types'
 import type { ToolBatchExecutionResult } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import type { AgentLoopConfig as LoopConfig } from '../../../../src/runtime/agent/core/loopTypes'
 import { createAssistantCompletionPolicy } from '../../../../src/runtime/agent/assistantCompletionPolicy'
@@ -73,6 +73,7 @@ async function runKernel(
     executeBatch?: () => Promise<ToolBatchExecutionResult>
     onToolResultCommitted?: () => void
     assistantCompletionPolicy?: LoopConfig['assistantCompletionPolicy']
+    receiveRuntimeInputs?: (input: { messageId: string; afterStep: number }) => Promise<readonly ChatMessage[]>
   } = {}
 ) {
   const modelPool = new ModelClientPool({
@@ -122,6 +123,7 @@ async function runKernel(
     abortSignal: () => undefined,
     executeBatch,
     onToolResultCommitted: opts.onToolResultCommitted,
+    receiveRuntimeInputs: opts.receiveRuntimeInputs,
     prepareMainRequest: async () => ({ status: 'within', revision: 0 }),
     observeMainRequest: () => {},
     updateTokenEstimate: () => {},
@@ -243,5 +245,63 @@ describe('runAgentLoop 停止原因', () => {
     })
     expect(endTools.stopReason).toBeUndefined()
     expect(toolsClient.getCalls()).toHaveLength(2)
+  })
+
+  it('完整工具结果之后接收运行时输入，再发下一次请求', async () => {
+    const client = new MockModelClient()
+    client.addResponse(toolCallResponse('t1'))
+    client.addResponse(textResponse())
+    const boundaries: number[] = []
+    let delivered = false
+
+    await runKernel(client, 10, {
+      receiveRuntimeInputs: async ({ afterStep }) => {
+        boundaries.push(afterStep)
+        if (afterStep !== 0 || delivered) return []
+        delivered = true
+        return [{ role: 'user', content: '后台结果', contextInstruction: true }]
+      }
+    })
+
+    expect(client.getCalls()).toHaveLength(2)
+    expect(boundaries).toContain(-1)
+    expect(boundaries).toContain(0)
+    const secondRequest = client.getCalls()[1]!.messages
+    const toolIndex = secondRequest.findIndex(message => message.role === 'tool')
+    const inputIndex = secondRequest.findIndex(message => message.content === '后台结果')
+    expect(toolIndex).toBeGreaterThanOrEqual(0)
+    expect(inputIndex).toBeGreaterThan(toolIndex)
+  })
+
+  it('无工具最终回答处收到输入时有界延长当前 turn', async () => {
+    const client = new MockModelClient()
+    for (let index = 0; index < 4; index++) client.addResponse(textResponse())
+    let batches = 0
+    const deliveredAt = new Set<number>()
+
+    const endResult = await runKernel(client, 10, {
+      receiveRuntimeInputs: async ({ afterStep }) => {
+        if (afterStep < 0 || batches >= 3 || deliveredAt.has(afterStep)) return []
+        deliveredAt.add(afterStep)
+        batches += 1
+        return [{ role: 'user', content: `后台结果 ${batches}`, contextInstruction: true }]
+      }
+    })
+
+    expect(endResult).toEqual({ ended: 'normal' })
+    expect(client.getCalls()).toHaveLength(4)
+  })
+
+  it('运行时输入提交失败时不发送含未持久事实的请求', async () => {
+    const client = new MockModelClient().addResponse(textResponse())
+
+    const endResult = await runKernel(client, 10, {
+      receiveRuntimeInputs: async () => {
+        throw new Error('disk failure')
+      }
+    })
+
+    expect(endResult).toEqual({ ended: 'error' })
+    expect(client.getCalls()).toHaveLength(0)
   })
 })

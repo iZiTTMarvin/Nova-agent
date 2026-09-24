@@ -37,6 +37,8 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   lastProjectPath: null,
   snapshotRetentionDays: 30,
   webSearchTavilyApiKey: undefined,
+  notificationsEnabled: true,
+  notifyOnlyWhenUnfocused: true,
   codeIndexEnabled: false,
   memoryEnabled: false,
   memorySearchLimit: 10,
@@ -135,6 +137,12 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   if (typeof obj.webSearchTavilyApiKey === 'string') {
     result.webSearchTavilyApiKey = obj.webSearchTavilyApiKey
+  }
+  if (typeof obj.notificationsEnabled === 'boolean') {
+    result.notificationsEnabled = obj.notificationsEnabled
+  }
+  if (typeof obj.notifyOnlyWhenUnfocused === 'boolean') {
+    result.notifyOnlyWhenUnfocused = obj.notifyOnlyWhenUnfocused
   }
   if (typeof obj.codeIndexEnabled === 'boolean') {
     result.codeIndexEnabled = obj.codeIndexEnabled

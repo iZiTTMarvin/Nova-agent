@@ -264,7 +264,7 @@ export function resolveModelReference(
 
   const modelId = entry.modelId.trim()
   if (!modelId) return { status: 'model_invalid', provider, entry }
-
+  const reasoningEffort = normalizeConfiguredReasoningEffort(entry)
   return {
     status: 'available',
     provider,
@@ -277,8 +277,8 @@ export function resolveModelReference(
       ...(provider.connectionRevision ? { connectionRevision: provider.connectionRevision } : {}),
       ...(entry.contextWindow !== undefined ? { contextWindow: entry.contextWindow } : {}),
       ...(entry.supportsVision !== undefined ? { supportsVision: entry.supportsVision } : {}),
-      ...(entry.reasoningEffort && entry.reasoningEffort !== 'auto'
-        ? { reasoningEffort: entry.reasoningEffort }
+      ...(reasoningEffort !== 'auto'
+        ? { reasoningEffort }
         : {}),
       ...(provider.toolDialect && provider.toolDialect !== 'auto'
         ? { toolDialect: provider.toolDialect }
@@ -290,6 +290,21 @@ export function resolveModelReference(
 /** 解析当前活跃模型配置 */
 export function resolveActiveModelConfig(registry: LlmRegistry): ModelConfig | null {
   return resolveModelConfig(registry, registry.activeModel)
+}
+
+/**
+ * 解析会话的有效模型引用：会话覆盖可用时按覆盖，其余情况跟随 registry 全局最近选择。
+ * 覆盖指向的 provider/entry 被删除、禁用、退役或缺凭据时同样回落，不残留死引用。
+ */
+export function resolveSessionModelRef(
+  registry: LlmRegistry,
+  override?: ActiveModelRef
+): ActiveModelRef {
+  if (override) {
+    const resolved = resolveModelReference(registry, override)
+    if (resolved.status === 'available') return override
+  }
+  return registry.activeModel
 }
 
 /** 解析 fallback 链为 ModelConfig 数组 */
@@ -392,18 +407,55 @@ export function getActiveModelDisplayName(registry: LlmRegistry): string | null 
   return entry.displayName ?? entry.modelId
 }
 
-/** 获取活跃模型的默认思考强度；未配置时视为 auto */
+/** 按引用取模型展示名；引用无效时回落活跃模型，均不可解析时返回 null。 */
+export function getModelDisplayName(registry: LlmRegistry, ref?: ActiveModelRef): string | null {
+  const resolve = (target: ActiveModelRef): string | null => {
+    const provider = findProvider(registry, target.providerId)
+    const entry = provider ? findModelEntry(provider, target.modelEntryId) : undefined
+    return entry ? (entry.displayName ?? entry.modelId) : null
+  }
+  const primary = resolve(ref ?? registry.activeModel)
+  if (primary) return primary
+  return ref ? resolve(registry.activeModel) : null
+}
+
+/** 未登记能力时返回 null；仅返回 auto 表示已知不提供可区分档位。 */
+export function getSupportedReasoningEfforts(entry: ModelEntry): readonly ReasoningEffort[] | null {
+  const efforts = lookupModelCapability(entry.modelId)?.reasoningEfforts
+  return efforts ? ['auto', ...efforts] : null
+}
+
+function normalizeConfiguredReasoningEffort(entry: ModelEntry): ReasoningEffort {
+  const configured = isReasoningEffort(entry.reasoningEffort) ? entry.reasoningEffort : 'auto'
+  if (configured === 'auto') return 'auto'
+  const supported = getSupportedReasoningEfforts(entry)
+  return supported && !supported.includes(configured) ? 'auto' : configured
+}
+
+function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return value === 'auto' || value === 'low' || value === 'medium' ||
+    value === 'high' || value === 'xhigh' || value === 'max'
+}
+
+/** 解析单个模型条目的有效默认强度；非法值与已知不支持的配置回落为 auto。 */
+export function resolveModelReasoningEffort(entry: ModelEntry): ReasoningEffort {
+  const configured = normalizeConfiguredReasoningEffort(entry)
+  const capability = lookupModelCapability(entry.modelId)
+  if (configured === 'auto') {
+    return capability?.defaultReasoningEffort ?? 'auto'
+  }
+  const supported = getSupportedReasoningEfforts(entry)
+  return supported && !supported.includes(configured)
+    ? capability?.defaultReasoningEffort ?? 'auto'
+    : configured
+}
+
+/** 获取活跃模型的有效默认思考强度；已知不支持的配置回落为 auto。 */
 export function getActiveModelReasoningEffort(registry: LlmRegistry): ReasoningEffort {
   const provider = findProvider(registry, registry.activeModel.providerId)
   if (!provider) return 'auto'
   const entry = findModelEntry(provider, registry.activeModel.modelEntryId)
-  return entry?.reasoningEffort ?? 'auto'
-}
-
-/** 未登记能力时返回 null；auto 始终安全，因为它不会向 provider 发送 effort。 */
-export function getSupportedReasoningEfforts(entry: ModelEntry): readonly ReasoningEffort[] | null {
-  const efforts = lookupModelCapability(entry.modelId)?.reasoningEfforts
-  return efforts ? ['auto', ...efforts] : null
+  return entry ? resolveModelReasoningEffort(entry) : 'auto'
 }
 
 /** 判断 effort 是否被指定模型支持（缺省视为 auto）。 */
@@ -757,7 +809,9 @@ export function getModelDirectory(
       const ref: ActiveModelRef = { providerId: provider.id, modelEntryId: entry.id }
       const resolved = resolveModelReference(registry, ref)
       const availability: ModelDirectoryEntry['availability'] = resolved.status === 'available' ? 'available' : 'unavailable'
-      const supportedEfforts = getSupportedReasoningEfforts(entry)
+      const supportedEfforts = availability === 'available'
+        ? getSupportedReasoningEfforts(entry)
+        : null
       const directoryEntry: ModelDirectoryEntry = {
         selector: `${provider.id}::${entry.id}`,
         providerId: provider.id,
@@ -866,8 +920,8 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
           : {}),
         ...(m.contextWindow !== undefined ? { contextWindow: m.contextWindow } : {}),
         ...(m.supportsVision !== undefined ? { supportsVision: m.supportsVision } : {}),
-        ...(m.reasoningEffort && m.reasoningEffort !== 'auto'
-          ? { reasoningEffort: m.reasoningEffort }
+        ...(normalizeConfiguredReasoningEffort(m) !== 'auto'
+          ? { reasoningEffort: normalizeConfiguredReasoningEffort(m) }
           : {}),
         ...(m.retired === true ? { retired: true } : {})
       })),

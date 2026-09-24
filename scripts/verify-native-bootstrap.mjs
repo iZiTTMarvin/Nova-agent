@@ -1,4 +1,4 @@
-/** dev 启动前验证 Electron 与原生数据库绑定均已安装且 ABI 匹配。 */
+/** dev 启动前验证 Electron 与原生数据库绑定均已安装且可在 Electron 内加载。 */
 import { existsSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -7,13 +7,30 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const require = createRequire(import.meta.url)
+
+function linuxUsesMusl() {
+  if (process.platform !== 'linux') return false
+  try {
+    return !process.report.getReport().header.glibcVersionRuntime
+  } catch {
+    return false
+  }
+}
+
+function betterSqlite3NativePath() {
+  const target = `${linuxUsesMusl() ? 'linuxmusl' : process.platform}-${process.arch}`
+  const prebuild = join(root, 'node_modules', 'better-sqlite3', 'prebuilds', `${target}.node`)
+  if (existsSync(prebuild)) return prebuild
+  return join(root, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node')
+}
+
 const checks = [
   {
     path: join(root, 'node_modules', 'electron', 'path.txt'),
     fix: 'node node_modules/electron/install.js'
   },
   {
-    path: join(root, 'node_modules', 'better-sqlite3', 'build', 'Release', 'better_sqlite3.node'),
+    path: betterSqlite3NativePath(),
     fix: 'npm run rebuild:native:electron'
   }
 ]

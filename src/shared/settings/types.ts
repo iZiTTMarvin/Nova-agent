@@ -96,6 +96,12 @@ export interface NovaSettingsDto {
   /** Tavily API Key（本地明文存储，不上传） */
   webSearchTavilyApiKey?: string
 
+  // ── 系统通知 ──
+  /** 任务终态与等待批准时是否弹系统通知 */
+  notificationsEnabled: boolean
+  /** 仅在窗口失焦时通知；聚焦时用户正在看，不打扰 */
+  notifyOnlyWhenUnfocused: boolean
+
   // ── 本地代码智能 ──
   /** 是否为新建会话启用本地代码索引 */
   codeIndexEnabled: boolean

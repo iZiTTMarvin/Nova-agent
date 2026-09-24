@@ -21,8 +21,10 @@ import {
 import { CHARS_PER_TOKEN } from '../../../../src/runtime/agent/tokenEstimator'
 import {
   createAgentContext,
+  getEffectiveToolDefinitions,
   type AgentContext
 } from '../../../../src/runtime/agent/core/AgentContext'
+import type { ReasoningEffort } from '../../../../src/shared/config/llmRegistry'
 import type { CompactionMeta } from '../../../../src/runtime/agent/types'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ArtifactStore } from '../../../../src/runtime/artifacts/ArtifactStore'
@@ -52,6 +54,7 @@ function createService(options: {
   client: MockModelClient
   onCompaction?: (context: ChatMessage[], meta: CompactionMeta) => void
   promptCacheKey?: string
+  getReasoningEffort?: () => ReasoningEffort | undefined
 }): {
   service: CompactionService
   context: AgentContext
@@ -68,7 +71,8 @@ function createService(options: {
     onCompaction: options.onCompaction,
     getIdleCacheProfile: () => ({ idlePolicy: 'anthropic-short-ttl' }),
     idleProjection: identitySummaryProjection,
-    ...(options.promptCacheKey ? { promptCacheKey: options.promptCacheKey } : {})
+    ...(options.promptCacheKey ? { promptCacheKey: options.promptCacheKey } : {}),
+    ...(options.getReasoningEffort ? { getReasoningEffort: options.getReasoningEffort } : {})
   })
   return { service, context: options.context, client: options.client, cacheDiagnostics }
 }
@@ -246,8 +250,14 @@ describe('压缩摘要前缀回放', () => {
     const warmedWrites = archiveWrites
     expect(warmedWrites).toBe(1)
 
+    // 原生工具方言：摘要请求必须携带与主请求相同的工具定义与思考强度
+    const effectiveTools = [
+      { name: 'read', description: '读取文件', parameters: { type: 'object', properties: {} } }
+    ]
+    context.dialect = 'native'
+    context.effectiveToolDefinitions = () => effectiveTools
     const client = new MockModelClient().addHandoffPair(summaryResponse('前缀摘要'))
-    const { service } = createService({ context, client })
+    const { service } = createService({ context, client, getReasoningEffort: () => 'high' })
 
     await expect(service.runThresholdCompaction(projection)).resolves.toBe(true)
 
@@ -272,6 +282,10 @@ describe('压缩摘要前缀回放', () => {
         expect(tail[0].role).toBe('assistant')
       }
       expect(summaryCall.options?.purpose).toBe(index === 0 ? 'compaction-stub' : 'compaction-state')
+      expect(summaryCall.tools).toEqual(getEffectiveToolDefinitions(context))
+      // tool_choice 计入 provider 缓存键（CommandCode/DeepSeek 实测），摘要请求不得携带
+      expect(summaryCall.options?.toolChoice).toBeUndefined()
+      expect(summaryCall.options?.reasoningEffort).toBe('high')
     }
 
     expect(extractTextFromContent(calls[0].messages.at(-1)!.content)).toContain('被折叠的这一段')
@@ -287,6 +301,10 @@ describe('压缩摘要前缀回放', () => {
     expect(client.getCalls()).toHaveLength(2)
     for (const call of client.getCalls()) {
       expect(call.options?.promptCacheKey).toBe('routing-key-A')
+      // xml 方言没有原生工具定义可携带，也不写 toolChoice / reasoningEffort
+      expect(call.tools).toBeUndefined()
+      expect(call.options?.toolChoice).toBeUndefined()
+      expect(call.options?.reasoningEffort).toBeUndefined()
     }
   })
 })

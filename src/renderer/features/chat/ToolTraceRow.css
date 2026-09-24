@@ -4,10 +4,10 @@
 .tool-trace-row {
   margin: 1px 0;
   padding-left: 0;
-  font-family: var(--font-sans, system-ui, sans-serif);
+  font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   max-width: 100%;
   min-width: 0;
 }
@@ -17,7 +17,7 @@
 }
 
 .tool-trace-row--error {
-  color: var(--color-error, #c96442);
+  color: var(--color-error);
 }
 
 .tool-trace-row__header {
@@ -38,16 +38,16 @@
   font: inherit;
   font-size: 13px;
   min-width: 0;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   overflow-anchor: auto;
   appearance: none;
   user-select: none;
-  transition: background-color var(--transition-fast, 140ms) ease;
+  transition: background-color var(--transition-fast) ease;
 }
 
 .tool-trace-row__header:hover {
   color: var(--text-primary);
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  background-color: var(--surface-hover);
 }
 
 .tool-trace-row__dot-slot {
@@ -67,23 +67,23 @@
 }
 
 .tool-trace-row__dot--running {
-  background-color: var(--color-brand, #c96442);
+  background-color: var(--color-brand);
   animation: tool-trace-row-pulse 1.2s ease-in-out infinite;
 }
 
-/* 成功态：更饱和的绿，小圆点在浅底上仍可辨认 */
+/* 成功态与相邻 running/error 点同构，统一取主题状态色 */
 .tool-trace-row__dot--success {
-  background-color: #16a34a;
+  background-color: var(--color-success);
 }
 
 .tool-trace-row__dot--error {
-  background-color: var(--color-error, #c96442);
+  background-color: var(--color-error);
 }
 
 .tool-trace-row__action {
   flex: 0 0 3.8em;
-  color: var(--text-muted, #8a857d);
-  font-family: var(--font-sans, system-ui, sans-serif);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.01em;
@@ -91,12 +91,12 @@
 
 .tool-trace-row__icon {
   flex-shrink: 0;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   opacity: 0.85;
 }
 
 .tool-trace-row__icon--folder {
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
 }
 
 .tool-trace-row__file-target {
@@ -112,19 +112,19 @@
 }
 
 .tool-trace-row__file-target:hover {
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  background-color: var(--surface-hover);
 }
 
 .tool-trace-row__file-target:hover .tool-trace-row__filename {
   text-decoration: underline;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
 }
 
 .tool-trace-row__filename {
   flex-shrink: 0;
   font-weight: 500;
-  color: var(--text-primary, #1f1d1a);
-  font-family: var(--font-sans, system-ui, sans-serif);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
   font-size: 12px;
 }
 
@@ -134,10 +134,10 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   font-size: 11.5px;
   opacity: 0.8;
-  font-family: var(--font-sans, system-ui, sans-serif);
+  font-family: var(--font-sans);
   margin-left: 2px;
 }
 
@@ -147,9 +147,9 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono, 'Menlo', 'Consolas', 'SF Mono', monospace);
+  font-family: var(--font-mono);
   font-size: 11.5px;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
 }
 
 .tool-trace-row__text {
@@ -159,13 +159,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
 }
 
 .tool-trace-row__chevron {
   flex-shrink: 0;
   opacity: 0.45;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   margin-left: auto;
 }
 
@@ -177,9 +177,9 @@
 .tool-trace-row__detail {
   margin: 4px 0 8px 0;
   padding: 8px 10px;
-  border-radius: var(--radius-sm, 6px);
-  background: var(--bg-sidebar, rgba(0, 0, 0, 0.04));
-  border: 1px solid var(--border-cream, rgba(20, 20, 19, 0.08));
+  border-radius: var(--radius-sm);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-cream);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -197,10 +197,10 @@
 .tool-trace-row__sec-title {
   font-size: 0.7rem;
   font-weight: 600;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-family: var(--font-sans, system-ui, sans-serif);
+  font-family: var(--font-sans);
 }
 
 .tool-trace-row__pre {
@@ -208,24 +208,24 @@
   font-family: inherit;
   font-size: 0.78rem;
   padding: 6px 8px;
-  background: var(--bg-card, rgba(255, 255, 255, 0.6));
+  background: var(--bg-card);
   border-radius: 4px;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 220px;
   overflow: auto;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
 }
 
 .tool-trace-row__hint {
   font-size: 0.72rem;
-  color: var(--text-muted, #8a857d);
-  font-family: var(--font-sans, system-ui, sans-serif);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
   line-height: 1.4;
 }
 
 .tool-trace-row__hint--error {
-  color: var(--color-error, #c96442);
+  color: var(--color-error);
 }
 
 .tool-trace-row__permission {
@@ -265,7 +265,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.5;
   opacity: 0.85;

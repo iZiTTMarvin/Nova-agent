@@ -106,10 +106,11 @@ it.each([20, 20_000, 80_000])('工具写回后唯一预算 Owner 决定是否继
     observeMainRequest: (tokens, request, source, revision) => { service.observeMainRequest(tokens, request, source, revision) },
     updateTokenEstimate: () => service.updateTokenEstimate(), sleep: async () => {}, onTerminalError: text => { error = text }
   })
-  expect(streamCalls).toBe(size <= 20_000 ? 2 : 1)
-  expect(result.ended).toBe(size <= 20_000 ? 'normal' : 'error')
+  // compact 状态下摘要失败 fail-open：主请求照常发出，任务不因优化失败终止
+  expect(streamCalls).toBe(2)
+  expect(result.ended).toBe('normal')
   expect(context.messages.find(m => m.role === 'tool')?.content).toBe('x'.repeat(size))
-  if (size > 20_000) expect(error).toBe('ContextRecoveryFailed: empty-summary')
+  expect(error).toBe('')
 })
 
 describe('CompactionService mid-turn', () => {

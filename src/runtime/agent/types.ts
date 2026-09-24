@@ -40,7 +40,7 @@ export type AgentEvent =
   | { type: 'tool_call_start'; messageId: string; toolCallId: string; toolName: string; sessionId?: string }
   | { type: 'tool_call_delta'; messageId: string; toolCallId: string; argumentsDelta: string; sessionId?: string }
   | { type: 'tool_call'; messageId: string; toolCallId: string; toolName: string; args: Record<string, unknown>; sessionId?: string; parentToolCallId?: string }
-  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; resultImages?: import('../../shared/tools/types').ImageContent[]; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processOutcome?: import('../../shared/tools/types').ToolProcessOutcome; processHandle?: ToolProcessHandle }
+  | { type: 'tool_result'; messageId: string; toolCallId: string; toolName: string; result: string; resultImages?: import('../../shared/tools/types').ImageContent[]; failed?: boolean; artifactId?: string; truncationMeta?: ToolTruncationMeta; sessionId?: string; parentToolCallId?: string; processOutcome?: import('../../shared/tools/types').ToolProcessOutcome; processHandle?: ToolProcessHandle; subagentNotificationIds?: string[] }
   | { type: 'permission_request'; messageId: string; requestId: string; toolName: string; args: Record<string, unknown>; riskLevel: 'low' | 'high'; reason: string; commands?: string[]; toolCallIds?: string[]; sessionId?: string; parentSessionId?: string; externalPaths?: string[]; pathAccess?: 'read' | 'write' }
   | {
       type: 'diff_update'
@@ -205,6 +205,11 @@ export interface AgentLoopConfig {
   onToolResultCommitted?: (
     content: import('../model/types').ChatMessage['content']
   ) => void
+  /** 宿主在完整模型/工具边界提交并返回可追加的运行时输入。 */
+  receiveRuntimeInputs?: (input: {
+    messageId: string
+    afterStep: number
+  }) => Promise<readonly import('../model/types').ChatMessage[]>
   /**
    * 工具调用方言用户覆盖（来自 ModelConfig.toolDialect）。
    * 'auto'/未设置时走 preferredToolDialect 自动判定。
@@ -225,6 +230,11 @@ export interface AgentLoopConfig {
    * 不含，避免误导读取摘要的父代理。
    */
   stopNoticeAudience?: import('./extensions/stopPolicyExtension').StopNoticeAudience
+  /**
+   * 投影层归档经济门槛：'auto' 按 provider 缓存档案的价格参数裁决；
+   * 'off' 回到固定批量门槛（对照实验与回退用）。
+   */
+  projectionEconomics?: 'auto' | 'off'
 }
 
 /** 压缩完成时传给 onCompaction 的元数据 */

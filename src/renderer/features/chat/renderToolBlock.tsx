@@ -9,7 +9,7 @@ import React from 'react'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import { isPlanReviewIgnoredResult } from '../../../shared/planReview'
 import { AskQuestionToolCard } from './AskQuestionToolCard'
-import { PlanApprovalCard, PlanApprovalIgnoredCard } from './PlanApprovalCard'
+import { PlanApprovalIgnoredCard, PlanApprovalPendingRow } from './PlanApprovalCard'
 import { PlanReviewCard } from './PlanReviewCard'
 import { ToolTraceRow } from './ToolTraceRow'
 import type { RendererToolBlock } from '../../stores/types'
@@ -50,9 +50,10 @@ export function renderToolBlock(
   }
 
   if (block.toolName === 'switch_mode' || block.toolName === 'stage_transition') {
-    // 控制面工具只有两种可见形态：等待审批的交互卡，以及忽略决定随工具结果持久化后的灰态记录
+    // 控制面工具只有两种可见形态：等待审批的状态行（交互在底部审批 dock），
+    // 以及忽略决定随工具结果持久化后的灰态记录
     if (context?.pendingPlanReview?.toolCallId === block.toolCallId) {
-      return <PlanApprovalCard key={block.toolCallId} review={context.pendingPlanReview} />
+      return <PlanApprovalPendingRow key={block.toolCallId} />
     }
     if (isPlanReviewIgnoredResult(block.result)) {
       return (

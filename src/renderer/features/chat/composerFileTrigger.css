@@ -1,0 +1,18 @@
+/* @ 文件引用候选：目录弱化、文件名为主，与技能菜单同族 */
+
+.composer-file-trigger__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 0;
+}
+
+.composer-file-trigger__dir {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.composer-file-trigger__name {
+  color: var(--color-text-primary);
+  font-weight: 500;
+}

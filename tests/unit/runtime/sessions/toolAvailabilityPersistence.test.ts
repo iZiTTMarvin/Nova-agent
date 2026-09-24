@@ -114,8 +114,8 @@ describe('工具组激活态持久化', () => {
     const { restoredGroups } = availability.restoreFromSessionState(
       new SessionStore(tmpDir).load(session.id)?.toolAvailability
     )
-    // orchestration → agent；ghost / 预留 browser 安全忽略
-    expect(restoredGroups).toEqual(['agent'])
+    // orchestration → agent；ghost 安全忽略，browser 已是可加载组
+    expect(restoredGroups).toEqual(['agent', 'browser'])
   })
 
   it('磁盘上的损坏字段不阻断会话加载，恢复入口按不可用处理', () => {

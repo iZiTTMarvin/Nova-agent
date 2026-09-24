@@ -10,6 +10,7 @@
  */
 import type { ChatMessage } from '../model/types'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
+import { resolveImageBudgetRule } from '../model/imageTokens'
 
 /** 轮内预算校验结果（只估算，不改写） */
 export type InlineBudgetResult =
@@ -44,13 +45,25 @@ export interface ContextBudgetOptions {
   maxSerializedBytes?: number
   /** 为模型输出预留的 token（从自定义 maxEstimatedTokens 中扣除） */
   reservedOutputTokens?: number
+  /** 当前模型 id 解析（fallback 切换后取最新值）；缺省时图片块按未知模型原口径计量 */
+  resolveModelId?: () => string | undefined
 }
 
 /** 文本估算与请求预算同口径；UTF-8 字节保留为独立硬上限。 */
-export function estimateContextSize(messages: ChatMessage[]): { tokens: number; bytes: number } {
+export function estimateContextSize(messages: ChatMessage[], modelId?: string): { tokens: number; bytes: number } {
   const json = JSON.stringify(messages)
   const bytes = Buffer.byteLength(json, 'utf8')
-  const tokens = estimateTextTokens(json)
+  let tokens = estimateTextTokens(json)
+  const imageRule = resolveImageBudgetRule(modelId)
+  if (imageRule) {
+    for (const message of messages) {
+      if (!Array.isArray(message.content)) continue
+      for (const block of message.content) {
+        if (block.type !== 'image_url') continue
+        tokens += imageRule(block.image_url.url) - estimateTextTokens(JSON.stringify(block.image_url.url))
+      }
+    }
+  }
   return { tokens, bytes }
 }
 
@@ -62,7 +75,7 @@ export class ContextBudgetManager {
    * 超预算时返回 requires_compaction，由调用方决定恢复策略。
    */
   enforceInline(messages: ChatMessage[]): InlineBudgetResult {
-    const { tokens, bytes } = estimateContextSize(messages)
+    const { tokens, bytes } = estimateContextSize(messages, this.options.resolveModelId?.())
     const maxTokens = this.options.maxEstimatedTokens
     const maxBytes = this.options.maxSerializedBytes
     const reserved = this.options.reservedOutputTokens ?? 0
@@ -108,10 +121,12 @@ export function resolveProductionBudgetLimits(opts: {
 export function createProductionContextBudgetManager(opts: {
   contextWindow: number
   reservedOutputTokens?: number
+  resolveModelId?: () => string | undefined
 }): ContextBudgetManager {
   const { highWaterTokens } =
     resolveProductionBudgetLimits(opts)
   return new ContextBudgetManager({
-    maxEstimatedTokens: highWaterTokens
+    maxEstimatedTokens: highWaterTokens,
+    ...(opts.resolveModelId ? { resolveModelId: opts.resolveModelId } : {})
   })
 }

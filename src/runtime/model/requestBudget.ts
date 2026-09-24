@@ -1,8 +1,10 @@
 import { createHash } from 'crypto'
 import type { UsageSource } from '../../shared/model/types'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
+import { estimateImageBlockBudgetTokens } from './imageTokens'
+import type { RequestSerializationMemo } from './requestFingerprint'
 
-export const REQUEST_ESTIMATOR_VERSION = 3
+export const REQUEST_ESTIMATOR_VERSION = 5
 
 /** 最终协议投影的无正文计量；前缀链用于验证纯追加。 */
 export interface RequestBudgetMeasurement {
@@ -17,7 +19,8 @@ export interface RequestBudgetMeasurement {
 }
 
 export interface RequestBudgetAnchor {
-  estimatorVersion: 1 | 2 | 3
+  /** 1–4：旧口径（图片按 URL 文本计）；5：图片按模型族有界视觉预留计。 */
+  estimatorVersion: 1 | 2 | 3 | 4 | 5
   revision: number
   routeId: string
   envelopeHash: string
@@ -36,7 +39,7 @@ export function parseRequestBudgetAnchor(value: unknown): RequestBudgetAnchor | 
   const a = value as Partial<RequestBudgetAnchor>
   const sha = (v: unknown): boolean => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v)
   const integer = (v: unknown): boolean => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0
-  if ((a.estimatorVersion !== 1 && a.estimatorVersion !== 2 && a.estimatorVersion !== 3) ||
+  if ((a.estimatorVersion !== 1 && a.estimatorVersion !== 2 && a.estimatorVersion !== 3 && a.estimatorVersion !== 4 && a.estimatorVersion !== 5) ||
       (a.budgetUnits !== undefined && !integer(a.budgetUnits)) ||
       (a.estimatorVersion !== 1 && !integer(a.budgetUnits)) ||
       !integer(a.revision) || !integer(a.messageCount) || !a.messageCount ||
@@ -48,27 +51,35 @@ export function parseRequestBudgetAnchor(value: unknown): RequestBudgetAnchor | 
   return a as RequestBudgetAnchor
 }
 
-export function measureRequestBudget(body: Record<string, unknown>, routeId: string, contextWindow: number): RequestBudgetMeasurement {
+export function measureRequestBudget(
+  body: Record<string, unknown>,
+  routeId: string,
+  contextWindow: number,
+  memo?: RequestSerializationMemo
+): RequestBudgetMeasurement {
   if (!Array.isArray(body.messages)) throw new Error('Request messages must be an array')
+  const messageJsons = memo?.messageJsons
   let prefix = ''
-  const prefixHashes = body.messages.map((message: unknown) => {
-    prefix = hash(prefix + JSON.stringify(message))
+  const prefixHashes = body.messages.map((message: unknown, index: number) => {
+    const messageJson = messageJsons?.[index] ?? JSON.stringify(message)
+    if (messageJsons !== undefined) messageJsons[index] = messageJson
+    prefix = hash(prefix + messageJson)
     return prefix
   })
-  const serialized = JSON.stringify(body)
+  const serialized =
+    memo?.bodyJson !== undefined ? memo.bodyJson : JSON.stringify(body)
   const serializedBytes = Buffer.byteLength(serialized, 'utf8')
   let budgetUnits = estimateTextTokens(serialized)
-  // M3 的最大 2016px / 14px patch 网格；不抵扣模型的 2x2 patch 合并，另预留全局图。
-  const imageReserve = typeof body.model === 'string' && /^minimax-m3(?:$|[-_])/i.test(body.model)
-    ? (2016 / 14) ** 2 + 576
-    : null
-  if (imageReserve !== null) {
-    for (const message of body.messages) {
-      if (!message || typeof message !== 'object' || !Array.isArray(message.content)) continue
-      for (const block of message.content) {
-        if (block?.type !== 'image_url' || typeof block.image_url?.url !== 'string') continue
-        budgetUnits += imageReserve - estimateTextTokens(JSON.stringify(block.image_url.url))
-      }
+  // 图片块先按 URL 文本计入，再按模型族规则替换成有界视觉预留（未实测型号走通用硬帽）；
+  // 无模型 id 时维持 URL 文本口径（保守高估方向）。
+  const wireModel = typeof body.model === 'string' ? body.model : undefined
+  for (const message of body.messages) {
+    if (!message || typeof message !== 'object' || !Array.isArray(message.content)) continue
+    for (const block of message.content) {
+      if (block?.type !== 'image_url' || typeof block.image_url?.url !== 'string') continue
+      const imageTokens = estimateImageBlockBudgetTokens(wireModel, block.image_url.url)
+      if (imageTokens === null) continue
+      budgetUnits += imageTokens - estimateTextTokens(JSON.stringify(block.image_url.url))
     }
   }
   return { routeId, tokenizerId: 'unknown', contextWindow,

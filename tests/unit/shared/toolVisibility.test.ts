@@ -1,7 +1,7 @@
 /**
  * toolVisibility 单元测试
  *
- * 可见性按 effects 收窄：plan 隐藏写文件 / shell / 编排，保留网络读取与会话状态工具。
+ * 可见性按 effects 收窄：plan 隐藏写文件 / shell / 网络写入 / 编排，保留网络读取与会话状态工具。
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -61,6 +61,14 @@ describe('toolVisibility', () => {
       expect(isToolVisibleInMode('plan', 'edit')).toBe(false)
       expect(isToolVisibleInMode('plan', 'write')).toBe(false)
       expect(isToolVisibleInMode('plan', 'task')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'browser_open')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'browser_act')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'browser_close')).toBe(false)
+    })
+
+    it('plan 模式下浏览器观察/截图可见', () => {
+      expect(isToolVisibleInMode('plan', 'browser_observe')).toBe(true)
+      expect(isToolVisibleInMode('plan', 'browser_capture')).toBe(true)
     })
 
     it('compose 不暴露普通模式切换', () => {
@@ -78,12 +86,21 @@ describe('toolVisibility', () => {
     })
 
     it('只读能力上限独立于产品模式收窄工具面，并保留终端观察动作', () => {
-      const tools = ['read', 'write', 'bash', 'shell_session', 'task', 'web_search']
-        .map(name => ({ name }))
+      const tools = [
+        'read',
+        'write',
+        'bash',
+        'shell_session',
+        'task',
+        'web_search',
+        'browser_observe',
+        'browser_act'
+      ].map(name => ({ name }))
       expect(getRuntimeVisibleTools('default', tools, 'read_only').map(tool => tool.name)).toEqual([
         'read',
         'shell_session',
-        'web_search'
+        'web_search',
+        'browser_observe'
       ])
     })
   })
@@ -98,6 +115,8 @@ describe('toolVisibility', () => {
       expect(isModeHiddenWriteTool('plan', 'edit')).toBe(true)
       expect(isModeHiddenWriteTool('plan', 'write')).toBe(true)
       expect(isModeHiddenWriteTool('plan', 'bash')).toBe(true)
+      expect(isModeHiddenWriteTool('plan', 'browser_act')).toBe(true)
+      expect(isModeHiddenWriteTool('plan', 'browser_observe')).toBe(false)
     })
 
     it('plan 模式下 shell_session 卡片照常渲染（read 观察是合法操作，write 由权限层按 action 拒绝）', () => {

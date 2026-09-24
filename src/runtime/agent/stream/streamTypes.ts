@@ -80,6 +80,12 @@ export interface StreamRunParams {
   signal: AbortSignal | undefined
   /** 本轮摘要投影；溢出压缩恢复时回放主请求前缀使用 */
   summaryProjection: SummaryProjection
+  /**
+   * 溢出恢复第一档：把可省略的历史工具图片降级为占位文本。
+   * 返回 true 表示降级集合已更新、调用方应重投影重试；false 表示无可降级对象或本 turn 已降级过。
+   * 策略与集合 Owner 是 Agent turn；StreamProcessor 只负责调用时机。
+   */
+  requestOverflowImageDegradation?: () => boolean
 }
 
 /**

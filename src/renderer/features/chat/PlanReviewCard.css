@@ -16,8 +16,49 @@
   padding: 8px 10px 6px 14px;
 }
 
-.plan-review-card__header > :last-child {
+.plan-review-card__action {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-left: auto;
+}
+
+.plan-review-card__tooltip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--color-text-primary);
+  color: var(--color-background-surface);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms ease, visibility 120ms ease;
+  z-index: 20;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+}
+
+.plan-review-card__tooltip::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid transparent;
+  border-bottom-color: var(--color-text-primary);
+}
+
+.plan-review-card__action:hover .plan-review-card__tooltip,
+.plan-review-card__action:focus-within .plan-review-card__tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 .plan-review-card__icon {
@@ -26,7 +67,7 @@
   justify-content: center;
   width: 24px;
   height: 24px;
-  color: var(--color-brand, var(--text-secondary));
+  color: var(--color-brand);
 }
 
 .plan-review-card--running .plan-review-card__icon svg {
@@ -51,7 +92,7 @@
 .plan-review-card__title {
   margin: 6px 0 14px;
   color: var(--text-primary);
-  font-family: var(--font-serif, serif);
+  font-family: var(--font-serif);
   font-size: clamp(1.22rem, 2vw, 1.52rem);
   font-weight: 650;
   line-height: 1.25;
@@ -88,7 +129,7 @@
 }
 
 .plan-review-card__error {
-  color: var(--nova-status-error, var(--color-error));
+  color: var(--nova-status-error);
 }
 
 .plan-review-card__footer {

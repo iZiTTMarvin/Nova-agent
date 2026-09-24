@@ -1,20 +1,18 @@
 /**
- * 子代理派遣类工具（task / task_followup）共用的结果文案与失败形态。
- * 两个工具的输出保持同构，文案漂移会让父模型无法统一判读，故单一真源；
- * batch_task 为 JSON 汇总输出，不经过本模块。
+ * Shared subagent result text builder.
+ * Lives in runtime/subagents so it can be imported by tools without creating cycles.
  */
 import type {
   SubagentExecutionResult,
   SubagentExecutionStatus
 } from '../../shared/subagents'
 import type { TurnTruncationReason } from '../../shared/run/types'
-import type { ToolResult } from './types'
+import type { ToolResult } from '../tools/types'
 
 export function failure(error: string): ToolResult {
   return { success: false, output: '', error }
 }
 
-/** 把一次子代理执行结果映射为父模型可见的同构工具输出；header 由调用方区分派遣/续跑。 */
 export function buildSubagentToolResult(
   header: string,
   result: SubagentExecutionResult
@@ -36,6 +34,8 @@ export function buildSubagentToolResult(
 
 export function statusLabel(status: SubagentExecutionStatus): string {
   switch (status) {
+    case 'accepted':
+      return '已后台接纳'
     case 'completed':
       return '成功'
     case 'incomplete':
@@ -49,7 +49,6 @@ export function statusLabel(status: SubagentExecutionStatus): string {
   }
 }
 
-/** 截断原因的可读说明（仅文案；判定不依赖文案） */
 export function describeIncompleteReason(reason: TurnTruncationReason | undefined): string {
   switch (reason) {
     case 'max_rounds':

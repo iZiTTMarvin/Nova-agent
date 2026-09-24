@@ -16,8 +16,11 @@ import type { ModelClient } from '../../runtime/model/ModelClient'
 import { ImageStore } from '../../runtime/storage/ImageStore'
 import {
   sendAgentMessage,
-  ensureTerminalHooksRegistered
+  ensureTerminalHooksRegistered,
+  configureIdleRelay,
+  resumeIdleRelaysAfterStartup
 } from '../agent/turn'
+import { getSubagentDeliveryCoordinator } from '../services/SubagentDeliveryCoordinatorHost'
 import { ensureProcessCleanupWired } from '../services/ProcessCleanupHost'
 import {
   cancelExecution,
@@ -37,10 +40,29 @@ export function registerAgentHandler(
   getImageStore: () => ImageStore
 ): void {
   ensureTerminalHooksRegistered()
+  configureIdleRelay({ getMainWindow, getModelClient, getImageStore })
   ensureProcessCleanupWired()
+  // 启动时 RunCoordinator 对账与草稿恢复已在 registerIpcHandlers 完成；
+  // 此处先补账（幂等补绑/补消息），再接管对账后仍有效的预约。
+  try {
+    getSubagentDeliveryCoordinator().reconcileDeliveryOnStartup()
+  } catch (error) {
+    console.error('[agentHandler] 接力投递启动对账失败:', error)
+  }
+  resumeIdleRelaysAfterStartup()
 
   handle(SEND_MESSAGE, async (_event, params) => {
-    return sendAgentMessage(params, { getMainWindow, getModelClient, getImageStore })
+    // 显式挑选用户字段：renderer 不能伪造内部接力入场
+    return sendAgentMessage(
+      {
+        sessionId: params.sessionId,
+        content: params.content,
+        ...(params.userMessageId !== undefined ? { userMessageId: params.userMessageId } : {}),
+        ...(params.images !== undefined ? { images: params.images } : {}),
+        ...(params.regenerate !== undefined ? { regenerate: params.regenerate } : {})
+      },
+      { getMainWindow, getModelClient, getImageStore }
+    )
   })
 
   handle(CANCEL_EXECUTION, async (_event, params) => cancelExecution(params))

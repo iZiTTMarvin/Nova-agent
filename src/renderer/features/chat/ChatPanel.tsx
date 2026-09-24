@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, useMemo, Profiler } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
+import { DropdownMenu } from '@astryxdesign/core/DropdownMenu'
 import {
   ChatComposerInput,
   type ChatComposerInputHandle,
@@ -22,13 +23,15 @@ import {
   SendIcon,
   StopIcon,
   NovaLogo,
-  ChevronIcon
+  ChevronIcon,
+  CopyIcon
 } from '../../components/Icons'
 import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
 import { ModeSwitch } from '../mode-switch/ModeSwitch'
 import { PermissionModeButton } from '../permissions/PermissionModeButton'
 import { ModelSelector } from './ModelSelector'
+import { ReasoningEffortControl } from './ReasoningEffortControl'
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
   browserFrameScheduler,
@@ -50,6 +53,7 @@ import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { useTodoStore } from '../todo/useTodoStore'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
+import { PlanApprovalCard } from './PlanApprovalCard'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
@@ -61,9 +65,12 @@ import {
   type ImageAttachment
 } from '../../lib/image-attachments'
 import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
+import { createComposerFileTrigger } from './composerFileTrigger'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
+import { WelcomeHero } from './WelcomeHero'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
+import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
 import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
 import '../todo/TodoPanel.css'
 
@@ -181,6 +188,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     !!pendingPlanReview
   const pausedMessageId =
     pendingPlanReview?.messageId ?? pendingPermissionRequest?.messageId ?? currentGeneratingMessageId
+  // 审批 dock 只服务当前会话的 review：快照归属其他会话时不替换输入区
+  const planReviewForCurrentSession =
+    pendingPlanReview && pendingPlanReview.sessionId === currentSessionId ? pendingPlanReview : null
 
   // 取消/中断都归属发起会话：其他会话的视图不呈现、不操作（归属未知时按旧语义放行当前会话）
   const cancellingForCurrentSession =
@@ -275,9 +285,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     }),
     [skillEmptyText]
   )
+  const fileTrigger = useMemo(
+    () => createComposerFileTrigger(() => currentProject),
+    [currentProject]
+  )
   const composerTriggers = useMemo<ChatComposerTrigger[]>(
-    () => [skillTrigger],
-    [skillTrigger]
+    () => [skillTrigger, fileTrigger],
+    [skillTrigger, fileTrigger]
   )
 
   // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
@@ -667,6 +681,22 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     window.alert(message)
   }, [])
 
+  /** 会话导出：主进程一次性读激活路径并转 Markdown */
+  const handleExportSession = useCallback(async (target: 'clipboard' | 'file') => {
+    if (!currentSessionId) {
+      showToast('当前没有可导出的会话')
+      return
+    }
+    try {
+      const result = await window.api.invoke('session:export-markdown', { sessionId: currentSessionId, target })
+      if (result.status === 'copied') showToast('已复制全部对话')
+      else if (result.status === 'saved') showToast(`已导出到 ${result.filePath}`)
+      else if (result.status === 'failed') showToast(`导出失败：${result.error}`)
+    } catch (err) {
+      showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [currentSessionId, showToast])
+
   /** 按钮上传：将有效图片加入附件列表，失败项逐条提示 */
   const addImageFiles = useCallback(async (files: File[]) => {
     const remainingSlots = MAX_IMAGE_COUNT - imageAttachments.length
@@ -915,37 +945,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           </div>
         )}
 
-        {/* Steering Queue 提示：Agent 运行期间入队的挂起消息 */}
-        {pendingUserMessages.length > 0 && (
-          <div className="steering-queue">
-            <div className="steering-queue__header">
-              <span className="steering-queue__title">
-                已排队 {pendingUserMessages.length} 条消息（{isGenerating ? '本轮正常结束后发送' : '等待继续'}）
-              </span>
-              {!isGenerating && !sendInFlight && (
-                <Button label="发送排队消息" variant="secondary" size="sm" onClick={() => void useChatStore.getState().sendNextPendingMessage()}>
-                  发送排队消息
-                </Button>
-              )}
-            </div>
-            <div className="steering-queue__list">
-              {pendingUserMessages.map((msg, idx) => (
-                <div key={`pending-${idx}`} className="steering-queue__item">
-                  <span className="steering-queue__index">{idx + 1}.</span>
-                  <span className="steering-queue__text">{msg.text || '(空文本)'}</span>
-                  <IconButton
-                    label="从队列移除"
-                    icon={<span aria-hidden="true">×</span>}
-                    variant="ghost"
-                    size="sm"
-                    className="steering-queue__remove"
-                    onClick={() => removePendingMessage(idx)}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
         </div>
         </MaybeProfiler>
       </div>
@@ -960,6 +959,19 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       >
         <div ref={composerInnerRef} className="chat-panel__composer-inner">
           {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
+          {!isEmptyState && currentSessionId && (
+            <div className="chat-session-export">
+              <DropdownMenu
+                button={{ label: '导出会话', variant: 'ghost', size: 'sm', icon: <CopyIcon size={14} /> }}
+                placement="above"
+                menuWidth={200}
+                items={[
+                  { label: '复制全部对话', onClick: () => void handleExportSession('clipboard') },
+                  { label: '导出为 .md 文件', onClick: () => void handleExportSession('file') }
+                ]}
+              />
+            </div>
+          )}
           {!isEmptyState && showScrollToBottom && (
             <button
               type="button"
@@ -1003,6 +1015,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           <div
             className="w-full flex flex-col items-center pointer-events-none"
           >
+            {/* 常驻后台子任务指示横条 */}
+            <div className="w-full pointer-events-auto">
+              <ActiveBackgroundBanner parentSessionId={currentSessionId} />
+            </div>
+
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 
@@ -1012,19 +1029,49 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
               <div className="w-full pointer-events-auto">
                 <TodoPanel
                   sessionId={currentSessionId}
-                  priorityDockOccupied={!!pendingAskQuestion}
+                  priorityDockOccupied={!!pendingAskQuestion || !!planReviewForCurrentSession}
                 />
               </div>
             )}
 
-            {isEmptyState && (
-              <div className="mb-8 flex flex-col items-center justify-center space-y-4">
-                <NovaLogo size={48} />
-                <h1 className="text-4xl md:text-5xl tracking-tight font-serif text-text-primary">
-                  说出你的想法
-                </h1>
+          {/* Steering Queue：排队消息吸附在 composer 上方，像一叠待发卡片 */}
+          {pendingUserMessages.length > 0 && (
+            <div className="w-full pointer-events-auto">
+              <div className="steering-queue">
+                <div className="steering-queue__header">
+                  <span className="steering-queue__title">
+                    已排队 {pendingUserMessages.length} 条消息
+                  </span>
+                  <span className="steering-queue__hint">
+                    {isGenerating ? '本轮正常结束后发送' : '等待继续'}
+                  </span>
+                  {!isGenerating && !sendInFlight && (
+                    <Button label="发送排队消息" variant="secondary" size="sm" onClick={() => void useChatStore.getState().sendNextPendingMessage()}>
+                      发送排队消息
+                    </Button>
+                  )}
+                </div>
+                <div className="steering-queue__list">
+                  {pendingUserMessages.map((msg, idx) => (
+                    <div key={`pending-${idx}`} className="steering-queue__item">
+                      <span className="steering-queue__index">{idx + 1}</span>
+                      <span className="steering-queue__text">{msg.text || '(空文本)'}</span>
+                      <IconButton
+                        label="从队列移除"
+                        icon={<span aria-hidden="true">×</span>}
+                        variant="ghost"
+                        size="sm"
+                        className="steering-queue__remove"
+                        onClick={() => removePendingMessage(idx)}
+                      />
+                    </div>
+                  ))}
+                </div>
               </div>
-            )}
+            </div>
+          )}
+
+            {isEmptyState && <WelcomeHero />}
 
             {/* Child Session 是 durable 执行记录；继续/恢复必须回到统一子代理执行服务。 */}
             {currentSession?.kind === 'subagent' ? (
@@ -1033,6 +1080,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 role="note"
               >
                 子会话为只读执行记录。请从父会话的子任务行继续、授权或重试。
+              </div>
+            ) : planReviewForCurrentSession ? (
+              /* 计划审批 dock：替换输入区（同 ZCode 形态），审批期间不再排队输入 */
+              <div className="plan-approval-dock w-full">
+                <PlanApprovalCard review={planReviewForCurrentSession} />
               </div>
             ) : (
               /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */
@@ -1103,6 +1155,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 <div className="flex items-center gap-2">
                   <ContextIndicator />
                   <ModelSelector />
+                  <ReasoningEffortControl />
                   {isGenerating || sendInFlight || cancellingForCurrentSession ? (
                     <IconButton
                       label={cancellingForCurrentSession ? '正在停止' : '中断生成'}

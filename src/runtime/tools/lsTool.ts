@@ -19,7 +19,7 @@ export const LS_MAX_ENTRIES = 500
 
 export const lsTool: ToolExecutor = {
   name: 'ls',
-  description: '列出指定目录下的文件和子目录。返回目录条目列表，区分文件和目录。',
+  description: 'List files and subdirectories in a directory. Returns the entry list, with directories marked by a trailing slash.',
   executionMode: 'parallel',
   isConcurrencySafe: () => true,
   maxResultSizeChars: 100_000,
@@ -28,7 +28,7 @@ export const lsTool: ToolExecutor = {
     properties: {
       path: {
         type: 'string',
-        description: '要列出的目录路径，相对于工作区根目录（绝对路径见 session context）。默认为当前目录。'
+        description: 'Directory to list, relative to the workspace root (absolute paths appear in session context). Defaults to the current directory.'
       }
     }
   },

@@ -49,6 +49,8 @@ export interface ToolExecutionOutcome {
    * 前缀反推失败状态——文案一旦本地化或调整就会让判定静默失效。
    */
   failed?: boolean
+  /** 当前工具结果已显式读取的后台通知 ID；仅最终非 failed 的成功结果透传，用于持久消费消重。 */
+  subagentNotificationIds?: string[]
 }
 
 interface PreparedToolCall {
@@ -425,6 +427,7 @@ async function executePreparedToolCall(
   let processOutcome: ToolProcessOutcome | undefined
   let processHandle: ToolProcessHandle | undefined
   let failed = false
+  let subagentNotificationIds: string[] | undefined
 
   try {
     const toolResult = await item.tool.execute(item.args, toolContext)
@@ -451,6 +454,10 @@ async function executePreparedToolCall(
       truncationMeta = toolResult.truncationMeta
       control = toolResult.control
       processHandle = toolResult.processHandle
+      // 仅 task_wait 产生消费事实；其他工具即使返回伪字段也忽略。
+      if (item.tool.name === 'task_wait' && toolResult.subagentNotificationIds?.length) {
+        subagentNotificationIds = [...toolResult.subagentNotificationIds]
+      }
     } else {
       // 工具执行失败：仍保留工具已产出的 output（如超时前的部分日志、错误堆栈）。
       // 历史问题：失败分支只回传 error 文案、把 output 整个丢弃，导致模型拿不到任何
@@ -484,6 +491,9 @@ async function executePreparedToolCall(
     if (patched?.isError !== undefined) failed = patched.isError
   }
 
+  // hook 将结果改为 error 时丢弃消费事实，event 与 outcome 均不携带。
+  const finalNotificationIds = !failed ? subagentNotificationIds : undefined
+
   options.emit({
     type: 'tool_result',
     messageId: options.messageId,
@@ -495,7 +505,8 @@ async function executePreparedToolCall(
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {}),
     ...(processOutcome ? { processOutcome } : {}),
-    ...(processHandle ? { processHandle } : {})
+    ...(processHandle ? { processHandle } : {}),
+    ...(finalNotificationIds?.length ? { subagentNotificationIds: [...finalNotificationIds] } : {})
   })
 
   return {
@@ -510,7 +521,8 @@ async function executePreparedToolCall(
       ...(!failed && control ? { control } : {}),
       ...(processOutcome ? { processOutcome } : {}),
       ...(processHandle ? { processHandle } : {}),
-      failed
+      failed,
+      ...(finalNotificationIds?.length ? { subagentNotificationIds: [...finalNotificationIds] } : {})
     },
     emitted: true
   }

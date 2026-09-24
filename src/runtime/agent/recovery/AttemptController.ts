@@ -21,14 +21,14 @@ import {
   type RecoveryStateMachine
 } from './RecoveryStateMachine'
 import type { ModelClientPool } from '../../model/ModelClientPool'
-import type { ModelFailure } from '../../model/failureTypes'
+import type { ModelFailure, ModelFailureKind } from '../../model/failureTypes'
 
 /** attempt 失败后的决策 */
 export type AttemptDecision =
   | { action: 'retry'; attemptId: string; attempt: number; hint: string; backoffMs: number }
   | { action: 'fallback'; attemptId: string; nextFallbackIndex: number; reason: string; modelId: string; fallbackIndex: number }
   | { action: 'recover_context'; state: RecoveryState }
-  | { action: 'fail'; error: string }
+  | { action: 'fail'; error: string; kind: ModelFailureKind }
 
 export interface AttemptControllerOptions {
   recovery: RecoveryStateMachine
@@ -113,8 +113,8 @@ export class AttemptController {
     failure?: ModelFailure,
     hasNoObservableOutput = false
   ): AttemptDecision {
-    if (failure?.dispatchOutcome === 'unknown') return { action: 'fail', error: failure.message }
-    if (!hasNoObservableOutput) return { action: 'fail', error }
+    if (failure?.dispatchOutcome === 'unknown') return { action: 'fail', error: failure.message, kind: failure.kind }
+    if (!hasNoObservableOutput) return { action: 'fail', error, kind: failure?.kind ?? 'unknown' }
     // classify 的 attempt 参数语义：当前错误前已消耗的恢复次数（从 0 起）。
     const completedBeforeThis = this.providerAttempt
     const errState = this.recovery.classify(error, completedBeforeThis, failure)
@@ -122,7 +122,7 @@ export class AttemptController {
     this.totalAttempts += 1
 
     if (this.totalAttempts > this.maxTotalAttempts) {
-      return { action: 'fail', error: `已达全 run attempt 预算上限（${this.totalAttempts}）` }
+      return { action: 'fail', error: `已达全 run attempt 预算上限（${this.totalAttempts}）`, kind: failure?.kind ?? 'unknown' }
     }
 
     if (errState.kind === 'recovering') {
@@ -177,7 +177,7 @@ export class AttemptController {
 
     const failError =
       errState.kind === 'failed' ? errState.error : error
-    return { action: 'fail', error: failError }
+    return { action: 'fail', error: failError, kind: failure?.kind ?? 'unknown' }
   }
 
   /**

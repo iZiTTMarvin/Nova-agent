@@ -1,154 +1,137 @@
-/* 全局基础样式 — 拟纸质感 Claude Parchment 主题 */
+/* 全局基础样式 — 现代冷峻 Zinc Desktop 视觉系统（对标 Cline） */
 
+/*
+ * 深浅色只有一份声明：随主题变化的字面值走 light-dark()，由 color-scheme 求值。
+ * Astryx 的 Theme 把 settings.theme 同步为 <html data-theme>，astryx-parchment.css
+ * 再把 data-theme 映射到 color-scheme；data-theme 缺省（跟随系统）时下面的
+ * `light dark` 让 light-dark() 直接取 OS 方案。该映射是整层 token 的承重前提，
+ * 由 themeCascadeContracts 测试保护，不再靠复制两份深色值维持。
+ *
+ * 深色阶梯：地板 L*≈8.7，逐级约 +5。地板离开准纯黑，投影才有存活空间；
+ * 步长拉开后每一档表面都能靠明度分辨，不必只吃 1px 描边。文本层级同步上抬，
+ * 否则底色变亮会挤压对比度——muted 曾深浅同值 #71717a，在深色卡片上仅 2.5:1。
+ */
 :root {
-  /* 基础背景（羊皮纸暖黄） */
-  --bg-app: #f5f4ed; 
-  /* 侧边栏背景（略带绿/黄调的温润象牙白） */
-  --bg-sidebar: #faf9f5; 
-  /* 卡片/ elevated surfaces（白色纸张） */
-  --bg-card: #ffffff; 
-  /* 辅助背景（暖沙色，用于次要按钮和交互悬浮） */
-  --bg-sand: #e8e6dc;
-  /* 输入框背景 */
-  --bg-input: #ffffff;
-  
-  /* 字体颜色 */
-  --text-primary: #141413;     /* 近黑色，最温暖的深色 */
-  --text-secondary: #5e5d59;   /* 橄榄灰，次要正文 */
-  --text-muted: #87867f;       /* 石灰色，辅助/占位信息 */
-  --text-charcoal: #4d4c48;    /* 木炭暖色，用于浅底按钮文本 */
-  
-  /* 品牌高亮与状态色 */
-  --color-brand: #c96442;      /* 赤土色（焦橙），主 CTA 颜色 */
-  --color-brand-hover: #b05131;
-  --color-brand-dim: rgba(201, 100, 66, 0.08);
-  --color-accent: #d97757;     /* 珊瑚橙，次要高亮 */
-  --color-warning: #a66500;
-  --nova-status-error: #b53333;      /* 温暖深红，错误状态 */
-  --nova-status-success: #788c5d;    /* 莫兰迪绿，成功状态 */
+  color-scheme: light dark;
+
+  /* 表面层级：越靠近观察者越亮；input 是唯一的内凹档 */
+  --surface-canvas: light-dark(#ffffff, #18191a);
+  --surface-sidebar: light-dark(#f8f9fa, #222325);
+  --surface-hover: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.03)); /* 悬停底色，侧栏/顶栏/折叠头共用 */
+  --surface-sidebar-active: light-dark(#ffffff, #2b2d2f);                      /* 激活行与卡片同档 */
+  --surface-card: light-dark(#ffffff, #2b2d2f);
+  --surface-muted: light-dark(#f4f4f5, #393b3e);                               /* 次级面 / 用户气泡 */
+  --surface-input: light-dark(#ffffff, #1d1e20);
+
+  /* 兼容与映射桥接 */
+  --bg-app: var(--surface-canvas);
+  --bg-sidebar: var(--surface-sidebar);
+  --bg-card: var(--surface-card);
+  --bg-sand: var(--surface-muted);
+  --bg-input: var(--surface-input);
+
+  /* 边框体系（极弱透明度，彻底淘汰粗黑描边） */
+  --border-subtle: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08)); /* 侧栏、顶栏与结构分隔线 */
+  --border-item: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.04));   /* 列表项微弱分隔线 */
+  --border-focus: light-dark(rgba(59, 130, 246, 0.45), rgba(96, 165, 250, 0.5));
+  --border-strong: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.16)); /* 浮层与弹窗边框 */
+  --border-cream: var(--border-subtle);
+  --border-warm: var(--border-subtle);
+  --border-composer: color-mix(in srgb, var(--color-warning) 28%, transparent);
+
+  /*
+   * 语义着色面：一律由状态色派生，色相随主题自动翻转——硬编码砖红/旧焦点蓝做不到。
+   * 此前同一语义在 7 个文件里散着 9 种 alpha，收拢为强弱两档填充加一档描边。
+   */
+  --surface-danger-subtle: color-mix(in srgb, var(--accent-error) 5%, transparent);
+  --surface-danger: color-mix(in srgb, var(--accent-error) 10%, transparent);
+  --border-danger: color-mix(in srgb, var(--accent-error) 22%, transparent);
+  --surface-warning: color-mix(in srgb, var(--accent-warning) 14%, transparent);
+  --surface-brand: color-mix(in srgb, var(--accent-primary) 9%, transparent);
+  --border-brand: color-mix(in srgb, var(--accent-primary) 32%, transparent);
+  --ring-focus: 0 0 0 2px color-mix(in srgb, var(--color-focus) 30%, transparent);
+  --surface-gutter: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04)); /* 代码行号栏 */
+
+  /* 文本梯度（无衬线现代阶梯） */
+  --text-primary: light-dark(#18181b, #f4f4f5);
+  --text-secondary: light-dark(#52525b, #a1a1aa);
+  --text-muted: light-dark(#71717a, #939496);           /* 相对时间、辅助说明 */
+  --text-placeholder: light-dark(#a1a1aa, #757678);
+  --text-charcoal: light-dark(#27272a, #e4e4e7);
+
+  /* 品牌与状态强调色（克制精准投放） */
+  --accent-primary: light-dark(#3b82f6, #60a5fa);       /* 活跃会话与主行动蓝点 */
+  --accent-running: light-dark(#22c55e, #4ade80);       /* 运行中微光绿点 */
+  --accent-warning: light-dark(#f59e0b, #fbbf24);       /* 等待授权/处理琥珀黄点 */
+  --accent-error: light-dark(#ef4444, #f87171);
+  --accent-purple: light-dark(#6366f1, #818cf8);
+
+  --color-brand: var(--accent-primary);
+  --color-brand-hover: light-dark(#2563eb, #93c5fd);
+  --color-brand-dim: light-dark(rgba(59, 130, 246, 0.08), rgba(96, 165, 250, 0.15));
+  --color-accent: var(--accent-primary);
+  --color-warning: var(--accent-warning);
+  --nova-status-error: var(--accent-error);
+  --nova-status-success: var(--accent-running);
   --color-error: var(--nova-status-error);
   --color-success: var(--nova-status-success);
-  --color-focus: #3898ec;      /* 焦点蓝，无障碍对焦环 */
-  
-  /* 边框（极淡的奶油色 border 与暖边框） */
-  --border-cream: #f0eee6;
-  --border-warm: #e8e6dc;
+  --color-focus: var(--accent-primary);
 
-  /* 围栏代码块：暖色浅底，仍用边框+mono+抬头与正文区分 */
-  --code-block-bg: #f3f1e8;
-  --code-block-header-bg: #ebe8df;
-  --code-block-border: #ddd8cc;
-  --code-block-text: #2a2926;
-  --code-block-muted: #7a776e;
-  --code-token-plain: #2a2926;
-  --code-token-comment: #6f7d5a;
-  --code-token-string: #a35a3a;
-  --code-token-number: #8a5a2b;
-  --code-token-keyword: #8b4a78;
-  --code-token-operator: #5e5d59;
-  --code-token-property: #3d6b8a;
-  
-  /* 字体族 */
-  --font-serif: Georgia, Cambria, "Times New Roman", Times, serif;
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  
+  /* 空态几何网格与水印 */
+  --grid-line-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.035));
+  --watermark-fill: light-dark(#6366f1, #818cf8);
+  --watermark-opacity: 0.11;
+
+  /* 代码块与语法高亮（冷感对齐） */
+  --code-block-bg: light-dark(#f8f9fa, #1d1e20);
+  --code-block-header-bg: light-dark(#f1f3f5, #222325);
+  --code-block-border: light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.08));
+  --code-block-text: light-dark(#24292f, #e4e4e7);
+  --code-block-muted: light-dark(#71717a, #939496);
+  --code-token-plain: light-dark(#24292f, #e4e4e7);
+  --code-token-comment: light-dark(#6f7d5a, #71717a);
+  --code-token-string: light-dark(#0969da, #7dd3fc);
+  --code-token-number: light-dark(#0550ae, #93c5fd);
+  --code-token-keyword: light-dark(#cf222e, #f472b6);
+  --code-token-operator: light-dark(#57606a, #a1a1aa);
+  --code-token-property: light-dark(#953800, #cbd5e1);
+
+  /* 字体族（强制无衬线） */
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+  --font-serif: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "Geist Mono", Menlo, Monaco, Consolas, monospace;
+
   /* 圆角大小 */
   --radius-sm: 6px;
   --radius-md: 8px;   /* 按钮/次要交互 */
   --radius-lg: 12px;  /* 输入框/主按钮 */
   --radius-xl: 16px;  /* 卡片/面板 */
-  
-  /* 对话流阅读中轴宽度（对齐主流 Desktop Agent 黄金阅读行宽） */
+
+  /* 对话流阅读中轴宽度 */
   --chat-content-max-width: 48rem;
-  
-  /* 阴影效果（弱投影与环形投影组合） */
-  --ring-shadow-subtle: 0 0 0 1px var(--border-cream);
-  --ring-shadow-warm: 0 0 0 1px var(--border-warm);
-  --ring-shadow-active: 0 0 0 2px var(--color-brand);
-  --shadow-whisper: rgba(20, 20, 19, 0.03) 0px 4px 20px;
-  --shadow-card: rgba(20, 20, 19, 0.04) 0px 2px 8px, 0px 0px 0px 1px var(--border-cream);
-  --shadow-popup: rgba(20, 20, 19, 0.08) 0px 12px 32px, 0px 0px 0px 1px var(--border-warm);
+
+  /* 阴影：深色下黑色投影拉深，并以顶部受光内边缘代替投影表达抬升 */
+  --ring-shadow-subtle: 0 0 0 1px var(--border-subtle);
+  --ring-shadow-warm: 0 0 0 1px var(--border-subtle);
+  --ring-shadow-active: 0 0 0 2px var(--accent-primary);
+  --shadow-whisper:
+    0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.30)),
+    0 4px 16px light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.45)),
+    inset 0 1px 0 light-dark(transparent, rgba(255, 255, 255, 0.05));
+  --shadow-card:
+    0 1px 2px light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.35)),
+    0 8px 24px light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.50)),
+    0 0 0 1px var(--border-subtle),
+    inset 0 1px 0 light-dark(transparent, rgba(255, 255, 255, 0.06));
+  --shadow-popup:
+    0 2px 4px light-dark(rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.40)),
+    0 16px 40px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.65)),
+    0 0 0 1px var(--border-strong),
+    inset 0 1px 0 light-dark(transparent, rgba(255, 255, 255, 0.08));
 
   /* 过渡曲线 */
   --transition-fast: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
   --transition-normal: 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-/* The parchment palette keeps its warm brand accent in dark mode while
-   swapping only surfaces, text, and borders. Astryx's Theme provider toggles
-   the root data-theme attribute for explicit modes; the media query covers
-   the system mode without creating a second renderer state. */
-:root[data-theme='dark'] {
-  --bg-app: #20201d;
-  --bg-sidebar: #292925;
-  --bg-card: #2c2c27;
-  --bg-sand: #37372f;
-  --bg-input: #252520;
-  --text-primary: #f3f1e8;
-  --text-secondary: #c3c0b3;
-  --text-muted: #9a978a;
-  --text-charcoal: #e5e1d5;
-  --color-brand: #df8a62;
-  --color-brand-hover: #ef9d74;
-  --color-brand-dim: rgba(223, 138, 98, 0.18);
-  --color-accent: #e29a73;
-  --color-warning: #f2c14e;
-  --nova-status-error: #f08a83;
-  --nova-status-success: #b4c98e;
-  --color-error: var(--nova-status-error);
-  --color-success: var(--nova-status-success);
-  --border-cream: #3c3b33;
-  --border-warm: #4a493f;
-  --code-block-bg: #2a2924;
-  --code-block-header-bg: #24231f;
-  --code-block-border: #4a493f;
-  --code-block-text: #e5e1d5;
-  --code-block-muted: #9a978a;
-  --code-token-plain: #e5e1d5;
-  --code-token-comment: #9aab7a;
-  --code-token-string: #e0a07a;
-  --code-token-number: #d4b07a;
-  --code-token-keyword: #d4a0c8;
-  --code-token-operator: #c3c0b3;
-  --code-token-property: #9ec0e0;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --bg-app: #20201d;
-    --bg-sidebar: #292925;
-    --bg-card: #2c2c27;
-    --bg-sand: #37372f;
-    --bg-input: #252520;
-    --text-primary: #f3f1e8;
-    --text-secondary: #c3c0b3;
-    --text-muted: #9a978a;
-    --text-charcoal: #e5e1d5;
-    --color-brand: #df8a62;
-    --color-brand-hover: #ef9d74;
-    --color-brand-dim: rgba(223, 138, 98, 0.18);
-    --color-accent: #e29a73;
-    --color-warning: #f2c14e;
-    --nova-status-error: #f08a83;
-    --nova-status-success: #b4c98e;
-    --color-error: var(--nova-status-error);
-    --color-success: var(--nova-status-success);
-    --border-cream: #3c3b33;
-    --border-warm: #4a493f;
-    --code-block-bg: #2a2924;
-    --code-block-header-bg: #24231f;
-    --code-block-border: #4a493f;
-    --code-block-text: #e5e1d5;
-    --code-block-muted: #9a978a;
-    --code-token-plain: #e5e1d5;
-    --code-token-comment: #9aab7a;
-    --code-token-string: #e0a07a;
-    --code-token-number: #d4b07a;
-    --code-token-keyword: #d4a0c8;
-    --code-token-operator: #c3c0b3;
-    --code-token-property: #9ec0e0;
-  }
 }
 
 *,
@@ -179,7 +162,7 @@ button {
   cursor: pointer;
 }
 
-/* 滚动条整体美化，与纸张质感契合 */
+/* 滚动条整体美化 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -190,7 +173,7 @@ button {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-warm);
+  background: var(--border-subtle);
   border-radius: var(--radius-sm);
 }
 

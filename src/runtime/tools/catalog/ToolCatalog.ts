@@ -14,8 +14,21 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   { name: 'bash', capability: 'shell', exposure: 'always', codeMode: 'direct-only' },
   { name: 'shell_session', capability: 'shell', exposure: 'always', codeMode: 'direct-only' },
   { name: 'web_search', capability: 'web', exposure: 'always', codeMode: 'direct-only' },
+  { name: 'web_fetch', capability: 'web', exposure: 'always', codeMode: 'direct-only' },
+  { name: 'browser_open', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_observe', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_act', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_close', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
+  { name: 'browser_capture', capability: 'web', exposure: 'deferred', groupId: 'browser', codeMode: 'direct-only' },
   {
     name: 'memory_search',
+    capability: 'memory',
+    exposure: 'always',
+    codeMode: 'direct-only',
+    registration: 'conditional'
+  },
+  {
+    name: 'memory_manage',
     capability: 'memory',
     exposure: 'always',
     codeMode: 'direct-only',
@@ -44,6 +57,8 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   { name: 'model_list', capability: 'agent', exposure: 'always', codeMode: 'direct-only' },
   { name: 'task', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'task_followup', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
+  { name: 'task_wait', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
+  { name: 'subagent_read', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'batch_task', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'save_plan', capability: 'plan', exposure: 'mode-bound', codeMode: 'direct-only' },
   { name: 'switch_mode', capability: 'mode', exposure: 'mode-bound', codeMode: 'direct-only' },
@@ -63,7 +78,7 @@ const GROUPS: readonly DeferredToolGroupMeta[] = [
     id: 'browser',
     label: 'browser',
     description: 'Navigate and interact with browser content.',
-    reserved: true
+    reserved: false
   },
   {
     id: 'computer-use',
@@ -83,10 +98,13 @@ const GROUP_ALIASES: Readonly<Record<string, string>> = {
 const entryByName = new Map<string, ToolCatalogEntry>(ENTRIES.map(entry => [entry.name, entry]))
 const groupById = new Map<string, DeferredToolGroupMeta>(GROUPS.map(group => [group.id, group]))
 
-/** Catalog 条目只读快照（校验与覆盖测试用），顺序即声明顺序 */
+/**
+ * Catalog 条目只读快照（校验与覆盖测试用），顺序即声明顺序。
+ */
 export function listCatalogEntries(): readonly ToolCatalogEntry[] {
   return ENTRIES
 }
+
 /** deferred 工具 → 所属组（仅 deferred exposure，非 deferred 一律 null） */
 const deferredToolGroup = new Map<string, string>()
 for (const entry of ENTRIES) {

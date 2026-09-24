@@ -35,7 +35,7 @@
 
 .chat-session-breadcrumb__trigger:hover,
 .chat-session-breadcrumb__trigger[aria-expanded='true'] {
-  background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
+  background: var(--color-overlay-hover);
   color: var(--text-primary);
 }
 
@@ -109,7 +109,7 @@
 }
 
 .chat-session-breadcrumb__item:hover {
-  background: var(--color-overlay-hover, rgba(0, 0, 0, 0.05));
+  background: var(--color-overlay-hover);
 }
 
 .chat-session-breadcrumb__item-label {
@@ -146,7 +146,7 @@
 /* 消息流内层阅读柱容器：最大宽度对齐主流 Agent 黄金阅读行宽（48rem/768px）并水平居中 */
 .chat-messages__flow-inner {
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin-inline: auto;
   min-width: 0;
   display: flex;
@@ -156,7 +156,7 @@
 .chat-messages__virtual {
   flex-shrink: 0;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin-inline: auto;
 }
 
@@ -165,7 +165,7 @@
   flex-direction: column;
   gap: 24px;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin-inline: auto;
 }
 
@@ -176,6 +176,16 @@
 
 /* 回到底部：绝对悬浮在 composer 栈顶上方；实心底 + 边框 + 阴影，
    叠在深色/浅色代码块上都能读清，且不占文档流。 */
+/* 会话导出入口：贴输入区上方右缘，与回底部箭头同层不打架 */
+.chat-session-export {
+  position: absolute;
+  right: 16px;
+  bottom: 100%;
+  margin-bottom: 8px;
+  z-index: 5;
+  pointer-events: auto;
+}
+
 .chat-scroll-to-bottom {
   position: absolute;
   left: 50%;
@@ -301,8 +311,48 @@
 
 .chat-msg--error {
   border-color: var(--color-error);
-  background-color: rgba(181, 51, 51, 0.03);
+  background-color: var(--surface-danger-subtle);
   color: var(--color-error);
+}
+
+/* 子代理接力系统事件行：居中、轻量、羊皮纸色调药丸 */
+.chat-msg--relay-event {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  padding: 8px 0;
+  user-select: none;
+}
+
+.chat-msg__relay-event-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border: 1px solid var(--border-subtle);
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+}
+
+.chat-msg__relay-event-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-brand);
+  opacity: 0.8;
+  flex-shrink: 0;
+}
+
+/* 终态错误的动作按钮行：紧贴错误文案下方 */
+.chat-msg__error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 /* ── 过程轨与正文间距：工具行之间紧凑，与 Markdown 文字之间留白 ── */
@@ -378,7 +428,7 @@
 
 .assistant-pending__log {
   font-size: 0.75rem;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
   max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -680,7 +730,7 @@
   gap: 4px;
   margin-top: 6px;
   font-size: 0.75rem;
-  color: var(--text-muted, #888);
+  color: var(--text-muted);
   user-select: none;
 }
 
@@ -699,14 +749,14 @@
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   margin: 0 auto 12px;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border-subtle, #d8d4c8);
-  background: var(--bg-cream, #f8f6f0);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-muted);
   font-size: 0.82rem;
-  color: var(--text-secondary, #5c5c5c);
+  color: var(--text-secondary);
 }
 
 .chat-tier1-notice__dismiss {
@@ -735,10 +785,10 @@
   margin: 0 0 10px;
   padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid rgba(207, 34, 46, 0.2);
-  background: rgba(207, 34, 46, 0.06);
+  border: 1px solid var(--border-danger);
+  background: var(--surface-danger);
   font-size: 0.82rem;
-  color: var(--text-secondary, #5c5c5c);
+  color: var(--text-secondary);
   box-sizing: border-box;
   /* 容器链 pointer-events: none，交互子元素需各自恢复 */
   pointer-events: auto;
@@ -791,6 +841,7 @@
 /* ── ContextIndicator 上下文占用圆环 + hover Popover ────────── */
 .context-indicator-wrap {
   position: relative;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
 }
@@ -832,7 +883,7 @@ button.code-index-status-chip:hover {
 }
 
 .code-index-status-chip--warning {
-  color: var(--color-warning, #d97706);
+  color: var(--color-warning);
 }
 
 .code-index-status-chip__warning-dot {
@@ -1142,8 +1193,8 @@ button.code-index-status-chip:hover {
   position: absolute;
   inset: 0;
   z-index: 50;
-  border: 2px dashed var(--color-focus, #3898ec);
-  background: rgba(56, 152, 236, 0.08);
+  border: 2px dashed var(--color-focus);
+  background: var(--surface-brand);
   border-radius: var(--radius-xl);
   pointer-events: none;
   display: flex;
@@ -1152,7 +1203,7 @@ button.code-index-status-chip:hover {
 }
 
 .chat-panel__drag-overlay span {
-  color: var(--color-focus, #3898ec);
+  color: var(--color-focus);
   font-weight: 500;
   font-size: 1.125rem; /* ~text-lg */
 }
@@ -1198,11 +1249,12 @@ button.code-index-status-chip:hover {
 
 /* composer 卡片与子会话只读提示：表面/边框/投影全部走主题变量，深浅色一致 */
 .chat-composer-box {
+  position: relative;
+  z-index: 2;
   background-color: var(--bg-card);
-  border: 1px solid var(--border-cream);
+  border: 1px solid var(--border-composer);
   border-radius: 16px;
   box-shadow: var(--shadow-whisper);
-  backdrop-filter: blur(24px);
   pointer-events: auto;
   transition:
     box-shadow var(--transition-fast),
@@ -1214,8 +1266,8 @@ button.code-index-status-chip:hover {
 }
 
 .chat-composer-box--dragover {
-  border-color: var(--color-focus, #3898ec);
-  box-shadow: 0 0 0 2px rgba(56, 152, 236, 0.2);
+  border-color: var(--color-focus);
+  box-shadow: var(--ring-focus);
 }
 
 .chat-subagent-note {
@@ -1230,7 +1282,7 @@ button.code-index-status-chip:hover {
 .chat-panel__composer-inner {
   position: relative;
   width: 100%;
-  max-width: var(--chat-content-max-width, 48rem);
+  max-width: var(--chat-content-max-width);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1264,53 +1316,66 @@ button.code-index-status-chip:hover {
 }
 
 /* ──────────────────────────────────────────────────────────
-   Steering Queue 提示
-   Agent 运行期间，用户入队的消息以淡蓝虚线框展示在消息流底部，
-   turn boundary 自动 dispatch 时逐条消失。
+   Steering Queue
+   排队消息吸附在 composer 上方，与 composer 共用同一卡片表面语言
+   （bg-card / border-cream / shadow-card）；条目用发丝分隔线，
+   移除按钮 hover/focus 才显现。turn boundary 自动 dispatch 时逐条消失。
 ────────────────────────────────────────────────────────── */
 .steering-queue {
-  margin: 12px 0 0 0;
-  padding: 10px 14px;
-  border: 1px dashed rgba(56, 152, 236, 0.4);
-  border-radius: 10px;
-  background: rgba(56, 152, 236, 0.04);
-  font-size: 13px;
-  color: var(--text-primary, #1a1a1a);
+  margin: 0 0 8px 0;
+  padding: 6px 10px 4px;
+  border: 1px solid var(--border-cream);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-card);
+  font-size: 12px;
+  color: var(--text-primary);
 }
 
 .steering-queue__header {
   display: flex;
   align-items: center;
-  margin-bottom: 6px;
+  gap: 8px;
+  padding: 2px 4px 6px;
 }
 
 .steering-queue__title {
   font-weight: 500;
-  color: var(--color-focus, #3898ec);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: 11px;
   letter-spacing: 0.02em;
+}
+
+.steering-queue__hint {
+  flex: 1;
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
 .steering-queue__list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  border-top: 1px solid var(--border-cream);
 }
 
 .steering-queue__item {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: rgba(255, 255, 255, 0.6);
+  gap: 8px;
+  padding: 5px 4px;
   border-radius: 6px;
 }
 
+.steering-queue__item + .steering-queue__item {
+  border-top: 1px solid var(--border-cream);
+}
+
 .steering-queue__index {
-  font-weight: 600;
-  color: var(--color-focus, #3898ec);
+  min-width: 14px;
   font-size: 11px;
-  min-width: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  text-align: right;
 }
 
 .steering-queue__text {
@@ -1318,7 +1383,7 @@ button.code-index-status-chip:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary, #555);
+  color: var(--text-primary);
 }
 
 .steering-queue__remove {
@@ -1329,16 +1394,29 @@ button.code-index-status-chip:hover {
   justify-content: center;
   border: none;
   background: transparent;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.steering-queue__item:hover .steering-queue__remove,
+.steering-queue__item:focus-within .steering-queue__remove {
+  opacity: 1;
 }
 
 .steering-queue__remove:hover {
-  background: rgba(0, 0, 0, 0.05);
-  color: #d33;
+  background: var(--surface-hover);
+  color: var(--color-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .steering-queue__remove {
+    transition: none;
+  }
 }
 
 
@@ -1400,15 +1478,15 @@ button.code-index-status-chip:hover {
   background: transparent;
   cursor: default;
   text-align: left;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   font: inherit;
   font-size: 13px;
   min-width: 0;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   appearance: none;
   user-select: none;
   overflow-anchor: auto;
-  transition: background-color var(--transition-fast, 140ms) ease;
+  transition: background-color var(--transition-fast) ease;
 }
 
 .ask-question-tool-card__header:not(:disabled) {
@@ -1416,8 +1494,8 @@ button.code-index-status-chip:hover {
 }
 
 .ask-question-tool-card__header:not(:disabled):hover {
-  color: var(--text-primary, #1f1d1a);
-  background-color: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
 }
 
 .ask-question-tool-card__glyph {
@@ -1435,16 +1513,16 @@ button.code-index-status-chip:hover {
 }
 
 .ask-question-tool-card__glyph--running {
-  color: var(--color-brand, #c96442);
+  color: var(--color-brand);
   animation: ask-question-pulse 1.4s ease-in-out infinite;
 }
 
 .ask-question-tool-card__glyph--success {
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
 }
 
 .ask-question-tool-card__glyph--error {
-  color: var(--color-error, #c96442);
+  color: var(--color-error);
 }
 
 @keyframes ask-question-pulse {
@@ -1463,13 +1541,13 @@ button.code-index-status-chip:hover {
 .ask-question-tool-card__chevron {
   flex-shrink: 0;
   display: inline-flex;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
 }
 
 .ask-question-tool-card__detail {
   margin: 2px 0 6px 11px;
   padding: 4px 0 6px 10px;
-  border-left: 1.5px solid color-mix(in srgb, var(--text-muted, #87867f) 28%, transparent);
+  border-left: 1.5px solid color-mix(in srgb, var(--text-muted) 28%, transparent);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1483,13 +1561,13 @@ button.code-index-status-chip:hover {
 
 .ask-question-tool-card__q {
   font-size: 0.82rem;
-  color: var(--text-primary, #1f1d1a);
+  color: var(--text-primary);
   line-height: 1.4;
 }
 
 .ask-question-tool-card__a {
   font-size: 0.8rem;
-  color: var(--text-muted, #8a857d);
+  color: var(--text-muted);
   line-height: 1.4;
 }
 

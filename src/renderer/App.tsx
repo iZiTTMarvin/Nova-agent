@@ -3,15 +3,17 @@ import { Theme } from '@astryxdesign/core/theme'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
 import { neutralIconRegistry } from '@astryxdesign/theme-neutral'
-import { parchmentTheme } from './styles/parchment'
+import { clineTheme } from './styles/cline-theme'
 import { useChatStore } from './stores/useChatStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { Sidebar } from './components/Sidebar'
-import { ChatPanel, type ChatPanelHandle } from './features/chat/ChatPanel'
-import { InspectorPanel } from './features/inspector/InspectorPanel'
+import { type ChatPanelHandle } from './features/chat/ChatPanel'
 import { SettingsModal } from './features/settings/SettingsModal'
+import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
+import { BrowserWorkspaceBody } from './features/browser/BrowserWorkspaceBody'
+import { startBrowserStore } from './features/browser/useBrowserStore'
 import { ContentTopBar } from './components/ContentTopBar'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
@@ -82,6 +84,7 @@ function App(): React.ReactNode {
     void loadTheme()
     // 启动工作区分发器（订阅 workspace:changed）
     const stopDispatcher = startWorkspaceDispatcher()
+    const stopBrowser = startBrowserStore()
     // 拉取初始工作区状态（会触发首次 dispatch，加载会话列表 + 选中最近会话）
     void useWorkspaceStore.getState().init().then(() => {
       // 运行态由 chat hydration 拉权威 snapshot；这里只刷新等待徽标。
@@ -90,6 +93,7 @@ function App(): React.ReactNode {
     })
     return () => {
       stopDispatcher()
+      stopBrowser()
     }
   }, [loadModelConfig, loadTheme])
 
@@ -112,6 +116,15 @@ function App(): React.ReactNode {
       cancelled = true
       unsubscribe()
     }
+  }, [])
+
+  // 系统通知点击后跳转到对应会话（通知由主进程弹出，会话选择是 renderer 状态）
+  useEffect(() => {
+    const unsubscribe = window.api.on('notifications:navigate', ({ sessionId }) => {
+      const store = useChatStore.getState()
+      if (store.currentSessionId !== sessionId) void store.selectSession(sessionId)
+    })
+    return unsubscribe
   }, [])
 
   // 2. 注册并清理主进程中 AgentLoop 跑出来的各种流式状态推送事件
@@ -331,17 +344,19 @@ function App(): React.ReactNode {
   ])
 
   return (
-    <Theme theme={parchmentTheme} mode={theme}>
+    <Theme theme={clineTheme} mode={theme}>
       {/*
         壳结构由 AppShell 拥有：sideNav=Sidebar；无贯穿顶栏（topNav 缺省），
         左右两栏各自通顶——侧栏顶行在 Sidebar 内，内容区顶行是 ContentTopBar。
         content 为「顶行 + 对话/inspector 行」纵向堆叠（AppShell 无右侧槽）。
         height="fill" → 100dvh 内部滚动；contentPadding=0 → 对话区边到边；
         mobileNav=false → Electron 桌面端无移动断点抽屉。
-        variant="section" 提供 nav 与内容间的分隔线（替代手写 border）。
+        variant="surface" 而非 "section"：两者底色同为 background-surface，差别只在
+        section 会额外画一条 LayoutPanel 分隔线。分隔线由 .sidebar-shell 独占——它需要在
+        侧栏折叠时随之消失，而 AppShell 那条会留下 1px 孤线，且与自带 border 叠成 2px。
       */}
       <AppShell
-        variant="section"
+        variant="surface"
         sideNav={<Sidebar updateSnapshot={updateSnapshot} />}
         contentPadding={0}
         height="fill"
@@ -349,20 +364,10 @@ function App(): React.ReactNode {
       >
         <div className="app-workspace">
           <ContentTopBar />
-          <div className="app-workspace__body">
-            <div className="app-workspace__main">
-              <ChatPanel ref={chatPanelRef} />
-            </div>
-            <InspectorPanel
-              onDragSessionChange={(active) => {
-                if (active) chatPanelRef.current?.freezeReadingWidth()
-                else chatPanelRef.current?.restoreReadingWidth()
-              }}
-            />
-          </div>
+          <BrowserWorkspaceBody chatPanelRef={chatPanelRef} />
         </div>
-
-        {/* 模型参数配置模态窗 */}
+        <BrowserGuestLayer />
+        {/* 模型参数配置模态窗：须叠在 guest 之上，DOM 合成才能挡住网页 */}
         <SettingsModal />
       </AppShell>
     </Theme>

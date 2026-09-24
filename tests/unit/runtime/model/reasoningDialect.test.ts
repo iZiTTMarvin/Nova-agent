@@ -43,9 +43,9 @@ describe('buildReasoningParams', () => {
     const params = buildReasoningParams(
       'deepseek-reasoner',
       'https://api.deepseek.com/v1',
-      'medium'
+      'low'
     )
-    expect(params).toEqual({ reasoning_effort: 'medium' })
+    expect(params).toEqual({ reasoning_effort: 'low' })
     expect(params).not.toHaveProperty('thinking')
   })
 
@@ -88,19 +88,19 @@ describe('buildReasoningParams', () => {
     expect(params).toEqual({ reasoning_effort: 'high' })
   })
 
-  it('MiniMax 官方端点 + high：注入 thinking.adaptive，不发 reasoning_effort', () => {
-    const params = buildReasoningParams('MiniMax-M3', 'https://api.minimaxi.com/v1', 'high')
-    expect(params).toEqual({ thinking: { type: 'adaptive' } })
-    expect(params).not.toHaveProperty('reasoning_effort')
+  it('MiniMax 的产品档位保持 adaptive 思考，不发送未文档化 effort', () => {
+    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimaxi.com/v1', 'high'))
+      .toEqual({ thinking: { type: 'adaptive' } })
+    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimax.io/v1', 'max'))
+      .toEqual({ thinking: { type: 'adaptive' } })
+    expect(buildReasoningParams('MiniMax-M2.5', 'https://api.minimax.chat/v1', 'high'))
+      .toEqual({ thinking: { type: 'adaptive' } })
   })
 
-  it('MiniMax 国际站与旧域名同样走官方思考方言', () => {
-    expect(buildReasoningParams('MiniMax-M3', 'https://api.minimax.io/v1', 'medium')).toEqual({
-      thinking: { type: 'adaptive' }
-    })
-    expect(buildReasoningParams('MiniMax-M2.5', 'https://api.minimax.chat/v1', 'low')).toEqual({
-      thinking: { type: 'adaptive' }
-    })
+  it('已登记模型收到不支持档位时不向服务商发送无效参数', () => {
+    expect(
+      buildReasoningParams('glm-5.3', 'https://open.bigmodel.cn/api/paas/v4', 'medium')
+    ).toBeNull()
   })
 
   it('MiniMax + none/minimal：显式 disabled，而不是省略', () => {

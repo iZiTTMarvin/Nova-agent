@@ -10,6 +10,25 @@ import { extractTextFromSerializableContent } from '../sessions/types'
 export const MAX_SUBAGENT_SUMMARY_CHARS = 8_000
 const MAX_FAILURE_MESSAGE_CHARS = 1_000
 
+export function projectSubagentAcceptanceResult(input: {
+  readonly childSession: SessionData
+  readonly runSnapshot: RunSnapshot
+}): SubagentExecutionResult {
+  if (isTerminalRunSnapshot(input.runSnapshot)) {
+    throw new Error(`child run 已终止，不能投影 accepted: ${input.runSnapshot.status}`)
+  }
+  return {
+    childSessionId: input.childSession.id,
+    childRunId: input.runSnapshot.runId,
+    status: 'accepted',
+    summary: '后台子任务已持久接纳，等待执行名额；结果将以后台通知交付',
+    artifactIds: [],
+    startedAt: input.runSnapshot.turnStartedAt ?? input.runSnapshot.createdAt,
+    completedAt: input.runSnapshot.updatedAt,
+    hasResultMessage: false
+  }
+}
+
 export function projectSubagentExecutionResult(input: {
   readonly childSession: SessionData
   readonly runSnapshot: RunSnapshot
@@ -40,6 +59,7 @@ export function projectSubagentExecutionResult(input: {
     artifactIds,
     startedAt: input.runSnapshot.turnStartedAt ?? input.runSnapshot.createdAt,
     completedAt: input.runSnapshot.updatedAt,
+    hasResultMessage: !!finalMessage,
     ...(status === 'incomplete' && incompleteReason
       ? { incompleteReason }
       : {}),
@@ -58,13 +78,10 @@ export function projectSubagentExecutionResult(input: {
 }
 
 function findFinalMessage(session: SessionData, messageId: string): SessionMessage | undefined {
-  if (messageId) {
-    const exact = session.messages.find(
-      (message) => message.id === messageId && message.role === 'assistant'
-    )
-    if (exact) return exact
-  }
-  return [...session.messages].reverse().find((message) => message.role === 'assistant')
+  if (!messageId) return undefined
+  return session.messages.find(
+    (message) => message.id === messageId && message.role === 'assistant'
+  )
 }
 
 function extractSummary(message: SessionMessage): string {
@@ -97,6 +114,8 @@ function toExecutionStatus(run: RunSnapshot): SubagentExecutionStatus {
 
 function fallbackSummary(status: SubagentExecutionStatus): string {
   switch (status) {
+    case 'accepted':
+      return '子代理任务已接纳，后台执行中'
     case 'completed':
       return '子代理未产生文本输出'
     case 'incomplete':
@@ -108,6 +127,15 @@ function fallbackSummary(status: SubagentExecutionStatus): string {
     case 'interrupted':
       return '子代理执行已中断'
   }
+}
+
+function isTerminalRunSnapshot(run: RunSnapshot): boolean {
+  return (
+    run.status === 'completed' ||
+    run.status === 'failed' ||
+    run.status === 'cancelled' ||
+    run.status === 'interrupted'
+  )
 }
 
 function boundText(value: string, limit: number): string {

@@ -24,6 +24,7 @@ import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
 import { loadLlmRegistry, loadModelConfig } from '../../../runtime/model/config'
 import { resolveContextWindow, resolveSupportsVision } from '../../../shared/config/types'
+import type { ModelConfig } from '../../../shared/config'
 import { preferredToolDialect } from '../../../runtime/model/dialect'
 import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
 import type { OpenAICompatibleModelClient } from '../../../runtime/model/OpenAICompatibleModelClient'
@@ -87,6 +88,7 @@ import {
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import { writerLeaseRegistry } from '../../../runtime/workspace'
 import { planReviewWaiters } from '../interaction/planReviewWaiters'
+import { getBrowserSessionHost } from '../../browser/hostRef'
 
 export interface AgentRuntimeRunRefs {
   runId: string
@@ -120,9 +122,12 @@ export interface PreparedAgentRuntime {
  * - 无 fallbacks 时返回单个 client（AgentLoop 构造函数会自动包装成无 fallback 的 pool）。
  * - fallback client 创建失败（配置非法）时跳过该条，不阻塞主流程。
  */
-export function buildModelPoolWithFallbacks(primary: ModelClient): ModelClient | ModelClientPool {
+export function buildModelPoolWithFallbacks(
+  primary: ModelClient,
+  primaryConfig?: ModelConfig
+): ModelClient | ModelClientPool {
   try {
-    const cfg = loadModelConfig(app.getPath('userData'))
+    const cfg = primaryConfig ?? loadModelConfig(app.getPath('userData'))
     if (!cfg || !cfg.fallbacks || cfg.fallbacks.length === 0) {
       return primary
     }
@@ -165,6 +170,8 @@ export interface PrepareAgentRuntimeInput {
   sessionsDir: string
   novaSettings: NovaSettings
   modelClient: ModelClient
+  /** 会话有效模型配置（含 fallback 链）；缺省时回退读全局配置 */
+  modelConfig?: ModelConfig
   getImageStore: () => ImageStore
   readState: ReadState
   pendingAskQuestions: Map<string, PendingAskQuestionEntry>
@@ -186,6 +193,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionsDir,
     novaSettings,
     modelClient,
+    modelConfig,
     getImageStore,
     readState,
     pendingAskQuestions,
@@ -203,7 +211,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
 
   const artifactStore = new ArtifactStore(sessionsDir)
 
-  const persistedConfig = loadModelConfig(app.getPath('userData'))
+  const persistedConfig = modelConfig ?? loadModelConfig(app.getPath('userData'))
   const contextWindow = resolveContextWindow(
     persistedConfig?.modelId ?? '',
     persistedConfig?.contextWindow
@@ -248,6 +256,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getMemoryRetrievalService,
     loadSettings: loadNovaSettings,
     getSpawnSubagentPort,
+    getRunCoordinator: () => runCoordinator,
     getSubagentCatalog: () =>
       buildSubagentCatalog(
         listSubAgents(projectPath),
@@ -261,6 +270,15 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     memoryEnabled: novaSettings.memoryEnabled,
     codeIndexEnabled: session.codeIndexEnabled === true,
     getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null),
+    getBrowserPort: () => getBrowserSessionHost(),
+    saveBrowserCaptureEvidence: async ({ sessionId, mimeType, base64 }) => {
+      try {
+        return getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`).filePath
+      } catch (error) {
+        console.error('[browser_capture] 截图证据落盘失败:', error)
+        return null
+      }
+    },
     getStageFacts: sid => {
       let projection
       try {
@@ -307,7 +325,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionStore.updateToolAvailability(sessionId, state)
   })
 
-  const modelPool = buildModelPoolWithFallbacks(modelClient)
+  const modelPool = buildModelPoolWithFallbacks(modelClient, persistedConfig ?? undefined)
   const activeProvider =
     modelPool instanceof ModelClientPool
       ? modelPool.getActiveProvider()
@@ -323,6 +341,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   )
   // 呈现模式进程级一次解析（会话内稳定）：code-readonly 时只读探索工具改由 SDK 暴露
   const toolPresentation = getProcessToolPresentationMode()
+  const contextSnapshot = sessionStore.loadContextSnapshot(sessionId)
   const effectiveToolDefinitions = applyLedgerToolVisibility(
     projectEffectiveToolDefinitions(
       session.mode,
@@ -330,7 +349,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       toolAvailability,
       toolPresentation
     ),
-    sessionStore.loadContextSnapshot(sessionId)?.entries.length ?? 0
+    contextSnapshot?.entries.length ?? 0
   )
   let sdkSection = ''
   if (toolPresentation === 'code-readonly') {
@@ -494,7 +513,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     currentProviderId: activeCacheProfile.id
   }
   agentLoop.setSessionContext(sessionStore, sessionId, historyProjection)
-  restoreOrInjectHistory(agentLoop, session, sessionStore.loadContextSnapshot(sessionId), { ...historyProjection, sessionStore })
+  restoreOrInjectHistory(agentLoop, session, contextSnapshot, { ...historyProjection, sessionStore })
 
   // 跨回合诊断快照：读回上一轮状态并绑定持久化回调
   const prevDiagState = loadDiagnosticState(sessionsDir, sessionId)
@@ -510,7 +529,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionId,
     workspaceRoot: projectPath,
     getActivePathMessageIds: () => {
-      const s = sessionStore.load(sessionId)
+      const s = sessionStore.loadActivePath(sessionId)
       if (!s) return undefined
       return new Set(getSessionActiveMessages(s).map((m) => m.id))
     }

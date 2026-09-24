@@ -1,4 +1,5 @@
 import type { PathAccessKind, SessionPathGrant, ToolEffect } from '../../shared/permissions/types'
+import { classifyIp } from '../../shared/permissions/ipClassify'
 import { getToolPermissionDescriptor } from '../../shared/permissions/toolEffects'
 import { resolveToolArg } from '../tools/toolArgResolver'
 import { getShellConfig } from '../tools/bash'
@@ -22,6 +23,16 @@ const PATH_DEFAULT_DOT_TOOLS = new Set(['ls', 'grep', 'find'])
 
 function filesystemAccess(effects: readonly ToolEffect[]): PathAccessKind {
   return effects.includes('filesystem.write') ? 'write' : 'read'
+}
+
+/**
+ * web_fetch 的私网升格（同步层）：URL host 是私网/链路本地 IP 字面量时
+ * 追加 network.private_read（baseline 升格为 ask）。
+ * 域名解析到私网 IP 的场景由工具内逐跳闸门 fail-close，不在这里做 DNS。
+ */
+function isPrivateIpLiteral(host: string): boolean {
+  const bare = host.replace(/^\[|\]$/g, '')
+  return classifyIp(bare) === 'private'
 }
 
 function resolveShellSession(query: PermissionQuery): EffectResolution {
@@ -79,6 +90,14 @@ export function resolvePermissionEffects(query: PermissionQuery): EffectResoluti
 
   const effects = [...descriptor.effects]
   const externalPaths: string[] = []
+  if (query.toolName === 'web_fetch' && typeof query.args.url === 'string') {
+    try {
+      const host = new URL(query.args.url).hostname
+      if (isPrivateIpLiteral(host)) effects.push('network.private_read')
+    } catch {
+      return { ok: false, reason: 'web_fetch 的 url 参数不是合法 URL' }
+    }
+  }
   let pathAccess: PathAccessKind | undefined
 
   if (descriptor.pathScope === 'dynamic') {

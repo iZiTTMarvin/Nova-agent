@@ -6,7 +6,7 @@ import {
   createFollowupSpawnIdentity,
   projectSubagentExecutionResult
 } from '../../../runtime/subagents'
-import { parseFollowupArguments } from '../../../runtime/tools/task_followup'
+import { parseFollowupArguments } from '../../../shared/subagents'
 import { buildSessionDiffState } from '../../../runtime/checkpoints/sessionDiffState'
 import { countEntryChanges } from '../../../shared/diff/compute'
 import { isTerminalRunStatus, type RunSnapshot } from '../../../shared/run/types'
@@ -167,6 +167,7 @@ export class SubagentProjectionService {
           ? { parentToolCallId: attribution.parentToolCallId, taskLabel: attribution.taskLabel }
           : {}),
         includeTerminalDetails,
+        ...(reads ? { reads } : {}),
         // 会话级 diff 是聚合值，只挂最后一个终态 run，避免多行重复展示同一份改动
         withFileChanges:
           includeTerminalDetails &&
@@ -185,6 +186,7 @@ export class SubagentProjectionService {
       readonly taskLabel?: string
       readonly includeTerminalDetails: boolean
       readonly withFileChanges: boolean
+      readonly reads?: ProjectionReadContext
     }
   ): SubagentActivityProjection {
     const { lineage } = session.subagent
@@ -220,8 +222,14 @@ export class SubagentProjectionService {
       profile: profileProjection,
       taskLabel: options.taskLabel?.trim() || session.title?.trim() || '未命名子任务',
       artifactCount: 0,
+      ...(snapshot?.dispatch?.execution
+        ? { execution: snapshot.dispatch.execution }
+        : {}),
       ...(effectiveModel ? { model: effectiveModel } : {}),
-      ...(header ? { reasoningEffort: header.reasoningEffort } : {})
+      ...(header ? { reasoningEffort: header.reasoningEffort } : {}),
+      ...(snapshot?.dispatch?.sourceChildRunId
+        ? { resumedFromRunId: snapshot.dispatch.sourceChildRunId }
+        : {})
     }
 
     if (!snapshot) {
@@ -252,13 +260,15 @@ export class SubagentProjectionService {
     }
 
     if (!options.includeTerminalDetails) {
+      const pendingRelayRunId = this.findPendingRelayRunId(lineage.parentSessionId, snapshot, options.reads)
       return {
         ...base,
         status: snapshot.status,
         sequence: snapshot.sequence,
         startedAt: snapshot.turnStartedAt ?? snapshot.createdAt,
         completedAt: snapshot.updatedAt,
-        latestActivity: snapshot.progress?.label
+        latestActivity: snapshot.progress?.label,
+        ...(pendingRelayRunId ? { pendingRelayRunId } : {})
       }
     }
 
@@ -274,6 +284,7 @@ export class SubagentProjectionService {
     }
     const result = projectSubagentExecutionResult({ childSession, runSnapshot: snapshot })
     const fileChanges = options.withFileChanges ? this.buildFileChanges(session) : []
+    const pendingRelayRunId = this.findPendingRelayRunId(lineage.parentSessionId, snapshot, options.reads)
     return {
       ...base,
       status: snapshot.status,
@@ -284,8 +295,31 @@ export class SubagentProjectionService {
       summary: result.summary,
       artifactCount: result.artifactIds.length,
       ...(result.failure ? { failure: result.failure } : {}),
+      ...(pendingRelayRunId ? { pendingRelayRunId } : {}),
       ...(fileChanges.length > 0 ? { fileChanges } : {})
     }
+  }
+
+  /** 完成通知已被空闲接力预约：从父会话 queued relay run 的冻结批次反查。 */
+  private findPendingRelayRunId(
+    parentSessionId: string,
+    snapshot: RunSnapshot,
+    reads?: ProjectionReadContext
+  ): string | undefined {
+    if (snapshot.dispatch?.execution !== 'background_read_only') return undefined
+    if (!isTerminalRunStatus(snapshot.status) || snapshot.status === 'interrupted') return undefined
+    if (snapshot.deliveryBinding?.paused || snapshot.deliveryBinding?.invalidatedReason) {
+      return undefined
+    }
+    const parentRuns = reads?.runsBySession.get(parentSessionId)
+      ?? this.deps.runCoordinator.listSnapshotsForSession(parentSessionId)
+    for (const run of parentRuns) {
+      if (run.status !== 'queued' || !run.relayTrigger) continue
+      if (run.relayTrigger.items.some(item => item.sourceRunId === snapshot.runId)) {
+        return run.runId
+      }
+    }
+    return undefined
   }
 
   /** 终态才计算会话级聚合 diff；只读子代理无 checkpoint，天然返回空数组。 */
@@ -351,12 +385,10 @@ export class SubagentProjectionService {
         const args = parseFollowupArguments(call.arguments)
         if (!args) continue
         const identity = createFollowupSpawnIdentity({
-          parentSessionId,
           parentRunId,
-          previousChildSessionId: args.childSessionId,
           parentMessageId: message.id,
           parentToolCallId: call.id,
-          task: args.task
+          previousChildSessionId: args.childSessionId
         })
         index.set(identity.spawnRunId, {
           parentToolCallId: call.id,

@@ -50,6 +50,7 @@ import { buildAtifTrajectory } from './atif'
 import { parseArgs, type CliOptions } from './cliOptions'
 import { PermissionManager } from '../runtime/permissions/PermissionManager'
 import { listPermissionRules } from '../runtime/permissions/PermissionService'
+import { isMetricsEnabled, registerMetricSink } from '../shared/diagnostics/metrics'
 import {
   disabledHeadlessCodeGraphDiagnostics,
   startHeadlessCodeGraph,
@@ -159,6 +160,14 @@ async function main(): Promise<void> {
   const summaryPath = resolve(options.logsDir, 'summary.json')
   const trajectoryPath = resolve(options.logsDir, 'trajectory.json')
   const runId = randomUUID()
+  // 结构化指标落盘：NOVA_METRICS=1 时把 projection.archive_batch / budget.assessment /
+  // usage.report 等写入 metrics.jsonl，供逐事件对账
+  if (isMetricsEnabled()) {
+    const metricsPath = resolve(options.logsDir, 'metrics.jsonl')
+    registerMetricSink(event => {
+      appendFileSync(metricsPath, `${JSON.stringify(event)}\n`, 'utf8')
+    })
+  }
   const startedAt = new Date()
   const usage: UsageTotals = {
     uncachedInputTokens: 0,
@@ -247,6 +256,8 @@ async function main(): Promise<void> {
     maxToolRounds: options.maxToolRounds,
     // 显式参数优先；缺省时由模型元数据解析（不再硬编码 1M，避免压缩阈值永不触发）
     contextWindow,
+    // NOVA_PROJECTION_ECONOMICS=off 关闭归档经济门槛（A/B 对照臂）
+    projectionEconomics: process.env.NOVA_PROJECTION_ECONOMICS === 'off' ? 'off' : 'auto',
     supportsVision: false,
     permissionMode: options.permissionMode,
     permissionManager,

@@ -24,6 +24,12 @@ export const SKILL_PICK_IMPORT = 'skill:pick-import' as const
 /** 应用设置 */
 export const SETTINGS_GET = 'settings:get' as const
 export const SETTINGS_SET = 'settings:set' as const
+/** 诊断包导出（保存对话框由主进程负责） */
+export const DIAGNOSTICS_EXPORT = 'diagnostics:export' as const
+/** 工作区文件搜索（@ 引用候选） */
+export const WORKSPACE_SEARCH_FILES = 'workspace:search-files' as const
+/** 会话导出 Markdown（剪贴板或存文件） */
+export const SESSION_EXPORT_MARKDOWN = 'session:export-markdown' as const
 /** 代码索引状态与用户控制 */
 export const CODEINDEX_GET_STATUS = 'codeindex:get-status' as const
 export const CODEINDEX_REBUILD = 'codeindex:rebuild' as const
@@ -95,10 +101,14 @@ export const WORKSPACE_SET_MODE = 'workspace:set-mode' as const
 export const WORKSPACE_SET_PERMISSION_MODE = 'workspace:set-permission-mode' as const
 /** 设置当前会话的思考强度覆盖（null 清除） */
 export const WORKSPACE_SET_REASONING_EFFORT = 'workspace:set-reasoning-effort' as const
+/** 设置当前会话的模型（同时回写全局最近选择） */
+export const WORKSPACE_SET_SESSION_MODEL = 'workspace:set-session-model' as const
 /** 读取当前会话 active plan 的完整 Markdown，用于计划审阅卡 */
 export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 /** 在系统默认应用中打开当前会话 active plan 文件 */
 export const WORKSPACE_OPEN_ACTIVE_PLAN = 'workspace:open-active-plan' as const
+/** 在系统文件管理器中打开指定目录（项目根目录） */
+export const WORKSPACE_OPEN_DIRECTORY = 'workspace:open-directory' as const
 /** compose 胶囊手动回退到方案（与 stage_transition 工具同一套校验） */
 export const COMPOSE_APPLY_STAGE_TRANSITION = 'compose:apply-stage-transition' as const
 /** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */
@@ -146,6 +156,19 @@ export const DOWNLOAD_APP_UPDATE = 'app:update:download' as const
 export const INSTALL_APP_UPDATE = 'app:update:install' as const
 /** 图片落盘：用户上传的 base64 data URL → 主进程写盘 → 返回 nova-image:// URL */
 export const IMAGE_SAVE = 'image:save' as const
+/** 内置浏览器：人工浏览命令（AI 工具不走这些通道） */
+export const BROWSER_OPEN = 'browser:open' as const
+export const BROWSER_NAVIGATE = 'browser:navigate' as const
+export const BROWSER_CLOSE = 'browser:close' as const
+export const BROWSER_GET_SNAPSHOT = 'browser:get-snapshot' as const
+export const BROWSER_CLAIM = 'browser:claim' as const
+export const BROWSER_RELEASE = 'browser:release' as const
+/** renderer 在 webview did-attach 后上报 guest webContentsId，供宿主 fail-closed 校验 */
+export const BROWSER_ATTACH = 'browser:attach' as const
+/** 页面观察、操作与截图。脚本只在主进程的隔离世界执行。 */
+export const BROWSER_OBSERVE = 'browser:observe' as const
+export const BROWSER_ACT = 'browser:act' as const
+export const BROWSER_CAPTURE = 'browser:capture' as const
 
 // ── main → renderer（事件推送） ──────────────────────
 
@@ -185,3 +208,7 @@ export const SKILL_CHANGED = 'skill:changed' as const
 export const WORKSPACE_CHANGED = 'workspace:changed' as const
 /** 主进程应用更新状态投影 */
 export const APP_UPDATE_STATE_CHANGED = 'app:update:state-changed' as const
+/** 内置浏览器页面状态投影（小字段；宿主是唯一写入方） */
+export const BROWSER_SNAPSHOT = 'browser:snapshot' as const
+/** renderer 挂载 webview 所需的 guest 描述（partition / 可见性） */
+export const BROWSER_GUEST_MOUNT = 'browser:guest-mount' as const

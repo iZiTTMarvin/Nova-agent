@@ -116,6 +116,28 @@ describe('compose 阶段工具门禁', () => {
     })
   })
 
+  describe('浏览器工具按 effects 收放，不靠组名或静态白名单', () => {
+    it.each(['interview', 'blueprint'] as const)('%s 放行观察/截图，拒绝打开/操作/关闭', (stage) => {
+      expect(getComposeStageToolDenial(stage, 'browser_observe')).toBeNull()
+      expect(getComposeStageToolDenial(stage, 'browser_capture')).toBeNull()
+      expect(getComposeStageToolDenial(stage, 'browser_open')).toContain('browser_open')
+      expect(getComposeStageToolDenial(stage, 'browser_act')).toContain('browser_act')
+      expect(getComposeStageToolDenial(stage, 'browser_close')).toContain('browser_close')
+    })
+
+    it('锤阶段不因浏览器工具额外干预', () => {
+      for (const name of [
+        'browser_observe',
+        'browser_capture',
+        'browser_open',
+        'browser_act',
+        'browser_close'
+      ]) {
+        expect(getComposeStageToolDenial('build', name)).toBeNull()
+      }
+    })
+  })
+
   it('五阶段都有确定行为（无遗漏分支）', () => {
     for (const stage of COMPOSE_STAGE_IDS) {
       expect(() => {

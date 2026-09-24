@@ -1,7 +1,7 @@
-import { mkdtempSync, rmSync } from 'fs'
+import fs, { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join, resolve } from 'path'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { AgentLoop } from '../../../../src/runtime/agent'
 import { EventBus } from '../../../../src/runtime/agent'
 import { AgentTurnExecutor } from '../../../../src/runtime/agent/turn'
@@ -17,14 +17,23 @@ import {
   createFollowupSpawnIdentity,
   createSpawnIdentity,
   resolveSubagentProfileSnapshot,
+  projectSubagentExecutionResult,
   type SubagentExecutionServiceDeps
 } from '../../../../src/runtime/subagents'
+import {
+  settleSubagentToolCall,
+  type SubagentToolSettlementInput,
+  type SubagentToolSettlement
+} from '../../../../src/runtime/subagents/toolSettlement'
+import { buildSubagentToolResult } from '../../../../src/runtime/subagents/resultText'
+import { writerLeaseRegistry } from '../../../../src/runtime/workspace'
 import type {
   FollowupSubagentCommand,
   SpawnSubagentCommand,
   SubagentSessionHeader
 } from '../../../../src/shared/subagents'
 import type { PrepareSubagentTurnInput } from '../../../../src/runtime/subagents'
+import * as atomicFile from '../../../../src/runtime/storage/atomicFile'
 
 const profile = {
   id: 'explore',
@@ -50,6 +59,7 @@ describe('SubagentExecutionService', () => {
   let parentSessionId: string
 
   beforeEach(() => {
+    writerLeaseRegistry.resetForTests()
     tempRoot = mkdtempSync(join(tmpdir(), 'nova-subagent-service-'))
     workspace = resolve(tempRoot, 'workspace')
     sessionStore = new SessionStore(tempRoot)
@@ -68,6 +78,8 @@ describe('SubagentExecutionService', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
+    writerLeaseRegistry.resetForTests()
     rmSync(tempRoot, { recursive: true, force: true })
   })
 
@@ -88,12 +100,13 @@ describe('SubagentExecutionService', () => {
     }
   }
 
-  function invocationRef() {
+  function invocationRef(overrides: Partial<{ messageId: string; toolCallId: string }> = {}) {
     return {
       sessionId: parentSessionId,
       runId: 'run-parent',
       messageId: 'msg-parent',
-      toolCallId: 'call-task'
+      toolCallId: 'call-task',
+      ...overrides
     }
   }
 
@@ -108,6 +121,9 @@ describe('SubagentExecutionService', () => {
     childFinalText?: string
     resolveExecutionTarget?: SubagentExecutionServiceDeps['resolveExecutionTarget']
     hasSessionExecutionHandle?: (sessionId: string) => boolean
+    isShuttingDown?: () => boolean
+    emitPermissionRequest?: boolean
+    onExecutionSettled?: SubagentExecutionServiceDeps['onExecutionSettled']
   } = {}) {
     const prepareTurn = vi.fn((input: PrepareSubagentTurnInput) => {
       const eventBus = new EventBus()
@@ -128,6 +144,17 @@ describe('SubagentExecutionService', () => {
         sendMessage: vi.fn(async () => {
           expect(fence()).toBe(true)
           eventBus.emit({ type: 'message_start', messageId: 'msg-child-final' })
+          if (options.emitPermissionRequest) {
+            eventBus.emit({
+              type: 'permission_request',
+              messageId: 'msg-child-final',
+              requestId: 'request-child',
+              toolName: 'write',
+              args: { path: 'a.ts' },
+              riskLevel: 'low',
+              reason: 'test permission'
+            })
+          }
           if (options.wait) {
             if (options.cancelReleasesWait) {
               await Promise.race([options.wait, cancellation])
@@ -194,6 +221,12 @@ describe('SubagentExecutionService', () => {
       ...(options.hasSessionExecutionHandle
         ? { hasSessionExecutionHandle: options.hasSessionExecutionHandle }
         : {}),
+      ...(options.isShuttingDown
+        ? { isShuttingDown: options.isShuttingDown }
+        : {}),
+      ...(options.onExecutionSettled
+        ? { onExecutionSettled: options.onExecutionSettled }
+        : {}),
       ...(options.onLinked ? { onLinked: options.onLinked } : {})
     })
     return { service, prepareTurn, scheduler, registry }
@@ -215,7 +248,8 @@ describe('SubagentExecutionService', () => {
       summary: 'child summary',
       artifactIds: ['artifact-1'],
       startedAt: expect.any(Number),
-      completedAt: expect.any(Number)
+      completedAt: expect.any(Number),
+      hasResultMessage: true
     })
     const child = sessionStore.load(execution.childSessionId)
     expect(child).toEqual(expect.objectContaining({
@@ -587,6 +621,422 @@ describe('SubagentExecutionService', () => {
     expect(coordinator.getSnapshot(execution.childRunId)?.status).toBe('cancelled')
     expect(prepareTurn).not.toHaveBeenCalled()
     expect(sessionStore.load(execution.childSessionId)?.kind).toBe('subagent')
+  })
+
+  it('后台只读任务先返回 accepted，持久 run 关联后再等待执行完成', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, prepareTurn } = createService({ wait })
+
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    expect(accepted.status).toBe('accepted')
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
+    expect(coordinator.getSnapshot(accepted.childRunId)).toEqual(expect.objectContaining({
+      status: 'running',
+      dispatch: expect.objectContaining({
+        execution: 'background_read_only',
+        topParentSessionId: parentSessionId
+      })
+    }))
+    expect(sessionStore.load(accepted.childSessionId)?.messages).toHaveLength(1)
+
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+  })
+
+  it('父 run 在后台接纳后终止，child 仍用自身栅栏完成', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, prepareTurn } = createService({ wait })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    coordinator.invalidateExecutionGeneration('run-parent')
+    const prepared = prepareTurn.mock.results[0]?.value as { agentLoop: AgentLoop }
+    const fence = (prepared.agentLoop.setExecutionFence as Mock).mock.calls[0]?.[0] as () => boolean
+    expect(fence()).toBe(true)
+    expect(prepared.agentLoop.setExecutionIdentity).toHaveBeenCalledWith({
+      runId: accepted.childRunId,
+      resourceOwnerRunId: accepted.childRunId
+    })
+
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+    const child = sessionStore.load(accepted.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(projectSubagentExecutionResult({
+      childSession: child,
+      runSnapshot: coordinator.getSnapshot(accepted.childRunId)!
+    }).status).toBe('completed')
+  })
+
+  it('后台派遣对可写 profile 强制只读生效上限并按后台接纳', async () => {
+    const background = command({
+      background: true,
+      profileId: 'code',
+      isolation: 'shared'
+    })
+    const { service, prepareTurn } = createService()
+
+    // background 即只读契约：执行装配按 readonly 生效，而非拒绝接纳
+    const accepted = await service.spawn(background, { invocationRef: invocationRef() })
+    expect(accepted.status).toBe('accepted')
+    await vi.waitFor(() => expect(prepareTurn).toHaveBeenCalledTimes(1))
+    expect(prepareTurn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({ isolation: 'readonly' })
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)).toEqual(expect.objectContaining({
+      dispatch: expect.objectContaining({ execution: 'background_read_only' })
+    }))
+  })
+
+  it('可写 profile 使用 readonly isolation 时生效上限为只读，允许后台接纳', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service } = createService({ wait })
+
+    const accepted = await service.spawn(
+      command({ background: true, profileId: 'code', isolation: 'readonly' }),
+      { invocationRef: invocationRef() }
+    )
+
+    expect(accepted.status).toBe('accepted')
+    expect(coordinator.getSnapshot(accepted.childRunId)).toEqual(expect.objectContaining({
+      dispatch: expect.objectContaining({ execution: 'background_read_only' })
+    }))
+
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+  })
+
+  it('后台排队超时后收敛为 failed，完成管线释放 Scheduler 计数', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 20
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: parentSessionId,
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('failed')
+    )
+    occupied.permit.release()
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(scheduler.snapshot()).toEqual(expect.objectContaining({
+      activeGlobal: 0,
+      queued: 0
+    }))
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason)
+      .toContain('scheduler:wait_timeout:')
+  })
+
+  it('排队中的后台 child 无执行句柄也可取消，迟到 permit 不会启动模型', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn, registry } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('queued')
+
+    const lifecycle = new SubagentLifecycleCoordinator(
+      sessionStore,
+      coordinator,
+      registry,
+      scheduler
+    )
+    await lifecycle.cancelRunTree(accepted.childRunId, 'cancel_queued_background')
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+    )
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(scheduler.snapshot().queued).toBe(0)
+    occupied.permit.release()
+  })
+
+  it('后台 child 取得 permit 后再次检查控制意图并取消', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    const child = sessionStore.load(accepted.childSessionId)
+    if (child?.kind !== 'subagent') throw new Error('expected Child Session')
+    expect(sessionStore.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'stop-background-child',
+      kind: 'stop',
+      targetRunIds: [accepted.childRunId],
+      targetSessionIds: [child.id],
+      requestedAt: Date.now()
+    })).toEqual({ ok: true })
+
+    occupied.permit.release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason)
+      .toBe('control_intent:stop-background-child')
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('单独停止 child 的绑定写入失败时，迟到 permit 仍受 child 会话意图约束', async () => {
+    const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied', capacityKey: 'other-tree', requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn, registry } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), { invocationRef: invocationRef() })
+    sessionStore.setControlIntent(accepted.childSessionId, {
+      version: 1, operationId: `stop:${accepted.childRunId}`, kind: 'stop',
+      targetRunIds: [accepted.childRunId], targetSessionIds: [], requestedAt: Date.now()
+    })
+    const eventsPath = join(tempRoot, accepted.childRunId, 'events.jsonl')
+    const savedEventsPath = `${eventsPath}.saved`
+    fs.renameSync(eventsPath, savedEventsPath)
+    fs.mkdirSync(eventsPath)
+    try {
+      expect(() => coordinator.updateDeliveryBinding(accepted.childRunId, {
+        invalidatedReason: `control_intent:stop:${accepted.childRunId}`
+      })).toThrow()
+    } finally {
+      fs.rmdirSync(eventsPath)
+      fs.renameSync(savedEventsPath, eventsPath)
+      occupied.permit.release()
+    }
+
+    await vi.waitFor(() => expect(scheduler.snapshot().activeGlobal).toBe(0))
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(registry.get(accepted.childRunId)).toBeNull()
+    expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+  })
+
+  it('投递绑定已失效化的后台 child 取得 permit 后收敛为 cancelled', async () => {
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({ scheduler })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('queued')
+    // 分支失效化的持久事实写在源 run（child）自身的投递控制上
+    coordinator.updateDeliveryBinding(accepted.childRunId, {
+      invalidatedReason: 'branch_invalidate:op_branch'
+    })
+
+    occupied.permit.release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('cancelled')
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason)
+      .toContain('branch_invalidate:op_branch')
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('覆盖本派遣的停止意图存在时，后台接纳在持久化 child 前被冻结拒绝', async () => {
+    sessionStore.setControlIntent(parentSessionId, {
+      version: 1,
+      operationId: 'op_stop',
+      kind: 'stop',
+      targetRunIds: ['run-parent'],
+      targetSessionIds: [],
+      requestedAt: Date.now()
+    })
+    const { service, prepareTurn } = createService()
+    const spawnCommand = command({ background: true })
+
+    await expect(
+      service.spawn(spawnCommand, { invocationRef: invocationRef() })
+    ).rejects.toThrow(/control_intent:op_stop/)
+
+    // 不留半套 child 会话与 run：拒绝发生在持久接纳之前
+    const identity = createSpawnIdentity(spawnCommand)
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(coordinator.getSnapshot(identity.spawnRunId)).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('意图未写盘也冻结后台接纳，重试提交并清除后恢复接纳', async () => {
+    const intent = {
+      version: 1 as const, operationId: 'failed-stop', kind: 'stop' as const,
+      targetRunIds: ['run-parent'], targetSessionIds: [], requestedAt: Date.now()
+    }
+    const write = atomicFile.atomicWriteFileSync
+    const fault = vi.spyOn(atomicFile, 'atomicWriteFileSync').mockImplementation((file, content, encoding) => {
+      if (file === join(tempRoot, 'sessions', parentSessionId, 'session.json')) {
+        throw new Error('intent disk full')
+      }
+      write(file, content, encoding)
+    })
+    try {
+      expect(() => sessionStore.setControlIntent(parentSessionId, intent)).toThrow(/intent disk full/)
+    } finally {
+      fault.mockRestore()
+    }
+    const { service, prepareTurn } = createService()
+    const background = command({ background: true })
+    const identity = createSpawnIdentity(background)
+    await expect(service.spawn(background, { invocationRef: invocationRef() }))
+      .rejects.toThrow(/控制意图冻结/)
+    expect(sessionStore.load(deriveChildSessionId(identity.spawnKey))).toBeNull()
+    expect(prepareTurn).not.toHaveBeenCalled()
+    expect(sessionStore.clearControlIntent(parentSessionId, intent.operationId)).toBe(false)
+
+    expect(sessionStore.setControlIntent(parentSessionId, intent)).toEqual({ ok: true })
+    expect(new SessionStore(tempRoot).getControlIntent(parentSessionId)?.operationId).toBe(intent.operationId)
+    expect(sessionStore.clearControlIntent(parentSessionId, intent.operationId)).toBe(true)
+    const accepted = await service.spawn(background, { invocationRef: invocationRef() })
+    expect(accepted.status).toBe('accepted')
+    await vi.waitFor(() => expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed'))
+  })
+
+  it('终态已提交但收尾未完成时 Registry 句柄仍在；空 Registry 代表完成唤醒已发出', async () => {
+    // 受控清理屏障：onExecutionSettled 完成前执行段不得 settled
+    let releaseCleanup!: () => void
+    const cleanupGate = new Promise<void>((resolve) => { releaseCleanup = resolve })
+    const onExecutionSettled = vi.fn(() => cleanupGate)
+    const { service, registry } = createService({ onExecutionSettled })
+
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+
+    // 模型已完成、durable 终态已提交，但收尾被屏障挡住
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+    expect(onExecutionSettled).toHaveBeenCalledTimes(1)
+    // 先到的 terminal snapshot 不构成收尾完成：live drain 门槛必须仍看见句柄
+    expect(registry.get(accepted.childRunId)).not.toBeNull()
+
+    releaseCleanup()
+    await vi.waitFor(() => expect(registry.get(accepted.childRunId)).toBeNull())
+  })
+
+  it('关闭流程开始后，后台 child 取得 permit 也只收敛为 interrupted', async () => {
+    let shuttingDown = false
+    const scheduler = new SubagentScheduler({
+      globalLimit: 1,
+      perRootLimit: 1,
+      waitTimeoutMs: 1_000
+    })
+    const occupied = await scheduler.acquire({
+      runId: 'run-occupied',
+      capacityKey: 'other-tree',
+      requestKey: 'occupied'
+    })
+    if (!occupied.ok) throw new Error('expected occupied permit')
+    const { service, prepareTurn } = createService({
+      scheduler,
+      isShuttingDown: () => shuttingDown
+    })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    shuttingDown = true
+    occupied.permit.release()
+
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('interrupted')
+    )
+    expect(coordinator.getSnapshot(accepted.childRunId)?.terminalReason).toBe('process_exit')
+    expect(prepareTurn).not.toHaveBeenCalled()
+  })
+
+  it('相同后台 spawn 在全生命周期去重，不同 metadata 的并发调用被拒绝', async () => {
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, prepareTurn } = createService({ wait })
+    const background = command({ background: true })
+    const first = service.spawn(background, { invocationRef: invocationRef() })
+    const second = service.spawn(background, { invocationRef: invocationRef() })
+    expect(first).toBe(second)
+    await expect(service.spawn(
+      { ...background, task: 'different background task' },
+      { invocationRef: invocationRef() }
+    )).rejects.toThrow(/metadata 冲突/)
+
+    const accepted = await first
+    expect(accepted.status).toBe('accepted')
+    release()
+    await vi.waitFor(() =>
+      expect(coordinator.getSnapshot(accepted.childRunId)?.status).toBe('completed')
+    )
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
+  })
+
+  it('后台 child 的提问/拒权清理只释放自身，不会抢走父 writer lease', async () => {
+    await expect(writerLeaseRegistry.acquire(workspace, 'run-parent')).resolves.toEqual({ ok: true })
+    let release!: () => void
+    const wait = new Promise<void>((resolveWait) => { release = resolveWait })
+    const { service, registry } = createService({
+      wait,
+      cancelReleasesWait: true,
+      emitPermissionRequest: true
+    })
+    const accepted = await service.spawn(command({ background: true }), {
+      invocationRef: invocationRef()
+    })
+    await vi.waitFor(() => expect(registry.get(accepted.childRunId)).not.toBeNull())
+    expect(writerLeaseRegistry.holder(workspace)).toBe('run-parent')
+
+    const lifecycle = new SubagentLifecycleCoordinator(
+      sessionStore,
+      coordinator,
+      registry,
+      new SubagentScheduler()
+    )
+    await lifecycle.cancelRunTree(accepted.childRunId, 'cancel_background_lease')
+    release()
+    expect(writerLeaseRegistry.holder(workspace)).toBe('run-parent')
   })
 
   it('depth 超限与 read_only 父级权限提升请求均被服务拒绝', async () => {
@@ -987,7 +1437,7 @@ describe('SubagentExecutionService', () => {
     const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
     const occupied = await scheduler.acquire({
       runId: 'run-occupied',
-      rootRunId: 'run-parent',
+      capacityKey: parentSessionId,
       requestKey: 'occupied'
     })
     const { service } = createService({ scheduler })
@@ -1005,7 +1455,7 @@ describe('SubagentExecutionService', () => {
     const scheduler = new SubagentScheduler({ globalLimit: 1, perRootLimit: 1 })
     const occupied = await scheduler.acquire({
       runId: 'run-occupied',
-      rootRunId: 'run-parent',
+      capacityKey: parentSessionId,
       requestKey: 'occupied'
     })
     const spawnCommand = command()
@@ -1029,7 +1479,7 @@ describe('SubagentExecutionService', () => {
     const identity = createSpawnIdentity(spawnCommand)
     const authoritative = await scheduler.acquire({
       runId: identity.spawnRunId,
-      rootRunId: 'run-parent',
+      capacityKey: parentSessionId,
       requestKey: 'authoritative-service'
     })
     if (!authoritative.ok) throw new Error('expected permit')
@@ -1082,6 +1532,78 @@ describe('SubagentExecutionService', () => {
         { invocationRef: invocationRef() }
       )
     ).rejects.toThrow(/workflow 子代理入口已移除/)
+  })
+
+  it('接力轮派遣的 child 把来源归一到最近的真实用户消息，而不是接力消息', async () => {
+    // 真实用户消息 U → 上一轮 assistant A → 内部接力消息 R（role user 但非用户输入）
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-user-origin', role: 'user', content: '继续推进', timestamp: 1
+    })
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-assistant-prev', role: 'assistant', content: '上一轮回答', timestamp: 2
+    })
+    sessionStore.appendMessageFast(parentSessionId, {
+      id: 'msg-relay-internal',
+      role: 'user',
+      content: '',
+      blocks: [{
+        type: 'runtime_input',
+        version: 1,
+        inputKind: 'subagent_notification',
+        notificationId: 'ntf_child_origin',
+        sourceRunId: 'run-child-origin',
+        afterStep: -1,
+        order: 0,
+        content: '后台子任务通知正文'
+      }],
+      internalSource: 'runtime_input',
+      timestamp: 3
+    })
+
+    // 活跃接力轮：turnDraft 的投递事实指向接力消息，派遣发生在该轮内
+    const relayRunId = 'run-parent-relay'
+    coordinator.startRun({
+      kind: 'agent',
+      runId: relayRunId,
+      workspaceId: workspace,
+      sessionId: parentSessionId,
+      messageId: 'msg-relay-internal'
+    })
+    coordinator.markRunning(relayRunId, 'msg-relay-internal')
+    // 派遣要求 root run 有可用的执行栅栏
+    coordinator.bindExecutionGeneration(relayRunId, 77)
+    coordinator.upsertTurnDraft(relayRunId, {
+      messageId: 'msg-relay-internal',
+      userDelivery: {
+        userMessageId: 'msg-relay-internal',
+        modeInstruction: '',
+        sessionPrefix: null
+      },
+      blocks: []
+    })
+
+    const { service } = createService()
+    const spawnCommand = command({
+      parentRunId: relayRunId,
+      invocation: {
+        kind: 'task_tool',
+        parentMessageId: 'msg-relay-internal',
+        parentToolCallId: 'call-relay-task'
+      }
+    })
+    const result = await service.spawn(spawnCommand, {
+      invocationRef: invocationRef({
+        runId: relayRunId,
+        messageId: 'msg-relay-internal',
+        toolCallId: 'call-relay-task'
+      })
+    })
+
+    const dispatch = coordinator.getSnapshot(result.childRunId)?.dispatch
+    // 接力消息不是用户授权来源：预算链必须归到真实用户消息，否则每轮接力都会新开一条链
+    expect(dispatch?.originUserMessageId).toBe('msg-user-origin')
+    expect(dispatch?.originUserMessageId).not.toBe('msg-relay-internal')
+    expect(dispatch?.parentMessageId).toBe('msg-relay-internal')
   })
 
   describe('followup', () => {
@@ -1569,6 +2091,451 @@ describe('SubagentExecutionService', () => {
       expect(taskToolIdentity.spawnKey.startsWith('task_tool:')).toBe(true)
       expect(identity.spawnKey).not.toBe(taskToolIdentity.spawnKey)
       expect(identity.spawnRunId).not.toBe(taskToolIdentity.spawnRunId)
+    })
+  })
+
+  describe('resume', () => {
+    function createTargetChild(options: {
+      readonly key?: string
+    } = {}) {
+      const key = options.key ?? `resume-target-${Date.now()}-${Math.random()}`
+      return sessionStore.createChildIfAbsent({
+        childSessionId: deriveChildSessionId(key),
+        workspaceRoot: workspace,
+        mode: 'default',
+        permissionMode: 'request_approval',
+        task: 'initial birth task',
+        subagent: {
+          lineage: {
+            parentSessionId,
+            parentRunId: 'run-parent',
+            rootRunId: 'run-parent',
+            depth: 1,
+            spawnKey: key,
+            spawnRunId: `run-birth-${key}`,
+            origin: {
+              kind: 'task_tool',
+              parentMessageId: 'msg-parent',
+              parentToolCallId: 'call-birth'
+            }
+          },
+          profile: resolveSubagentProfileSnapshot(profile, profile.id),
+          header: modelHeader
+        }
+      }).session
+    }
+
+    function followupCmd(
+      previousChildSessionId: string,
+      overrides: Partial<FollowupSubagentCommand> = {}
+    ): FollowupSubagentCommand {
+      return {
+        parentSessionId,
+        parentRunId: 'run-parent',
+        previousChildSessionId,
+        parentMessageId: 'msg-parent',
+        parentToolCallId: 'call-followup-resume',
+        task: 'resume the interrupted work',
+        ...overrides
+      }
+    }
+
+    function ref(toolCallId = 'call-followup-resume') {
+      return {
+        sessionId: parentSessionId,
+        runId: 'run-parent',
+        messageId: 'msg-parent',
+        toolCallId
+      }
+    }
+
+    it('指定 run 不存在时拒绝', async () => {
+      const child = createTargetChild({ key: 'resume-nonexistent' })
+      const { service } = createService()
+      await expect(
+        service.followup(
+          followupCmd(child.id, { resumeRunId: 'run-no-such' }),
+          { invocationRef: ref() }
+        )
+      ).rejects.toThrow('不存在')
+    })
+
+    it('指定 run 不属于该子会话时拒绝', async () => {
+      const childA = createTargetChild({ key: 'resume-wrong-child-a' })
+      const childB = createTargetChild({ key: 'resume-wrong-child-b' })
+      coordinator.startRun({ kind: 'agent', runId: 'run-b-child', sessionId: childB.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: 'run-b-child', status: 'interrupted' })
+      const { service } = createService()
+      await expect(
+        service.followup(
+          followupCmd(childA.id, { resumeRunId: 'run-b-child' }),
+          { invocationRef: ref() }
+        )
+      ).rejects.toThrow('不属于该子会话')
+    })
+
+    it('指定 run 非 interrupted 状态时拒绝', async () => {
+      const child = createTargetChild({ key: 'resume-not-inter' })
+      coordinator.startRun({ kind: 'agent', runId: 'run-not-inter', sessionId: child.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: 'run-not-inter', status: 'completed' })
+      const { service } = createService()
+      await expect(
+        service.followup(
+          followupCmd(child.id, { resumeRunId: 'run-not-inter' }),
+          { invocationRef: ref() }
+        )
+      ).rejects.toThrow('只能恢复 interrupted 状态的子 run（当前 completed）')
+    })
+
+    it('指定 run 有活跃执行句柄时拒绝', async () => {
+      const child = createTargetChild({ key: 'resume-active-handle' })
+      coordinator.startRun({ kind: 'agent', runId: 'run-active-handle', sessionId: child.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: 'run-active-handle', status: 'interrupted' })
+      const registry = new RunExecutionRegistry()
+      const release = vi.fn()
+      // provide proper settled promise so registry.register() doesn't throw
+      registry.register({ runId: 'run-active-handle', generation: 1, release, settled: Promise.resolve() })
+      const { service } = createService({
+        registry,
+        isRunExecutionActive: (runId) => registry.get(runId) !== null
+      })
+      await expect(
+        service.followup(
+          followupCmd(child.id, { resumeRunId: 'run-active-handle' }),
+          { invocationRef: ref() }
+        )
+      ).rejects.toThrow('仍有活跃执行句柄')
+    })
+
+    it('指定 run 有 pending 交互时拒绝', async () => {
+      const child = createTargetChild({ key: 'resume-pending' })
+      // 恢复目标：旧 run 带未决交互
+      coordinator.startRun({ kind: 'agent', runId: 'run-pending', sessionId: child.id, workspaceId: workspace })
+      coordinator.inbox.enqueue({
+        interactionId: 'i-pending',
+        runId: 'run-pending',
+        sessionId: child.id,
+        messageId: 'msg-pending',
+        type: 'permission',
+        status: 'pending',
+        payload: {},
+        version: 1
+      })
+      coordinator.commitTerminal({ runId: 'run-pending', status: 'interrupted' })
+      // 子会话最新 run 无未决交互：既有会话级检查放行，由 resume 校验链拒绝
+      coordinator.startRun({ kind: 'agent', runId: 'run-latest-clean', sessionId: child.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: 'run-latest-clean', status: 'interrupted' })
+
+      const { service } = createService()
+      await expect(
+        service.followup(
+          followupCmd(child.id, { resumeRunId: 'run-pending' }),
+          { invocationRef: ref() }
+        )
+      ).rejects.toThrow('有待处理交互')
+    })
+
+    it('resume 使用旧 run 事实：新 run 的 dispatch.sourceChildRunId 指向旧 run；旧 run 仍 interrupted', async () => {
+      const child = createTargetChild({ key: 'resume-use-facts' })
+      const oldRunId = `run-resume-old-${Date.now()}`
+      // old run 有 committed 和 executing tool 记录，但不留 turnDraft（防止 recoverSessionTurnDrafts 触发）
+      coordinator.startRun({ kind: 'agent', runId: oldRunId, sessionId: child.id, workspaceId: workspace })
+      coordinator.markRunning(oldRunId, 'msg-old')
+      coordinator.recordToolPhase(oldRunId, 'read-1', 'read', 'committed', { idempotent: true })
+      coordinator.recordToolPhase(oldRunId, 'write-1', 'write', 'executing', { idempotent: false })
+      coordinator.commitTerminal({ runId: oldRunId, status: 'interrupted' })
+
+      const { service, prepareTurn } = createService()
+      const result = await service.followup(
+        followupCmd(child.id, { resumeRunId: oldRunId }),
+        { invocationRef: ref() }
+      )
+      expect(result.status).toBe('completed')
+      const newRunId = result.childRunId
+      expect(newRunId).not.toBe(oldRunId)
+
+      const newSnap = coordinator.getSnapshot(newRunId)
+      expect(newSnap?.dispatch?.sourceChildRunId).toBe(oldRunId)
+      expect(newSnap?.dispatch?.callKind).toBe('task_followup')
+      expect(newSnap?.dispatch?.execution).toBe('sync')
+      expect(newSnap?.dispatch?.parentSessionId).toBe(parentSessionId)
+
+      const oldSnap = coordinator.getSnapshot(oldRunId)
+      expect(oldSnap?.status).toBe('interrupted')
+
+      const preparedResult = prepareTurn.mock.results.at(-1)?.value as { agentLoop: AgentLoop }
+      expect(preparedResult).toBeDefined()
+      const sendMessageMock = preparedResult.agentLoop.sendMessage as unknown as Mock
+      const sentTask = sendMessageMock.mock.calls.at(-1)?.[0] as string
+      expect(sentTask).toContain('read')
+      expect(sentTask).toContain('禁止自动重放')
+    })
+
+    it('同一命令重试幂等：第一次 resume 后收敛新 run 为 interrupted，再用同一命令 followup → 复用同一新 run', async () => {
+      const child = createTargetChild({ key: 'resume-idempotent' })
+      const oldRunId = `run-resume-idempotent-old-${Date.now()}`
+      coordinator.startRun({ kind: 'agent', runId: oldRunId, sessionId: child.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: oldRunId, status: 'interrupted' })
+
+      const { service } = createService()
+      const first = await service.followup(
+        followupCmd(child.id, { resumeRunId: oldRunId }),
+        { invocationRef: ref() }
+      )
+      const newRunId = first.childRunId
+
+      coordinator.commitTerminal({ runId: newRunId, status: 'interrupted' })
+
+      const second = await service.followup(
+        followupCmd(child.id, { resumeRunId: oldRunId }),
+        { invocationRef: ref() }
+      )
+      expect(second.childRunId).toBe(newRunId)
+      const snap = coordinator.getSnapshot(newRunId)
+      expect(snap?.status).toBe('completed')
+    })
+
+    it('普通 followup（无 resumeRunId）行为完全不变：新 run 不带 sourceChildRunId', async () => {
+      const child = createTargetChild({ key: 'resume-normal' })
+      coordinator.startRun({ kind: 'agent', runId: 'run-normal-followup', sessionId: child.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: 'run-normal-followup', status: 'interrupted' })
+
+      const { service } = createService()
+      const result = await service.followup(followupCmd(child.id), { invocationRef: ref() })
+      const snap = coordinator.getSnapshot(result.childRunId)
+      expect(snap?.dispatch?.sourceChildRunId).toBeUndefined()
+      expect(snap?.dispatch?.callKind).toBe('task_followup')
+    })
+
+    it('模型失效时 resume 失败，旧 run 状态不变', async () => {
+      const child = createTargetChild({ key: 'resume-model-fail' })
+      coordinator.startRun({ kind: 'agent', runId: 'run-model-fail', sessionId: child.id, workspaceId: workspace })
+      coordinator.commitTerminal({ runId: 'run-model-fail', status: 'interrupted' })
+
+      const resolveExecutionTarget = vi.fn(() => { throw new Error('provider 已禁用') })
+      const { service } = createService({ resolveExecutionTarget })
+
+      await expect(
+        service.followup(
+          followupCmd(child.id, { resumeRunId: 'run-model-fail' }),
+          { invocationRef: ref() }
+        )
+      ).rejects.toThrow('provider 已禁用')
+
+      const oldSnap = coordinator.getSnapshot('run-model-fail')
+      expect(oldSnap?.status).toBe('interrupted')
+    })
+
+    it('普通 spawn 的 child run 带 dispatch（callKind task；topParentSessionId 正确）', async () => {
+      const { service } = createService()
+      coordinator.bindExecutionGeneration('run-parent', 99)
+      const result = await service.spawn(command(), { invocationRef: invocationRef() })
+      const snap = coordinator.getSnapshot(result.childRunId)
+      expect(snap?.dispatch?.callKind).toBe('task')
+      expect(snap?.dispatch?.execution).toBe('sync')
+      expect(snap?.dispatch?.topParentSessionId).toBe(parentSessionId)
+    })
+
+    it('batch_tool 派生的 spawn 带 callKind batch_task', async () => {
+      const { service } = createService()
+      coordinator.bindExecutionGeneration('run-parent', 99)
+      const result = await service.spawn(
+        command({
+          invocation: { kind: 'task_tool', parentToolCallId: 'call:batch:task_1', parentMessageId: 'msg-parent' },
+          parentToolCallId: 'call:batch:task_1'
+        }),
+        { invocationRef: invocationRef({ toolCallId: 'call:batch:task_1' }) }
+      )
+      const snap = coordinator.getSnapshot(result.childRunId)
+      expect(snap?.dispatch?.callKind).toBe('batch_task')
+    })
+  })
+
+  describe('settleSubagentToolCall', () => {
+    let settlementCallCount = 0
+
+    async function makeSettledTask(opts: {
+      sessionStore: SessionStore
+      coordinator: ReturnType<typeof createRunCoordinator>
+      parentSessionId: string
+      childFinalText?: string
+      status?: RunSnapshot['status']
+      terminalReason?: string
+      incompleteReason?: RunSnapshot['incompleteReason']
+      invocationRefOverride?: { messageId: string; toolCallId: string }
+    }) {
+      const { sessionStore, coordinator, parentSessionId, childFinalText = 'done', status = 'completed', terminalReason, incompleteReason, invocationRefOverride } = opts
+      const ref = invocationRef(invocationRefOverride ?? {})
+      const cmd = command({
+        invocation: {
+          kind: 'task_tool',
+          parentMessageId: ref.messageId,
+          parentToolCallId: ref.toolCallId
+        }
+      })
+      const { service } = createService({ childFinalText })
+      const exec = await service.spawn(cmd, { invocationRef: ref })
+      // Use terminalTransitionId to force override even if already terminal
+      coordinator.commitTerminal({
+        runId: exec.childRunId,
+        status,
+        terminalTransitionId: 'forced-' + Math.random(),
+        ...(terminalReason ? { reason: terminalReason } : {}),
+        ...(incompleteReason ? { incompleteReason } : {})
+      })
+      return { exec, cmd }
+    }
+
+    it('followup 不污染旧 task：不同 toolCallId 独立结算，互不干扰', async () => {
+      const unique = `settle1-${++settlementCallCount}`
+      const { service } = createService({ childFinalText: 'spawn result' })
+      const cmd = command({ invocation: { kind: 'task_tool', parentMessageId: 'msg-parent', parentToolCallId: `call-${unique}` } })
+      const exec = await service.spawn(cmd, { invocationRef: { sessionId: parentSessionId, runId: 'run-parent', messageId: 'msg-parent', toolCallId: `call-${unique}` } })
+      coordinator.commitTerminal({ runId: exec.childRunId, status: 'completed' })
+
+      // 结算 task 调用（unique toolCallId）
+      const settlement = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: 'run-parent', parentMessageId: 'msg-parent', toolCallId: `call-${unique}`, toolName: 'task', args: { subagent_type: 'explore', task: 'inspect runtime' } }
+      )
+      expect(settlement).not.toBeNull()
+      expect(settlement!.status).toBe('success')
+      expect(settlement!.result).toContain('spawn result')
+    })
+
+    it('恢复与正常路径一致：真实 spawn 到 completed，settlement.status === success 且 result 与 buildSubagentToolResult 逐字节相等', async () => {
+      const unique = `settle2-${++settlementCallCount}`
+      const { exec } = await makeSettledTask({
+        sessionStore, coordinator, parentSessionId,
+        childFinalText: 'real result text',
+        status: 'completed',
+        invocationRefOverride: { messageId: 'msg-parent', toolCallId: `call-${unique}` }
+      })
+      const child = sessionStore.load(exec.childSessionId)!
+      const run = coordinator.getSnapshot(exec.childRunId)!
+      const projected = projectSubagentExecutionResult({ childSession: child, runSnapshot: run })
+      const expectedResult = buildSubagentToolResult(
+        `[子代理 explore / 会话 ${exec.childSessionId} / run ${exec.childRunId}]`,
+        projected
+      ).output
+      const settlement = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: 'run-parent', parentMessageId: 'msg-parent', toolCallId: `call-${unique}`, toolName: 'task', args: { subagent_type: 'explore', task: 'inspect runtime' } }
+      )
+      expect(settlement).not.toBeNull()
+      expect(settlement!.status).toBe('success')
+      expect(settlement!.result).toBe(expectedResult)
+    })
+
+    it('interrupted child 结算：error 文本含 childSessionId/runId/已提交计数/resume 入口提示', async () => {
+      const unique = `settle3-${++settlementCallCount}`
+      // makeSettledTask creates child + run but commits 'completed' via reconcileAgentTurnTerminal.
+      // Override to 'interrupted' by mutating the stored snapshot directly (commitTerminal
+      // after 'completed' is a no-op since completed is terminal).
+      const { exec } = await makeSettledTask({
+        sessionStore, coordinator, parentSessionId,
+        invocationRefOverride: { messageId: 'msg-parent', toolCallId: `call-${unique}` }
+      })
+      // Directly mutate stored snapshot — bypass commitTerminal's terminal guard
+      const stored = (coordinator as unknown as Record<string, unknown>).runs.get(exec.childRunId) as Record<string, unknown> | undefined
+      expect(stored).toBeDefined()
+      stored!.status = 'interrupted'
+      stored!.terminalReason = 'process_exit'
+
+      const settlement = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: 'run-parent', parentMessageId: 'msg-parent', toolCallId: `call-${unique}`, toolName: 'task', args: { subagent_type: 'explore', task: 'inspect runtime' } }
+      )
+      expect(settlement).not.toBeNull()
+      expect(settlement!.status).toBe('error')
+      expect(settlement!.result).toContain(exec.childSessionId)
+      expect(settlement!.result).toContain(exec.childRunId)
+      expect(settlement!.result).toContain('task_followup')
+      expect(settlement!.result).toContain('已提交工具调用')
+    })
+
+    it('未创建（child 与 run 均无）返回精确缺失文案，不伪造成功', async () => {
+      const unique = `settle4-${++settlementCallCount}`
+      const neverCreated = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: 'run-parent', parentMessageId: 'msg-parent', toolCallId: `call-${unique}`, toolName: 'task', args: { subagent_type: 'explore', task: 'inspect runtime' } }
+      )
+      expect(neverCreated).not.toBeNull()
+      expect(neverCreated!.status).toBe('error')
+      expect(neverCreated!.result).toContain('均不存在')
+      expect(neverCreated!.result).toContain('未被执行')
+    })
+
+    it('batch 结算：两项均未创建，整体 error 且结果为 JSON 格式含 rejected', async () => {
+      const unique = `settle5-${++settlementCallCount}`
+      const settlement = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        {
+          sessionId: parentSessionId,
+          parentRunId: 'run-parent',
+          parentMessageId: 'msg-parent',
+          toolCallId: `call-${unique}`,
+          toolName: 'batch_task',
+          args: {
+            items: [
+              { itemId: 'a', profileId: 'explore', task: 'inspect runtime' },
+              { itemId: 'b', profileId: 'explore', task: 'inspect runtime 2' }
+            ]
+          }
+        }
+      )
+      expect(settlement).not.toBeNull()
+      expect(settlement!.status).toBe('error')
+      expect(settlement!.result).toContain('工具执行失败:')
+      expect(settlement!.result).toContain('批次部分失败')
+      const jsonStart = settlement!.result.indexOf('{')
+      const parsed = JSON.parse(settlement!.result.slice(jsonStart))
+      expect(parsed.results).toBeDefined()
+      expect(Array.isArray(parsed.results)).toBe(true)
+      expect(parsed.results.length).toBe(2)
+    })
+
+    it('followup 不依赖父消息归档：直接以坐标+参数结算 followup run', async () => {
+      const unique = `settle6-${++settlementCallCount}`
+      coordinator.markRunning('run-parent', 'msg-parent')
+      coordinator.bindExecutionGeneration('run-parent', 41)
+      coordinator.startRun({ kind: 'agent', runId: `run-followup-${unique}`, workspaceId: workspace, sessionId: parentSessionId })
+      coordinator.markRunning(`run-followup-${unique}`, `msg-followup-${unique}`)
+      coordinator.commitTerminal({ runId: `run-followup-${unique}`, status: 'completed' })
+
+      const settlement = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: `run-followup-${unique}`, parentMessageId: `msg-followup-${unique}`, toolCallId: `call-followup-${unique}`, toolName: 'task_followup', args: { child_session_id: 'sess-sub-nonexistent', task: 'continue' } }
+      )
+      expect(settlement).not.toBeNull()
+      expect(settlement!.status).toBe('error')
+    })
+
+    it('结算幂等无副作用：连续两次调用结果相等，且不改变 store/coordinator 内容', async () => {
+      const unique = `settle7-${++settlementCallCount}`
+      const svc = createService({ childFinalText: 'idempotency check' })
+      coordinator.bindExecutionGeneration('run-parent', 99)
+      const cmd = command({ invocation: { kind: 'task_tool', parentMessageId: 'msg-parent', parentToolCallId: `call-${unique}` } })
+      const exec = await svc.service.spawn(cmd, {
+        invocationRef: { sessionId: parentSessionId, runId: 'run-parent', messageId: 'msg-parent', toolCallId: `call-${unique}` }
+      })
+      coordinator.commitTerminal({ runId: exec.childRunId, status: 'completed' })
+
+      const snapshotStore = JSON.stringify([...sessionStore.listInternal()])
+      const snapshotRuns = coordinator.getSnapshot(exec.childRunId)
+
+      const first = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: 'run-parent', parentMessageId: 'msg-parent', toolCallId: `call-${unique}`, toolName: 'task', args: { subagent_type: 'explore', task: 'inspect runtime' } }
+      )
+      const second = settleSubagentToolCall(
+        { sessionStore, runCoordinator: coordinator },
+        { sessionId: parentSessionId, parentRunId: 'run-parent', parentMessageId: 'msg-parent', toolCallId: `call-${unique}`, toolName: 'task', args: { subagent_type: 'explore', task: 'inspect runtime' } }
+      )
+      expect(first).toEqual(second)
+      expect(JSON.stringify([...sessionStore.listInternal()])).toBe(snapshotStore)
+      const afterRuns = coordinator.getSnapshot(exec.childRunId)
+      expect(afterRuns?.updatedAt ?? 0).toBe(snapshotRuns?.updatedAt ?? 0)
     })
   })
 })

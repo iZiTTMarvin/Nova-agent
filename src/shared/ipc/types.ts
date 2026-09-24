@@ -49,6 +49,7 @@ import type {
   SetModeParams,
   SetPermissionModeParams,
   SetReasoningEffortParams,
+  SetSessionModelParams,
   ActivePlanDocument,
   ReadActivePlanParams
 } from '../workspace/types'
@@ -85,8 +86,42 @@ import type {
 } from '../fs/types'
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 import type { AppUpdateSnapshot } from '../update'
+import type {
+  ActionOutcome,
+  BrowserActIpcParams,
+  BrowserAttachIpcParams,
+  BrowserAttachResult,
+  BrowserCaptureIpcParams,
+  BrowserCaptureResult,
+  BrowserObserveIpcParams,
+  BrowserObserveResult,
+  BrowserClaimIpcParams,
+  BrowserClaimResult,
+  BrowserCloseIpcParams,
+  BrowserCloseResult,
+  BrowserGuestMountSnapshot,
+  BrowserListResult,
+  BrowserNavigateIpcParams,
+  BrowserNavigateResult,
+  BrowserOpenIpcParams,
+  BrowserOpenResult,
+  BrowserSnapshotIpcParams,
+  BrowserSurfaceSnapshot
+} from '../browser'
 import {
   APP_UPDATE_STATE_CHANGED,
+  BROWSER_ATTACH,
+  BROWSER_CLAIM,
+  BROWSER_CLOSE,
+  BROWSER_GET_SNAPSHOT,
+  BROWSER_GUEST_MOUNT,
+  BROWSER_NAVIGATE,
+  BROWSER_OBSERVE,
+  BROWSER_OPEN,
+  BROWSER_RELEASE,
+  BROWSER_ACT,
+  BROWSER_CAPTURE,
+  BROWSER_SNAPSHOT,
   CHECK_APP_UPDATE,
   DOWNLOAD_APP_UPDATE,
   GET_APP_UPDATE_STATE,
@@ -268,6 +303,21 @@ export interface IpcCommands {
     params: void
     result: Session[]
   }
+  'session:export-markdown': {
+    params: { sessionId: string; target: 'clipboard' | 'file' }
+    result:
+      | { status: 'copied' }
+      | { status: 'saved'; filePath: string }
+      | { status: 'cancelled' }
+      | { status: 'failed'; error: string }
+  }
+  'diagnostics:export': {
+    params: void
+    result:
+      | { status: 'saved'; filePath: string }
+      | { status: 'cancelled' }
+      | { status: 'failed'; error: string }
+  }
   'load-session': {
     params: { sessionId: string }
     result: SessionDetail
@@ -397,6 +447,10 @@ export interface IpcCommands {
     result: void
   }
   // ── Workspace 单一事实源（PRD §5.1） ──
+  'workspace:search-files': {
+    params: { workspaceRoot: string; query: string }
+    result: { files: string[]; source: 'git' | 'recursive' }
+  }
   'workspace:get': {
     params: void
     result: WorkspaceState
@@ -438,12 +492,20 @@ export interface IpcCommands {
     params: SetReasoningEffortParams
     result: WorkspaceState
   }
+  'workspace:set-session-model': {
+    params: SetSessionModelParams
+    result: WorkspaceState
+  }
   'workspace:read-active-plan': {
     params: ReadActivePlanParams
     result: ActivePlanDocument | null
   }
   'workspace:open-active-plan': {
     params: { sessionId: string }
+    result: void
+  }
+  'workspace:open-directory': {
+    params: { path: string }
     result: void
   }
   'compose:apply-stage-transition': {
@@ -587,6 +649,46 @@ export interface IpcCommands {
       url: string
     }
   }
+  [BROWSER_OPEN]: {
+    params: BrowserOpenIpcParams
+    result: BrowserOpenResult
+  }
+  [BROWSER_NAVIGATE]: {
+    params: BrowserNavigateIpcParams
+    result: BrowserNavigateResult
+  }
+  [BROWSER_CLOSE]: {
+    params: BrowserCloseIpcParams
+    result: BrowserCloseResult
+  }
+  [BROWSER_GET_SNAPSHOT]: {
+    params: BrowserSnapshotIpcParams
+    result: BrowserListResult
+  }
+  [BROWSER_CLAIM]: {
+    params: BrowserClaimIpcParams
+    result: BrowserClaimResult
+  }
+  [BROWSER_RELEASE]: {
+    params: BrowserClaimIpcParams
+    result: BrowserClaimResult
+  }
+  [BROWSER_ATTACH]: {
+    params: BrowserAttachIpcParams
+    result: BrowserAttachResult
+  }
+  [BROWSER_OBSERVE]: {
+    params: BrowserObserveIpcParams
+    result: BrowserObserveResult
+  }
+  [BROWSER_ACT]: {
+    params: BrowserActIpcParams
+    result: ActionOutcome
+  }
+  [BROWSER_CAPTURE]: {
+    params: BrowserCaptureIpcParams
+    result: BrowserCaptureResult
+  }
 }
 
 /** 所有命令 channel 名称 */
@@ -722,6 +824,9 @@ export interface IpcEvents {
     messageId: string
     error: string
   }
+  'notifications:navigate': {
+    sessionId: string
+  }
   'agent:message-end': {
     messageId: string
     /**
@@ -834,6 +939,12 @@ export interface IpcEvents {
     sessionId: string | null
   }
   [APP_UPDATE_STATE_CHANGED]: AppUpdateSnapshot
+  [BROWSER_SNAPSHOT]: {
+    snapshot: BrowserSurfaceSnapshot
+  }
+  [BROWSER_GUEST_MOUNT]: {
+    snapshot: BrowserGuestMountSnapshot
+  }
 }
 
 /** 所有事件 channel 名称 */

@@ -48,7 +48,7 @@ describe.each(PROVIDER_IDS)('真实 API 缓存门禁（压缩）：%s', provider
 
   describe.skipIf(!provider)('压缩摘要命中', () => {
     it(
-      '小窗口下压缩触发：摘要调用与压缩后主请求 cacheRead > 0',
+      '小窗口下压缩触发：摘要调用与压缩后主请求 cacheRead 达标',
       async () => {
         const workspace = createCompactionWorkspace()
         const { client, toolCallCount } = await runLiveConversation({
@@ -83,10 +83,11 @@ describe.each(PROVIDER_IDS)('真实 API 缓存门禁（压缩）：%s', provider
         for (const request of summaryRequests) {
           if (!request.usage) {
             failures.push(`摘要请求 #${request.index}：provider 未返回 usage，无法判定缓存命中`)
-          } else if (request.usage.cacheReadTokens <= 0) {
+          } else if (request.usage.cacheReadTokens < 0.5 * request.usage.promptTokens) {
             failures.push(
-              `摘要请求 #${request.index}：cacheRead=${request.usage.cacheReadTokens}（应为 > 0），` +
-              `promptTokens=${request.usage.promptTokens} —— 摘要未回放主请求前缀`
+              `摘要请求 #${request.index}：cacheRead=${request.usage.cacheReadTokens}` +
+              `（应 ≥ 50% × promptTokens=${request.usage.promptTokens}）—— ` +
+              `摘要未回放主请求前缀（含工具定义与思考强度参数）`
             )
           }
         }

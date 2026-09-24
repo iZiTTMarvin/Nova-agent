@@ -13,7 +13,7 @@ export function buildSkillContext(skills: SkillManifest[]): string {
   const lines = skills.map(s => `- ${s.name}: ${s.description}`)
   return [
     '<skills>',
-    '你可以通过 invoke_skill 工具调用以下技能。每个技能会在干净上下文中执行其定义的工作。',
+    'Invoke with invoke_skill; each skill runs its workflow in a clean context.',
     '',
     ...lines,
     '</skills>'

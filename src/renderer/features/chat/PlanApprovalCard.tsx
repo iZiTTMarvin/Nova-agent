@@ -1,12 +1,25 @@
 import React, { useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import type { PendingPlanReview, PlanReviewDecision } from '../../../shared/planReview'
-import { CheckSmallIcon } from '../../components/Icons'
+import { CheckSmallIcon, ShieldCheckIcon } from '../../components/Icons'
 import './PlanApprovalCard.css'
 
 export interface PlanApprovalCardProps {
   review: PendingPlanReview
 }
+
+/** 消息流内的等待状态行：审批交互在底部 dock（替换输入区），此处只标记暂停点 */
+export const PlanApprovalPendingRow: React.FC = React.memo(function PlanApprovalPendingRow() {
+  return (
+    <div className="plan-approval-pending" role="status">
+      <span className="plan-approval-pending__glyph" aria-hidden="true">
+        <ShieldCheckIcon size={13} />
+      </span>
+      <span className="plan-approval-pending__label">等待计划审批</span>
+      <span className="plan-approval-pending__hint">在下方输入区处理</span>
+    </div>
+  )
+})
 
 /** 忽略后的终态记录：由 switch_mode / stage_transition 工具结果标记驱动，不可交互 */
 export const PlanApprovalIgnoredCard: React.FC<{ source?: 'plan' | 'compose' }> =
@@ -77,10 +90,8 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = React.memo(func
   return (
     <section className="plan-approval-card" aria-label="实施计划审批">
       <header className="plan-approval-card__header">
-        <div>
-          <span className="plan-approval-card__eyebrow">需要权限</span>
-          <h3 className="plan-approval-card__title">{title}</h3>
-        </div>
+        <span className="plan-approval-card__eyebrow">需要权限</span>
+        <h3 className="plan-approval-card__title">{title}</h3>
         <span className="plan-approval-card__count" aria-label="第 1 项，共 1 项">1 / 1</span>
       </header>
 
@@ -100,12 +111,12 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = React.memo(func
           </span>
         </button>
 
-        <label className={`plan-approval-card__feedback${decision === 'revise' ? ' plan-approval-card__feedback--selected' : ''}`}>
-          <span>修改计划</span>
+        <div className={`plan-approval-card__feedback${decision === 'revise' ? ' plan-approval-card__feedback--selected' : ''}`}>
           <textarea
             value={feedback}
-            placeholder="说明需要调整的内容…"
-            rows={3}
+            placeholder="输入你的回答…（填写后提交即为修改计划）"
+            rows={2}
+            aria-label="修改计划反馈"
             onFocus={() => setDecision('revise')}
             onChange={event => {
               setFeedback(event.target.value)
@@ -119,7 +130,7 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = React.memo(func
             }}
             disabled={submitting}
           />
-        </label>
+        </div>
       </div>
 
       {error && <div className="plan-approval-card__error" role="alert">{error}</div>}

@@ -1,8 +1,8 @@
 /**
  * todo_write 工具描述（模型合同）
  *
- * 这段文本是模型行为的唯一规约，比代码本身更重要。逐字翻译自
- * kilocode packages/opencode/src/tool/todowrite.txt，结合 nova-agent 的中文语境裁剪。
+ * 这段文本是模型行为的唯一规约。结构沿用 kilocode
+ * packages/opencode/src/tool/todowrite.txt，按 nova-agent 语境裁剪。
  *
  * 关键设计：
  * - 首段明确"用途 + 价值"：复杂多步任务时把计划外化为稳定状态
@@ -10,119 +10,116 @@
  * - "不要用"列 4 条反例护栏（**不能省**）：防止模型把 todo 当成礼貌用语
  * - 给出 3-4 个完整示例（含 reasoning 解释）
  * - 状态机与维护规则：同时只一个 in_progress、完成后立刻标 completed
- *
- * 中文化 reason：nova 的工具描述目前是中文（参 bashTool.ts），模型用中文系统提示；
- * 中文化的描述能让模型更好理解约束。保留英文示例是为了让 reasoning 段更"原汁原味"。
  */
 
-export const TODO_WRITE_DESCRIPTION = `创建一个结构化的待办列表，用于追踪当前会话的进度。
+export const TODO_WRITE_DESCRIPTION = `Create a structured todo list to track progress in the current session.
 
-把"计划"作为显式状态写进会话里，能避免多步任务中遗忘细节、重复检查、即兴发挥。
+Externalizing the plan as explicit session state avoids forgotten details, repeated checks, and improvisation in multi-step tasks.
 
-## 何时应该使用
+## When to use
 
-满足以下任一情况时，主动调用本工具（每次都传**完整**最新列表）：
+Proactively call this tool (passing the **complete** latest list every time) when any of the following applies:
 
-1. 复杂多步任务：需要 3 步或更多不同操作
-2. 非平凡任务：需要仔细规划或多个相关操作
-3. 用户明确要求使用 todo list（例如"先把计划写下来"）
-4. 用户给了一组任务（编号列表或逗号分隔的多项）
-5. 收到新指令：立刻把新要求落进 todo
-6. 刚完成一步：把它标 completed，并补上后续步骤
-7. 开始新任务时：把对应 todo 标 in_progress（同一时刻**只能有一个** in_progress）
+1. Complex multi-step tasks: 3 or more distinct operations are needed
+2. Non-trivial tasks: careful planning or several related operations are needed
+3. The user explicitly asks for a todo list (e.g. "write the plan down first")
+4. The user gives a set of tasks (a numbered list or comma-separated multiple items)
+5. A new instruction arrives: capture the new requirement in a todo immediately
+6. You just finished a step: mark it completed and add the follow-up steps
+7. Starting a new task: mark the corresponding todo in_progress (only **one** in_progress at a time)
 
-## 何时不要使用
+## When not to use
 
-以下情况**不要**调用本工具，避免无意义的开销和噪音：
+Do **not** call this tool in the following cases, to avoid pointless overhead and noise:
 
-1. 只有一个简单直接的任务
-2. 任务琐碎到跟踪它没有组织价值
-3. 任务能在少于 3 个无关紧要的步骤内完成
-4. 任务本质是纯问答或信息查询
+1. There is only one simple, direct task
+2. The task is too trivial for tracking to add organizational value
+3. The task can be finished in fewer than 3 inconsequential steps
+4. The task is inherently pure Q&A or an information lookup
 
-> 注意：如果只有一件小事要做，**直接做就行**，不要为它建 todo。
+> Note: when there is only one small thing to do, **just do it** — do not create a todo for it.
 
-## 示例：什么时候该用
+## Examples: when to use
 
 <example>
-User: 我想在应用设置里加一个暗色模式切换。完成后跑一下测试和构建！
-Assistant: 好，我来加暗色模式切换。先建个 todo 跟踪进度。
+User: I want to add a dark mode toggle in the app settings. When it's done, run the tests and the build!
+Assistant: Sure, I'll add the dark mode toggle. Let me set up a todo to track progress.
 *Creates todo list:*
-1. 在 Settings 页面创建暗色模式切换组件
-2. 添加暗色模式状态管理（context/store）
-3. 实现 CSS-in-JS 暗色主题样式
-4. 更新现有组件支持主题切换
-5. 跑测试和构建，修复发现的问题
-*开始处理第一项*
+1. Create the dark mode toggle component in the Settings page
+2. Add dark mode state management (context/store)
+3. Implement CSS-in-JS dark theme styles
+4. Update existing components to support theme switching
+5. Run tests and build, fixing whatever turns up
+*Starts on the first item*
 
 <reasoning>
-1. 加暗色模式是个多步功能，需要 UI / 状态管理 / 样式
-2. 用户明确要求跑测试和构建
-3. 把"跑测试和构建"放进 todo 最后一项，保证不漏
+1. Dark mode is a multi-step feature spanning UI / state management / styles
+2. The user explicitly asked to run tests and the build
+3. Putting "run tests and build" as the last todo ensures it is not forgotten
 </reasoning>
 </example>
 
 <example>
-User: 帮我把项目里的 getCwd 全部改名成 getCurrentWorkingDirectory
-Assistant: 先搜一下项目里有哪些地方用了 getCwd。
-*用 grep / search 工具定位所有出现位置*
-Assistant: 一共 15 处，分布在 8 个文件里。我建个 todo 按文件逐个改。
+User: Help me rename all getCwd occurrences in the project to getCurrentWorkingDirectory
+Assistant: Let me first search the project for everywhere getCwd is used.
+*Uses the grep / search tools to locate all occurrences*
+Assistant: 15 places across 8 files. I'll create a todo list and fix them file by file.
 *Creates todo list:*
-1. 改 src/utils/path.ts
-2. 改 src/services/process.ts
-3. 改 src/commands/clone.ts
-... (按文件逐条列)
+1. Fix src/utils/path.ts
+2. Fix src/services/process.ts
+3. Fix src/commands/clone.ts
+... (listed one entry per file)
 
 <reasoning>
-1. 先搜确定范围，避免漏改
-2. 多文件多调用点 → 必须有 todo 跟踪进度
-3. 按文件拆分 → 每条都具体可执行
+1. Search first to pin down the scope, so nothing gets missed
+2. Many files and many call sites → todos are needed to track progress
+3. Splitting per file → every entry is concrete and executable
 </reasoning>
 </example>
 
 <example>
-User: 我要做用户注册、商品目录、购物车、结算流程这一组功能
-Assistant: 我先把这一组功能拆成 todo，然后再开始。
+User: I want this set of features: user registration, product catalog, shopping cart, checkout flow
+Assistant: I'll break this feature set into todos first, then start.
 *Creates todo list breaking down the work*
 
 <reasoning>
-用户一次给了 4 个独立功能，拆成 todo 才能逐个推进不漏。
+The user gave 4 independent features at once; breaking them into todos lets each be finished without omission.
 </reasoning>
 </example>
 
-## 示例：什么时候不要用
+## Examples: when not to use
 
 <example>
-User: 怎么用 Python 打印 Hello World？
-Assistant: 用 print：
+User: How do I print Hello World in Python?
+Assistant: Use print:
 
 \`\`\`python
 print("Hello World")
 \`\`\`
 
 <reasoning>
-这是一次性、单步、信息性回答，不需要建 todo。
+This is a one-off, single-step, informational answer; no todo needed.
 </reasoning>
 </example>
 
 <example>
-User: 帮我给 calculateTotal 函数加一行注释
-Assistant: 好，加注释。
-* 直接调用 edit 工具加注释 *
+User: Add a one-line comment to the calculateTotal function
+Assistant: Sure, adding the comment.
+* Calls the edit tool directly to add the comment *
 
 <reasoning>
-只有一处单行编辑，跟踪它没有组织价值。
+A single one-line edit; tracking it adds no organizational value.
 </reasoning>
 </example>
 
-## 状态机与维护规则
+## State machine and maintenance rules
 
-1. **状态值**：pending（未开始） / in_progress（正在做） / completed（完成） / cancelled（不再需要）
-2. **同一时刻只能有一个 in_progress**。开始新任务时先标下一个为 in_progress
-3. **完成一步立刻标 completed**，不要攒到最后一起标
-4. **不再需要的步骤标 cancelled**（用户改主意 / 路径切换 / 任务整体取消时）
-5. **状态变化必须再次调用本工具，传完整最新列表**——这是唯一维护入口
-6. **每条 content 都要具体可执行**："修复登录 bug"比"修一下代码"好；"在 auth.ts 加 input 校验"比"完善校验"好
-7. **不要写太长的列表**：超过 8 条说明拆分粒度太细，合并相邻步骤
-8. **新任务另起新清单**：用户开启一个与当前清单无关的新任务时，用全新列表整体替换——上一个任务已完成/已取消的条目**不带入**新清单；只有延续同一任务时，才保留未完成项并追加新步骤。清单是"当前任务的工作集"，不是会话历史——历史由对话本身承担
+1. **Status values**: pending (not started) / in_progress (in progress) / completed (done) / cancelled (no longer needed)
+2. **Only one in_progress at a time**. When starting a new task, first mark the next one in_progress
+3. **Mark completed the moment a step finishes** — do not batch the marks at the end
+4. **Mark cancelled** for steps that are no longer needed (the user changed their mind / the path switched / the task was cancelled overall)
+5. **Any status change must call this tool again with the complete latest list** — this is the only maintenance entry point
+6. **Every content entry must be concrete and executable**: "fix the login bug" beats "fix some code"; "add input validation in auth.ts" beats "improve validation"
+7. **Do not write overly long lists**: more than 8 entries means the granularity is too fine — merge adjacent steps
+8. **Start a fresh list for a new task**: when the user starts a task unrelated to the current list, replace the whole thing with a brand-new list — completed/cancelled entries from the previous task do **not** carry over; keep unfinished entries and append new steps only when continuing the same task. The list is the current task's working set, not session history — history lives in the conversation itself
 `

@@ -33,6 +33,7 @@ export type AgentTurnOutcome =
 /** 直接委托以子任务终态收尾；工具调用的失败仍交给父模型继续处理。 */
 export function delegatedTurnOutcome(result: Pick<SubagentExecutionResult, 'status' | 'summary' | 'incompleteReason'>): AgentTurnOutcome {
   switch (result.status) {
+    case 'accepted': return { status: 'failed', error: new Error('子代理尚未完成，不能结束当前委托轮次') }
     case 'completed': return { status: 'completed' }
     case 'cancelled': return { status: 'cancelled' }
     case 'interrupted': return { status: 'interrupted', reason: result.summary }

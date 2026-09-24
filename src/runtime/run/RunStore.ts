@@ -15,7 +15,10 @@ import {
   isTerminalRunStatus,
   isTurnTruncationReason,
   type RunEventRecord,
-  type RunSnapshot
+  type RunSnapshot,
+  decodeSubagentRunDispatch,
+  decodeSubagentDeliveryBinding,
+  decodeSubagentRelayTrigger
 } from '../../shared/run/types'
 
 export interface RunStoreOptions {
@@ -37,6 +40,7 @@ export function assertSafeRunId(runId: string): void {
 
 export class RunStore {
   private readonly runsRoot: string
+  private readonly pendingReplay = new Set<string>()
 
   constructor(opts: RunStoreOptions) {
     this.runsRoot = opts.runsRoot
@@ -101,6 +105,9 @@ export class RunStore {
   ): RunEventRecord[] {
     if (events.length === 0) return []
     assertSafeRunId(nextSnapshot.runId)
+    if (this.pendingReplay.has(nextSnapshot.runId)) {
+      throw new Error(`run ${nextSnapshot.runId} 的事件尚未完成恢复，拒绝写入旧快照`)
+    }
     const last = events[events.length - 1]
     if (last.sequence !== nextSnapshot.sequence) {
       throw new Error(
@@ -127,8 +134,13 @@ export class RunStore {
       payload: event.payload
     }))
 
-    this.appendEventsFsynced(records)
-    atomicWriteFileSync(this.snapshotPath(nextSnapshot.runId), JSON.stringify(nextSnapshot, null, 2))
+    try {
+      this.appendEventsFsynced(records)
+      atomicWriteFileSync(this.snapshotPath(nextSnapshot.runId), JSON.stringify(nextSnapshot, null, 2))
+    } catch (error) {
+      this.pendingReplay.add(nextSnapshot.runId)
+      throw error
+    }
     return records
   }
 
@@ -155,18 +167,39 @@ export class RunStore {
     throw new Error('RunStore.saveSnapshot 已禁用：请使用 commitTransaction')
   }
 
-  /** 读取 snapshot；不存在返回 null */
+  /**
+   * 读取 snapshot；文件不存在或 JSON 损坏返回 null。
+   * dispatch/deliveryBinding 解码失败向上抛错：未知协议版本失败关闭，
+   * 读取方显式失败，不静默把派遣记录降级为无派遣。
+   */
   loadSnapshot(runId: string): RunSnapshot | null {
+    return this.pendingReplay.has(runId)
+      ? this.loadSnapshotWithReplay(runId)
+      : this.readSnapshot(runId)
+  }
+
+  private readSnapshot(runId: string): RunSnapshot | null {
     assertSafeRunId(runId)
     const filePath = this.snapshotPath(runId)
     if (!fs.existsSync(filePath)) return null
+    let parsed: RunSnapshot
     try {
       const raw = fs.readFileSync(filePath, 'utf8')
-      return JSON.parse(raw) as RunSnapshot
+      parsed = JSON.parse(raw) as RunSnapshot
     } catch (err) {
       console.error(`[RunStore] 读取 snapshot 失败 runId=${runId}:`, err)
       return null
     }
+    if (parsed && typeof parsed === 'object' && 'dispatch' in parsed) {
+      parsed.dispatch = decodeSubagentRunDispatch(parsed.dispatch) ?? undefined
+    }
+    if (parsed && typeof parsed === 'object' && 'deliveryBinding' in parsed) {
+      parsed.deliveryBinding = decodeSubagentDeliveryBinding(parsed.deliveryBinding) ?? undefined
+    }
+    if (parsed && typeof parsed === 'object' && 'relayTrigger' in parsed) {
+      parsed.relayTrigger = decodeSubagentRelayTrigger(parsed.relayTrigger) ?? undefined
+    }
+    return parsed
   }
 
   /**
@@ -211,8 +244,13 @@ export class RunStore {
    * 若事件流中间损坏，只重放到损坏点之前。
    */
   loadSnapshotWithReplay(runId: string): RunSnapshot | null {
-    const base = this.loadSnapshot(runId)
-    if (!base) return null
+    assertSafeRunId(runId)
+    this.pendingReplay.add(runId)
+    const base = this.readSnapshot(runId)
+    if (!base) {
+      this.pendingReplay.delete(runId)
+      return null
+    }
     const { events, truncatedByCorruption } = this.loadEvents(runId)
     if (truncatedByCorruption) {
       console.warn(`[RunStore] runId=${runId} 事件流中间损坏，仅重放到损坏点前`)
@@ -232,6 +270,7 @@ export class RunStore {
     if (snap.sequence > base.sequence) {
       atomicWriteFileSync(this.snapshotPath(runId), JSON.stringify(snap, null, 2))
     }
+    this.pendingReplay.delete(runId)
     return snap
   }
 
@@ -256,15 +295,22 @@ export class RunStore {
     }
   }
 
-  /** 扫描未终态 run（启动对账）；已终态只读 snapshot，不重放 events */
+  /**
+   * 扫描未终态 run（启动对账）；已终态只读 snapshot，不重放 events。
+   * 全盘扫描对单条腐坏记录隔离跳过，不让一条坏记录瘫痪启动对账。
+   */
   listNonTerminalSnapshots(): RunSnapshot[] {
     const result: RunSnapshot[] = []
     for (const runId of this.listRunIds()) {
-      const peek = this.loadSnapshot(runId)
-      if (!peek || isTerminalRunStatus(peek.status)) continue
-      const snap = this.loadSnapshotWithReplay(runId)
-      if (snap && !isTerminalRunStatus(snap.status)) {
-        result.push(snap)
+      try {
+        const peek = this.loadSnapshot(runId)
+        if (!peek || isTerminalRunStatus(peek.status)) continue
+        const snap = this.loadSnapshotWithReplay(runId)
+        if (snap && !isTerminalRunStatus(snap.status)) {
+          result.push(snap)
+        }
+      } catch (err) {
+        console.error(`[RunStore] 跳过腐坏 run 记录 runId=${runId}:`, err)
       }
     }
     return result
@@ -275,19 +321,51 @@ export class RunStore {
     return this.findSnapshotsBySessions(new Set([sessionId]))
   }
 
-  /** 一次目录扫描；先看 snapshot 的 sessionId 与状态，终态不重放 events。 */
+  /**
+   * 一次目录扫描；先看 snapshot 的 sessionId 与状态。
+   * 普通终态记录不读事件日志；带 dispatch/deliveryBinding 的新协议终态记录
+   * 走尾部事件收敛（投递事件可能领先快照）。腐坏记录隔离跳过。
+   */
   findSnapshotsBySessions(sessionIds: ReadonlySet<string>): RunSnapshot[] {
     if (sessionIds.size === 0) return []
     const result: RunSnapshot[] = []
     for (const runId of this.listRunIds()) {
-      const peek = this.loadSnapshot(runId)
-      if (!peek || !sessionIds.has(peek.sessionId)) continue
-      const snap = isTerminalRunStatus(peek.status)
-        ? peek
-        : this.loadSnapshotWithReplay(runId)
-      if (snap) result.push(snap)
+      try {
+        const peek = this.loadSnapshot(runId)
+        if (!peek || !sessionIds.has(peek.sessionId)) continue
+        const snap = isTerminalRunStatus(peek.status)
+          ? peek.dispatch || peek.deliveryBinding
+            ? this.loadSnapshotWithReplay(runId)
+            : peek
+          : this.loadSnapshotWithReplay(runId)
+        if (snap) result.push(snap)
+      } catch (err) {
+        console.error(`[RunStore] 跳过腐坏 run 记录 runId=${runId}:`, err)
+      }
     }
     result.sort((a, b) => b.updatedAt - a.updatedAt)
+    return result
+  }
+
+  /**
+   * 启动恢复入口：只对带新协议记录（dispatch/deliveryBinding）的终态 run 收敛尾部事件。
+   * 普通历史终态记录不读事件日志。返回尾部确实领先快照并已写回的快照。
+   */
+  recoverTerminalProtocolTails(): RunSnapshot[] {
+    const result: RunSnapshot[] = []
+    for (const runId of this.listRunIds()) {
+      try {
+        const peek = this.loadSnapshot(runId)
+        if (!peek || !isTerminalRunStatus(peek.status)) continue
+        if (!peek.dispatch && !peek.deliveryBinding) continue
+        const replayed = this.loadSnapshotWithReplay(runId)
+        if (replayed && replayed.sequence > peek.sequence) {
+          result.push(replayed)
+        }
+      } catch (err) {
+        console.error(`[RunStore] 跳过腐坏 run 记录 runId=${runId}:`, err)
+      }
+    }
     return result
   }
 
@@ -331,6 +409,13 @@ function reduceEventPayload(
       }
     case 'turn_draft_cleared':
       return { turnDraft: null }
+    case 'delivery_binding': {
+      // 未知版本失败关闭：解码错误向上抛，重放中止且不写回快照。
+      // 捕获后忽略仍推进 sequence 会永久掩埋该控制事实，下次启动也不会再尝试。
+      // 调用方按单条 run 隔离腐坏记录，事件保留在日志中待新版本读取。
+      const binding = decodeSubagentDeliveryBinding(p.binding)
+      return binding ? { deliveryBinding: binding } : {}
+    }
     case 'reconcile_interrupted':
       return {
         status: 'interrupted',

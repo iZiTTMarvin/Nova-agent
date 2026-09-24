@@ -27,6 +27,11 @@ export function enqueueSteeringMessage(
   sessionId: string,
   message: SteeringMessage
 ): void {
+  // 幂等去重：同会话、同 userMessageId 的重复入队直接跳过
+  if (message.userMessageId) {
+    const existing = queuesBySession.get(sessionId)
+    if (existing?.some(m => m.userMessageId === message.userMessageId)) return
+  }
   let q = queuesBySession.get(sessionId)
   if (!q) {
     q = []

@@ -4,7 +4,10 @@
  * - 新增工具忘记登记 Catalog → 未分组 fail-open（自动变 core）或隐藏行为不可预期；
  * - Catalog 行被误删 → 注册工具失去可用性策略来源。
  */
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import { BUILTIN_SUBAGENTS } from '../../../../src/runtime/agent/core/SubAgentConfig'
 import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
@@ -13,9 +16,11 @@ import type { BuiltinToolRegistrationDeps } from '../../../../src/main/agent/run
 import {
   buildLoadToolsDescription,
   getCatalogEntry,
+  getDeferredGroupMeta,
   isLoadableToolGroup,
   listCatalogEntries,
   listDefinedGroupIds,
+  listGroupToolNames,
   listLiveDeferredGroupIds,
   normalizeGroupAlias,
   validateCatalogIntegrity,
@@ -96,7 +101,12 @@ describe('Tool Catalog 清洁度', () => {
   it('live 组成员全部未注册 → 校验失败（空组绝不下发）', () => {
     const result = validateRegistryAgainstCatalog(
       fullRegistryNames().filter(
-        name => name !== 'task' && name !== 'task_followup' && name !== 'batch_task'
+        name =>
+          name !== 'task' &&
+          name !== 'task_followup' &&
+          name !== 'task_wait' &&
+          name !== 'subagent_read' &&
+          name !== 'batch_task'
       )
     )
     expect(result.ok).toBe(false)
@@ -105,14 +115,46 @@ describe('Tool Catalog 清洁度', () => {
 })
 
 describe('Deferred 组暴露规则', () => {
-  it('browser / computer-use 为预留空组：不进入 live 组、不接受 load_tools', () => {
+  it('browser 组在工具登记后可加载；computer-use 仍为预留空组', () => {
     const live = listLiveDeferredGroupIds(fullRegistryNames())
-    expect(live).toEqual(['agent'])
-    expect(live).not.toContain('browser')
+    expect(live).toEqual(['agent', 'browser'])
     expect(live).not.toContain('computer-use')
-    expect(isLoadableToolGroup('browser')).toBe(false)
+    expect(isLoadableToolGroup('browser')).toBe(true)
     expect(isLoadableToolGroup('computer-use')).toBe(false)
     expect(isLoadableToolGroup('agent')).toBe(true)
+    expect(getDeferredGroupMeta('browser')?.reserved).toBe(false)
+    expect(getDeferredGroupMeta('computer-use')?.reserved).toBe(true)
+    expect(listGroupToolNames('browser')).toEqual([
+      'browser_open',
+      'browser_observe',
+      'browser_act',
+      'browser_close',
+      'browser_capture'
+    ])
+  })
+
+  it('内置注册含浏览器工具；headless 编码清单与子代理预设仍不含', () => {
+    const registered = fullRegistryNames()
+    expect(registered.filter(name => name.startsWith('browser_'))).toEqual([
+      'browser_open',
+      'browser_observe',
+      'browser_act',
+      'browser_close',
+      'browser_capture'
+    ])
+
+    const headlessSource = readFileSync(
+      join(__dirname, '../../../../src/headless/cli.ts'),
+      'utf8'
+    )
+    expect(headlessSource).not.toMatch(/browser_(open|observe|act|close|capture)/)
+
+    for (const spec of BUILTIN_SUBAGENTS) {
+      expect(
+        spec.allowedTools.filter(name => name.startsWith('browser_')),
+        `${spec.id} 不应授予浏览器工具`
+      ).toEqual([])
+    }
   })
 
   it('历史 orchestration 只作为恢复 alias，不进入组定义与 live enum', () => {

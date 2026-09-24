@@ -1,13 +1,13 @@
 /** ImagePreviewBar — 图片预览条样式
- *  拟纸质感暖色调设计，与 ChatPanel 整体视觉协调
+ *  半透明卡片面 + 模糊，缩略图叠在消息流上仍能读出边界
  */
 
 .image-preview-bar {
   display: flex;
   padding: 8px 10px;
-  background: rgba(232, 230, 220, 0.55);
-  border-top: 1px solid var(--border-cream);
-  border-bottom: 1px solid var(--border-cream);
+  background: color-mix(in srgb, var(--surface-card) 72%, transparent);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }

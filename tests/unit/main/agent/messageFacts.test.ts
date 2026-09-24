@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { createHash } from 'crypto'
-import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { deriveChildSessionId, SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
 import { RunStore } from '../../../../src/runtime/run/RunStore'
@@ -25,13 +25,21 @@ import { toSharedMessage } from '../../../../src/main/ipc/sessionMessageMapper'
 import { toRendererRunSnapshot } from '../../../../src/shared/run/rendererProjection'
 import { forwardEventToRenderer } from '../../../../src/main/agent/events/AgentEventForwarder'
 import type { MessageContext } from '../../../../src/main/agent/events/types'
+import {
+  ACTIVE_TOOL_RESULT_MAX_TOKENS,
+  CHARS_PER_TOKEN,
+  isArchivedPlaceholder
+} from '../../../../src/runtime/request-projection'
+import { createSpawnIdentity } from '../../../../src/runtime/subagents/identity'
+import { SubagentDeliveryCoordinator } from '../../../../src/runtime/subagents'
 
 let sessionStore: SessionStore
 let coordinator: RunCoordinator
+
 vi.mock('electron', () => ({ app: { getPath: () => '' }, BrowserWindow: class {} }))
 vi.mock('../../../../src/main/services/SessionStoreHost', () => ({ getSessionStore: () => sessionStore }))
 vi.mock('../../../../src/main/services/RunCoordinatorHost', () => ({ getRunCoordinator: () => coordinator }))
-import { accumulateStreamEvent, activeStreams, markActiveStreamsCancelled } from '../../../../src/main/agent/events/AgentEventAccumulator'
+import { accumulateStreamEvent, activeStreams, markActiveStreamsCancelled, persistRuntimeInputFact } from '../../../../src/main/agent/events/AgentEventAccumulator'
 
 const roots: string[] = []
 afterEach(() => {
@@ -41,6 +49,15 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 const hash = (s: string) => createHash('sha256').update(s).digest('hex')
+type WireMessage = { role: string; content?: unknown; tool_call_id?: string; [key: string]: unknown }
+const asWire = (messages: unknown[]) => messages as WireMessage[]
+const wireTool = (messages: unknown[], id: string) =>
+  asWire(messages).find(message => message.role === 'tool' && message.tool_call_id === id)
+const wireBeforeTool = (messages: unknown[], id: string) => {
+  const list = asWire(messages)
+  const index = list.findIndex(message => message.role === 'tool' && message.tool_call_id === id)
+  return index === -1 ? list : list.slice(0, index)
+}
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'nova-message-facts-'))
@@ -60,6 +77,83 @@ function setup() {
 }
 
 describe('消息事实提交往返', () => {
+  it('真实存储中的后台终态在首次请求前提交为 runtime_input 再交给受控模型', async () => {
+    const { root, session, run, bus, ctx } = setup()
+    sessionStore.appendMessageFast(session.id, {
+      id: 'parent-user', role: 'user', content: '继续处理', timestamp: 1
+    })
+    const child = sessionStore.create(root)
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'child-background',
+      workspaceId: root,
+      sessionId: child.id,
+      dispatch: {
+        version: 1,
+        callKind: 'task',
+        parentSessionId: session.id,
+        parentRunId: run.runId,
+        parentMessageId: 'parent-message',
+        execution: 'background_read_only',
+        topParentSessionId: session.id,
+        originUserMessageId: 'parent-user'
+      }
+    })
+    coordinator.markRunning('child-background', 'child-message')
+    sessionStore.appendMessageFast(child.id, {
+      id: 'child-message', role: 'assistant', content: '后台检查完成', timestamp: 2
+    })
+    coordinator.commitTerminal({
+      runId: 'child-background',
+      status: 'completed',
+      terminalTransitionId: 'terminal-background'
+    })
+
+    const delivery = new SubagentDeliveryCoordinator({
+      runCoordinator: coordinator,
+      sessionStore,
+      isRunExecutionActive: () => false
+    })
+    const receiver = delivery.createActiveTurnReceiver({
+      sessionId: session.id,
+      runId: () => run.runId,
+      persistence: {
+        persist: (messageId, input) => persistRuntimeInputFact({ messageId, input }, ctx)
+      }
+    })
+    const client = new MockModelClient().addResponse({ events: [
+      { type: 'message_start' },
+      { type: 'text_delta', delta: '已吸收后台结果' },
+      { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const loop = new AgentLoop(client, bus, {
+      permissionManager: new PermissionManager(),
+      permissionMode: 'full_access',
+      receiveRuntimeInputs: input => receiver.receive(input)
+    })
+    loop.setSessionContext(sessionStore, session.id)
+    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+
+    expect((await loop.sendMessage('继续处理', agentRoute(), { userMessageId: 'parent-user' })).status)
+      .toBe('completed')
+
+    const request = client.getCalls()[0]!.messages
+    expect(request.some(message =>
+      message.role === 'user' &&
+      typeof message.content === 'string' &&
+      message.content.includes('child_run_id: child-background')
+    )).toBe(true)
+    const fact = sessionStore.findRuntimeInputFact(
+      session.id,
+      'ntf_child-background_terminal-background'
+    )
+    expect(fact?.input.content).toContain('后台检查完成')
+    expect(coordinator.getSnapshot('child-background')?.deliveryBinding).toMatchObject({
+      boundRunId: run.runId,
+      boundSessionId: session.id
+    })
+    loop.dispose()
+  })
   it('重复失败后的恢复指令在重启后仍保留于已发送的请求前缀', async () => {
     const { session, bus, ctx } = setup()
     sessionStore.appendMessageFast(session.id, { id: 'u', role: 'user', content: '继续实现', timestamp: 1 })
@@ -99,9 +193,9 @@ describe('消息事实提交往返', () => {
   })
   it.each([
     { size: 8035, image: false, skill: true },
-    { size: 12000, image: false, skill: false },
+    { size: 12000, image: false, skill: false, contextWindow: 50_000 },
     { size: 50, image: true, skill: false }
-  ])('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image / skill=$skill', async ({ size, image, skill }) => {
+  ] as Array<{ size: number; image: boolean; skill: boolean; contextWindow?: number }>)('新建 loop 从真实提交恢复后保持完整已发 wire 前缀 $size / image=$image / skill=$skill', async ({ size, image, skill, contextWindow }) => {
     const { root, session, run, runStore, bus, ctx } = setup()
     const input = skill ? '/f 原始问题' : '原始问题'
     const skillDir = join(root, 'skills', 'f')
@@ -137,7 +231,7 @@ describe('消息事实提交往返', () => {
     registry.register({ name: 'archive_read', description: '读取归档', parameters: { type: 'object', properties: {} }, execute: async () => ({ success: true, output: 'readable' }) })
     const makeLoop = () => {
       const client = new OpenAICompatibleModelClient({ baseUrl: 'https://offline.test/v1', apiKey: 'test-key', modelId: image ? 'MiniMax-M3' : 'deepseek-chat', cacheProfile: image ? 'minimax' : 'deepseek' })
-      const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access' })
+      const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access', contextWindow })
       loop.setToolRegistry(registry)
       loop.setSessionContext(sessionStore, session.id)
       loop.setArtifactStore(new ArtifactStore(root))
@@ -168,9 +262,20 @@ describe('消息事实提交往返', () => {
     expect((await restored.sendMessage('下一题', agentRoute())).status).toBe('completed')
     expect(sessionStore.loadContextSnapshot(session.id)?.revision).toBe(4)
     const next = bodies.at(-1)!
-    expect(bodies[2].messages.slice(0, bodies[1].messages.length)).toEqual(bodies[1].messages)
     const prefix = next.messages.slice(0, previous.messages.length)
+    const oversize = size > ACTIVE_TOOL_RESULT_MAX_TOKENS * CHARS_PER_TOKEN
+    const fullTool = '中'.repeat(size)
     console.info(JSON.stringify({ previousCount: previous.messages.length, nextCount: next.messages.length, previousHash: hash(JSON.stringify(previous.messages)), restoredPrefixHash: hash(JSON.stringify(prefix)), envelopeEqual: JSON.stringify({ ...previous, messages: null }) === JSON.stringify({ ...next, messages: null }) }))
+    if (oversize) {
+      // 超体积结果先全文投递；t2 投递后 t1 滑出最近窗口换成可回读占位符，断点前的前缀仍逐字节一致。
+      expect(wireTool(bodies[1].messages, 't1')?.content).toBe(fullTool)
+      expect(isArchivedPlaceholder(String(wireTool(bodies[2].messages, 't1')?.content))).toBe(true)
+      expect(wireTool(bodies[2].messages, 't2')?.content).toBe(fullTool)
+      expect(wireBeforeTool(bodies[2].messages, 't1')).toEqual(wireBeforeTool(bodies[1].messages, 't1'))
+    } else {
+      expect(bodies[2].messages.slice(0, bodies[1].messages.length)).toEqual(bodies[1].messages)
+    }
+    // 恢复后 t1 复用同一占位符、t2 后缀不足最近窗口仍为全文：整段已发前缀逐字节相等。
     expect(JSON.stringify(prefix)).toBe(JSON.stringify(previous.messages))
     expect({ ...next, messages: null }).toEqual({ ...previous, messages: null })
   })
@@ -219,7 +324,7 @@ describe('消息事实提交往返', () => {
     expect(restored.filter(m => m.toolCalls).map(m => m.toolCalls)).toEqual(sent.map(m => m.toolCalls))
     expect(coordinator.getSnapshot(run.runId)?.turnDraft).toBeNull()
     const assistant = loaded.messages.find(m => m.role === 'assistant')!
-    expect(assistant.messageSchemaVersion).toBe(5)
+    expect(assistant.messageSchemaVersion).toBe(6)
     expect(assistant.userDelivery).toMatchObject({ userMessageId: 'user', modeInstruction: '当时的模式指令' })
     const delivery = assistant.userDelivery!
     expect(client.getCalls()[0].messages.find(m => m.origin?.messageId === 'user')?.content)
@@ -327,6 +432,166 @@ describe('消息事实提交往返', () => {
     expect(sessionStore.load(session.id)).toBeNull()
     expect(readFileSync(path, 'utf8')).toBe(raw)
   })
+
+  it('运行时通知先提交草稿，重建 assistant_step 与正式归档后保持冻结次序', () => {
+    const { root, feed, run, session, ctx } = setup()
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'child-run',
+      sessionId: session.id,
+      workspaceId: root
+    })
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({
+      type: 'assistant_step',
+      messageId: 'a',
+      step: 0,
+      content: '先完成工具',
+      toolCalls: [{ id: 'tool-1', name: 'read', arguments: { path: 'a.ts' } }]
+    })
+    feed({
+      type: 'tool_result',
+      messageId: 'a',
+      toolCallId: 'tool-1',
+      toolName: 'read',
+      result: 'ok'
+    })
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-child-terminal',
+      sourceRunId: 'child-run',
+      afterStep: 0,
+      order: 0,
+      content: '子代理已完成：冻结正文'
+    }
+
+    expect(persistRuntimeInputFact({ messageId: 'a', input }, ctx))
+      .toMatchObject({ status: 'committed', notificationId: input.notificationId })
+    activeStreams.get('a')!.blocks = activeStreams.get('a')!.blocks.filter(
+      block => block.type !== 'runtime_input'
+    )
+    expect(persistRuntimeInputFact({ messageId: 'a', input }, ctx).status)
+      .toBe('already_committed')
+    expect(coordinator.getSnapshot(input.sourceRunId)?.deliveryBinding).toMatchObject({
+      boundRunId: run.runId,
+      boundSessionId: session.id
+    })
+
+    feed({ type: 'assistant_step', messageId: 'a', step: 1, content: '继续处理', toolCalls: [] })
+    expect(coordinator.getSnapshot(run.runId)?.turnDraft?.blocks.filter(block => block.type === 'runtime_input'))
+      .toEqual([input])
+    feed({ type: 'message_end', messageId: 'a' })
+
+    const loaded = sessionStore.load(session.id)!
+    const archivedInput = loaded.messages[0].blocks?.find(block => block.type === 'runtime_input')
+    expect(archivedInput).toEqual(input)
+    expect(sessionStore.findRuntimeInputFact(session.id, input.notificationId)).toEqual({
+      messageId: 'a',
+      input
+    })
+    const context = buildConversationContext(loaded, 'default', { reasoningReplay: 'all-history' })
+    const toolIndex = context.findIndex(message => message.role === 'tool')
+    const inputIndex = context.findIndex(message => message.contextInstruction && message.content === input.content)
+    expect(toolIndex).toBeGreaterThanOrEqual(0)
+    expect(inputIndex).toBeGreaterThan(toolIndex)
+    expect(context.filter(message => message.content === input.content)).toHaveLength(1)
+  })
+
+  it('运行时通知落盘失败时不进入活动上下文且不返回 ACK', () => {
+    const { feed, run, ctx } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'assistant_step', messageId: 'a', step: 0, content: '完成一步', toolCalls: [] })
+    vi.spyOn(coordinator, 'upsertTurnDraft').mockImplementationOnce(() => {
+      throw new Error('disk_failure')
+    })
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-failed',
+      sourceRunId: 'child-run',
+      afterStep: 0,
+      order: 0,
+      content: '不得发送'
+    }
+
+    expect(() => persistRuntimeInputFact({ messageId: 'a', input }, ctx))
+      .toThrow('disk_failure')
+    expect(activeStreams.get('a')?.blocks.some(block => block.type === 'runtime_input')).toBe(false)
+    expect(coordinator.getSnapshot(run.runId)?.turnDraft?.blocks.some(block => block.type === 'runtime_input'))
+      .toBe(false)
+  })
+
+  it('首次请求前只有源端绑定时仍提交父接收事实，不把预约误当成已接收', () => {
+    const { root, feed, run, session, ctx } = setup()
+    coordinator.startRun({
+      kind: 'agent',
+      runId: 'child-reserved',
+      sessionId: session.id,
+      workspaceId: root
+    })
+    coordinator.updateDeliveryBinding('child-reserved', {
+      boundRunId: run.runId,
+      boundSessionId: session.id
+    })
+    feed({ type: 'message_start', messageId: 'a' })
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-reserved',
+      sourceRunId: 'child-reserved',
+      afterStep: -1,
+      order: 0,
+      content: '预约恢复正文'
+    }
+
+    expect(persistRuntimeInputFact({ messageId: 'a', input }, ctx).status).toBe('committed')
+    expect(coordinator.getSnapshot(run.runId)?.turnDraft?.blocks).toContainEqual(input)
+  })
+
+  it('内部接力消息重载后仍投影为运行时输入而非普通用户约束', () => {
+    const { session } = setup()
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-idle',
+      sourceRunId: 'child-idle',
+      afterStep: -1,
+      order: 0,
+      content: '空闲接力的冻结正文'
+    }
+    expect(sessionStore.appendMessageFast(session.id, {
+      id: 'relay',
+      role: 'user',
+      internalSource: 'runtime_input',
+      content: '',
+      blocks: [input],
+      messageSchemaVersion: 6,
+      timestamp: 1
+    }).ok).toBe(true)
+
+    const loaded = sessionStore.load(session.id)!
+    const context = buildConversationContext(loaded, 'default')
+    expect(context).toEqual([{
+      role: 'user',
+      content: input.content,
+      origin: { messageId: 'relay', step: 0, runtimeInputId: 'ntf-idle' },
+      contextInstruction: true
+    }])
+    expect(toSharedMessage(loaded.messages[0])).toMatchObject({
+      role: 'user',
+      internalSource: 'runtime_input',
+      blocks: [input]
+    })
+    expect(sessionStore.findRuntimeInputFact(session.id, input.notificationId)).toEqual({
+      messageId: 'relay',
+      input
+    })
+  })
 })
 
 it('native XML 参数修复后再提交，首发与恢复使用同一规范参数', async () => {
@@ -361,4 +626,160 @@ it('草稿提交回调失效 generation 后不追加或清除事实', () => {
   feed({ type: 'message_end', messageId: 'a' })
   expect(sessionStore.load(session.id)!.messages).toEqual([])
   expect(runStore.loadSnapshot(run.runId)!.turnDraft).not.toBeNull()
+})
+
+// ── 批次 3：live finalize 精确结算用例 ─────────────────────────────────
+
+/** 按真实身份派生建立 child 会话与 run：childSessionId 由 spawnKey 哈希，child runId 即 spawnRunId。 */
+function setupChildForFinalize(opts: {
+  parentSessionId: string
+  parentRunId: string
+  workspaceRoot: string
+  childAssistantText?: string
+  status: 'completed' | 'running'
+}) {
+  const identity = createSpawnIdentity({
+    parentRunId: opts.parentRunId,
+    invocation: { kind: 'task_tool', parentMessageId: 'assistant-1', parentToolCallId: 'task-1' }
+  })
+  const childSessionId = deriveChildSessionId(identity.spawnKey)
+  sessionStore.createChildIfAbsent({
+    childSessionId,
+    workspaceRoot: opts.workspaceRoot,
+    mode: 'default',
+    permissionMode: 'full_access',
+    task: opts.childAssistantText ?? '子代理任务',
+    subagent: {
+      lineage: {
+        parentSessionId: opts.parentSessionId,
+        parentRunId: opts.parentRunId,
+        rootRunId: opts.parentRunId,
+        depth: 1,
+        spawnKey: identity.spawnKey,
+        spawnRunId: identity.spawnRunId,
+        origin: { kind: 'task_tool', parentMessageId: 'assistant-1', parentToolCallId: 'task-1' }
+      },
+      profile: { profileId: 'test', name: 'test', description: 'test', systemPrompt: 'test', toolNames: [], permissionCeiling: 'read_only', maxToolRounds: 10, configHash: 'hash' }
+    },
+    codeIndexEnabled: false
+  })
+  const childRun = coordinator.startRun({
+    kind: 'agent',
+    runId: identity.spawnRunId,
+    sessionId: childSessionId,
+    workspaceId: opts.workspaceRoot
+  })
+  coordinator.markRunning(childRun.runId, 'child-assistant')
+  if (opts.status === 'completed') {
+    sessionStore.appendMessageFast(childSessionId, {
+      id: 'child-assistant',
+      role: 'assistant',
+      content: opts.childAssistantText ?? '',
+      timestamp: 2
+    })
+    coordinator.commitTerminal({ runId: childRun.runId, status: 'completed', reason: 'done' })
+  }
+  return { identity, childSessionId, childRun }
+}
+
+it('f) live finalize：child completed 时 running task 块落盘为 success 含精确摘要', () => {
+  const { feed, run, session, ctx } = setup()
+  feed({ type: 'message_start', messageId: 'assistant-1' })
+  feed({ type: 'text_delta', messageId: 'assistant-1', delta: '正在派遣子代理' })
+  feed({ type: 'tool_call', messageId: 'assistant-1', toolCallId: 'task-1', toolName: 'task', args: {} })
+
+  const { childSessionId } = setupChildForFinalize({
+    parentSessionId: session.id,
+    parentRunId: run.runId,
+    workspaceRoot: ctx.workspaceRoot,
+    childAssistantText: '子代理完成：任务已执行',
+    status: 'completed'
+  })
+
+  feed({ type: 'message_end', messageId: 'assistant-1', finishReason: 'stop', interrupted: true })
+
+  const msg = sessionStore.load(session.id)!.messages.find(m => m.id === 'assistant-1')!
+  const taskBlock = (msg.blocks ?? []).find(b => b.type === 'tool' && b.toolCallId === 'task-1')
+  expect(taskBlock).toMatchObject({ status: 'success' })
+  const result = taskBlock && taskBlock.type === 'tool' ? String(taskBlock.result) : ''
+  expect(result).toContain('子代理')
+  expect(result).toContain(childSessionId)
+  expect(result).toContain('任务已执行')
+})
+
+it('f 变体) live finalize：child 仍 running 时 running task 块落盘为 error 且文案含"尚未收到终态"', () => {
+  const { feed, run, session, ctx } = setup()
+  feed({ type: 'message_start', messageId: 'assistant-1' })
+  feed({ type: 'text_delta', messageId: 'assistant-1', delta: '正在派遣子代理' })
+  feed({ type: 'tool_call', messageId: 'assistant-1', toolCallId: 'task-1', toolName: 'task', args: {} })
+
+  setupChildForFinalize({
+    parentSessionId: session.id,
+    parentRunId: run.runId,
+    workspaceRoot: ctx.workspaceRoot,
+    status: 'running'
+  })
+
+  feed({ type: 'message_end', messageId: 'assistant-1', finishReason: 'stop', interrupted: true })
+
+  const msg = sessionStore.load(session.id)!.messages.find(m => m.id === 'assistant-1')!
+  const taskBlock = (msg.blocks ?? []).find(b => b.type === 'tool' && b.toolCallId === 'task-1')
+  expect(taskBlock).toMatchObject({ status: 'error' })
+  const result = taskBlock && taskBlock.type === 'tool' ? String(taskBlock.result) : ''
+  expect(result).toContain('尚未收到终态')
+})
+
+describe('task_wait 消费事实持久化', () => {
+  it('tool_call 后 tool_result 携带 IDs，turnDraft 同一 ToolBlock 为 success+result+IDs', () => {
+    const { feed, run, runStore } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait', args: {} })
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait',
+      result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1', 'ntf_run-2_t-2']
+    })
+
+    const draft = runStore.loadSnapshot(run.runId)!.turnDraft!
+    const block = draft.blocks.find(b => b.type === 'tool' && b.toolCallId === 'tw1')!
+    expect(block.type).toBe('tool')
+    expect(block.status).toBe('success')
+    expect(block.result).toBe('ok')
+    expect(block.subagentNotificationIds).toEqual(['ntf_run-1_t-1', 'ntf_run-2_t-2'])
+  })
+
+  it('error tool_result 不保留旧 IDs：先 success 再 error 时 IDs 被清除', () => {
+    const { feed, run, runStore } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait', args: {} })
+    // 先 success 携带 IDs
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait',
+      result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+    })
+    // 同一 toolCallId 再来 error 结果（hook 改写场景）
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'tw1', toolName: 'task_wait',
+      result: 'hook 改为失败', failed: true
+    })
+
+    const draft = runStore.loadSnapshot(run.runId)!.turnDraft!
+    const block = draft.blocks.find(b => b.type === 'tool' && b.toolCallId === 'tw1')!
+    expect(block.status).toBe('error')
+    expect(block.subagentNotificationIds).toBeUndefined()
+  })
+
+  it('非 task_wait 工具的 tool_result 即使携带 IDs 也不写入 ToolBlock', () => {
+    const { feed, run, runStore } = setup()
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'r1', toolName: 'read', args: {} })
+    feed({
+      type: 'tool_result', messageId: 'a', toolCallId: 'r1', toolName: 'read',
+      result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+    })
+
+    const draft = runStore.loadSnapshot(run.runId)!.turnDraft!
+    const block = draft.blocks.find(b => b.type === 'tool' && b.toolCallId === 'r1')!
+    expect(block.status).toBe('success')
+    expect(block.subagentNotificationIds).toBeUndefined()
+  })
 })

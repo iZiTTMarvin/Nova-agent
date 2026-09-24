@@ -16,7 +16,7 @@
 import { create } from 'zustand'
 import type { Mode, PermissionMode, Session, BranchMeta } from '../../shared/session/types'
 import type { WorkspaceState } from '../../shared/workspace/types'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 
 export interface WorkspaceStoreState {
   // ── 状态（由 dispatcher 写入） ──
@@ -25,6 +25,8 @@ export interface WorkspaceStoreState {
   currentMode: Mode
   /** 当前会话思考强度覆盖；null 表示无覆盖（回落模型默认） */
   reasoningEffortOverride: ReasoningEffort | null
+  /** 当前会话的有效模型引用（会话覆盖优先，否则全局最近选择）；无会话/未配置时为 null */
+  activeModelRef: ActiveModelRef | null
   availableSessions: Session[]
   /** 启动时是否已完成首次 workspace:get 拉取 */
   initialized: boolean
@@ -54,6 +56,8 @@ export interface WorkspaceStoreState {
   setPermissionMode: (permissionMode: PermissionMode) => Promise<void>
   /** 设置当前会话思考强度覆盖；null 清除覆盖 */
   setReasoningEffortOverride: (effort: ReasoningEffort | null) => Promise<void>
+  /** 设置当前会话模型；ref 为 null 清除会话覆盖 */
+  setSessionModel: (ref: ActiveModelRef | null) => Promise<void>
   /** 重新生成助手消息的分叉准备 */
   prepareRegenerate: (sessionId: string, messageId: string) => Promise<void>
   /** 切换到兄弟分支 */
@@ -69,6 +73,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   currentProjectPath: null,
   currentMode: 'default',
   reasoningEffortOverride: null,
+  activeModelRef: null,
   availableSessions: [],
   initialized: false,
   isSessionLoading: false,
@@ -186,6 +191,12 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
     }
   },
 
+  setSessionModel: async (ref: ActiveModelRef | null) => {
+    const state = await window.api.invoke('workspace:set-session-model', { ref })
+    const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+    dispatchWorkspaceChange(state)
+  },
+
   prepareRegenerate: async (sessionId: string, messageId: string) => {
     const state = await window.api.invoke('workspace:regenerate', { sessionId, messageId })
     const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
@@ -219,6 +230,7 @@ export function resetWorkspaceStoreForTests(): void {
     currentProjectPath: null,
     currentMode: 'default',
     reasoningEffortOverride: null,
+    activeModelRef: null,
     availableSessions: [],
     initialized: false,
     isSessionLoading: false

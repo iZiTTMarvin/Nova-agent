@@ -13,6 +13,10 @@ const appCss = readFileSync(
   new URL('../../../src/renderer/App.css', import.meta.url),
   'utf8'
 )
+const sidebarCss = readFileSync(
+  new URL('../../../src/renderer/components/Sidebar.css', import.meta.url),
+  'utf8'
+)
 
 describe('壳结构契约（AppShell + SideNav 权威）', () => {
   it('App 根布局由 AppShell 拥有：无贯穿 topNav，左右两栏各自通顶', () => {
@@ -49,5 +53,19 @@ describe('壳结构契约（AppShell + SideNav 权威）', () => {
 
   it('App.css 只保留 Tailwind 生成入口', () => {
     expect(appCss).toContain('@tailwind utilities;')
+  })
+
+  it('侧栏分隔线只有一个 Owner：AppShell 不画，.sidebar-shell 独占', () => {
+    // variant="section" 会让 LayoutPanel 也画一条 borderInlineEnd，与 .sidebar-shell
+    // 自带的 border-right 同 token 叠成 2px；且折叠时它无法随之消失，留下 1px 孤线。
+    // "surface" 与 "section" 底色相同，仅少了那条分隔线。
+    expect(appSource).toMatch(/variant="surface"/)
+    expect(appSource).not.toMatch(/variant="section"/)
+
+    const shellRule = sidebarCss.match(/\.sidebar-shell\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    expect(shellRule).toMatch(/border-right:\s*1px solid var\(--border-subtle\)/)
+
+    const collapsedRule = sidebarCss.match(/\.sidebar-shell--collapsed\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    expect(collapsedRule).toMatch(/border-right:\s*none/)
   })
 })

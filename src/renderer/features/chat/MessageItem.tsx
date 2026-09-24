@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -22,12 +22,14 @@ import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
 import { useChatStore } from '../../stores/useChatStore'
-import { RegenerateIcon, EditIcon } from '../../components/Icons'
+import { useSettingsStore } from '../../stores/useSettingsStore'
+import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon } from '../../components/Icons'
 import { TurnProcessTree } from './TurnProcessTree'
-import { buildTurnRenderModel, resolveTurnPhase } from './turnProcessModel'
+import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
-import type { ExtendedMessage, MessageDiffCache } from '../../stores/types'
+import type { ExtendedMessage, MessageDiffCache, RendererMessageBlock } from '../../stores/types'
+import type { TerminalErrorAction } from '../../../shared/session/terminalErrorBlocks'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageRenderMode } from './messageRenderTier'
 
@@ -225,8 +227,9 @@ function MessageItemInner({
   // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
   // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
   const msg = useEffectiveMessage(msgProp)
+  const isInternalInput = msg.role === 'user' && msg.internalSource === 'runtime_input'
   const isAssistant = msg.role === 'assistant'
-  const isUser = msg.role === 'user'
+  const isUser = msg.role === 'user' && !isInternalInput
   const isStaticRow = renderMode === 'static'
 
   // 用户消息编辑态（编辑重发）：本地受控，确认后调用 onEditResend 走分叉重发
@@ -271,6 +274,13 @@ function MessageItemInner({
     },
     [msg.id, onTurnProcessOpenChange]
   )
+  // timeline 增量缓存：流式 tick 只浅拷贝尾部 blocks，前缀段（含工具组数组）
+  // 引用稳定，下游 React.memo 不再级联失效。缓存随组件实例存活。
+  const turnBuildCacheRef = useRef<TurnBuildCache | undefined>(undefined)
+  turnBuildCacheRef.current ??= {
+    blocks: [], mode: currentMode, answerIndex: -1, lastSavePlanIndex: -1,
+    timeline: [], segmentEndBlockIndex: []
+  }
   const turnModel = useMemo(
     () =>
       isAssistant
@@ -282,7 +292,8 @@ function MessageItemInner({
             turnStartedAt: msg.turnStartedAt,
             turnEndedAt: msg.turnEndedAt,
             thinking: thinkingContent || undefined,
-            content: textContent || undefined
+            content: textContent || undefined,
+            cache: turnBuildCacheRef.current
           })
         : null,
     [
@@ -332,6 +343,49 @@ function MessageItemInner({
     ? msg.blocks?.filter((b): b is { type: 'image'; fileName: string; dataUrl: string; mimeType: string } => b.type === 'image') ?? []
     : []
 
+  const [copied, setCopied] = useState(false)
+  const handleCopyMessage = useCallback(() => {
+    if (typeof navigator === 'undefined' || !navigator.clipboard) return
+    const text = typeof textContent === 'string' ? textContent : msg.content || ''
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1800)
+    }, () => {})
+  }, [textContent, msg.content])
+
+  const copyButton = (
+    <IconButton
+      label={copied ? '已复制' : '复制此消息'}
+      icon={copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+      variant="ghost"
+      size="sm"
+      onClick={handleCopyMessage}
+      tooltip="复制此消息"
+    />
+  )
+
+  if (isInternalInput) {
+    const runtimeInputBlocks = (msg.blocks ?? []).filter(
+      (b): b is Extract<RendererMessageBlock, { type: 'runtime_input' }> => b.type === 'runtime_input'
+    )
+    const count = runtimeInputBlocks.length
+    const label =
+      count > 1
+        ? `后台子任务已完成（共 ${count} 项）· 结果已自动同步到上下文`
+        : '后台子任务已完成 · 结果已自动同步到上下文'
+
+    return (
+      <ChatMessage sender="system">
+        <div className="chat-msg chat-msg--relay-event" role="status" aria-label={label}>
+          <span className="chat-msg__relay-event-pill">
+            <span className="chat-msg__relay-event-dot" aria-hidden="true" />
+            <span className="chat-msg__relay-event-text">{label}</span>
+          </span>
+        </div>
+      </ChatMessage>
+    )
+  }
+
   /* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出。
      按钮几何全部交给 Astryx（IconButton size/variant），不再有 .astryx-* 几何覆盖。 */
   const actionsBar =
@@ -352,6 +406,7 @@ function MessageItemInner({
                 : '重新生成此回答（保留原分支）'
           }
         />
+        {copyButton}
       </div>
     ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
       /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
@@ -368,7 +423,11 @@ function MessageItemInner({
           isDisabled={!!rollbackError}
           tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
         />
+        {copyButton}
       </div>
+    ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && (userImageBlocks.length > 0 || !onEditResend) ? (
+      /* 含图片或不可编辑的用户消息：只给复制 */
+      <div className="chat-msg__actions">{copyButton}</div>
     ) : null
 
   /* 兄弟分支翻页器：‹ k/n › */
@@ -538,6 +597,9 @@ function MessageItemInner({
       {actionsBar}
       {branchFlipper}
       <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>{messageBody}</div>
+      {msg.isError && msg.errorActions && msg.errorActions.length > 0 ? (
+        <ErrorActionRow message={msg} onRegenerate={onRegenerate} />
+      ) : null}
     </>
   )
 
@@ -557,6 +619,57 @@ function MessageItemInner({
         </div>
       )}
     </ChatMessage>
+  )
+}
+
+// ── 终态错误动作按钮：把分类错误翻译成用户能点的下一步 ──────────────────
+
+const ERROR_ACTION_LABELS: Record<TerminalErrorAction, string> = {
+  'open-settings': '去设置检查',
+  'switch-model': '换模型',
+  retry: '重试',
+  'new-session': '开新会话',
+  'export-diagnostics': '导出诊断包'
+}
+
+function ErrorActionRow({
+  message,
+  onRegenerate
+}: {
+  message: ExtendedMessage
+  onRegenerate: (messageId: string) => void
+}) {
+  const handleAction = (action: TerminalErrorAction) => {
+    switch (action) {
+      case 'retry':
+        onRegenerate(message.id)
+        break
+      case 'open-settings':
+      case 'switch-model':
+        useSettingsStore.getState().setConfigModalOpen(true)
+        break
+      case 'new-session':
+        void useChatStore.getState().createNewSession(useSettingsStore.getState().currentProject ?? undefined)
+        break
+      case 'export-diagnostics':
+        void window.api.invoke('diagnostics:export')
+        break
+    }
+  }
+  return (
+    <div className="chat-msg__error-actions">
+      {message.errorActions!.map(action => (
+        <Button
+          key={action}
+          label={ERROR_ACTION_LABELS[action]}
+          size="sm"
+          variant="secondary"
+          onClick={() => handleAction(action)}
+        >
+          {ERROR_ACTION_LABELS[action]}
+        </Button>
+      ))}
+    </div>
   )
 }
 

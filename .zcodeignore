@@ -1,0 +1,100 @@
+node_modules/
+out/
+dist/
+*.log
+__pycache__/
+*.py[cod]
+.local/
+.DS_Store
+Thumbs.db
+.devin
+.qwen
+# electron-builder 打包产物（NSIS 安装包 NovaAgent-Setup-*.exe、win-unpacked、Spike 冒烟 exe 等）
+# 本地重建：npm run dist  或  npm run pack:spike
+release/
+.zcode
+# electron-builder 在 buildResources 目录生成的临时图标转换缓存（勿提交）
+build/.icon-ico/
+.kiro
+# 品牌源图：assets/brand/（提交）
+# 打包/开发用图标：build/icon.png、src/renderer/assets/app-icon.png（npm run sync:icon 同步，建议一并提交）
+.nova/plans/
+.plans/
+scripts/trigram-fact-check.mjs
+
+.spec-workflow
+tasks/*
+!tasks/todo.md
+!tasks/phase3-validation.md
+SPEC.md
+TASKS.md
+docs/Local_Docs
+!docs/nova-harness-token-efficiency-audit.md
+!docs/perf-long-conversation-research.md
+.claude
+.commandcode
+.kilo
+.kilocode
+.cursor
+# Cursor Helper Version: 0.1.5
+# Cursor Helper AI 相关文件
+# 忽略 .cursor/commands 目录（Cursor 命令文件）
+.cursor/commands/
+
+# cursor-helper 目录：只允许提交报告文件
+# 忽略所有 diff 目录（临时文件）
+cursor-helper/**/diff/
+
+# 忽略所有 docs 目录（PRD和技术方案文档）
+cursor-helper/**/docs/
+
+# 忽略 rule_improvements.md（临时规则优化建议文件）
+cursor-helper/**/rule_improvements.md
+
+# 忽略 fix 目录下的修复计划文件（临时文件）
+cursor-helper/**/fix/fix_plan.md
+
+# 忽略评审报告中的 files 目录（详细的文件评审报告，diff 报告）
+cursor-helper/**/review/reports/files/
+
+# 备份文件（.bak）
+# ⚠️ 重要提示：如果因为 Cursor 无法访问文件而通过文件操作命令修改文件时，可能会遗留 .bak 备份文件
+# 这些备份文件应该被忽略，请记得及时删除遗留的 .bak 文件
+*.bak
+
+# 保留所有报告文件：
+# - cursor-helper/**/review/reports/summary/** （总结性评审报告）
+# - cursor-helper/**/fix/fix_report.md （修复报告）
+# - cursor-helper/**/organize-rules/** （规则整理报告）
+
+# Electron E2E 诊断产物
+test-results/
+playwright-report/
+
+# ===== ↑ 以上同步自 .gitignore（「从 .gitignore 同步」只重写以上部分）=====
+.git/
+.hg/
+.svn/
+bower_components/
+jspm_packages/
+site-packages/
+venv/
+coverage/
+htmlcov/
+lcov-report/
+cmakefiles/
+cmake-build-*/
+bazel-*/
+pods/
+deriveddata/
+storybook-static/
+allure-results/
+allure-report/
+cdk.out/
+*.egg-info/
+*.dist-info/
+eggs/
+pip-wheel-metadata/
+wheels/
+# ----- ↑ 以上为 ZCode 默认排除规则（自定义规则请写在本行下方，不会被同步/恢复改动）-----
+# 自定义规则写在下方（本行提示可删除）

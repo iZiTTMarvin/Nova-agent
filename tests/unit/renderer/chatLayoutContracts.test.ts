@@ -42,18 +42,18 @@ describe('chat panel layout contracts', () => {
 
   it('locks message flow and composer to centered reading column with responsive gutters', () => {
     const flowInner = rule('.chat-messages__flow-inner')
-    expect(flowInner).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+    expect(flowInner).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
     expect(flowInner).toMatch(/margin-inline:\s*auto/)
 
     const virtualList = rule('.chat-messages__virtual')
-    expect(virtualList).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+    expect(virtualList).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
     expect(virtualList).toMatch(/margin-inline:\s*auto/)
 
     const composerInner = rule('.chat-panel__composer-inner')
-    expect(composerInner).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+    expect(composerInner).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
 
     const tier1Notice = rule('.chat-tier1-notice')
-    expect(tier1Notice).toMatch(/max-width:\s*var\(--chat-content-max-width,\s*48rem\)/)
+    expect(tier1Notice).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
   })
 
   it('freezes reading column widths via per-container variables while inspector drags', () => {

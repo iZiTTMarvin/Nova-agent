@@ -50,5 +50,8 @@ export {
   BATCH_MIN_ITEMS,
   BATCH_TASK_MAX_LENGTH,
   SubagentBatchDecodeError,
-  decodeBatchInput
+  decodeBatchInput,
+  formatBatchSubagentOutput
 } from './batch'
+export type { BatchSubagentOutputResult } from './batch'
+export { parseFollowupArguments } from './followup'

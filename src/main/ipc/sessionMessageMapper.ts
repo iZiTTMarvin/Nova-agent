@@ -66,6 +66,7 @@ export function toSharedMessage(
       arguments: parseToolArguments(tc.arguments)
     })),
     blocks: normalizeBlocks(msg.blocks),
+    ...(msg.internalSource ? { internalSource: msg.internalSource } : {}),
     timestamp: msg.timestamp,
     ...(msg.turnStartedAt !== undefined ? { turnStartedAt: msg.turnStartedAt } : {}),
     ...(msg.turnEndedAt !== undefined ? { turnEndedAt: msg.turnEndedAt } : {}),

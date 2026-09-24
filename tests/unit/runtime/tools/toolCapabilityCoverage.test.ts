@@ -90,6 +90,38 @@ describe('工具能力分类 / 显示名全覆盖守卫', () => {
     }
   })
 
+  it('每个已注册工具的参数 schema 都是带 properties 的扁平 object，任何层级不用 oneOf/anyOf/allOf', () => {
+    // 多数服务商不支持顶层组合 schema，部分连嵌套也不支持；Nova 自己的形状关卡与工具目录也只认 properties。
+    // 用了组合 schema 的工具在模型眼里等于没有参数，只能乱猜。
+    const COMBINATORS = ['oneOf', 'anyOf', 'allOf']
+    const findCombinator = (node: unknown, path: string): string | null => {
+      if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i++) {
+          const hit = findCombinator(node[i], `${path}[${i}]`)
+          if (hit) return hit
+        }
+        return null
+      }
+      if (typeof node !== 'object' || node === null) return null
+      for (const [key, value] of Object.entries(node)) {
+        if (COMBINATORS.includes(key)) return `${path}.${key}`
+        const hit = findCombinator(value, `${path}.${key}`)
+        if (hit) return hit
+      }
+      return null
+    }
+    const problems: string[] = []
+    for (const def of registry.getToolDefinitions()) {
+      const schema = def.parameters as { type?: unknown; properties?: unknown }
+      if (schema.type !== 'object' || typeof schema.properties !== 'object' || schema.properties === null) {
+        problems.push(`${def.name}: 顶层不是带 properties 的 object`)
+      }
+      const hit = findCombinator(def.parameters, def.name)
+      if (hit) problems.push(`${def.name}: 含组合 schema ${hit}`)
+    }
+    expect(problems).toEqual([])
+  })
+
   it('每个已注册工具都有专属 UI 显示名（不得落到兜底「运行自动化工具」）', () => {
     const fallback = toolNames.filter(name =>
       getToolDisplayName(name).startsWith('运行自动化工具')

@@ -437,4 +437,149 @@ describe('SubagentActivityRow', () => {
     expect(renderer.container.querySelector('.tool-trace-row')).not.toBeNull()
     renderer.unmount()
   })
+
+  it('interrupted 且为最新 run 时显示继续按钮', () => {
+    const proj = baseProjection({ status: 'interrupted' })
+    useSubagentProjectionStore.getState().hydrateParent(proj.parentSessionId, [proj])
+    const renderer = renderDom(<SubagentActivityRow projection={proj} />)
+    expect(renderer.container.textContent).toContain('继续此子任务')
+    renderer.unmount()
+  })
+
+  it('旧 run 被更新的 run 超越后不显示继续按钮', () => {
+    const oldProj = baseProjection({ childRunId: 'old-run', status: 'interrupted' })
+    const newProj = baseProjection({ childRunId: 'new-run', status: 'completed' })
+    useSubagentProjectionStore.getState().hydrateParent(oldProj.parentSessionId, [oldProj, newProj])
+    const renderer = renderDom(<SubagentActivityRow projection={oldProj} />)
+    expect(renderer.container.textContent).not.toContain('继续此子任务')
+    renderer.unmount()
+  })
+
+  it('后台子代理运行中显示停止后台任务入口并单独取消该 run；同步子代理不显示', async () => {
+    const background = renderDom(
+      <SubagentActivityRow
+        projection={baseProjection({ status: 'running', execution: 'background_read_only' })}
+      />
+    )
+    const stop = background.container.querySelector<HTMLButtonElement>(
+      '.subagent-activity-row__stop-btn'
+    )
+    expect(stop).not.toBeNull()
+    expect(stop?.textContent).toContain('停止后台任务')
+    act(() => stop!.click())
+    await flushAsync()
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'internal-run-id' })
+    background.unmount()
+
+    const sync = renderDom(
+      <SubagentActivityRow projection={baseProjection({ status: 'running' })} />
+    )
+    expect(sync.container.querySelector('.subagent-activity-row__stop-btn')).toBeNull()
+    sync.unmount()
+  })
+
+  it('接力已预约的完成行显示停止自动接力入口，点击取消接力 run', async () => {
+    const renderer = renderDom(
+      <SubagentActivityRow projection={baseProjection({ pendingRelayRunId: 'run-relay-9' })} />
+    )
+    const stop = renderer.container.querySelector<HTMLButtonElement>(
+      '.subagent-activity-row__stop-btn'
+    )
+    expect(stop?.textContent).toContain('停止自动接力')
+    act(() => stop!.click())
+    await flushAsync()
+    expect(mockInvoke).toHaveBeenCalledWith('cancel-execution', { runId: 'run-relay-9' })
+    renderer.unmount()
+  })
+
+  it('点击继续按钮调用 send-message 且参数含稳定 userMessageId 与两个 id；不冒泡展开浮层', async () => {
+    vi.useFakeTimers()
+    try {
+      const proj = baseProjection({ status: 'interrupted', childRunId: 'interrupted-child-run' })
+      useSubagentProjectionStore.getState().hydrateParent(proj.parentSessionId, [proj])
+      const renderer = renderDom(<SubagentActivityRow projection={proj} />)
+      const resumeBtn = renderer.container.querySelector<HTMLButtonElement>('.subagent-activity-row__resume-btn')
+      expect(resumeBtn).not.toBeNull()
+      expect(resumeBtn?.textContent).toContain('继续此子任务')
+
+      await act(async () => {
+        resumeBtn?.click()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect(mockInvoke).toHaveBeenCalledWith('send-message', expect.objectContaining({
+        sessionId: proj.parentSessionId,
+        userMessageId: expect.stringContaining('msg_resume_interrupted-child-run')
+      }))
+      // 行不应展开
+      expect(renderer.container.querySelector('.subagent-detail-popover')).toBeNull()
+      renderer.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('submitting → waiting 状态流转；投影出现 resumedFromRunId 后显示 started', async () => {
+    vi.useFakeTimers()
+    try {
+      let resolveDeferred!: (value: { accepted: boolean }) => void
+      const deferred = new Promise<{ accepted: boolean }>(resolve => { resolveDeferred = resolve })
+      mockInvoke.mockReturnValueOnce(deferred)
+      const proj = baseProjection({ status: 'interrupted', childRunId: 'resume-row-run' })
+
+      useSubagentProjectionStore.getState().hydrateParent(proj.parentSessionId, [proj])
+
+      const renderer = renderDom(<SubagentActivityRow projection={proj} />)
+      const resumeBtn = renderer.container.querySelector<HTMLButtonElement>('.subagent-activity-row__resume-btn')
+      expect(resumeBtn).not.toBeNull()
+
+      await act(async () => {
+        resumeBtn?.click()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(renderer.container.textContent).toContain('提交中…')
+
+
+      await act(async () => {
+        resolveDeferred({ accepted: true })
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(renderer.container.textContent).toContain('已提交，等待父会话处理')
+
+      act(() => {
+        useSubagentProjectionStore.getState().hydrateParent(proj.parentSessionId, [{
+          ...proj,
+          childRunId: 'resumed-row-run',
+          status: 'running',
+          resumedFromRunId: 'resume-row-run'
+        }])
+      })
+
+      expect(renderer.container.textContent).toContain('已开始')
+      renderer.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('拒绝 → failed 状态流转并可重试', async () => {
+    vi.useFakeTimers()
+    try {
+      mockInvoke.mockResolvedValue({ accepted: false, rejection: { reason: 'agent_not_allowed', skillName: 'resume', suggestions: [] } })
+      const proj = baseProjection({ status: 'interrupted' })
+      useSubagentProjectionStore.getState().hydrateParent(proj.parentSessionId, [proj])
+      const renderer = renderDom(<SubagentActivityRow projection={proj} />)
+      const resumeBtn = renderer.container.querySelector<HTMLButtonElement>('.subagent-activity-row__resume-btn')
+
+      await act(async () => {
+        resumeBtn?.click()
+        await vi.advanceTimersByTimeAsync(0)
+      })
+
+      expect(renderer.container.textContent).toContain('父会话拒绝接收')
+      renderer.unmount()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

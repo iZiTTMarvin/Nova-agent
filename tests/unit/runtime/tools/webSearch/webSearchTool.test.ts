@@ -164,6 +164,45 @@ describe('webSearchTool.execute', () => {
     )
   })
 
+  it('provider 失败时若查询已取消，不再启动 fallback', async () => {
+    const controller = new AbortController()
+    const fallback = vi.fn<SearchProvider['search']>().mockResolvedValue(ddgSuccessResponse)
+    const first = vi.fn<SearchProvider['search']>().mockImplementation(async () => {
+      controller.abort()
+      throw { provider: 'bing', message: '请求已取消' }
+    })
+
+    mockGetAvailableProviders.mockReturnValue([
+      mockProvider('bing', { search: first }),
+      mockProvider('duckduckgo', { search: fallback })
+    ])
+
+    const result = await webSearchTool.execute(
+      { query: 'cancel fallback' },
+      createContext({ abortSignal: controller.signal })
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('请求已取消')
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
+  it('调用前已取消时不启动任何 provider', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const search = vi.fn<SearchProvider['search']>()
+    mockGetAvailableProviders.mockReturnValue([mockProvider('bing', { search })])
+
+    const result = await webSearchTool.execute(
+      { query: 'already cancelled' },
+      createContext({ abortSignal: controller.signal })
+    )
+
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('请求已取消')
+    expect(search).not.toHaveBeenCalled()
+  })
+
   it('将 maxResults 与 recency 透传给 provider.search', async () => {
     let capturedParams: SearchQueryParams | undefined
     const search = vi.fn<SearchProvider['search']>().mockImplementation(async params => {

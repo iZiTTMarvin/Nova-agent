@@ -1031,6 +1031,68 @@ describe('executeToolBatch', () => {
     expect(availability.isToolAvailable('task')).toBe(true)
   })
 
+  it('run_code 的嵌套派发重新经过权限校验，读写上限拒绝后不执行写工具', async () => {
+    const registry = new ToolRegistry()
+    let writeExecuted = false
+    registerTool(registry, 'write', async () => {
+      writeExecuted = true
+      return { success: true, output: 'should-not-run' }
+    })
+    registry.register({
+      name: 'run_code',
+      description: 'run code',
+      executionMode: 'parallel',
+      isConcurrencySafe: () => true,
+      parameters: { type: 'object', properties: {} },
+      execute: async (_args, context) => {
+        const dispatch = context.dispatchNestedToolCall
+        if (!dispatch) {
+          return { success: false, output: '', error: 'missing nested dispatcher' }
+        }
+        const nested = await dispatch({
+          toolName: 'write',
+          args: { path: 'a.ts', content: 'blocked' }
+        })
+        return nested.success
+          ? { success: true, output: nested.output }
+          : {
+              success: false,
+              output: nested.output,
+              error: nested.error ?? 'nested permission denied'
+            }
+      }
+    })
+
+    const checkedTools: string[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'tc_run_code', name: 'run_code', arguments: '{}' }],
+      messageId: 'msg_nested_ceiling',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async toolName => {
+        checkedTools.push(toolName)
+        return toolName === 'write'
+          ? { allowed: false, reason: '只读上限禁止写入' }
+          : { allowed: true, reason: '' }
+      },
+      emit: vi.fn(),
+      applyTruncation: output => output,
+      maxParallelToolCalls: 1,
+      toolExecution: 'parallel',
+      allowNestedToolDispatch: true
+    })
+
+    expect(checkedTools).toEqual(['run_code', 'write'])
+    expect(writeExecuted).toBe(false)
+    expect(result.outcomes[0]).toMatchObject({ failed: true })
+    expect(result.outcomes[0]?.resultText).toContain('只读上限禁止写入')
+  })
+
   it('工具失败回传超过 4000 字符时保留尾部并如实标注省略字符数', async () => {
     const registry = new ToolRegistry()
     const tail = 'ERROR_TAIL_END'
@@ -1360,6 +1422,167 @@ describe('executeToolBatch', () => {
     expect(result.outcomes[0].failed).toBe(true)
     expect(result.outcomes[0].resultText).toBe('工具 "no_such_tool" 不可用：未注册工具')
     expect(events.filter(event => event.type === 'repair_diagnostic')).toHaveLength(0)
+  })
+})
+
+describe('executeToolBatch —— subagentNotificationIds 透传', () => {
+  it('成功工具结果的 subagentNotificationIds 同时透传到 event 与 outcome，且 clone 不共享原数组', async () => {
+    const registry = new ToolRegistry()
+    const originalIds = ['ntf_run-1_t-1', 'ntf_run-2_t-2']
+    registerTool(registry, 'task_wait', async () => ({
+      success: true,
+      output: 'ok',
+      subagentNotificationIds: originalIds
+    }))
+
+    const emitted: AgentEvent[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'tc1', name: 'task_wait', arguments: '{}' }],
+      messageId: 'msg_ntf',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: (event: AgentEvent) => { emitted.push(event) },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    // event 携带 clone
+    const toolResultEvent = emitted.find((e): e is Extract<AgentEvent, { type: 'tool_result' }> => e.type === 'tool_result')!
+    expect(toolResultEvent.subagentNotificationIds).toEqual(originalIds)
+    expect(toolResultEvent.subagentNotificationIds).not.toBe(originalIds)
+
+    // outcome 携带 clone
+    const outcome = result.outcomes[0]!
+    expect(outcome.failed).toBeFalsy()
+    expect(outcome.subagentNotificationIds).toEqual(originalIds)
+    expect(outcome.subagentNotificationIds).not.toBe(originalIds)
+    // event 与 outcome 不共享同一数组引用
+    expect(toolResultEvent.subagentNotificationIds).not.toBe(outcome.subagentNotificationIds)
+  })
+
+  it('hook 将结果改为 error 时 event 与 outcome 均不携带 subagentNotificationIds', async () => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'task_wait', async () => ({
+      success: true,
+      output: 'ok',
+      subagentNotificationIds: ['ntf_run-1_t-1']
+    }))
+
+    const mockHookManager = {
+      trigger: vi.fn().mockImplementation(async (payload: { event: string }) => {
+        if (payload.event === 'postToolUse') {
+          return { isError: true, content: 'hook 改为失败' }
+        }
+        return null
+      })
+    }
+
+    const emitted: AgentEvent[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'tc1', name: 'task_wait', arguments: '{}' }],
+      messageId: 'msg_ntf_hook',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: (event: AgentEvent) => { emitted.push(event) },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel',
+      hookManager: mockHookManager
+    })
+
+    const toolResultEvent = emitted.find((e): e is Extract<AgentEvent, { type: 'tool_result' }> => e.type === 'tool_result')!
+    expect(toolResultEvent.failed).toBe(true)
+    expect(toolResultEvent.subagentNotificationIds).toBeUndefined()
+
+    const outcome = result.outcomes[0]!
+    expect(outcome.failed).toBe(true)
+    expect(outcome.subagentNotificationIds).toBeUndefined()
+  })
+
+  it('abort-after-execute 返回 skipped，不 emit 事件也不携带 receipt', async () => {
+    const registry = new ToolRegistry()
+    const execGate = deferred<void>()
+    const started = deferred<void>()
+    registerTool(registry, 'task_wait', async () => {
+      started.resolve()
+      await execGate.promise
+      return { success: true, output: 'ok', subagentNotificationIds: ['ntf_run-1_t-1'] }
+    })
+
+    const abortController = new AbortController()
+    const emitted: AgentEvent[] = []
+    const resultPromise = executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'tc1', name: 'task_wait', arguments: '{}' }],
+      messageId: 'msg_ntf_abort',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: abortController.signal,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: (event: AgentEvent) => { emitted.push(event) },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'sequential'
+    })
+
+    // 确认工具 execute 已进入后再 abort
+    await started.promise
+    abortController.abort()
+    execGate.resolve()
+    const result = await resultPromise
+
+    // abort-after-execute：outcome 为 skipped，无事件，无 receipt
+    const outcome = result.outcomes[0]!
+    expect(outcome.skippedByAbort).toBe(true)
+    expect(outcome.subagentNotificationIds).toBeUndefined()
+    expect(emitted.find(e => e.type === 'tool_result')).toBeUndefined()
+  })
+
+  it('非 task_wait 工具即使返回 subagentNotificationIds 也被忽略', async () => {
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', async () => ({
+      success: true,
+      output: 'ok',
+      subagentNotificationIds: ['ntf_run-1_t-1']
+    }))
+
+    const emitted: AgentEvent[] = []
+    const result = await executeToolBatch({
+      readState: createReadState(),
+      toolCalls: [{ id: 'tc1', name: 'read', arguments: '{}' }],
+      messageId: 'msg_ntf_other',
+      toolRegistry: registry,
+      workingDir: process.cwd(),
+      mode: 'default',
+      supportsVision: true,
+      checkpointManager: null,
+      abortSignal: undefined,
+      checkPermission: async () => ({ allowed: true, reason: '' }),
+      emit: (event: AgentEvent) => { emitted.push(event) },
+      applyTruncation: output => output,
+      maxParallelToolCalls: 4,
+      toolExecution: 'parallel'
+    })
+
+    const toolResultEvent = emitted.find((e): e is Extract<AgentEvent, { type: 'tool_result' }> => e.type === 'tool_result')!
+    expect(toolResultEvent.subagentNotificationIds).toBeUndefined()
+    expect(result.outcomes[0]?.subagentNotificationIds).toBeUndefined()
   })
 })
 

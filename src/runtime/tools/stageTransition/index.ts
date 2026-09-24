@@ -90,10 +90,10 @@ export function createStageTransitionTool(deps: StageTransitionToolDeps): ToolEx
   return {
     name: 'stage_transition',
     description:
-      '仅 compose 模式：推进生命周期阶段。' +
-      'complete 完成当前阶段并进入下一阶段；' +
-      'skip 跳过当前阶段（必须给原因）；' +
-      'return 回退到更早阶段（必须给 targetStage 与原因）。',
+      'Compose mode only: advance the lifecycle stage. ' +
+      'complete finishes the current stage and moves to the next; ' +
+      'skip skips the current stage (a reason is required); ' +
+      'return rewinds to an earlier stage (targetStage and a reason are required).',
     executionMode: 'sequential',
     isConcurrencySafe: () => false,
     parameters: {
@@ -102,16 +102,16 @@ export function createStageTransitionTool(deps: StageTransitionToolDeps): ToolEx
         action: {
           type: 'string',
           enum: ['complete', 'skip', 'return'],
-          description: '阶段转换动作：完成、跳过或回退'
+          description: 'Stage transition action: complete, skip, or return'
         },
         reason: {
           type: 'string',
-          description: '跳过或回退时必填的原因'
+          description: 'The reason, required when skipping or returning'
         },
         targetStage: {
           type: 'string',
           enum: [...COMPOSE_STAGE_IDS],
-          description: '回退目标阶段（仅 return 时必填）'
+          description: 'The stage to return to (required only for return)'
         }
       },
       required: ['action'],

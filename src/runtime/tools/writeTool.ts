@@ -43,20 +43,20 @@ export function createWriteTool(options?: WriteToolOptions): ToolExecutor {
   return {
     name: 'write',
     description:
-      '创建新文件或完整覆写已有文件。' +
-      '适用于创建新文件或需要完全重写文件内容的场景。' +
-      '如果要修改文件中的部分内容，请使用 edit 工具。',
+      'Create a new file or fully overwrite an existing one. ' +
+      'Use for creating new files or when the whole file content must be rewritten. ' +
+      'To change only part of a file, use the edit tool.',
     executionMode: 'sequential',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: '要写入的文件路径，相对于工作区根目录。'
+          description: 'Path of the file to write, relative to the workspace root.'
         },
         content: {
           type: 'string',
-          description: '要写入文件的完整内容。'
+          description: 'The complete content to write to the file.'
         }
       },
       required: ['path', 'content']

@@ -1,9 +1,15 @@
-import React from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { useChatStore } from '../../stores/useChatStore'
 import { useAgentStore } from '../../stores/useAgentStore'
-import { useSubagentProjectionStore, selectLatestSubagentByChildSessionId } from './projection'
+import {
+  selectLatestSubagentByChildSessionId,
+  useSubagentProjectionStore
+} from './projection'
+import { requestSubagentResume } from './resumeSubagentExecution'
 import './SubagentSessionHeader.css'
+
+type ResumeState = 'idle' | 'submitting' | 'waiting' | 'started' | 'failed'
 
 export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> = ({
   originalTask
@@ -12,10 +18,55 @@ export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> =
   const currentSessionId = useChatStore((state) => state.currentSessionId)
   const selectSession = useChatStore((state) => state.selectSession)
   const cancelExecution = useAgentStore((state) => state.cancelExecution)
-  const session = sessions.find((candidate) => candidate.id === currentSessionId)
+
   const projection = useSubagentProjectionStore((state) =>
     currentSessionId ? selectLatestSubagentByChildSessionId(state, currentSessionId) : undefined
   )
+
+  const [resumeState, setResumeState] = useState<ResumeState>('idle')
+  const [resumeRejection, setResumeRejection] = useState<string>('')
+  const unsubscribeRef = useRef<(() => void) | null>(null)
+
+  const childSessionId = currentSessionId ?? ''
+  const parentSessionId = projection?.parentSessionId ?? ''
+  const childRunId = projection?.childRunId ?? ''
+
+  const subscribeResumed = useCallback(() => {
+    if (!childRunId) return
+    unsubscribeRef.current?.()
+    const unsub = useSubagentProjectionStore.subscribe((state) => {
+      // 续跑产生新 childRunId，通过 resumedFromRunId 反向定位旧 run 的接替者
+      const updated = Object.values(state.byChildRunId).find(
+        item => item.resumedFromRunId === childRunId && item.status !== 'interrupted'
+      )
+      if (updated) setResumeState('started')
+    })
+    unsubscribeRef.current = unsub
+  }, [childRunId])
+
+  useEffect(() => {
+    return () => unsubscribeRef.current?.()
+  }, [])
+
+  const handleResume = useCallback(async () => {
+    if (!parentSessionId || !childSessionId || !childRunId) return
+    setResumeState('submitting')
+    setResumeRejection('')
+    const result = await requestSubagentResume({
+      parentSessionId,
+      childSessionId,
+      childRunId
+    })
+    if (result.ok) {
+      setResumeState('waiting')
+      subscribeResumed()
+    } else {
+      setResumeState('failed')
+      setResumeRejection(result.rejection ?? '提交失败')
+    }
+  }, [parentSessionId, childSessionId, childRunId, subscribeResumed])
+
+  const session = sessions.find((candidate) => candidate.id === currentSessionId)
   if (!session || session.kind !== 'subagent') return null
 
   const active = projection && ![
@@ -25,6 +76,10 @@ export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> =
     'interrupted',
     'record_missing'
   ].includes(projection.status)
+
+  const showResume =
+    projection?.status === 'interrupted' &&
+    resumeState === 'idle'
 
   return (
     <header className="subagent-session-header">
@@ -53,6 +108,36 @@ export const SubagentSessionHeader: React.FC<{ originalTask?: string | null }> =
           className="subagent-session-header__stop"
           onClick={() => void cancelExecution(projection.childRunId)}
         />
+      ) : null}
+      {showResume ? (
+        <Button
+          label="继续此子任务"
+          aria-label="继续此子任务"
+          variant="primary"
+          size="sm"
+          onClick={handleResume}
+        />
+      ) : null}
+      {resumeState === 'submitting' ? (
+        <Button
+          label="提交中…"
+          variant="primary"
+          isDisabled={true}
+        />
+      ) : null}
+      {resumeState === 'waiting' ? (
+        <span className="subagent-session-header__resume-waiting">已提交，等待父会话处理</span>
+      ) : null}
+      {resumeState === 'failed' ? (
+        <Button
+          label={`重试${resumeRejection ? ` (${resumeRejection})` : ''}`}
+          variant="destructive"
+          size="sm"
+          onClick={handleResume}
+        />
+      ) : null}
+      {resumeState === 'started' ? (
+        <span className="subagent-session-header__resume-started">已开始</span>
       ) : null}
     </header>
   )

@@ -15,6 +15,7 @@ import {
   restoreOrInjectHistory
 } from '../../../../src/runtime/sessions/contextSnapshot'
 import { CONTEXT_SNAPSHOT_VERSION } from '../../../../src/runtime/sessions/types'
+import { buildConversationContext } from '../../../../src/runtime/sessions/conversationContext'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 
@@ -33,6 +34,51 @@ afterEach(() => {
 })
 
 describe('contextSnapshot 纯函数', () => {
+  it('旧压缩坐标不能覆盖后来持久接收的运行时输入', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/project')
+    store.appendMessage(session.id, { id: 'u1', role: 'user', content: '开始', timestamp: 1 })
+    store.appendMessage(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      content: '完成一步',
+      blocks: [{ type: 'text', content: '完成一步', responseStep: 0 }],
+      timestamp: 2
+    })
+    const before = store.load(session.id)!
+    const oldLedger = makeCompactionLedger({
+      shadows: {
+        from: { messageId: 'u1', step: 0 },
+        to: { messageId: 'a1', step: 0 }
+      },
+      tailFrom: null
+    })
+    expect(classifyLedgerRestore(before, oldLedger)).toBe('restored')
+
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-late',
+      sourceRunId: 'child-late',
+      afterStep: 0,
+      order: 0,
+      content: '迟到但已提交的输入'
+    }
+    const after = {
+      ...before,
+      messages: before.messages.map(message => message.id === 'a1'
+        ? { ...message, blocks: [...(message.blocks ?? []), input] }
+        : message)
+    }
+    expect(buildConversationContext(after, 'default').at(-1)?.origin).toEqual({
+      messageId: 'a1',
+      step: 0,
+      runtimeInputId: input.notificationId
+    })
+    expect(classifyLedgerRestore(after, oldLedger)).toBe('invalid')
+  })
+
   it('persistCompactionSnapshot 写入账本且不含消息正文', () => {
     const store = new SessionStore(tmpDir)
     const session = store.create('/project')

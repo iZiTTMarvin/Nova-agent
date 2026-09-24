@@ -1,8 +1,12 @@
 import type { ReasoningEffort } from '../../../shared/config'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../../subagents'
-import { buildSubagentToolResult, failure } from '../subagentResultText'
+import { buildSubagentToolResult } from '../../subagents/resultText'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
+
+function failure(error: string): ToolResult {
+  return { success: false, output: '', error }
+}
 
 const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'max'] as const
 
@@ -32,25 +36,29 @@ export interface TaskToolDeps {
 export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
   return {
     name: 'task',
-    description: '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。XForge 下用 critic 挑刺一页纸、inspector 独立核验。',
+    description: 'Launch a subagent to complete a subtask. Subagents run in a clean context and return results as a summary. Prefer explore/code/review for specialized tasks; general-purpose is only for mixed tasks that do not fit pure exploration/coding/review. Under XForge, use critic to poke holes in the one-pager and inspector for independent verification.',
     parameters: {
       type: 'object',
       properties: {
-        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose / critic / inspector' },
-        task: { type: 'string', description: '子任务描述' },
+        subagent_type: { type: 'string', description: 'The subagent type, e.g. explore / code / review / general-purpose / critic / inspector' },
+        task: { type: 'string', description: 'The subtask description' },
+        background: {
+          type: 'boolean',
+          description: 'Optional background execution: returns an acceptance handle immediately and continues the parent task; results arrive later as a background notification. Background tasks are forced read-only and may not write to the workspace'
+        },
         model: {
           type: 'object',
-          description: '可选 canonical 模型覆盖，仅改变模型路由，不改变 profile prompt/工具/权限/isolation',
+          description: 'Optional canonical model override; changes only model routing, not the profile prompt/tools/permissions/isolation',
           properties: {
-            providerId: { type: 'string', description: '目标 providerId' },
-            modelEntryId: { type: 'string', description: '目标 modelEntryId' }
+            providerId: { type: 'string', description: 'The target providerId' },
+            modelEntryId: { type: 'string', description: 'The target modelEntryId' }
           },
           required: ['providerId', 'modelEntryId'],
           additionalProperties: false
         },
         reasoningEffort: {
           type: 'string',
-          description: '可选思考强度覆盖（auto/low/medium/high/max），仅改变推理强度',
+          description: 'Optional reasoning-effort override (auto/low/medium/high/max); changes only the reasoning effort',
           enum: ['auto', 'low', 'medium', 'high', 'max']
         }
       },
@@ -60,11 +68,15 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
     executionMode: 'sequential',
     async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
       const extraKeys = Object.keys(args).filter(
-        key => !['subagent_type', 'task', 'model', 'reasoningEffort'].includes(key)
+        key => !['subagent_type', 'task', 'background', 'model', 'reasoningEffort'].includes(key)
       )
       if (extraKeys.length > 0) {
         return failure(`未知字段：${extraKeys.join(', ')}`)
       }
+      if (args.background !== undefined && typeof args.background !== 'boolean') {
+        return failure('background 必须是布尔值')
+      }
+      const background = args.background === true
       const profileId = String(args.subagent_type ?? '').trim()
       const task = String(args.task ?? '').trim()
       if (!profileId) return failure('子代理类型不能为空')
@@ -108,6 +120,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
               profileId === BUILTIN_SUBAGENT_IDS.critic
                 ? 'readonly'
                 : 'shared',
+            ...(background ? { background: true } : {}),
             timeoutMs: SUBAGENT_WALL_CLOCK_TIMEOUT_MS,
             ...(modelOverride ? { modelOverride } : {}),
             ...(reasoningEffort !== undefined ? { reasoningEffort } : {})

@@ -229,6 +229,8 @@ export interface ToolResult {
    * UI 据此区分「跑完了」与「还在跑」，不进入模型上下文与持久化侧车。
    */
   processHandle?: ToolProcessHandle
+  /** 当前工具结果已显式读取的后台通知 ID；只用于持久消费消重，不进入模型 wire 正文。 */
+  subagentNotificationIds?: string[]
 }
 
 /** 工具执行器接口，所有工具必须实现 */

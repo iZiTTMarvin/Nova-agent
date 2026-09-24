@@ -1,5 +1,6 @@
 import type { SpawnSubagentPort } from '../../subagents'
-import { buildSubagentToolResult, failure } from '../subagentResultText'
+import { buildSubagentToolResult } from '../../subagents/resultText'
+import { parseFollowupArguments } from '../../../shared/subagents'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 
 export interface TaskFollowupToolDeps {
@@ -7,41 +8,28 @@ export interface TaskFollowupToolDeps {
   readonly getSpawnSubagentPort: () => SpawnSubagentPort | undefined
 }
 
-/**
- * task_followup 参数的唯一归一化入口：工具执行与投影侧的 followup 归属索引共用，
- * 字段改名只改这里。接受对象（executor 入参）或 JSON 字符串（持久化 arguments）。
- */
-export function parseFollowupArguments(
-  raw: unknown
-): { childSessionId: string; task: string } | null {
-  let value = raw
-  if (typeof value === 'string') {
-    try {
-      value = JSON.parse(value)
-    } catch {
-      return null
-    }
-  }
-  if (typeof value !== 'object' || value === null) return null
-  const { child_session_id, task } = value as Record<string, unknown>
-  if (typeof child_session_id !== 'string' || !child_session_id.trim()) return null
-  if (typeof task !== 'string' || !task.trim()) return null
-  return { childSessionId: child_session_id.trim(), task: task.trim() }
+function failure(error: string): ToolResult {
+  return { success: false, output: '', error }
 }
 
 export function createTaskFollowupTool(deps: TaskFollowupToolDeps): ToolExecutor {
   return {
     name: 'task_followup',
     description:
-      '让既有子代理带着已有上下文继续执行，而不是重新 task 从零开始。适用于：上一轮未完成（如已达工具轮数上限）、方向跑偏需要纠正、或需基于既有结论追问细节。child_session_id 取自此前 task / batch_task 结果中返回的会话 ID；profile、模型与权限沿用该子代理既有配置，不可在此覆盖。',
+      'Have an existing subagent continue with its existing context instead of starting over with a fresh task. Use when the previous run did not finish (e.g. it hit the tool-rounds cap), the direction went off course and needs correcting, or you need to drill into details based on existing conclusions. child_session_id comes from the session ID returned in a previous task / batch_task result; profile, model, and permissions follow that subagent\'s existing configuration and cannot be overridden here.',
     parameters: {
       type: 'object',
       properties: {
         child_session_id: {
           type: 'string',
-          description: '既有子代理的会话 ID，来自此前 task / batch_task 结果'
+          description: 'The existing subagent session ID, from the session ID returned in a previous task / batch_task result'
         },
-        task: { type: 'string', description: '追加指令：说明要继续、纠正或追问什么' }
+        task: { type: 'string', description: 'Follow-up instruction: state what to continue, correct, or drill into' },
+        resume_run_id: {
+          type: 'string',
+          description:
+            'Optional: explicitly specify the interrupted sub run id to resume (from the interruption notice). When provided, the resume facts derive from that run; when omitted, the original semantics are kept.'
+        }
       },
       required: ['child_session_id', 'task'],
       additionalProperties: false
@@ -49,7 +37,7 @@ export function createTaskFollowupTool(deps: TaskFollowupToolDeps): ToolExecutor
     executionMode: 'sequential',
     async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
       const extraKeys = Object.keys(args).filter(
-        key => !['child_session_id', 'task'].includes(key)
+        key => !['child_session_id', 'task', 'resume_run_id'].includes(key)
       )
       if (extraKeys.length > 0) {
         return failure(`未知字段：${extraKeys.join(', ')}`)
@@ -72,7 +60,8 @@ export function createTaskFollowupTool(deps: TaskFollowupToolDeps): ToolExecutor
             previousChildSessionId: parsed.childSessionId,
             parentMessageId: invocationRef.messageId,
             parentToolCallId: invocationRef.toolCallId,
-            task: parsed.task
+            task: parsed.task,
+            ...(parsed.resumeRunId ? { resumeRunId: parsed.resumeRunId } : {})
           },
           {
             invocationRef,

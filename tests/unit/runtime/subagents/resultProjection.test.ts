@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_SUBAGENT_SUMMARY_CHARS,
+  projectSubagentAcceptanceResult,
   projectSubagentExecutionResult
 } from '../../../../src/runtime/subagents'
 import type { RunSnapshot } from '../../../../src/shared/run/types'
@@ -56,6 +57,24 @@ function run(
 }
 
 describe('projectSubagentExecutionResult', () => {
+  it('queued run 投影为 accepted，且不读取尚未生成的最终消息', () => {
+    const projected = projectSubagentAcceptanceResult({
+      childSession: session('not used'),
+      runSnapshot: run('queued')
+    })
+
+    expect(projected).toEqual({
+      childSessionId: 'sess-child',
+      childRunId: 'run-child',
+      status: 'accepted',
+      summary: '后台子任务已持久接纳，等待执行名额；结果将以后台通知交付',
+      artifactIds: [],
+      startedAt: 2,
+      completedAt: 3,
+      hasResultMessage: false
+    })
+  })
+
   it('从原始 spawn run 的最终 assistant message 生成有界摘要与去重 artifact', () => {
     const projected = projectSubagentExecutionResult({
       childSession: session('x'.repeat(MAX_SUBAGENT_SUMMARY_CHARS + 50)),

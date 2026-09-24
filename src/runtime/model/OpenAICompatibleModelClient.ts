@@ -25,7 +25,7 @@ import type { ModelClient, ChatOptions } from './ModelClient'
 import { ThinkTagParser } from './ThinkTagParser'
 import { normalizeUsage } from './usage'
 import { applyCacheMarkers, applyToolCacheMarker, sanitizeToolMessages } from './messageFormat'
-import { buildReasoningParams } from './reasoningDialect'
+import { buildReasoningParams, resolveRequestReasoningEffort } from './reasoningDialect'
 import { isReasoningSourceCompatible } from './reasoningSource'
 import { projectMessagesForVision } from './visionProjection'
 import { resolveCacheProfile, type CacheMarker, type CacheProfile } from './cacheProfile'
@@ -33,10 +33,10 @@ import {
   observeReasoningField,
   type ObservedReasoningField
 } from './reasoningObservation'
-import type { CacheStrategy } from '../../shared/config/types'
+import type { CacheStrategy, ReasoningEffort } from '../../shared/config/types'
 import { resolveSupportsVision } from '../../shared/config/types'
 import { isContextOverflowError } from '../agent/recovery/contextOverflow'
-import { computeWireSnapshot } from './requestFingerprint'
+import { computeWireSnapshot, resetRequestSerializationMemo, type RequestSerializationMemo } from './requestFingerprint'
 import {
   transportFetch,
   TransportBodyReader,
@@ -119,6 +119,16 @@ export class OpenAICompatibleModelClient implements ModelClient {
     })
   }
 
+  /** 请求参数与 route identity 必须使用同一份有效强度，避免无效档位制造假路由差异。 */
+  private effectiveReasoningEffort(options?: ChatOptions): ReasoningEffort {
+    return resolveRequestReasoningEffort(
+      this.config.modelId,
+      this.config.reasoningEffort,
+      options?.reasoningEffort,
+      this.config.baseUrl
+    )
+  }
+
   /**
    * 初始化观测字段：仅当档案标记 reasoningWireObservable 时启用观测，
    * 初始值取静态 reasoningWire（限定为 reasoning_content / reasoning 两类载体）。
@@ -183,7 +193,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     const reasoningParams = buildReasoningParams(
       this.config.modelId,
       this.config.baseUrl,
-      options?.reasoningEffort ?? this.config.reasoningEffort ?? 'auto'
+      this.effectiveReasoningEffort(options)
     )
     if (reasoningParams) {
       Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams, requestDisabled))
@@ -214,7 +224,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
   }
 
   measureRequest(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): RequestBudgetMeasurement {
-    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: options?.reasoningEffort ?? this.config.reasoningEffort, cacheProfile: this.cacheProfile.id })
+    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: this.effectiveReasoningEffort(options), cacheProfile: this.cacheProfile.id })
     return measureRequestBudget(this.buildRequestBody(messages, tools, options), route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow))
   }
 
@@ -233,16 +243,28 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
     const body = this.buildRequestBody(messages, tools, options)
 
+    // 同一请求内 wire 字符串与逐消息 JSON 只算一次，指纹 / 度量 / 发送线共用；
+    // body 被能力剥离或 reasoning 字段切换改写后必须整体废弃（见各变异点）。
+    const serializationMemo: RequestSerializationMemo = {}
+    const invalidateSerialization = (): void => {
+      resetRequestSerializationMemo(serializationMemo)
+    }
+
     // 最终 body 就绪后计算语义快照（降级重试若剥离 key 会在成功/失败出口再算）
     const snapshotEvent = (): ChatEvent => ({
       type: 'wire_snapshot',
-      snapshot: computeWireSnapshot(body, this.cacheProfile, JSON.stringify(body)),
+      snapshot: computeWireSnapshot(
+        body,
+        this.cacheProfile,
+        serializationMemo.bodyJson ?? JSON.stringify(body),
+        serializationMemo
+      ),
       source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose }
     })
 
     const logicalRequestId = options?.observation?.logicalRequestId ?? randomUUID()
     const purpose = options?.purpose ?? 'main'
-    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: options?.reasoningEffort ?? this.config.reasoningEffort, cacheProfile: this.cacheProfile.id })
+    const route = resolveRouteIdentity({ ...this.config, reasoningEffort: this.effectiveReasoningEffort(options), cacheProfile: this.cacheProfile.id })
     let dispatchIndexWithinCall = 0
     let physicalAttemptId = ''
     let observedAttempt: Awaited<ReturnType<typeof transportFetch>>['attempt'] | undefined
@@ -290,8 +312,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
       physicalAttemptId = randomUUID()
       rawUsage = null
       observedResponse = undefined
-      const wireBody = JSON.stringify(body)
-      observedSnapshot = computeWireSnapshot(body, this.cacheProfile, wireBody)
+      const wireBody = serializationMemo.bodyJson ?? JSON.stringify(body)
+      if (serializationMemo.bodyJson === undefined) serializationMemo.bodyJson = wireBody
+      observedSnapshot = computeWireSnapshot(body, this.cacheProfile, wireBody, serializationMemo)
       recordMetric('transport.dispatch', { dispatchIndexWithinCall, wireBodyBytes: observedSnapshot.rawBodyBytes }, {
         id: logicalRequestId,
         tags: { physicalAttemptId, routeId: route.routeId, purpose,
@@ -341,8 +364,9 @@ export class OpenAICompatibleModelClient implements ModelClient {
           downgradeCap === 'reasoning_content' &&
           this.cacheProfile.reasoningWireObservable &&
           this.trySwitchReasoningField(body, text)
-
         if (triedFieldSwitch) {
+          // body 已改写：序列化缓存作废，重试时重算
+          invalidateSerialization()
           // 已把 body 中的 reasoning_content 换成 reasoning（或反向），重新请求
           try {
             const retry = await doFetch()
@@ -366,6 +390,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
             requestDisabled.add('reasoning_content')
             yield { type: 'capability_downgrade', capability: 'reasoning_content', detail: retryText }
             applyCapabilityStripToBody(body, 'reasoning_content')
+            invalidateSerialization()
             try {
               const stripRetry = await doFetch()
               response = stripRetry.response
@@ -398,6 +423,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
             detail: text
           }
           applyCapabilityStripToBody(body, downgradeCap)
+          invalidateSerialization()
           try {
             const retry = await doFetch()
             response = retry.response
@@ -655,7 +681,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (rawUsage) {
       const usage = normalizeUsage(rawUsage)
       if (usage) {
-        yield { type: 'usage', usage, requestBudget: measureRequestBudget(body, route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow)), source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
+        yield { type: 'usage', usage, requestBudget: measureRequestBudget(body, route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow), serializationMemo), source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
       }
     }
 

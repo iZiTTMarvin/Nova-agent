@@ -41,20 +41,20 @@ export const todoWriteTool: ToolExecutor = {
     properties: {
       todos: {
         type: 'array',
-        description: '更新后的完整 todo 列表（每次都是全量替换）',
+        description: 'The complete updated todo list (full replacement every time)',
         items: {
           type: 'object',
           properties: {
-            content: { type: 'string', description: '任务描述' },
+            content: { type: 'string', description: 'Task description' },
             status: {
               type: 'string',
               enum: ['pending', 'in_progress', 'completed', 'cancelled'],
-              description: '任务状态'
+              description: 'Task status'
             },
             priority: {
               type: 'string',
               enum: ['high', 'medium', 'low'],
-              description: '优先级'
+              description: 'Priority'
             }
           },
           required: ['content', 'status', 'priority']

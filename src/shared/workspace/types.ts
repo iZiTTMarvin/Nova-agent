@@ -7,7 +7,7 @@
  */
 import type { Mode, PermissionMode } from '../session/types'
 import type { Session } from '../session/types'
-import type { ReasoningEffort } from '../config/llmRegistry'
+import type { ReasoningEffort, ActiveModelRef } from '../config/llmRegistry'
 
 /** 工作区状态广播载荷 */
 export interface WorkspaceState {
@@ -23,6 +23,11 @@ export interface WorkspaceState {
    * 必填：广播载荷始终显式携带，避免 renderer 旧值残留。
    */
   reasoningEffortOverride: ReasoningEffort | null
+  /**
+   * 当前会话的有效模型引用（会话覆盖优先，否则跟随全局最近选择）。
+   * 必填：随会话切换/模型切换广播，renderer 据此展示触发器，不自己推断。
+   */
+  activeModelRef: ActiveModelRef | null
   /** 当前可用的会话列表（供侧边栏展示，避免 renderer 二次拉取） */
   availableSessions: Session[]
   /**
@@ -90,6 +95,13 @@ export interface SetPermissionModeParams {
 /** 设置会话思考强度覆盖的参数；effort 为 null 表示清除覆盖 */
 export interface SetReasoningEffortParams {
   effort: ReasoningEffort | null
+  /** 若提供则持久化到指定会话；否则用当前会话 */
+  sessionId?: string
+}
+
+/** 设置会话模型覆盖的参数；ref 为 null 表示清除覆盖、跟随全局最近选择 */
+export interface SetSessionModelParams {
+  ref: ActiveModelRef | null
   /** 若提供则持久化到指定会话；否则用当前会话 */
   sessionId?: string
 }

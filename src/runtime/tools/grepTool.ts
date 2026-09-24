@@ -60,32 +60,32 @@ interface SearchOptions {
 }
 
 function buildDescription(rgReady: boolean): string {
-  const base = '在工作区中递归搜索匹配指定模式的文件内容。'
+  const base = 'Recursively search file contents across the workspace for matches of a pattern.'
 
   if (!rgReady) {
-    return base + '支持字面量匹配，返回文件路径、行号和匹配内容。'
+    return base + 'Supports literal matching and returns file paths, line numbers, and matching content.'
   }
 
   return base + `
 
-参数说明：
-- pattern: 搜索模式（自动检测是否为正则，不含元字符时用字面量匹配）
-- path: 搜索起始目录，默认为工作区根目录（绝对路径见 session context）
-- output_mode: 输出格式
-  - "content"（默认）: 返回 文件:行号: 内容
-  - "files_with_matches": 仅返回包含匹配的文件路径
-  - "count": 返回每个文件的匹配数
-- glob: 文件过滤模式，如 "*.ts" 只搜索 TypeScript 文件
-- type: ripgrep 内置文件类型，如 "ts", "js", "py"
-- -A / -B / -C: 匹配行后/前/前后上下文行数
-- head_limit: 限制返回的匹配条数（按逻辑匹配计数，非输出行数；用于分页）
-- offset: 跳过前 N 条匹配（按逻辑匹配计数；配合 head_limit 分页）
-- multiline: 启用多行正则匹配
+Parameters:
+- pattern: search pattern (auto-detected as regex; literal matching when it contains no metacharacters)
+- path: search root directory; defaults to the workspace root (absolute paths appear in session context)
+- output_mode: output format
+  - "content" (default): returns file:line: content
+  - "files_with_matches": returns only the paths of files containing matches
+  - "count": returns the match count per file
+- glob: file filter pattern, e.g. "*.ts" to search only TypeScript files
+- type: ripgrep built-in file type, e.g. "ts", "js", "py"
+- -A / -B / -C: number of context lines after / before / around a match
+- head_limit: caps the number of returned matches (counted as logical matches, not output lines; for pagination)
+- offset: skips the first N matches (counted as logical matches; with head_limit for pagination)
+- multiline: enables multiline regex matching
 
-使用场景：
-1. 快速定位代码：pattern: "functionName", glob: "*.ts"
-2. 了解影响范围：output_mode: "files_with_matches", pattern: "import.*module"
-3. 统计匹配数：output_mode: "count", pattern: "TODO"`
+Use cases:
+1. Quick code lookup: pattern: "functionName", glob: "*.ts"
+2. Understand the blast radius: output_mode: "files_with_matches", pattern: "import.*module"
+3. Count matches: output_mode: "count", pattern: "TODO"`
 }
 
 export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor {
@@ -101,48 +101,48 @@ export function createGrepTool(options?: Partial<GrepToolOptions>): ToolExecutor
       properties: {
         pattern: {
           type: 'string',
-          description: '搜索模式（自动检测正则）'
+          description: 'Search pattern (regex auto-detected)'
         },
         path: {
           type: 'string',
-          description: '搜索起始目录，默认为工作区根目录（绝对路径见 session context）'
+          description: 'Search root directory; defaults to the workspace root (absolute paths appear in session context)'
         },
         output_mode: {
           type: 'string',
           enum: ['content', 'files_with_matches', 'count'],
-          description: '输出格式：content（默认）、files_with_matches、count'
+          description: 'Output format: content (default), files_with_matches, count'
         },
         glob: {
           type: 'string',
-          description: '文件过滤 glob 模式，如 "*.ts"'
+          description: 'Glob file filter, e.g. "*.ts"'
         },
         type: {
           type: 'string',
-          description: 'ripgrep 内置文件类型，如 "ts", "js"'
+          description: 'Ripgrep built-in file type, e.g. "ts", "js"'
         },
         '-A': {
           type: 'number',
-          description: '匹配行后的上下文行数'
+          description: 'Context lines after a match'
         },
         '-B': {
           type: 'number',
-          description: '匹配行前的上下文行数'
+          description: 'Context lines before a match'
         },
         '-C': {
           type: 'number',
-          description: '匹配行前后的上下文行数'
+          description: 'Context lines around a match'
         },
         head_limit: {
           type: 'number',
-          description: '限制返回的匹配条数（按逻辑匹配计数，非输出行数）'
+          description: 'Caps the number of returned matches (counted as logical matches, not output lines)'
         },
         offset: {
           type: 'number',
-          description: '跳过前 N 条匹配（按逻辑匹配计数，配合 head_limit 分页）'
+          description: 'Skips the first N matches (counted as logical matches; with head_limit for pagination)'
         },
         multiline: {
           type: 'boolean',
-          description: '启用多行正则匹配'
+          description: 'Enable multiline regex matching'
         }
       },
       required: ['pattern']

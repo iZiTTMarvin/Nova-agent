@@ -11,13 +11,13 @@
  * - image_url 的持久化引用（如 nova-image://）经 resolveImageUrl 回调转回模型可识别的 URL；
  *   本函数保持纯函数无 IO 依赖，转换实现由调用方注入
  */
-import type { ChatMessage, ContentBlock, MessageOrigin } from '../model/types'
+import { isSameMessageOrigin, type ChatMessage, type ContentBlock, type MessageOrigin } from '../model/types'
 import { extractTextFromContent } from '../model/types'
 import type { CacheProfile } from '../model/cacheProfile'
 import { isReasoningSourceCompatible } from '../model/reasoningSource'
 import type { SessionData, SessionMessage, SessionToolCall } from './types'
 import { getSessionActiveMessages } from './tree'
-import type { Mode, MessageBlock } from '../../shared/session/types'
+import type { Mode, MessageBlock, RuntimeInputBlock } from '../../shared/session/types'
 import { projectUserMessages, alignToUserInputBoundary, projectAssistantContent as sanitizeAssistantContent, serializeToolArguments, toToolContent } from '../request-projection'
 
 /** 判断是否为需要转换的内部图片协议 URL（nova-image://） */
@@ -104,8 +104,8 @@ function normalizeBuildOptions(
  * 默认扁平路径：单条 assistant（全部 toolCalls）+ 多条 tool 消息；丢弃 thinking。
  * 供 reasoningReplay === 'none' 的档案使用。
  */
-function archiveOrigin(messageId: string, step: number): MessageOrigin {
-  return { messageId, step }
+function archiveOrigin(messageId: string, step: number, runtimeInputId?: string): MessageOrigin {
+  return { messageId, step, ...(runtimeInputId ? { runtimeInputId } : {}) }
 }
 
 /** 从指定档案坐标起保留消息；坐标不存在时返回空数组。 */
@@ -114,11 +114,11 @@ export function sliceMessagesFromOrigin(
   from: MessageOrigin
 ): ChatMessage[] {
   const exact = messages.findIndex(
-    m => m.origin?.messageId === from.messageId && m.origin.step === from.step
+    m => isSameMessageOrigin(m.origin, from)
   )
   if (exact >= 0) return messages.slice(alignToUserInputBoundary(messages, exact))
 
-  const laterSameMessage = messages.findIndex(
+  const laterSameMessage = from.runtimeInputId ? -1 : messages.findIndex(
     m => m.origin?.messageId === from.messageId && (m.origin.step ?? 0) >= from.step
   )
   if (laterSameMessage >= 0) return messages.slice(alignToUserInputBoundary(messages, laterSameMessage))
@@ -203,6 +203,15 @@ export function projectAssistantWithReasoningReplay(
     tc: SessionToolCall | undefined
   }> = []
 
+  const pushRuntimeInput = (block: RuntimeInputBlock): void => {
+    out.push({
+      role: 'user',
+      content: block.content,
+      origin: archiveOrigin(msg.id, Math.max(0, block.afterStep), block.notificationId),
+      contextInstruction: true
+    })
+  }
+
   const attachReasoning = (assistant: ChatMessage, hasToolCalls: boolean): void => {
     // reasoningReplay === 'none'：仍拆子轮，但不附着 reasoning
     if (!reasoning || reasoningReplay === 'none') return
@@ -280,7 +289,9 @@ export function projectAssistantWithReasoningReplay(
 
   let responseStep: number | undefined
   for (const block of blocks) {
-    const explicitStep = block.type === 'image' ? undefined : block.responseStep
+    const explicitStep = block.type === 'image' || block.type === 'runtime_input'
+      ? undefined
+      : block.responseStep
     if (explicitStep !== undefined && explicitStep !== responseStep) {
       if (pendingTools.length > 0) flushToolSubTurn()
       else flushFinalAssistant()
@@ -307,6 +318,10 @@ export function projectAssistantWithReasoningReplay(
       if (block.continuation !== undefined) continuation = block.continuation
     } else if (block.type === 'tool') {
       pendingTools.push({ block, tc: toolCallById.get(block.toolCallId) })
+    } else if (block.type === 'runtime_input') {
+      if (pendingTools.length > 0) flushToolSubTurn()
+      else flushFinalAssistant()
+      pushRuntimeInput(block)
     }
     // image 块不进入模型侧 assistant 投影
   }
@@ -367,6 +382,19 @@ export function buildConversationContext(
         toolCallId: msg.toolCallId,
         origin: archiveOrigin(msg.id, 0)
       })
+      continue
+    }
+
+    if (msg.internalSource === 'runtime_input') {
+      for (const block of msg.blocks ?? []) {
+        if (block.type !== 'runtime_input') continue
+        context.push({
+          role: 'user',
+          content: block.content,
+          origin: archiveOrigin(msg.id, Math.max(0, block.afterStep), block.notificationId),
+          contextInstruction: true
+        })
+      }
       continue
     }
 

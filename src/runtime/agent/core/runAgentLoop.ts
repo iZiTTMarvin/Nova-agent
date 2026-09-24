@@ -21,6 +21,7 @@ import {
   projectAssistantContent,
   serializeToolArguments,
   createRequestProjectionArchiveCache,
+  imageBlockFingerprint,
   projectRequestMessages,
   type ActiveToolResultPrunePolicy,
   type ArchiveCandidate,
@@ -73,6 +74,11 @@ export interface RunAgentLoopParams {
   /** 执行工具批次；门面负责注入权限与截断策略。 */
   executeBatch: (toolCalls: import('../../model/types').ChatToolCall[], messageId: string) => Promise<ToolBatchExecutionResult>
   onToolResultCommitted?: (content: ChatMessage['content']) => void
+  /** 在完整协议边界接收已持久化的运行时输入；空结果必须是无副作用快路径。 */
+  receiveRuntimeInputs?: (input: {
+    messageId: string
+    afterStep: number
+  }) => Promise<readonly ChatMessage[]>
   prepareMainRequest: (messages: ChatMessage[], tools: import('../../model/types').ToolDefinition[] | undefined, projection: SummaryProjection) => Promise<{ status: 'within' | 'compacted'; revision: number }>
   observeMainRequest: (inputTokens: number, request: RequestBudgetMeasurement, source: UsageSource, revision: number) => void
   /** 上下文变化后更新压缩 token 簿记 */
@@ -120,6 +126,8 @@ export function createSummaryProjection(options: {
   archiveCache?: RequestProjectionArchiveCache
   /** 与主请求同源的延后归档集合：摘要投影必须复现主请求对最新结果的全文投递 */
   deferToolCallIds?: () => ReadonlySet<string>
+  /** 与主请求同源的溢出降级集合：两视图对同一图片的替换决策必须一致 */
+  omittedImages?: () => ReadonlySet<string>
 }): SummaryProjection {
   const archive = createArchiveWriter(options.context)
   return {
@@ -129,7 +137,8 @@ export function createSummaryProjection(options: {
         policy: typeof options.policy === 'function' ? options.policy() : options.policy,
         archiveCache: options.archiveCache ?? createRequestProjectionArchiveCache(),
         archive,
-        ...(options.deferToolCallIds ? { deferToolCallIds: options.deferToolCallIds() } : {})
+        ...(options.deferToolCallIds ? { deferToolCallIds: options.deferToolCallIds() } : {}),
+        ...(options.omittedImages ? { omittedImages: options.omittedImages() } : {})
       })
       return result.messages
     }
@@ -150,21 +159,38 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   const { messageId, userText, context, config, streamProcessor, hookManager, emit } = p
   let toolRound = 0
   let responseStep = 0
+  let safeAfterStep = -1
   let turnCompletedByControl = false
   /** 停止策略 / 循环条件命中时的原因；模型自然收工时为 undefined */
   let stopReason: StopReason | undefined
   const requestProjectionArchiveCache = createRequestProjectionArchiveCache()
   const archiveWriter = createArchiveWriter(context)
-  const requestProjectionPolicy = config.requestProjectionPolicy ?? DISABLED_PRUNE_POLICY
+  // 策略每请求解析一次：占位符一旦冻结，不会因后续策略回落而复活
+  let currentProjectionPolicy: ActiveToolResultPrunePolicy = DISABLED_PRUNE_POLICY
   // 最新一批工具调用：其结果在紧随其后的请求中全文投递，再之后才可归档。
   // 摘要投影经 getter 与主请求读同一集合，保证两视图字节前缀恒等。
   let deferredToolCallIds: ReadonlySet<string> = new Set()
+  /**
+   * 溢出降级集合（turn 级，随本循环释放）：元素为 `${toolCallId}:${imageBlockFingerprint}`。
+   * 只作用于投影层，权威上下文不被改写；主请求与摘要投影读取同一实例。
+   */
+  const omittedImages = new Set<string>()
   const summaryProjection = createSummaryProjection({
     context,
-    policy: requestProjectionPolicy,
+    policy: () => currentProjectionPolicy,
     archiveCache: requestProjectionArchiveCache,
-    deferToolCallIds: () => deferredToolCallIds
+    deferToolCallIds: () => deferredToolCallIds,
+    omittedImages: () => omittedImages
   })
+
+  const receiveRuntimeInputs = async (afterStep: number): Promise<number> => {
+    if (!p.receiveRuntimeInputs || p.signal() || p.abortSignal()?.aborted) return 0
+    const received = await p.receiveRuntimeInputs({ messageId, afterStep })
+    if (received.length === 0) return 0
+    context.messages.push(...received)
+    p.updateTokenEstimate()
+    return received.length
+  }
 
   /** 首次归档的冻结投递写回权威上下文（唯一写入 Owner 是本循环）并通知持久化。 */
   const applyFrozenDeliveries = (frozen: readonly FrozenToolDelivery[]): void => {
@@ -179,9 +205,60 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
     }
   }
 
+  /**
+   * 受保护的最后一批工具调用 id：当前批直接复用 deferredToolCallIds（其结果是最近投递）；
+   * 恢复历史（本批为空）时取最后一条带 toolCalls 的 assistant 消息 id 集与现存 tool 消息求交，
+   * 关联不可靠（交集为空 / 无 assistant toolCalls）返回 null。
+   */
+  const resolveProtectedToolCallIds = (): ReadonlySet<string> | null => {
+    if (deferredToolCallIds.size > 0) return deferredToolCallIds
+    const lastAssistantWithCalls = [...context.messages]
+      .reverse()
+      .find(m => m.role === 'assistant' && (m.toolCalls?.length ?? 0) > 0)
+    if (!lastAssistantWithCalls?.toolCalls) return null
+    const existingToolCallIds = new Set(
+      context.messages
+        .filter(m => m.role === 'tool' && m.toolCallId)
+        .map(m => m.toolCallId!)
+    )
+    const protectedIds = new Set(
+      lastAssistantWithCalls.toolCalls
+        .filter(toolCall => existingToolCallIds.has(toolCall.id))
+        .map(toolCall => toolCall.id)
+    )
+    return protectedIds.size > 0 ? protectedIds : null
+  }
+
+  /**
+   * 溢出恢复第一档：把最近一批之外的历史工具图片登记进降级集合，由投影层替换为占位文本。
+   * 每个 turn 最多一次有效降级（集合非空即不再扩充）；无候选或批次关联不可靠时返回 false。
+   */
+  const requestOverflowImageDegradation = (): boolean => {
+    if (omittedImages.size > 0) return false
+    const protectedIds = resolveProtectedToolCallIds()
+    if (!protectedIds) return false
+    const candidates: string[] = []
+    for (const message of context.messages) {
+      if (message.role !== 'tool' || !message.toolCallId || !Array.isArray(message.content)) continue
+      if (protectedIds.has(message.toolCallId)) continue
+      for (const block of message.content) {
+        if (block.type === 'image_url') {
+          candidates.push(`${message.toolCallId}:${imageBlockFingerprint(block.image_url.url)}`)
+        }
+      }
+    }
+    if (candidates.length === 0) return false
+    for (const candidate of candidates) omittedImages.add(candidate)
+    return true
+  }
+
   try {
     while (toolRound < config.maxToolRounds) {
       if (p.signal()) break
+
+      // 只在请求投影与预算许可之前接收；已发出的 HTTP 请求永不被中途改写。
+      await receiveRuntimeInputs(safeAfterStep)
+      if (p.signal() || p.abortSignal()?.aborted) break
 
       // beforeAgentStart 可在每次模型调用前改写 messages 或 systemPrompt。
       const beforeAgent = await hookManager.trigger({
@@ -221,12 +298,14 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       // 首次归档的冻结投递在此写回权威上下文，供后续投影幂等复用。
       // 预算压缩成功后的 continue 会回到循环顶重新执行投影，
       // 天然满足"恢复后重投影"——若未来把恢复改成就地重试，必须显式重新投影。
+      currentProjectionPolicy = config.resolveRequestProjectionPolicy?.() ?? DISABLED_PRUNE_POLICY
       const projection = await projectRequestMessages({
         messages: chatMessages,
-        policy: requestProjectionPolicy,
+        policy: currentProjectionPolicy,
         archiveCache: requestProjectionArchiveCache,
         archive: archiveWriter,
-        deferToolCallIds: deferredToolCallIds
+        deferToolCallIds: deferredToolCallIds,
+        omittedImages
       })
       chatMessages = projection.messages
       applyFrozenDeliveries(projection.frozenDeliveries)
@@ -244,7 +323,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         summaryProjection,
         signal: p.abortSignal(),
         isCancelled: () => p.signal(),
-        sleep: (ms: number) => p.sleep(ms)
+        sleep: (ms) => p.sleep(ms),
+        requestOverflowImageDegradation
       })
 
       if (turnResult.kind === 'cancelled') {
@@ -311,6 +391,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
 
       if (toolCalls.length === 0) {
         commitResponse()
+        safeAfterStep = stepOrigin.step
         const continuation = await config.assistantCompletionPolicy?.({
           messageId,
           toolRound,
@@ -319,7 +400,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
           ...(reasoningContent ? { reasoningContent } : {})
         })
         const instruction = continuation?.instruction.trim()
-        if (!instruction) break
+        if (!instruction) {
+          // 最终无工具回答也是安全边界；收到输入才延长当前 turn。
+          if (await receiveRuntimeInputs(safeAfterStep)) continue
+          break
+        }
         appendContinuation(instruction)
         continue
       }
@@ -373,6 +458,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
             .filter(outcome => !outcome.skippedByAbort)
             .map(outcome => outcome.toolCall.id)
         )
+        safeAfterStep = stepOrigin.step
         p.updateTokenEstimate()
         if (batchResult.outcomes.some(outcome => outcome.control?.type === 'turn_complete')) {
           turnCompletedByControl = true

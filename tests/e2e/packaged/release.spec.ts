@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
+import http from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { launchNova, packagedExecutablePath } from '../fixtures/nova'
-import { CODEINDEX_GET_STATUS } from '../../../src/shared/ipc/channels'
+import { BROWSER_CLOSE, BROWSER_OPEN, CODEINDEX_GET_STATUS, WORKSPACE_SET_PERMISSION_MODE } from '../../../src/shared/ipc/channels'
 
 function hasCodeContextTool(tools: unknown): boolean {
   if (!Array.isArray(tools)) return false
@@ -78,5 +80,71 @@ test('Windows unpacked release 能加载索引 Worker 并完成一次查询', as
     expect(nova.pageErrors).toEqual([])
   } finally {
     await nova.cleanup()
+  }
+})
+
+test('Windows unpacked release 的内置网页不带应用桥，关掉后页面进程消失', async ({}, testInfo) => {
+  test.skip(process.platform !== 'win32', 'packaged release gate runs on Windows')
+  const server = http.createServer((_req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    res.end('<!doctype html><title>packed</title><body><p>packed</p></body>')
+  })
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
+  const nova = await launchNova(testInfo, { executablePath: packagedExecutablePath() })
+  try {
+    const workspace = await nova.getWorkspace()
+    const sessionId = workspace.currentSessionId
+    expect(sessionId).toBeTruthy()
+    if (typeof sessionId !== 'string') throw new Error('打包检查没有可用会话')
+    await nova.invoke(WORKSPACE_SET_PERMISSION_MODE, { sessionId, permissionMode: 'full_access' })
+    const opened = await nova.invoke(BROWSER_OPEN, { sessionId, url: `${origin}/` })
+    expect(opened.status).toBe('applied')
+    await expect(nova.page.locator('webview[data-browser-id]')).toHaveCount(1)
+    const isolation = await nova.app.evaluate(async ({ webContents }) => {
+      const guest = webContents.getAllWebContents().find((item) => {
+        try {
+          return item.getType() === 'webview' && !item.isDestroyed()
+        } catch {
+          return false
+        }
+      })
+      if (!guest) return null
+      const probe = await guest.executeJavaScript(`({
+        api: typeof window.api,
+        nodeProcess: typeof process,
+        protocol: location.protocol
+      })`)
+      return { type: guest.getType(), ...probe }
+    })
+    expect(isolation).toMatchObject({
+      type: 'webview',
+      api: 'undefined',
+      nodeProcess: 'undefined',
+      protocol: 'http:'
+    })
+    if (opened.status === 'applied') {
+      await nova.invoke(BROWSER_CLOSE, { sessionId, browserId: opened.page.browserId })
+    }
+    await expect(nova.page.locator('webview[data-browser-id]')).toHaveCount(0)
+    const guestsLeft = await nova.app.evaluate(({ webContents }) => {
+      return webContents.getAllWebContents().filter((item) => {
+        try {
+          return item.getType() === 'webview' && !item.isDestroyed()
+        } catch {
+          return false
+        }
+      }).length
+    })
+    expect(guestsLeft).toBe(0)
+    // 卸旧 webview 时 Electron 44.4.3 会抛 Invalid guestInstanceId，不是应用桥泄漏
+    expect(
+      nova.pageErrors.filter((error) => !error.includes('Invalid guestInstanceId'))
+    ).toEqual([])
+  } finally {
+    await nova.cleanup()
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()))
+    })
   }
 })

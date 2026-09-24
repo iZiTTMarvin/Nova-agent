@@ -1356,4 +1356,85 @@ describe('SessionStore', () => {
       expect(meta!.workspaceRoot).toBe('/project/root')
     })
   })
+
+  describe('findSubagentNotificationReceipt', () => {
+    it('仅匹配当前激活路径 task_wait success block', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const r1 = store.appendMessageFast(session.id, {
+        id: 'assistant-1', role: 'assistant', content: '', timestamp: 1,
+        blocks: [{
+          type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: 'success',
+          result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+        }]
+      })
+      expect(r1.ok).toBe(true)
+      const receipt = store.findSubagentNotificationReceipt(session.id, 'ntf_run-1_t-1')
+      expect(receipt).toEqual({ messageId: 'assistant-1', toolCallId: 'tw1' })
+    })
+
+    it('running 状态的 task_wait block 不匹配', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const r1 = store.appendMessageFast(session.id, {
+        id: 'assistant-1', role: 'assistant', content: '', timestamp: 1,
+        blocks: [{
+          type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: 'running'
+        }]
+      })
+      expect(r1.ok).toBe(true)
+      expect(store.findSubagentNotificationReceipt(session.id, 'ntf_run-1_t-1')).toBeNull()
+    })
+
+    it('error 状态的 task_wait block 不匹配', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      const r1 = store.appendMessageFast(session.id, {
+        id: 'assistant-1', role: 'assistant', content: '', timestamp: 1,
+        blocks: [{
+          type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: 'error',
+          result: 'failed'
+        }]
+      })
+      expect(r1.ok).toBe(true)
+      expect(store.findSubagentNotificationReceipt(session.id, 'ntf_run-1_t-1')).toBeNull()
+    })
+
+    it('切 leaf 后旧分支 receipt 不命中，新分支命中', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      // 旧分支：u1 → a1(task_wait receipt)
+      const ru1 = store.appendMessage(session.id, { id: 'u1', role: 'user', content: 'q', timestamp: 1 })
+      expect(ru1).not.toBeNull()
+      const ra1 = store.appendMessageFast(session.id, {
+        id: 'a1', role: 'assistant', content: '', timestamp: 2,
+        blocks: [{
+          type: 'tool', toolCallId: 'tw1', toolName: 'task_wait', arguments: {}, status: 'success',
+          result: 'ok', subagentNotificationIds: ['ntf_run-1_t-1']
+        }]
+      })
+      expect(ra1.ok).toBe(true)
+      // 倒回到 u1，新分支挂为其子节点
+      const leaf = store.setCurrentLeaf(session.id, 'u1')
+      expect(leaf).not.toBeNull()
+      const ra2 = store.appendMessageFast(session.id, {
+        id: 'a2', role: 'assistant', content: '', timestamp: 3,
+        blocks: [{
+          type: 'tool', toolCallId: 'tw2', toolName: 'task_wait', arguments: {}, status: 'success',
+          result: 'ok', subagentNotificationIds: ['ntf_run-2_t-2']
+        }]
+      })
+      expect(ra2.ok).toBe(true)
+      // 旧分支的 receipt 不再命中
+      expect(store.findSubagentNotificationReceipt(session.id, 'ntf_run-1_t-1')).toBeNull()
+      // 新分支的 receipt 命中
+      expect(store.findSubagentNotificationReceipt(session.id, 'ntf_run-2_t-2')).toEqual({ messageId: 'a2', toolCallId: 'tw2' })
+    })
+
+    it('空 notificationId 返回 null', () => {
+      const store = new SessionStore(tmpDir)
+      const session = store.create('/project/root')
+      expect(store.findSubagentNotificationReceipt(session.id, '')).toBeNull()
+    })
+  })
 })

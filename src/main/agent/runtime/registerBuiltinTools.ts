@@ -8,7 +8,9 @@ import { readTool } from '../../../runtime/tools/readTool'
 import { createGrepTool } from '../../../runtime/tools/grepTool'
 import { findTool } from '../../../runtime/tools/findTool'
 import { webSearchTool } from '../../../runtime/tools/webSearch'
+import { webFetchTool } from '../../../runtime/tools/webFetch'
 import { createMemorySearchTool } from '../../../runtime/tools/memorySearch'
+import { createMemoryManageTool } from '../../../runtime/tools/memoryManage'
 import { createCodeContextTool } from '../../../runtime/tools/codeContext'
 import { editTool } from '../../../runtime/tools/editTool'
 import { writeTool } from '../../../runtime/tools/writeTool'
@@ -19,6 +21,8 @@ import { askQuestionTool } from '../../../runtime/tools/askQuestionTool'
 import { createInvokeSkillTool } from '../../../runtime/tools/invokeSkillTool'
 import { createTaskTool } from '../../../runtime/tools/task'
 import { createTaskFollowupTool } from '../../../runtime/tools/task_followup'
+import { createTaskWaitTool } from '../../../runtime/tools/task_wait'
+import { subagentReadTool } from '../../../runtime/tools/subagentRead'
 import { createBatchTaskTool } from '../../../runtime/tools/batch_task'
 import { createAgentListTool } from '../../../runtime/tools/agent_list'
 import { createModelListTool } from '../../../runtime/tools/model_list'
@@ -32,7 +36,13 @@ import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { historyReadTool } from '../../../runtime/tools/historyRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
 import { createRunCodeTool } from '../../../runtime/tools/runCode'
+import { createBrowserOpenTool } from '../../../runtime/tools/browser_open'
+import { createBrowserObserveTool } from '../../../runtime/tools/browser_observe'
+import { createBrowserActTool } from '../../../runtime/tools/browser_act'
+import { createBrowserCloseTool } from '../../../runtime/tools/browser_close'
+import { createBrowserCaptureTool } from '../../../runtime/tools/browser_capture'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
+import type { BrowserPort } from '../../../runtime/browser'
 import {
   InProcessCodeRuntime,
   getProcessToolPresentationMode,
@@ -45,6 +55,7 @@ import type { MemoryRetrievalService } from '../../../runtime/memory/retrieval/M
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
 import type { SpawnSubagentPort } from '../../../runtime/subagents'
+import type { RunCoordinator } from '../../../runtime/run'
 import type { SubagentCatalogEntry } from '../../../shared/subagents'
 
 export interface BuiltinToolRegistrationDeps {
@@ -55,6 +66,8 @@ export interface BuiltinToolRegistrationDeps {
   loadSettings: () => NovaSettings
   /** task 工具执行时惰性解析本 turn 的统一 spawn 端口。 */
   getSpawnSubagentPort?: () => SpawnSubagentPort | undefined
+  /** task_wait 读取 run 状态与订阅变更；执行时惰性解析。 */
+  getRunCoordinator?: () => RunCoordinator | null
   /** agent_list 读取的 workspace-scoped catalog；仅返回公开字段。 */
   getSubagentCatalog?: () => readonly SubagentCatalogEntry[]
   loadSubagentProfile: (profileId: string, workspaceRoot: string) => unknown
@@ -63,7 +76,7 @@ export interface BuiltinToolRegistrationDeps {
   /** run_code 的沙箱 Code Runtime 构建产物路径；缺省仅用于测试的进程内执行 */
   codeModeWorkerPath?: string
   /**
-   * 是否注册 memory_search。由装配方按本轮设置快照决定（与 memoryContext /
+   * 是否注册 memory_search / memory_manage。由装配方按本轮设置快照决定（与 memoryContext /
    * prefetch 接线同源）；每轮装配重新注册，开关变化下一轮即生效。
    */
   memoryEnabled: boolean
@@ -71,6 +84,14 @@ export interface BuiltinToolRegistrationDeps {
   codeIndexEnabled: boolean
   /** 查询端可随 workspace 生命周期更换，不参与工具是否注册。 */
   getCodeContextQueryPort: () => CodeContextQueryPort | null
+  /** 内置浏览器端口；缺省时浏览器工具返回 unavailable。 */
+  getBrowserPort?: () => BrowserPort | null
+  /** 截图本地证据落盘；缺省则只返回文字说明。 */
+  saveBrowserCaptureEvidence?: (input: {
+    readonly sessionId: string
+    readonly mimeType: string
+    readonly base64: string
+  }) => Promise<string | null>
   /**
    * compose 阶段完成的运行时事实。缺省视为两项均未满足（拒绝完成「图」「验」）；
    * 测试注册工具时不必接投影服务。
@@ -94,11 +115,22 @@ export function registerBuiltinTools(
   toolRegistry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
   toolRegistry.register(findTool)
   toolRegistry.register(webSearchTool)
+  toolRegistry.register(webFetchTool)
   if (deps.memoryEnabled) {
     toolRegistry.register(
       createMemorySearchTool({
         getMemoryRetrievalService: deps.getMemoryRetrievalService,
         loadSettings: deps.loadSettings
+      })
+    )
+    toolRegistry.register(
+      createMemoryManageTool({
+        loadSettings: deps.loadSettings,
+        // 延迟加载 owner：避免仅枚举工具的单测/启动路径提前载入 better-sqlite3 原生绑定。
+        getMemoryCandidateProcessor: async () => {
+          const { getMemoryCandidateProcessor } = await import('../../services/MemoryServiceHost')
+          return getMemoryCandidateProcessor()
+        }
       })
     )
   }
@@ -144,6 +176,16 @@ export function registerBuiltinTools(
     })
   )
   toolRegistry.register(
+    createTaskWaitTool({
+      getRunCoordinator: () => {
+        const coordinator = deps.getRunCoordinator?.()
+        if (!coordinator) throw new Error('子任务等待服务尚未装配')
+        return coordinator
+      }
+    })
+  )
+  toolRegistry.register(subagentReadTool)
+  toolRegistry.register(
     createBatchTaskTool({
       getSpawnSubagentPort: deps.getSpawnSubagentPort ?? (() => undefined),
       loadProfile: deps.loadSubagentProfile
@@ -163,6 +205,20 @@ export function registerBuiltinTools(
       }
     })
   )
+  const getBrowserPort = deps.getBrowserPort ?? (() => null)
+  toolRegistry.register(createBrowserOpenTool({ getPort: getBrowserPort }))
+  toolRegistry.register(createBrowserObserveTool({ getPort: getBrowserPort }))
+  toolRegistry.register(createBrowserActTool({ getPort: getBrowserPort }))
+  toolRegistry.register(createBrowserCloseTool({ getPort: getBrowserPort }))
+  toolRegistry.register(
+    createBrowserCaptureTool({
+      getPort: getBrowserPort,
+      ...(deps.saveBrowserCaptureEvidence
+        ? { saveEvidence: deps.saveBrowserCaptureEvidence }
+        : {})
+    })
+  )
+
   // load_tools 最后注册：其 enum / 描述需要完整注册清单来判定 live deferred 组
   toolRegistry.register(
     createLoadToolsTool({

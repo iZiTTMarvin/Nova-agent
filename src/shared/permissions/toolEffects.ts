@@ -16,7 +16,9 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   find: FILESYSTEM_READ,
   archive_read: { effects: ['filesystem.read'], pathScope: 'none' },
   history_read: { effects: ['filesystem.read'], pathScope: 'none' },
+  subagent_read: { effects: ['filesystem.read'], pathScope: 'none' },
   memory_search: { effects: ['filesystem.read'], pathScope: 'none' },
+  memory_manage: { effects: ['session.write'], pathScope: 'none' },
   code_context: { effects: ['filesystem.read'], pathScope: 'none' },
   write: { effects: ['filesystem.write'], pathScope: 'dynamic' },
   edit: {
@@ -30,6 +32,12 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
     risk: 'dynamic'
   },
   web_search: { effects: ['network.read'], pathScope: 'none' },
+  web_fetch: { effects: ['network.read'], pathScope: 'none' },
+  browser_observe: { effects: ['network.read'], pathScope: 'none' },
+  browser_capture: { effects: ['network.read'], pathScope: 'none' },
+  browser_open: { effects: ['network.write'], pathScope: 'none' },
+  browser_act: { effects: ['network.write'], pathScope: 'none' },
+  browser_close: { effects: ['network.write'], pathScope: 'none' },
   run_code: { effects: [], pathScope: 'none' },
   todo_write: { effects: ['session.write'], pathScope: 'none' },
   stage_transition: { effects: ['session.write'], pathScope: 'none' },
@@ -44,6 +52,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   switch_mode: { effects: ['mode.transition'], pathScope: 'none' },
   task: { effects: ['orchestration'], pathScope: 'none' },
   task_followup: { effects: ['orchestration'], pathScope: 'none' },
+  task_wait: { effects: ['orchestration'], pathScope: 'none' },
   batch_task: { effects: ['orchestration'], pathScope: 'none' },
   invoke_skill: { effects: ['orchestration'], pathScope: 'none' },
   agent_list: { effects: [], pathScope: 'none' },
@@ -56,13 +65,14 @@ export function getToolPermissionDescriptor(
   return DESCRIPTORS[toolName]
 }
 
-/** 含 filesystem.write 或 shell.execute 即视为写能力，供子代理 profile 收窄。 */
+/** 含文件写入、Shell 执行或网络写入即视为写能力，供子代理 profile 收窄。 */
 export function toolHasWriteCapability(toolName: string): boolean {
   const descriptor = getToolPermissionDescriptor(toolName)
   if (!descriptor) return false
   return (
     descriptor.effects.includes('filesystem.write') ||
-    descriptor.effects.includes('shell.execute')
+    descriptor.effects.includes('shell.execute') ||
+    descriptor.effects.includes('network.write')
   )
 }
 
@@ -70,7 +80,8 @@ const READ_ONLY_FORBIDDEN_EFFECTS = new Set<ToolEffect>([
   'filesystem.write',
   'shell.execute',
   'process.control',
-  'orchestration'
+  'orchestration',
+  'network.write'
 ])
 
 export function effectsExceedCapabilityCeiling(

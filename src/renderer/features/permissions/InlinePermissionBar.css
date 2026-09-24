@@ -11,7 +11,7 @@
   gap: 8px;
   margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px dashed var(--border-cream, rgba(0, 0, 0, 0.1));
+  border-top: 1px dashed var(--border-cream);
 }
 
 .inline-perm__reason {
@@ -19,8 +19,8 @@
   line-height: 1.5;
   color: var(--text-secondary);
   padding: 6px 10px;
-  border-radius: var(--radius-sm, 6px);
-  background-color: var(--bg-sidebar, rgba(0, 0, 0, 0.03));
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-sidebar);
 }
 
 /* 风险等级左边框提示 */
@@ -28,16 +28,16 @@
   border-left: 3px solid #7a8a53;
 }
 .inline-perm__reason--high {
-  border-left: 3px solid var(--color-error, #b53333);
+  border-left: 3px solid var(--color-error);
 }
 
 .inline-perm__error {
   font-size: 0.8rem;
   padding: 6px 10px;
-  border-radius: var(--radius-sm, 6px);
-  border: 1px solid rgba(181, 51, 51, 0.18);
-  background-color: rgba(181, 51, 51, 0.08);
-  color: var(--color-error, #b53333);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-danger);
+  background-color: var(--surface-danger);
+  color: var(--color-error);
 }
 
 .inline-perm__actions {
@@ -54,11 +54,11 @@
 }
 
 .inline-perm__danger-option {
-  color: var(--color-error, #b53333) !important;
+  color: var(--color-error) !important;
 }
 
 .inline-perm__danger-option:hover {
-  background-color: rgba(181, 51, 51, 0.06) !important;
+  background-color: var(--surface-danger) !important;
 }
 
 .inline-perm__path {
@@ -82,11 +82,11 @@
 
 .inline-perm__path-access {
   flex-shrink: 0;
-  color: var(--text-tertiary, var(--text-secondary));
+  color: var(--text-secondary);
 }
 
 .inline-perm__dropdown-divider {
   height: 1px;
-  background-color: var(--border-cream, rgba(0, 0, 0, 0.1));
+  background-color: var(--border-cream);
   margin: 4px 0;
 }

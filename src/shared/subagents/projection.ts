@@ -89,4 +89,16 @@ export interface SubagentActivityProjection {
    * 只读子代理无写入工具，恒缺省；UI 据此不渲染 diff 卡。
    */
   readonly fileChanges?: readonly SubagentFileChange[]
+  /** 来自显式 resume 的恢复来源 runId；仅 resume 目标 run 携带。 */
+  readonly resumedFromRunId?: string
+  /**
+   * 派遣执行形态，从 run 派遣关联派生；旧记录缺省视为同步。
+   * UI 据此区分后台任务与父空闲时的停止入口，不自行判定执行形态。
+   */
+  readonly execution?: 'sync' | 'background_read_only'
+  /**
+   * 该 child run 的完成通知已被空闲接力预约（queued relay run id）；
+   * 接力开始执行或结算后消失。
+   */
+  readonly pendingRelayRunId?: string
 }

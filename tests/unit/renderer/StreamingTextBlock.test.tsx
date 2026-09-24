@@ -47,7 +47,7 @@ describe('StreamingTextBlock', () => {
     renderer.unmount()
   })
 
-  it('enableTypewriter=true 时流式初帧可为空，推进 rAF 后逐步放出', () => {
+  it('默认 agile 在流式期间立即展示已收到全文，不启动逐字放出', () => {
     const renderer = renderDom(
       <StreamingTextBlock
         fullContent="abc"
@@ -56,27 +56,29 @@ describe('StreamingTextBlock', () => {
       />
     )
 
-    // 首帧 pool 从 0 开始，可能尚未放出字符
-    let md = renderer.container.querySelectorAll('[data-testid="md"]')
-    expect(md.length).toBeLessThanOrEqual(1)
+    const md = renderer.container.querySelector<HTMLElement>('[data-testid="md"]')
+    expect(md?.textContent).toBe('abc')
+    expect(rafCallbacks).toHaveLength(0)
+    renderer.unmount()
+  })
+
+  it('elegant 在流式期间保留逐步放出节奏', () => {
+    const renderer = renderDom(
+      <StreamingTextBlock
+        fullContent="abc"
+        isStreaming={true}
+        enableTypewriter={true}
+        style="elegant"
+      />
+    )
+
+    expect(renderer.container.textContent).toBe('')
+    expect(rafCallbacks).toHaveLength(1)
 
     act(() => {
       for (const cb of rafCallbacks.splice(0)) cb()
     })
-    act(() => {
-      renderer.render(
-        <StreamingTextBlock
-          fullContent="abc"
-          isStreaming={true}
-          enableTypewriter={true}
-        />
-      )
-    })
-
-    md = renderer.container.querySelectorAll('[data-testid="md"]')
-    if (md.length > 0) {
-      expect((md[0].textContent ?? '').length).toBeGreaterThan(0)
-    }
+    expect((renderer.container.textContent ?? '').length).toBeGreaterThan(0)
     renderer.unmount()
   })
 

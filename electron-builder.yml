@@ -49,7 +49,7 @@ publish:
 win:
   target:
     - nsis
-  icon: build/icon.png
+  icon: build/icon.ico
   # 代码签名：CI 注入 CSC_LINK / CSC_KEY_PASSWORD；本地无证书时跳过签名
   # 无证书时仍会跳过签名，但必须允许 rcedit 写入 exe 图标（false 会导致桌面/任务栏仍是 Electron 默认图标）
 

@@ -39,13 +39,13 @@ export class ErrorBoundary extends Component<Props, State> {
             justifyContent: 'center',
             height: '100vh',
             padding: 24,
-            fontFamily: 'system-ui, sans-serif',
-            background: '#fafafa',
-            color: '#333'
+            fontFamily: 'var(--font-sans)',
+            background: 'var(--surface-canvas)',
+            color: 'var(--text-primary)'
           }}
         >
           <h2 style={{ marginBottom: 8 }}>界面遇到问题</h2>
-          <p style={{ marginBottom: 16, maxWidth: 480, textAlign: 'center', color: '#666' }}>
+          <p style={{ marginBottom: 16, maxWidth: 480, textAlign: 'center', color: 'var(--text-secondary)' }}>
             {this.state.error.message || '未知错误'}
           </p>
           <Button

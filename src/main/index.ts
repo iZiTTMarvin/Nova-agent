@@ -25,12 +25,16 @@ import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
 import { processRegistry } from '../runtime/process'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
+import { bindWebviewPolicy, getBrowserSessionHost } from './browser'
 import { initMainLogger, mainLog } from './logger'
 import { initAutoUpdater } from './updater'
 import { bindRegistryApiKeyCrypto } from '../runtime/model/registryCrypto'
 import { decryptApiKeyFromDisk, encryptApiKeyForDisk } from './services/apiKeyStorage'
-import { interruptActiveSubagentsOnShutdown } from './services/SubagentLifecycleHost'
-import { resetChromiumDiskCaches } from './cacheReset'
+import {
+  interruptActiveSubagentsOnShutdown,
+  markSubagentsShuttingDown
+} from './services/SubagentLifecycleHost'
+import { resetChromiumDiskCaches, markChromiumCachesClean, clearChromiumCachesCleanMarker } from './cacheReset'
 
 /** 退出流程是否已进入同步落盘阶段（可重入守卫） */
 let quitInProgress = false
@@ -116,12 +120,22 @@ function createMainWindow(): void {
     frame: false,
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
-      preload: join(__dirname, '../preload/index.js')
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      webviewTag: true
     },
     title: 'Nova Agent',
     show: false
   })
   setMainWindow(win)
+
+  const browserHost = getBrowserSessionHost()
+  if (browserHost) {
+    bindWebviewPolicy(win, browserHost)
+  }
 
   win.on('ready-to-show', () => {
     if (getMainWindow()) {
@@ -162,6 +176,8 @@ function createMainWindow(): void {
   // 渲染进程崩溃自愈：记日志 + reload（带上限防循环）
   contents.on('render-process-gone', (_event, details) => {
     mainLog.error('[render-process-gone]', details)
+    // 崩溃可能源于缓存损坏：作废干净退出标记，下次启动重建缓存
+    clearChromiumCachesCleanMarker(app.getPath('userData'))
     if (renderReloadAttempts >= MAX_RENDER_RELOAD_ATTEMPTS) {
       void dialog.showMessageBox(win, {
         type: 'error',
@@ -221,7 +237,8 @@ async function bootstrap(): Promise<void> {
   //    必须在 createMainWindow 之前完成：renderer mount 即发 workspace:get / window-is-maximized 等
   //    invoke，handler 未注册会 reject；且 initOnStartup 不 broadcast，延后会让侧边栏永久空。
   //    返回 ImageStore 实例：nova-image:// 协议 handler 需复用它读盘。
-  const imageStore = registerIpcHandlers()
+  //    await：控制意图重放与 run 对账须在窗口诞生前收敛。
+  const imageStore = await registerIpcHandlers()
 
   // 4. 注册 Agent 运行时专属事件与通道（复用 imageStore，用于历史图片 URL→base64 转换）
   registerAgentHandler(getMainWindow, getModelClient, () => imageStore)
@@ -271,38 +288,46 @@ async function bootstrap(): Promise<void> {
     event.preventDefault()
     quitInProgress = true
 
-    try {
-      const interrupted = interruptActiveSubagentsOnShutdown()
-      if (interrupted > 0) {
-        console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+    void (async () => {
+      try {
+        markSubagentsShuttingDown()
+        const interrupted = await interruptActiveSubagentsOnShutdown()
+        if (interrupted > 0) {
+          console.info(`[subagent] 退出前已中断 ${interrupted} 个活跃 child run`)
+        }
+      } catch {
+        // 运行态服务未初始化时无需对账。
       }
-    } catch {
-      // 运行态服务未初始化时无需对账。
-    }
 
-    try {
-      const ws = getWorkspaceService().getState()
-      if (ws.currentSessionId && ws.currentProjectPath) {
-        // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
-        flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+      try {
+        const ws = getWorkspaceService().getState()
+        if (ws.currentSessionId && ws.currentProjectPath) {
+          // 退出路径永不跑 LLM 提炼，仅同步 drain + 写盘
+          flushCurrentSessionOnQuit(ws.currentSessionId, ws.currentProjectPath)
+        }
+      } catch {
+        // WorkspaceService 未初始化时跳过
       }
-    } catch {
-      // WorkspaceService 未初始化时跳过
-    }
-    closeMemoryService()
-    // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
-    closeAllSessionIndexes()
-    // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
-    void Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll()])
-      .then(([graphs, processes]) => {
-        if (graphs.status === 'rejected') {
-          console.error('[CodeGraphHost] 退出前释放失败:', graphs.reason)
-        }
-        if (processes.status === 'rejected') {
-          console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
-        }
-      })
-      .finally(() => app.exit(requestedExitCode))
+      closeMemoryService()
+      // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
+      closeAllSessionIndexes()
+      // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
+      await Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll()])
+        .then(([graphs, processes]) => {
+          if (graphs.status === 'rejected') {
+            console.error('[CodeGraphHost] 退出前释放失败:', graphs.reason)
+          }
+          if (processes.status === 'rejected') {
+            console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
+          }
+        })
+      // 干净退出标记：让下次启动跳过 Chromium 缓存重建，复用代码缓存加速启动。
+      // 仅打包态写入；dev 恒重建，不留标记。
+      if (app.isPackaged) {
+        markChromiumCachesClean(app.getPath('userData'))
+      }
+      app.exit(requestedExitCode)
+    })()
   })
 }
 
@@ -317,7 +342,7 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore()
     win.focus()
   })
-  // Chromium 初始化缓存目录前物理重建，已损坏的缓存不进入本次渲染链路
-  resetChromiumDiskCaches(app.getPath('userData'))
+  // Chromium 初始化缓存目录前物理重建：dev 每次重建；打包态仅上次异常退出后重建
+  resetChromiumDiskCaches(app.getPath('userData'), { packaged: app.isPackaged })
   void bootstrap()
 }

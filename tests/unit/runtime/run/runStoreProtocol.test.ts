@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync, appendFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { createRunCoordinator, RunStore, assertSafeRunId } from '../../../../src/runtime/run'
+import { createRunCoordinator, RunCoordinator, RunStore, assertSafeRunId } from '../../../../src/runtime/run'
 
 describe('RunStore 落盘协议与 sequence', () => {
   let tmp: string
@@ -116,6 +116,59 @@ describe('RunStore 落盘协议与 sequence', () => {
     const replayed = store.loadSnapshotWithReplay(runId)!
     expect(replayed.sequence).toBe(2)
     expect(replayed.status).toBe('interrupted')
+  })
+
+  it('未知版本的投递事件重放失败关闭：不推进序号、不写回快照、保留事件', () => {
+    const store = new RunStore({ runsRoot: tmp })
+    const runId = 'run_unknown_bindver'
+    store.commitTransaction(
+      {
+        runId,
+        kind: 'agent',
+        workspaceId: 'ws',
+        sessionId: 's1',
+        messageId: '',
+        status: 'running',
+        sequence: 1,
+        pendingInteractions: [],
+        currentAttempt: null,
+        progress: null,
+        lastHeartbeatAt: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      },
+      'run_started'
+    )
+    appendFileSync(
+      join(tmp, runId, 'events.jsonl'),
+      JSON.stringify({
+        sequence: 2,
+        runId,
+        type: 'delivery_binding',
+        at: Date.now(),
+        payload: { binding: { version: 999, updatedAt: Date.now() } }
+      }) + '\n',
+      'utf8'
+    )
+
+    // 捕获后忽略并推进 sequence 会永久掩埋该控制事实；必须失败关闭
+    expect(() => store.loadSnapshotWithReplay(runId)).toThrow(/unsupported version/)
+    // 快照不推进、事件保留：新版本二进制仍可恢复
+    expect(JSON.parse(readFileSync(join(tmp, runId, 'snapshot.json'), 'utf8')).sequence).toBe(1)
+    const { events } = store.loadEvents(runId)
+    expect(events).toHaveLength(2)
+    // 启动扫描按单条 run 隔离腐坏记录，不抛错、不把它当作可对账记录
+    expect(store.listNonTerminalSnapshots().map(snap => snap.runId)).not.toContain(runId)
+    const coordinator = new RunCoordinator({ store })
+    coordinator.convergeProtocolTailsOnStartup()
+    expect(() => coordinator.updateDeliveryBinding(runId, { invalidatedReason: 'stop' }))
+      .toThrow(/unsupported version/)
+    expect(() => coordinator.getSnapshot(runId)).toThrow(/unsupported version/)
+    expect(JSON.parse(readFileSync(join(tmp, runId, 'snapshot.json'), 'utf8')).sequence).toBe(1)
+    expect(store.loadEvents(runId).events).toHaveLength(2)
+    coordinator.startRun({ kind: 'agent', runId: 'healthy-run', workspaceId: 'ws', sessionId: 's2' })
+    expect(coordinator.updateDeliveryBinding('healthy-run', { paused: true })?.deliveryBinding?.paused)
+      .toBe(true)
   })
 
   it('terminal 事件领先时从 payload 重建 incompleteReason，未知字符串拒绝', () => {

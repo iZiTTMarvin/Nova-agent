@@ -11,53 +11,53 @@
  * - 反例护栏（permission_request / 已明确表达的选项 / 可推断的信息）防止滥用
  */
 
-export const ASK_QUESTION_DESCRIPTION = `当需要用户的明确选择、偏好或额外信息来推进任务时，向用户提问。不同于简单的文本追问，本工具支持多选项、单选/多选切换、推荐项标记和自定义输入。适合需要用户在多个预定义选项中做决策，或需要用户补充额外信息的场景。
+export const ASK_QUESTION_DESCRIPTION = `Ask the user when you need their explicit choice, preference, or extra information to move the task forward. Unlike a plain text follow-up, this tool supports multiple options, single/multi-select switching, recommended-option marking, and custom input. Use it when the user must decide among several predefined options, or when you need them to supply additional information.
 
-## questions 结构
+## questions structure
 
-传入 questions 数组，每个问题对象包含：
+Pass a questions array; each question object contains:
 
-- question（必填）：问题正文
-- header（可选）：问题上方的小标题/上下文
-- options（必填）：选项列表，每个选项含：
-  - label（必填）：选项显示文本
-  - description（可选）：选项说明
-  - recommended（可选）：是否为推荐项；UI 会标记 "(Recommended)"
-- multiple（可选）：是否允许多选；不填为 false = 单选
-- custom（可选）：是否允许用户自定义输入；true 时 UI 显示 "Type your own answer" 输入框；默认 true
+- question (required): the question text
+- header (optional): a small label / context above the question
+- options (required): the option list; each option contains:
+  - label (required): the option's display text
+  - description (optional): the option's description
+  - recommended (optional): whether this option is recommended; the UI marks it "(Recommended)"
+- multiple (optional): whether multiple selection is allowed; when omitted, false = single select
+- custom (optional): whether the user may type a custom answer; when true the UI shows a "Type your own answer" input; defaults to true
 
-## 答案格式
+## Answer format
 
-工具返回格式化的字符串：
+The tool returns a formatted string:
 
-User has answered your questions: "问题1"="选项A, 选项B"; "问题2"="自定义内容".
+User has answered your questions: "question1"="optionA, optionB"; "question2"="custom content".
 
-用户点击"跳过全部"/Dismiss 时返回：
+When the user clicks "Dismiss all" / Dismiss, it returns:
 
 User dismissed the question.
 
-## 示例
+## Example
 
 <example>
-User: 我想给这个项目加个暗色模式
-Assistant: 需要确定几个偏好：
+User: I want to add a dark mode to this project
+Assistant: A few preferences need to be pinned down:
 *Calls askQuestion with questions:*
-[{"question": "你想使用哪种暗色主题？", "options": [{"label": "深灰背景 + 浅色文字", "recommended": true}, {"label": "纯黑背景 + 高对比度文字"}]}, {"question": "暗色模式下图片如何处理？", "options": [{"label": "自动降低饱和度"}, {"label": "保持原样"}], "multiple": true}]
-*用户选择"深灰背景"和"降低饱和度"*
-User has answered your questions: "你想使用哪种暗色主题？"="深灰背景 + 浅色文字"; "暗色模式下图片如何处理？"="自动降低饱和度".
-*根据用户偏好实现暗色模式*
+[{"question": "Which dark theme do you want to use?", "options": [{"label": "Dark gray background + light text", "recommended": true}, {"label": "Pure black background + high-contrast text"}]}, {"question": "How should images be handled in dark mode?", "options": [{"label": "Auto reduce saturation"}, {"label": "Keep as-is"}], "multiple": true}]
+*The user picks "Dark gray background" and "reduce saturation"*
+User has answered your questions: "Which dark theme do you want to use?"="Dark gray background + light text"; "How should images be handled in dark mode?"="Auto reduce saturation".
+*Implements dark mode according to the user's preferences*
 </example>
 
-## 何时使用
+## When to use
 
-1. 需要用户在多个预定义选项中做选择
-2. 需要获取用户的偏好或设置项
-3. 需要用户在几个方案中做决策
-4. 需要用户确认或补充额外信息
+1. The user must choose among several predefined options
+2. You need the user's preferences or settings
+3. The user must decide between several approaches
+4. You need the user to confirm or supply extra information
 
-## 何时不要使用
+## When not to use
 
-1. 简单的是/否确认 → 使用 permission_request 机制
-2. 可以直接从代码/文件推断的信息 → 直接推断，不要问
-3. 用户已经明确表达了选择 → 不要重复问
-4. 计划批准或「是否开始实施 / 如何推进」类决策 → save_plan 后立即调用 switch_mode(default)，由计划审阅交互承接批准、更正或忽略；用户明确要求就更正内容提问（如「请询问我希望调整哪些部分」）时不在此限`
+1. Simple yes/no confirmation → use the permission_request mechanism
+2. Information you can infer from code/files → infer it directly; don't ask
+3. The user has already expressed their choice → don't ask again
+4. Plan approval or "should implementation start / how to proceed" decisions → after save_plan, immediately call switch_mode(default) and let the plan-review interaction handle approval, revision, or ignoring; this does not apply when the user explicitly asks you to ask about revising content (e.g. "please ask me which parts I want adjusted")`

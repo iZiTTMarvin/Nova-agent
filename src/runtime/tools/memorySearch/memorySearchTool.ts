@@ -10,18 +10,18 @@ import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 
 const TOOL_NAME = 'memory_search'
 
-const TOOL_DESCRIPTION = `检索跨会话记忆：项目结构化记忆、手写笔记与全局用户偏好。当遇到项目相关问题、需要回忆此前的决策/约定/踩坑时，先调用此工具查询，再决定是否读文件。
-注意：记忆是历史证据，非权威源；使用前应与当前工作区核对。
+const TOOL_DESCRIPTION = `Search cross-session memory: structured project memory, handwritten notes, and global user preferences. Call this tool first whenever a question touches project context or you need to recall earlier decisions / conventions / pitfalls, then decide whether to read files.
+Note: memory is historical evidence, not an authoritative source; check it against the current workspace before relying on it.
 
-何时该用：
-- 用户问「之前怎么处理的 / 这个项目用什么 / 上次踩过类似的坑吗」
-- 你准备读 README/package.json 重新了解项目前
-- 涉及项目约定、历史决策、已知问题
-- 需要回忆已被替代或撤回的旧方案时，传 history: true
+When to use:
+- The user asks "how did we handle this before / what does this project use / did we hit a similar pitfall last time"
+- Before reading README/package.json to re-learn the project
+- Anything involving project conventions, historical decisions, or known issues
+- Recalling superseded or retracted old approaches: pass history: true
 
-何时不该用：
-- 查询当前文件内容（用 read/grep）
-- 通用知识问题`
+When not to use:
+- Querying current file contents (use read/grep)
+- General knowledge questions`
 
 export interface MemorySearchToolDeps {
   getMemoryRetrievalService: () => MemoryRetrievalService | null
@@ -104,12 +104,12 @@ export function createMemorySearchTool(deps: MemorySearchToolDeps): ToolExecutor
       properties: {
         query: {
           type: 'string',
-          description: '检索查询。用自然语言描述你想回忆的内容。'
+          description: 'Search query. Describe in natural language what you want to recall.'
         },
         history: {
           type: 'boolean',
           description:
-            '是否包含历史记录（已被替代/已撤回/待核对的旧记忆）。查询旧方案、历史变化时传 true，默认 false。'
+            'Whether to include historical entries (superseded / retracted / to-be-verified old memories). Pass true when querying old approaches or historical changes; defaults to false.'
         }
       },
       required: ['query'],

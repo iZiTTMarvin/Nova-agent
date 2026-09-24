@@ -30,12 +30,19 @@ function summarizeParameters(parameters?: ToolDefinition['parameters']): string 
   return fields.length === 0 ? '()' : `({ ${fields.join(', ')} })`
 }
 
+/** load_tools 连接器可见时附加的按需加载说明；文本冻结，任何字节变化会作废全部会话的前缀缓存。 */
+const LOAD_TOOLS_HINT =
+  'Tool groups load on demand: call load_tools to see and activate deferred groups; activated tools join on the next model step.'
+
 /** 渲染 native 模式下的简洁工具目录。 */
 function renderNativeInventory(tools: ToolDefinition[]): string {
   if (tools.length === 0) return ''
-  return tools
-    .map(t => `- ${t.name}${summarizeParameters(t.parameters)} — ${t.description.split('\n')[0].trim()}`)
-    .join('\n')
+  const lines = tools.map(
+    t => `- ${t.name}${summarizeParameters(t.parameters)} — ${t.description.split('\n')[0].trim()}`
+  )
+  return tools.some(t => t.name === 'load_tools')
+    ? `${lines.join('\n')}\n\n${LOAD_TOOLS_HINT}`
+    : lines.join('\n')
 }
 
 /**
@@ -113,23 +120,24 @@ function renderXmlInventory(tools: ToolDefinition[]): string {
   })
 
   return [
-    '## 工具目录（XML inband 调用）',
+    '## Tool catalog (XML inband calls)',
     '',
-    '你必须通过下面的 XML 标签调用工具，把调用直接写在你的回复正文中：',
+    'Call tools by writing the XML tags below directly in your reply:',
     '',
     '```xml',
-    '<invoke name="工具名">',
-    '  <parameter name="参数名">参数值</parameter>',
+    '<invoke name="tool-name">',
+    '  <parameter name="param-name">value</parameter>',
     '</invoke>',
     '```',
     '',
-    '规则：',
-    '- `name` 必须是下面列出的工具名之一，禁止调用未列出的工具。',
-    '- 每个参数用一个 `<parameter name="...">值</parameter>` 表示；`filePath` / `path` 等路径参数不可省略。',
-    '- 字符串值直接写文本，不要加 JSON 引号或转义。',
-    '- 数值 / 布尔值 / 数组 / 对象直接写 JSON 字面量。',
-    '- 多个调用连续输出；输出完所有工具调用后停止，等待返回结果再继续。',
-    '- 你不需要输出 `<tool_response>`，系统会返回结果给你。',
+    'Rules:',
+    '- `name` must be one of the tools listed below; never call unlisted tools.',
+    '- One `<parameter name="...">value</parameter>` per parameter; path arguments such as `filePath` are never omitted.',
+    '- String values are plain text, without JSON quotes or escaping.',
+    '- Numbers / booleans / arrays / objects are JSON literals.',
+    '- Emit calls consecutively; stop after all calls and wait for results.',
+    '- Do not output `<tool_response>`; results are returned to you.',
+    ...(tools.some(t => t.name === 'load_tools') ? [LOAD_TOOLS_HINT] : []),
     '',
     ...toolBlocks
   ].join('\n')
@@ -151,15 +159,12 @@ export function renderModeToolInventory(
   return renderToolInventory(getModeVisibleTools(mode, tools), options)
 }
 
-/**
- * 渲染“当前工作区路径”提示，用于 XML 模式下让模型知道 cwd。
- * oh-my-pi 的做法是把这个信息放到 project / base rules 层，而不是每条 user 消息前缀。
- */
+/** 渲染“当前工作区路径”提示（system prompt 的 agentRole 层）。 */
 export function renderWorkingDirectoryHint(workingDir: string): string {
   return [
-    '## 当前工作区',
+    '## Workspace',
     '',
-    `工作区绝对路径：${workingDir}`,
-    '所有工具参数中的相对路径都基于该绝对路径解析。'
+    `Workspace root: ${workingDir}`,
+    'Relative paths in tool arguments resolve against this root.'
   ].join('\n')
 }

@@ -118,6 +118,7 @@ function isolatedElectronEnv(profileRoot: string): Record<string, string> {
   return {
     ...inherited,
     NODE_ENV: 'production',
+    NOVA_E2E: '1',
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
     APPDATA: path.join(profileRoot, 'appdata'),
     XDG_CONFIG_HOME: path.join(profileRoot, 'xdg'),
@@ -179,6 +180,7 @@ export async function launchNova(
   })
 
   const page = await app.firstWindow()
+  await page.setViewportSize({ width: 1200, height: 800 })
   page.on('pageerror', error => {
     pageErrors.push(error.stack ?? error.message)
   })

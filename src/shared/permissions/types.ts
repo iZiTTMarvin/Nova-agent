@@ -12,6 +12,7 @@ export type ToolEffect =
   | 'shell.execute'
   | 'process.control'
   | 'network.read'
+  | 'network.private_read'
   | 'network.write'
   | 'session.write'
   | 'orchestration'
@@ -29,7 +30,7 @@ export interface ToolPermissionDescriptor {
 export type PathAccessKind = 'read' | 'write'
 
 /**
- * 只读能力上限：排除写文件、执行 Shell 与控制进程等副作用，任何权限模式都不能放宽。
+ * 只读能力上限：排除写文件、执行 Shell、控制进程与网络写入等副作用，任何权限模式都不能放宽。
  * 空值表示没有能力上限，仅按 Permission Mode 决策。
  */
 export type PermissionCapabilityCeiling = 'read_only'

@@ -17,6 +17,8 @@ import { registerUpdaterHandler } from './updaterHandler'
 import { registerStorageHandler } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
 import { registerFsHandler } from './fsHandler'
+import { registerBrowserHandler } from './browserHandler'
+import { initBrowserSessionHost, getBrowserSessionHost } from '../browser'
 import { registerImageHandler } from './imageHandler'
 import { registerRunHandler } from './runHandler'
 import { registerCodeIndexHandler } from './codeIndexHandler'
@@ -25,7 +27,9 @@ import { registerComposeStageHandler } from './composeStageHandler'
 import { registerPlanFileHandler } from './planFileHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { disposeIdleLoopForSession } from '../agent/turn'
-import { getRunCoordinator, initRunCoordinatorHost } from '../services/RunCoordinatorHost'
+import { getRunCoordinator, initRunCoordinatorHost, convergeRunProtocolTailsOnStartup, reconcileRunCoordinatorOnStartup } from '../services/RunCoordinatorHost'
+import { getSubagentLifecycleCoordinator } from '../services/SubagentLifecycleHost'
+import { getSubagentDeliveryCoordinator } from '../services/SubagentDeliveryCoordinatorHost'
 import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
 import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
 import {
@@ -43,8 +47,10 @@ import {
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
 import { recoverInterruptedTurnDraftsOnStartup } from '../../runtime/sessions/turnDraftRecovery'
+import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
 import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
+import { registerDiagnosticsHandler } from './diagnosticsHandler'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 /**
@@ -53,8 +59,9 @@ import { loadNovaSettings } from '../../runtime/settings/novaSettings'
  *
  * 返回 ImageStore 实例：主进程入口需复用它注册 nova-image:// 协议 handler
  * （协议 handler 必须在 createMainWindow 之前注册，与 IPC handler 共用同一落盘实例）。
+ * async：控制意图重放先于 run 对账，需在窗口诞生前 await 完成。
  */
-export function registerIpcHandlers(): ImageStore {
+export async function registerIpcHandlers(): Promise<ImageStore> {
   // ping/pong 基础连通测试
   handle(PING, async () => {
     return 'pong'
@@ -62,6 +69,8 @@ export function registerIpcHandlers(): ImageStore {
 
   // 开发环境诊断（event-loop lag 等）
   registerDevDiagnosticsHandlers()
+  // 诊断包导出（日志脱敏打包，供用户反馈问题）
+  registerDiagnosticsHandler()
   // 注册异步对话框 IPC（替代阻塞的 window.confirm）
   registerDialogHandler()
   registerUpdaterHandler()
@@ -95,14 +104,21 @@ export function registerIpcHandlers(): ImageStore {
     getMainWindow,
     getRunCoordinator,
     onSessionLeaving: (sessionId, workspaceRoot) => {
+      getBrowserSessionHost()?.revokeSession(sessionId)
       if (isMemoryExtractEnabled()) {
-        extractOnSessionLeave(sessionId, workspaceRoot, getSessionStore())
+        extractOnSessionLeave(sessionId, workspaceRoot)
       } else {
         drainAndSchedulePersist(sessionId, workspaceRoot)
       }
     },
     onSessionCaptureCleanup: (sessionId) => {
       cleanupObservationCaptureSession(sessionId)
+    },
+    settleQueuedRelayReservations: (sessionIds) => {
+      getSubagentDeliveryCoordinator().settleQueuedRelayReservationsForSessions(sessionIds)
+    },
+    invalidateBranchDelivery: (sessionId, discardedAnchorMessageIds) => {
+      getSubagentLifecycleCoordinator().invalidateBranchDelivery(sessionId, discardedAnchorMessageIds)
     }
   })
   registerCodeIndexHandler(workspaceService, getSessionStore, getMainWindow)
@@ -143,8 +159,33 @@ export function registerIpcHandlers(): ImageStore {
   registerPermissionHandler()
 
   // RunCoordinator：权威运行快照 / Interaction Inbox / 启动对账
-  const { coordinator, interrupted } = initRunCoordinatorHost(getMainWindow)
-  recoverInterruptedTurnDraftsOnStartup(interrupted, getSessionStore(), coordinator)
+  // 通知用会话标题查询：SessionStore 摘要不含消息内容
+  const { coordinator } = initRunCoordinatorHost(
+    getMainWindow,
+    sessionId => getSessionStore().list().find(session => session.id === sessionId)?.title
+  )
+  // 尾部事件收敛 → 控制意图重放 → run 对账：意图重放基于已含尾部事件的最新快照提交，
+  // 否则旧快照序号会在事件日志产生重复并掩埋已落盘的绑定事实；重放又要先于对账，
+  // 停止意图先把崩溃残留 running 收敛为 cancelled，对账才把剩余非终态标为 interrupted。
+  convergeRunProtocolTailsOnStartup()
+  try {
+    const replay = await getSubagentLifecycleCoordinator().replayControlIntents()
+    if (replay.retained.length > 0) {
+      console.error(
+        `[subagent] 启动控制意图重放未完成，保留 ${replay.retained.length} 条待下次启动:`,
+        replay.retained
+      )
+    }
+  } catch (err) {
+    // 意图记录损坏等枚举失败：显式上报，不清除意图；下次启动仍会重放
+    console.error('[subagent] 启动控制意图重放失败，意图已保留:', err)
+  }
+  reconcileRunCoordinatorOnStartup()
+  // 用 listRecoverableTurnDraftRuns 枚举所有终态遗留草稿，注入精确结算闭包
+  const recoverableRuns = coordinator.listRecoverableTurnDraftRuns()
+  const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+    settleSubagentToolCall({ sessionStore: getSessionStore(), runCoordinator: coordinator }, input)
+  recoverInterruptedTurnDraftsOnStartup(recoverableRuns, getSessionStore(), coordinator, settle)
   registerRunHandler()
   initSubagentProjectionServiceHost()
   registerSubagentProjectionHandler()
@@ -154,6 +195,13 @@ export function registerIpcHandlers(): ImageStore {
 
   // 当前项目只读文件浏览（Inspector 文件 tab）
   registerFsHandler()
+
+  // 浏览器宿主先于 IPC 登记装配；未挂页面时仍可 fail closed。
+  const browserHost = initBrowserSessionHost()
+  registerBrowserHandler({
+    getPort: () => getBrowserSessionHost() ?? browserHost,
+    getHost: () => getBrowserSessionHost() ?? browserHost
+  })
 
   // 图片落盘 IPC + nova-image:// 协议 handler 共用同一 ImageStore 实例。
   // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。

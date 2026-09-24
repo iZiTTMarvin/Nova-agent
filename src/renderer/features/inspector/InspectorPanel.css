@@ -7,8 +7,8 @@
   flex-shrink: 0;
   height: 100%;
   overflow: hidden;
-  background-color: var(--bg-sidebar);
-  border-left: 1px solid var(--border-warm);
+  background-color: var(--surface-sidebar);
+  border-left: 1px solid var(--border-subtle);
   box-sizing: border-box;
   /* transform 合成器动画专用层 + 隔离重排范围 */
   will-change: transform;
@@ -33,7 +33,7 @@
 
 .inspector-panel__resize:hover,
 .inspector-panel--dragging .inspector-panel__resize {
-  background-color: var(--color-brand-dim, var(--color-brand));
+  background-color: var(--color-brand-dim);
   opacity: 0.45;
 }
 
@@ -237,13 +237,13 @@
 
 .inspector-plan__state--error,
 .inspector-plan__error {
-  color: var(--nova-status-error, var(--color-error));
+  color: var(--nova-status-error);
 }
 
 .inspector-plan__error {
   padding: 8px 12px;
   border-top: 1px solid var(--border-cream);
-  background: color-mix(in srgb, var(--nova-status-error, var(--color-error)) 7%, var(--bg-card));
+  background: color-mix(in srgb, var(--nova-status-error) 7%, var(--bg-card));
   font-size: 0.74rem;
 }
 
@@ -366,7 +366,7 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background-color: var(--code-block-bg, #fafaf7);
+  background-color: var(--code-block-bg);
 }
 
 .inspector-review__footer {
@@ -420,7 +420,7 @@
 }
 
 .inspector-review .diff-file--deleted .diff-file__status-badge {
-  background-color: rgba(181, 51, 51, 0.08);
+  background-color: var(--surface-danger);
   color: var(--color-error);
 }
 
@@ -434,12 +434,12 @@
 
 .inspector-review .diff-file__review-badge--accepted {
   background-color: rgba(120, 140, 93, 0.12);
-  color: var(--nova-status-success, var(--color-success));
+  color: var(--nova-status-success);
 }
 
 .inspector-review .diff-file__review-badge--rejected {
-  background-color: rgba(181, 51, 51, 0.08);
-  color: var(--nova-status-error, var(--color-error));
+  background-color: var(--surface-danger);
+  color: var(--nova-status-error);
 }
 
 /* ── FilesTab ── */
@@ -538,7 +538,7 @@
   gap: 8px;
   padding: 6px 14px;
   font-size: 0.75rem;
-  color: var(--nova-status-error, var(--color-error));
+  color: var(--nova-status-error);
 }
 
 .inspector-tree__retry {
@@ -596,7 +596,7 @@
   overflow: auto;
   margin: 0;
   padding: 8px 0;
-  background-color: var(--code-block-bg, #fafaf7);
+  background-color: var(--code-block-bg);
   font-family: var(--font-mono);
   font-size: 0.78rem;
   line-height: 1.5;
@@ -615,7 +615,7 @@
   padding-right: 8px;
   color: var(--text-muted);
   user-select: none;
-  background-color: rgba(0, 0, 0, 0.03);
+  background-color: var(--surface-gutter);
 }
 
 .inspector-preview__text {

@@ -102,12 +102,11 @@ function planReviewResolution(command: PlanReviewCommand): PlanReviewResolution 
   return { decision: command.decision }
 }
 
-export function dismissRunTreeInteractions(runId: string): void {
+/** 释放一组 run 的交互等待与进程内资源；在停止意图落盘后调用，避免 waiter 与取消互等。 */
+export function dismissInteractionsForRuns(targetRunIds: readonly string[]): void {
   const coord = getRunCoordinator()
   const registry = getRunExecutionRegistry()
-  const lifecycle = getSubagentLifecycleCoordinator()
-  // waiter 必须在等待执行收敛前释放，否则提问工具与取消会互等。
-  for (const targetRunId of [runId, ...lifecycle.listDescendantRunIds(runId)]) {
+  for (const targetRunId of targetRunIds) {
     const target = coord.getSnapshot(targetRunId)
     if (!target) continue
     const handle = registry.get(targetRunId)
@@ -126,6 +125,12 @@ export function dismissRunTreeInteractions(runId: string): void {
   }
 }
 
+export function dismissRunTreeInteractions(runId: string): void {
+  const lifecycle = getSubagentLifecycleCoordinator()
+  // waiter 必须在等待执行收敛前释放，否则提问工具与取消会互等。
+  dismissInteractionsForRuns([runId, ...lifecycle.listDescendantRunIds(runId)])
+}
+
 export async function cancelExecution(params: { runId: string }): Promise<{ runId: string; status: string }> {
   const runId = params?.runId
   if (typeof runId !== 'string' || runId.trim().length === 0) {
@@ -136,8 +141,14 @@ export async function cancelExecution(params: { runId: string }): Promise<{ runI
   if (!beforeCancel || beforeCancel.runId !== runId) {
     throw new Error(`取消执行的 run ${runId} 不存在`)
   }
-  dismissRunTreeInteractions(runId)
-  await getSubagentLifecycleCoordinator().cancelRunTree(runId, 'cancel_execution')
+  if (isTerminalRunStatus(beforeCancel.status)) {
+    return { runId, status: beforeCancel.status }
+  }
+  // 停止链路：先冻结目标并提交持久控制意图，意图落盘后才释放交互等待、
+  // 逐项收敛取消与投递失效化；处理途中崩溃由启动重放补完
+  await getSubagentLifecycleCoordinator().stopRunTree(runId, 'cancel_execution', {
+    releaseInteractions: dismissInteractionsForRuns
+  })
 
   const snap = coord.getSnapshot(runId)
   return { runId, status: snap?.status ?? beforeCancel.status }

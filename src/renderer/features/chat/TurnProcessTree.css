@@ -24,15 +24,15 @@
   cursor: pointer;
   overflow-anchor: auto;
   text-align: left;
-  font-family: var(--font-sans, system-ui, sans-serif);
+  font-family: var(--font-sans);
   font-size: 13.5px;
   font-weight: 500;
   line-height: 1.4;
-  color: var(--text-secondary, #6b6760);
+  color: var(--text-secondary);
 }
 
 .turn-process-tree__header:hover {
-  color: var(--text-primary, #141413);
+  color: var(--text-primary);
 }
 
 .turn-process-tree__header-title {
@@ -57,8 +57,8 @@
 /* 无最终结论时的占位：与折叠头同级外露，不进入消息历史 */
 .turn-process-tree__no-summary {
   padding: 6px 0;
-  color: var(--text-secondary, #6b6760);
-  font-family: var(--font-sans, system-ui, sans-serif);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
   font-size: 13.5px;
   line-height: 1.5;
 }

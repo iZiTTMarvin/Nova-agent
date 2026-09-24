@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -16,7 +17,7 @@ import {
   migrateV16ToV17,
   CURRENT_SESSION_SCHEMA_VERSION
 } from '../../../../src/runtime/sessions/migrations'
-import { SESSION_DATA_FILE } from '../../../../src/runtime/sessions/types'
+import { SESSION_DATA_FILE, decodeSessionControlIntent } from '../../../../src/runtime/sessions/types'
 import { SESSION_MIGRATED_EMPTY_TITLE } from '../../../../src/shared/session/title'
 
 describe('migrateSessionData', () => {
@@ -152,6 +153,56 @@ describe('migrateSessionData', () => {
     expect(migrated.titleSource).toBe('placeholder')
   })
 
+  it('v4 空 v3+ 会话缺 messages 字段也能迁移（消息在 jsonl 的空会话不崩迁移链）', () => {
+    const v4 = {
+      schemaVersion: 4,
+      id: 'sess_no_messages_field',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 2
+    }
+
+    const migrated = migrateSessionData(v4)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+    expect(migrated.messages).toEqual([])
+    expect(migrated.title).toBe(SESSION_MIGRATED_EMPTY_TITLE)
+  })
+
+  it('v4 空 v3+ 会话物理文件缺 messages.jsonl 时 migrateSessionFile 成功且备份不堆积', () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-session-v4-empty-'))
+    const sessionId = 'sess_v4_empty'
+    const sessionDir = join(sessionsDir, sessionId)
+    mkdirSync(sessionDir)
+    writeFileSync(
+      join(sessionDir, SESSION_DATA_FILE),
+      JSON.stringify({
+        schemaVersion: 4,
+        id: sessionId,
+        workspaceRoot: '/ws',
+        mode: 'default',
+        currentLeafId: null,
+        createdAt: 1,
+        updatedAt: 2
+      }),
+      'utf-8'
+    )
+
+    try {
+      const migrated = migrateSessionFile(sessionsDir, sessionId)
+      expect(migrated?.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
+      expect(migrated?.messages).toEqual([])
+
+      // 已是当前版本后再次迁移不再产生新备份：固定名覆盖，不按时间戳堆积
+      migrateSessionFile(sessionsDir, sessionId)
+      const backups = readdirSync(sessionDir).filter(name => name.startsWith(`${SESSION_DATA_FILE}.backup`))
+      expect(backups).toEqual([`${SESSION_DATA_FILE}.backup`])
+    } finally {
+      rmSync(sessionsDir, { recursive: true, force: true })
+    }
+  })
+
   it('v8 会话升级到当前版本，不强制生成 cacheRoutingKey', () => {
     const v8 = {
       schemaVersion: 8,
@@ -202,9 +253,7 @@ describe('migrateSessionData', () => {
       expect(persisted.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
       expect(persisted.kind).toBe('primary')
       expect('messages' in persisted).toBe(false)
-      expect(
-        readdirSync(sessionDir).filter((name) => name.startsWith(`${SESSION_DATA_FILE}.backup.`))
-      ).toHaveLength(1)
+      expect(existsSync(join(sessionDir, `${SESSION_DATA_FILE}.backup`))).toBe(true)
     } finally {
       rmSync(sessionsDir, { recursive: true, force: true })
     }
@@ -576,15 +625,15 @@ describe('migrateSessionData', () => {
       subagent
     })
 
-    expect(primary).toMatchObject({ schemaVersion: 19, mode: 'plan' })
+    expect(primary).toMatchObject({ schemaVersion: 21, mode: 'plan' })
     expect(child).toMatchObject({
-      schemaVersion: 19,
+      schemaVersion: 21,
       mode: 'default',
       messages,
       currentLeafId: 'm1',
       subagent
     })
-    expect(historicalComposeChild).toMatchObject({ schemaVersion: 19, mode: 'compose' })
+    expect(historicalComposeChild).toMatchObject({ schemaVersion: 21, mode: 'compose' })
   })
 
   it('完全访问持久值按当前 schema 原样恢复', () => {
@@ -628,7 +677,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.composeStages).toEqual([
       { id: 'interview', status: 'completed', completedAt: 10 },
       { id: 'blueprint', status: 'in_progress', note: '正在写方案' },
@@ -758,7 +807,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.composeStages?.map(s => s.id)).toEqual([
       'interview',
       'blueprint',
@@ -790,8 +839,58 @@ describe('migrateSessionData', () => {
       updatedAt: 1
     })
 
-    expect(migrated.schemaVersion).toBe(19)
+    expect(migrated.schemaVersion).toBe(21)
     expect(migrated.composeStages).toBeUndefined()
+  })
+
+  it('v19 会话升级到当前版本，controlIntent 缺省即无意图', () => {
+    const v19 = {
+      schemaVersion: 19,
+      kind: 'primary',
+      id: 'sess_v19',
+      workspaceRoot: '/tmp/ws',
+      mode: 'default',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1
+    }
+
+    const migrated = migrateSessionData(v19)
+    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.controlIntent).toBeUndefined()
+  })
+
+  it('v20 带合法 controlIntent 升级后原样保留；非法版本由 decoder 拒绝', () => {
+    const controlIntent = {
+      version: 1,
+      operationId: 'op1',
+      kind: 'stop',
+      targetRunIds: ['r1'],
+      targetSessionIds: [],
+      requestedAt: 1
+    }
+    const migrated = migrateSessionData({
+      schemaVersion: 20,
+      kind: 'primary',
+      id: 'sess_v20_intent',
+      workspaceRoot: '/ws',
+      mode: 'default',
+      permissionMode: 'auto',
+      codeIndexEnabled: false,
+      messages: [],
+      currentLeafId: null,
+      createdAt: 1,
+      updatedAt: 1,
+      controlIntent
+    })
+
+    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.controlIntent).toEqual(controlIntent)
+    expect(() => decodeSessionControlIntent({ ...controlIntent, version: 2 })).toThrow()
+    expect(decodeSessionControlIntent(null)).toBeUndefined()
   })
 
   it('未来 schemaVersion fail closed，绝不被降级为当前版本', () => {

@@ -20,7 +20,10 @@ export interface ModelCapabilityEntry {
    * 未设时走 resolveContextWindow → inferContextWindow 兜底。
    */
   contextWindow?: number
+  /** 已确认的可区分强度；空数组表示无档位，缺省表示能力未知。 */
   reasoningEfforts?: readonly Exclude<ReasoningEffort, 'auto'>[]
+  /** 服务商未收到显式覆盖时使用的已知默认强度。 */
+  defaultReasoningEffort?: Exclude<ReasoningEffort, 'auto'>
 }
 
 /** 精确 modelId → 能力。查找时统一 toLowerCase 全等匹配。 */
@@ -33,17 +36,21 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'gpt-4-turbo': { supportsVision: true }, // 来源: Cherry Studio + litellm
   'gpt-5': { supportsVision: true }, // 来源: Cherry Studio + litellm
   'gpt-5-mini': { supportsVision: true }, // 来源: Cherry Studio + litellm
-  'gpt-5.1': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-1）
-  'gpt-5.2': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-2）
-  'gpt-5.4': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-4）
+  'gpt-5.1': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
+  'gpt-5.2': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
+  'gpt-5.4': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
   'gpt-5.4-mini': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-4-mini）
   'gpt-5.4-pro': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-4-pro）
-  'gpt-5.5': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-5）
+  'gpt-5.5': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
   'gpt-5.5-pro': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-5-pro）
-  o1: { supportsVision: true }, // 来源: Cherry Studio + litellm
-  o3: { supportsVision: true }, // 来源: Cherry Studio + litellm
-  'o3-mini': { supportsVision: false }, // 来源: litellm supports_vision=false
-  'o4-mini': { supportsVision: true }, // 来源: Cherry Studio + litellm
+  'gpt-5.6-sol': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'low' }, // 来源: OpenAI Codex model metadata；Ultra 属于产品编排模式，不混入 reasoning slider
+  'gpt-5.6-terra': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
+  'gpt-5.6-luna': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
+  'gpt-6-astra': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'low' }, // 来源: OpenAI Codex model metadata
+  o1: { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
+  o3: { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
+  'o3-mini': { supportsVision: false, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
+  'o4-mini': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
 
   // ── Anthropic ───────────────────────────────────────────
   'claude-sonnet-4': { supportsVision: true }, // 来源: Cherry Studio + litellm
@@ -109,27 +116,39 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   // Nova 配置 500K 以控制 KV cache 成本与延迟，Agent 场景绰绰有余——这是工程上限，不是模型规格。
   'deepseek-v4-flash': {
     supportsVision: false,
-    contextWindow: 500_000
-  }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）
+    contextWindow: 500_000,
+    reasoningEfforts: ['low', 'high', 'max'],
+    defaultReasoningEffort: 'high'
+  }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）；档位见官方 thinking_mode 文档
   'deepseek-v4-pro': {
     supportsVision: false,
-    contextWindow: 500_000
-  }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）
+    contextWindow: 500_000,
+    reasoningEfforts: ['low', 'high', 'max'],
+    defaultReasoningEffort: 'high'
+  }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）；档位见官方 thinking_mode 文档
   // 旧名：官方已路由到 v4-flash；同样按 Nova 工程上限 500K
   'deepseek-chat': {
     supportsVision: false,
-    contextWindow: 500_000
-  }, // 官方 1M（同 V4）；Nova 500K（2026-07）
+    contextWindow: 500_000,
+    reasoningEfforts: ['low', 'high', 'max'],
+    defaultReasoningEffort: 'high'
+  }, // 官方 1M（同 V4）；Nova 500K（2026-07）；档位见官方 thinking_mode 文档
   'deepseek-reasoner': {
     supportsVision: false,
-    contextWindow: 500_000
-  }, // 官方 1M（同 V4）；Nova 500K（2026-07）
+    contextWindow: 500_000,
+    reasoningEfforts: ['low', 'high', 'max'],
+    defaultReasoningEffort: 'high'
+  }, // 官方 1M（同 V4）；Nova 500K（2026-07）；档位见官方 thinking_mode 文档
 
   // ── MiniMax（纠偏：模糊兜底把全部 minimax 判 true）──────
-  // 官方上下文窗口 204,800（platform.minimax.io 文本生成文档，验证 2026-07）
-  'minimax-m2.5': { supportsVision: false, contextWindow: 204_800 }, // 来源: Cherry + litellm；官方 204800（2026-07）
-  'minimax-m2.5-highspeed': { supportsVision: false, contextWindow: 204_800 }, // 来源: Cherry；官方 204800（2026-07）
-  'minimax-m3': { supportsVision: true }, // 来源: Cherry Studio + litellm；官方宣称 1M，未在本轮固化工程取值
+  // 官方上下文窗口 204,800（platform.minimax.io 文本生成文档，验证 2026-07）；
+  // 官方 thinking 只有开关（adaptive/disabled），reasoning_effort 未在文档列出、会被网关忽略：
+  // 这里登记的是产品侧可选强度，wire 上 High/Max 都保持 adaptive 思考。
+  'minimax-m2': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2.1': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2.5': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry + litellm；官方 204800（2026-07）
+  'minimax-m2.5-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry；官方 204800（2026-07）
+  'minimax-m3': { supportsVision: true, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry Studio + litellm；官方宣称 1M，未在本轮固化工程取值
 
   // ── Moonshot Kimi ───────────────────────────────────────
   'kimi-k2': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text

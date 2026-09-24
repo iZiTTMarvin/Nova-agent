@@ -63,12 +63,14 @@ describe('renderBashDescription', () => {
   it('长任务指导不教 nohup、不提时限，说明 ref 机制', () => {
     const bash = renderBashDescription('bash', 'linux')
     expect(bash).not.toContain('nohup')
-    expect(bash).not.toContain('强制终止')
-    expect(bash).not.toContain('时限')
-    expect(bash).toContain('长任务')
+    expect(bash).not.toContain('timeout')
+    expect(bash).not.toContain('time limit')
+    expect(bash).not.toContain('force-kill')
+    expect(bash).not.toContain('120')
+    expect(bash).toContain('Long-running')
     expect(bash).toContain('shell_session')
     expect(bash).toContain('ref')
-    expect(bash).toContain('换行')
+    expect(bash).toContain('trailing newline')
   })
 
   it('三个 shell family 的长任务指导齐全', () => {
@@ -76,7 +78,7 @@ describe('renderBashDescription', () => {
     const pwsh = renderBashDescription('pwsh', 'win32')
     const cmd = renderBashDescription('cmd', 'win32')
     for (const text of [bash, pwsh, cmd]) {
-      expect(text).toContain('长任务')
+      expect(text).toContain('Long-running')
       expect(text).toContain('shell_session')
       expect(text).toContain('stop')
     }

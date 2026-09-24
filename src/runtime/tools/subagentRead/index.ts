@@ -1,0 +1,324 @@
+import {
+  extractTextFromSerializableContent,
+  getSessionActiveMessages,
+  type SessionData,
+  type SessionMessage,
+  type SessionStore,
+  type SubagentSessionData
+} from '../../sessions'
+import { isSafeArtifactId } from '../../artifacts/artifactRef'
+import type { ToolContext, ToolExecutor, ToolResult } from '../types'
+
+const DEFAULT_READ_CHARS = 8_000
+const MAX_READ_CHARS = 16_000
+const MAX_SEARCH_MATCHES = 24
+const SEARCH_CONTEXT_CHARS = 180
+
+type SubagentReadOperation = 'inspect' | 'search' | 'read' | 'artifact_read'
+
+function failure(error: string): ToolResult {
+  return { success: false, output: '', error }
+}
+
+function jsonResult(payload: unknown): ToolResult {
+  return { success: true, output: JSON.stringify(payload) }
+}
+
+function renderToolCall(messageId: string, toolCall: NonNullable<SessionMessage['toolCalls']>[number]): string {
+  const result = toolCall.result ?? '[tool result missing]'
+  const artifact = toolCall.artifactId ? ` artifact=${toolCall.artifactId}` : ''
+  return [
+    `Tool call [message=${messageId} call=${toolCall.id} name=${toolCall.name}${artifact}]`,
+    `Arguments: ${toolCall.arguments}`,
+    `Tool result [call=${toolCall.id} name=${toolCall.name}${artifact}]:`,
+    result
+  ].join('\n')
+}
+
+/**
+ * 直接从权威 Child Session 渲染证据 transcript。
+ * 不走请求投影，因此 request archive/compaction 折叠掉的旧工具结果仍可回读。
+ * 按 active path 渲染；子代理会话没有编辑/重生成分支入口，线性路径即全部持久化记录。
+ * 若工具结果自身曾经 spill 到 artifact，这里保留 artifactId，交给 artifact_read 续读全文。
+ */
+function renderEvidenceTranscript(messages: readonly SessionMessage[]): string {
+  const chunks: string[] = []
+  for (const message of messages) {
+    const text = extractTextFromSerializableContent(message.content)
+    if (message.role === 'user') {
+      chunks.push(`User [message=${message.id}]:\n${text}`)
+      continue
+    }
+    if (message.role === 'assistant') {
+      const parts = [`Assistant [message=${message.id}]:\n${text}`]
+      for (const toolCall of message.toolCalls ?? []) {
+        parts.push(renderToolCall(message.id, toolCall))
+      }
+      chunks.push(parts.join('\n\n'))
+      continue
+    }
+    if (message.role === 'tool') {
+      chunks.push(
+        `Tool result [message=${message.id}${message.toolCallId ? ` call=${message.toolCallId}` : ''}]:\n${text}`
+      )
+    }
+  }
+  return chunks.join('\n\n')
+}
+
+function collectReferencedArtifactIds(messages: readonly SessionMessage[]): string[] {
+  return [...new Set(
+    messages.flatMap(message =>
+      (message.toolCalls ?? []).flatMap(call => call.artifactId ? [call.artifactId] : [])
+    )
+  )]
+}
+
+function isDescendantOf(
+  store: SessionStore,
+  candidate: SessionData,
+  ancestorSessionId: string
+): boolean {
+  let current: SessionData | null = candidate
+  const seen = new Set<string>()
+
+  while (current?.kind === 'subagent') {
+    if (seen.has(current.id)) return false
+    seen.add(current.id)
+
+    const parentId = current.subagent.lineage.parentSessionId
+    if (parentId === ancestorSessionId) return true
+    current = store.load(parentId)
+  }
+
+  return false
+}
+
+function resolveReadableChild(
+  context: ToolContext,
+  childSessionId: string
+): { session: SubagentSessionData } | { error: string } {
+  const store = context.sessionStore
+  const currentSessionId = context.sessionId
+  if (!store || !currentSessionId) {
+    return { error: 'subagent_read 需要 sessionStore 与当前 sessionId' }
+  }
+
+  const session = store.load(childSessionId)
+  if (!session || session.kind !== 'subagent') {
+    return { error: '目标子代理会话不存在' }
+  }
+  if (!isDescendantOf(store, session, currentSessionId)) {
+    return { error: '只能读取当前会话派生出的子代理记录' }
+  }
+  return { session }
+}
+
+function parseOperation(value: unknown): SubagentReadOperation | null {
+  if (value === undefined || value === '') return 'inspect'
+  if (
+    value === 'inspect' ||
+    value === 'search' ||
+    value === 'read' ||
+    value === 'artifact_read'
+  ) {
+    return value
+  }
+  return null
+}
+
+function normalizeReadRange(args: Record<string, unknown>, totalChars: number): {
+  offset: number
+  limit: number
+  end: number
+} {
+  const rawOffset = typeof args.offset === 'number' && Number.isFinite(args.offset)
+    ? Math.floor(args.offset)
+    : 0
+  const offset = Math.max(0, Math.min(rawOffset, totalChars))
+  const rawLimit = typeof args.limit === 'number' && Number.isFinite(args.limit)
+    ? Math.floor(args.limit)
+    : DEFAULT_READ_CHARS
+  const limit = Math.max(1, Math.min(rawLimit, MAX_READ_CHARS))
+  const end = Math.min(offset + limit, totalChars)
+  return { offset, limit, end }
+}
+
+function buildReadPayload(
+  operation: 'read' | 'artifact_read',
+  childSessionId: string,
+  content: string,
+  args: Record<string, unknown>,
+  extra: Record<string, unknown> = {}
+): ToolResult {
+  const { offset, end } = normalizeReadRange(args, content.length)
+  return jsonResult({
+    ok: true,
+    operation,
+    childSessionId,
+    ...extra,
+    offset,
+    limit: end - offset,
+    nextOffset: end < content.length ? end : null,
+    hasMore: end < content.length,
+    totalChars: content.length,
+    content: content.slice(offset, end)
+  })
+}
+
+/**
+ * subagent_read — 让父 Agent 按需回到 Child Session 核对原始 Evidence。
+ * task/task_followup 仍只返回有界摘要；本工具把摘要变成可回溯索引，而不是复制第二份 evidence store。
+ */
+export const subagentReadTool: ToolExecutor = {
+  name: 'subagent_read',
+  description:
+    'Read the persisted records of subagents derived from the current session, to verify the raw evidence behind task/task_followup summaries. inspect shows the size and artifacts, search locates keywords, read pages through the child transcript, artifact_read reads the full text of a large-output artifact explicitly referenced by a child toolCall; records keep message/toolCall/toolName/artifactId so you can trace back to the concrete tool result.',
+  parameters: {
+    type: 'object',
+    properties: {
+      child_session_id: {
+        type: 'string',
+        description: 'The subagent session ID returned by task / batch_task / task_followup'
+      },
+      operation: {
+        type: 'string',
+        enum: ['inspect', 'search', 'read', 'artifact_read'],
+        default: 'inspect',
+        description: 'inspect=view record size, search=keyword location, read=read the transcript, artifact_read=read the raw artifact referenced by a child toolCall'
+      },
+      query: {
+        type: 'string',
+        description: 'Literal keyword for search, case-insensitive'
+      },
+      artifact_id: {
+        type: 'string',
+        description: 'The artifact ID used by artifact_read; must come from an artifact=... entry in inspect or the transcript'
+      },
+      offset: {
+        type: 'number',
+        default: 0,
+        description: '0-based character offset for read / artifact_read; the offset returned by search can be used directly to read back the transcript'
+      },
+      limit: {
+        type: 'number',
+        description: `Maximum characters read by read / artifact_read; defaults to ${DEFAULT_READ_CHARS}, maximum ${MAX_READ_CHARS}`
+      }
+    },
+    required: ['child_session_id'],
+    additionalProperties: false
+  },
+  executionMode: 'parallel',
+  isConcurrencySafe: () => true,
+  // 有意不声明 maxResultSizeChars：执行器的通用截断管线按 1000 字符切长行，
+  // 会把本工具的单行 JSON 拦腰截断成不可解析文本；输出已由 limit 分页在内部控量
+
+  async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
+    const childSessionId = typeof args.child_session_id === 'string'
+      ? args.child_session_id.trim()
+      : ''
+    if (!childSessionId) return failure('child_session_id 不能为空')
+
+    const operation = parseOperation(args.operation)
+    if (!operation) return failure(`未知 operation: ${String(args.operation)}`)
+
+    const resolved = resolveReadableChild(context, childSessionId)
+    if ('error' in resolved) return failure(resolved.error)
+
+    const messages = getSessionActiveMessages(resolved.session)
+    const artifactIds = collectReferencedArtifactIds(messages)
+
+    if (operation === 'artifact_read') {
+      const artifactId = typeof args.artifact_id === 'string' ? args.artifact_id.trim() : ''
+      if (!artifactId || !isSafeArtifactId(artifactId)) {
+        return failure('artifact_read 需要合法的 artifact_id')
+      }
+      if (!artifactIds.includes(artifactId)) {
+        return failure('artifact_id 未被该子代理当前 toolCall 记录引用')
+      }
+      if (!context.artifactStore) {
+        return failure('artifact_read 需要 artifactStore')
+      }
+      try {
+        const raw = await context.artifactStore.read(childSessionId, artifactId)
+        return buildReadPayload(
+          'artifact_read',
+          childSessionId,
+          raw,
+          args,
+          { artifactId }
+        )
+      } catch (error) {
+        const nodeError = error as NodeJS.ErrnoException
+        if (nodeError.code === 'ENOENT') {
+          return failure(`子代理 artifact 不存在: ${artifactId}`)
+        }
+        return failure(`无法读取子代理 artifact: ${(error as Error).message}`)
+      }
+    }
+
+    const transcript = renderEvidenceTranscript(messages)
+
+    if (operation === 'inspect') {
+      const toolCallCount = messages.reduce(
+        (sum, message) => sum + (message.toolCalls?.length ?? 0),
+        0
+      )
+      return jsonResult({
+        ok: true,
+        operation: 'inspect',
+        childSessionId,
+        profileId: resolved.session.subagent.profile.profileId,
+        messageCount: messages.length,
+        toolCallCount,
+        artifactIds,
+        totalChars: transcript.length,
+        hint: '用 search + query 定位 transcript 证据；若命中 artifact=...，用 artifact_read 读取该大输出原文。'
+      })
+    }
+
+    if (operation === 'read') {
+      return buildReadPayload('read', childSessionId, transcript, args)
+    }
+
+    const query = typeof args.query === 'string' ? args.query.trim() : ''
+    if (!query) return failure('search 操作需要 query 参数')
+
+    // 正则 i 匹配的索引天然落在原文上；toLowerCase 部分字符会变长（如 İ→i̇），
+    // 在 lowercased 副本上取 offset 会与后续 read 的原文偏移漂移
+    const pattern = new RegExp(
+      query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      'gi'
+    )
+    const matches: Array<{ offset: number; snippet: string }> = []
+    let totalMatches = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(transcript)) !== null) {
+      totalMatches += 1
+      if (matches.length < MAX_SEARCH_MATCHES) {
+        const start = Math.max(0, match.index - SEARCH_CONTEXT_CHARS)
+        const end = Math.min(
+          transcript.length,
+          match.index + match[0].length + SEARCH_CONTEXT_CHARS
+        )
+        matches.push({ offset: match.index, snippet: transcript.slice(start, end) })
+      }
+      pattern.lastIndex = match.index + Math.max(match[0].length, 1)
+    }
+
+    return jsonResult({
+      ok: true,
+      operation: 'search',
+      childSessionId,
+      query,
+      totalMatches,
+      truncated: totalMatches > matches.length,
+      matches,
+      hint: matches.length > 0
+        ? '用 read 在命中 offset 附近核对完整 transcript；若片段带 artifact=...，改用 artifact_read。'
+        : '未命中；可先 inspect，再从 offset=0 分页 read。'
+    })
+  }
+}
+
+export default subagentReadTool

@@ -147,6 +147,8 @@ export interface SpawnSubagentCommand {
   readonly task: string
   readonly workingDirectory: string
   readonly isolation: 'shared' | 'readonly'
+  /** 后台派遣：立即返回接纳句柄，结果经通知投递；执行强制只读，默认同步。 */
+  readonly background?: boolean
   readonly timeoutMs?: number
   /** 可选 canonical 模型覆盖；只影响模型路由，不改变 profile prompt/工具/权限/isolation。 */
   readonly modelOverride?: {
@@ -164,9 +166,12 @@ export interface FollowupSubagentCommand {
   readonly parentMessageId: string
   readonly parentToolCallId: string
   readonly task: string
+  /** 显式恢复来源；resume_run_id 透传。 */
+  readonly resumeRunId?: string
 }
 
 export type SubagentExecutionStatus =
+  | 'accepted'
   | 'completed'
   | 'incomplete'
   | 'failed'
@@ -199,4 +204,6 @@ export interface SubagentExecutionResult {
   readonly failure?: SubagentExecutionFailure
   /** status === 'incomplete' 时的截断原因（源自 durable run 记录） */
   readonly incompleteReason?: TurnTruncationReason
+  /** 精确结果消息是否存在；用于区分 completed 后的精确成功与降级摘要 */
+  readonly hasResultMessage: boolean
 }

@@ -8,7 +8,7 @@
  *
  * 后端：
  * - 生产：better-sqlite3（messages-index.sqlite，WAL）
- * - 单测：Map 内存后端（避免 Electron ABI 的 native 模块在 Node vitest 下无法加载）
+ * - 单测：Map 内存后端（避免 Node vitest 打开 WAL 后无法清理临时目录）
  */
 import * as fs from 'fs'
 import * as path from 'path'
@@ -488,8 +488,8 @@ export function openIndexDb(sessionDir: string): SessionIndexDb {
 }
 
 /**
- * 探测当前进程能否加载 better-sqlite3（Electron ABI 下 Node vitest 通常为 false）。
- * 供测试决定是否跑真实 SQLite 用例。
+ * 探测当前进程能否加载 better-sqlite3。
+ * 供显式 SQLite 用例决定是否跑真实库；默认单测仍走内存后端。
  */
 export function canOpenSqliteSessionIndex(): boolean {
   try {

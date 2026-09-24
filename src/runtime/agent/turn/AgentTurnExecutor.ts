@@ -4,7 +4,8 @@ import type { SubagentProfileSnapshot } from '../../../shared/subagents'
 import {
   isTerminalRunStatus,
   type CommitTerminalParams,
-  type RunSnapshot
+  type RunSnapshot,
+  type SubagentRunDispatch
 } from '../../../shared/run/types'
 import type { ToolInvocationRef } from '../../tools/types'
 import type { RunCoordinator } from '../../run/RunCoordinator'
@@ -97,12 +98,15 @@ export interface AgentTurnExecutorInput {
   readonly resourceOwnerGeneration?: number
   readonly runRefs?: AgentTurnRunRefs
   readonly userMessageId: string
+  readonly dispatch?: SubagentRunDispatch
   readonly onStarted?: (context: AgentTurnExecutionContext) => void
   readonly afterOutcome?: (
     outcome: AgentTurnOutcome,
     context: AgentTurnExecutionContext
   ) => void | Promise<void>
   readonly onCleanup?: (context: AgentTurnExecutionContext) => void | Promise<void>
+  /** 句柄注销后触发；自身抛错只吞 console.error，不影响 settled/注销。 */
+  readonly onUnregistered?: (context: AgentTurnExecutionContext) => void | Promise<void>
 }
 
 export interface AgentTurnExecutorResult extends AgentTurnExecutionContext {
@@ -130,7 +134,8 @@ export class AgentTurnExecutor {
         kind: 'agent',
         workspaceId: input.workingDirectory,
         sessionId: input.sessionId,
-        ...(input.runId ? { runId: input.runId } : {})
+        ...(input.runId ? { runId: input.runId } : {}),
+        ...(input.dispatch ? { dispatch: input.dispatch } : {})
       })
       if (
         snapshot.sessionId !== input.sessionId ||
@@ -222,14 +227,29 @@ export class AgentTurnExecutor {
       }
       throw error
     } finally {
-      resolveSettled()
-      if (registered && context) {
-        this.executionRegistry.unregister(
-          context.runId,
-          context.executionGeneration
-        )
+      // 收尾完成前不得 settled/注销：Registry 以句柄存在表达「尚未完整收尾」，
+      // live drain 见到空 Registry 即代表终态已提交、资源已释放、结果可安全读取；
+      // 先到的 terminal snapshot 不构成收尾完成。onCleanup 抛错也必须照常 settled
+      // 并继续 onUnregistered，避免 grace 后句柄永久滞留或唤醒丢失。
+      try {
+        if (context) await input.onCleanup?.(context)
+      } catch (error) {
+        console.error('[AgentTurnExecutor] onCleanup 回调失败:', error)
+      } finally {
+        resolveSettled()
+        if (registered && context) {
+          this.executionRegistry.unregister(
+            context.runId,
+            context.executionGeneration
+          )
+        }
+        // 句柄注销后才触发：投递协调器需要看见 isRunExecutionActive=false
+        try {
+          if (context) await input.onUnregistered?.(context)
+        } catch (error) {
+          console.error('[AgentTurnExecutor] onUnregistered 回调失败:', error)
+        }
       }
-      if (context) await input.onCleanup?.(context)
     }
   }
 }

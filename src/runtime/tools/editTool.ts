@@ -71,6 +71,8 @@ export interface ReadStateEntry {
   contentHash: string
   /** 全文；预算外或被 LRU 淘汰后为 undefined */
   content?: string
+  /** 预览模式实际展示的 UTF-16 正文区间；缺省保持既有读取语义。 */
+  visibleRange?: { readonly start: number; readonly end: number }
 }
 
 /** 对外暴露的缓存统计 */
@@ -85,7 +87,7 @@ export interface ReadStateStats {
 
 export interface ReadState {
   get(path: string): ReadStateEntry | undefined
-  set(path: string, entry: ReadStateEntry | { content: string; timestamp: number; size?: number }): void
+  set(path: string, entry: ReadStateEntry | { content: string; timestamp: number; size?: number; visibleRange?: ReadStateEntry['visibleRange'] }): void
   has(path: string): boolean
   clear(): void
   /** 深拷贝：用于 sub agent 创建独立 readState，避免污染父 agent */
@@ -171,7 +173,7 @@ class ReadStateMap implements ReadState {
 
   set(
     path: string,
-    raw: ReadStateEntry | { content: string; timestamp: number; size?: number }
+    raw: ReadStateEntry | { content: string; timestamp: number; size?: number; visibleRange?: ReadStateEntry['visibleRange'] }
   ): void {
     const key = normalizeReadStateKey(path)
     const content = 'content' in raw ? raw.content : undefined
@@ -208,7 +210,8 @@ class ReadStateMap implements ReadState {
       timestamp,
       size,
       contentHash,
-      ...(keepContent !== undefined ? { content: keepContent } : {})
+      ...(keepContent !== undefined ? { content: keepContent } : {}),
+      ...(keepContent !== undefined && raw.visibleRange ? { visibleRange: raw.visibleRange } : {})
     }
     this.store.set(key, entry)
     this.totalBytes += bytes
@@ -603,7 +606,7 @@ async function safetyGate(
   rs: ReadState,
   ops: EditOperations,
   currentNormalizedContent: string,
-): Promise<void> {
+): Promise<ReadStateEntry> {
   const lastRead = rs.get(path)
   // get() 在 content 被淘汰时返回 undefined → 要求重新 read
   if (!lastRead || lastRead.content === undefined) {
@@ -635,6 +638,7 @@ async function safetyGate(
       `File is too large to edit (${stat.size} bytes). Maximum is ${MAX_EDIT_FILE_SIZE} bytes.`
     )
   }
+  return lastRead
 }
 
 function normalizeInput(args: Record<string, unknown>): {
@@ -703,33 +707,33 @@ export async function writeEditedFile(
 export const editTool: ToolExecutor = {
   name: 'edit',
   description:
-    '精确修改已有文件。支持一次调用修改多处（edits 数组）。' +
-    '所有 oldText 与原始文件匹配（非增量），必须唯一且互不重叠。' +
-    '编辑前必须先用 read 工具读取文件。',
+    'Precisely modify an existing file. Supports multiple edit points in one call (edits array). ' +
+    'All oldText entries match against the original file (not incrementally), must be unique, and must not overlap. ' +
+    'The file must be read with the read tool before editing.',
   executionMode: 'sequential',
   parameters: {
     type: 'object',
     properties: {
       filePath: {
         type: 'string',
-        description: '要修改的文件路径（绝对或相对工作区）。'
+        description: 'Path of the file to modify (absolute or relative to the workspace).'
       },
       edits: {
         type: 'array',
         minItems: 1,
         description:
-          '一个或多个精确替换。每个 oldText 匹配原始文件（非增量），必须唯一。' +
-          '如果两处修改在同一块或相邻行，合并为一个 edit。',
+          'One or more precise replacements. Each oldText matches the original file (not incrementally) and must be unique. ' +
+          'If two edits touch the same block or adjacent lines, merge them into one edit.',
         items: {
           type: 'object',
           properties: {
             oldText: {
               type: 'string',
-              description: '原始文件中要查找的精确文本，必须唯一。'
+              description: 'Exact text to find in the original file; must be unique.'
             },
             newText: {
               type: 'string',
-              description: '替换后的新文本。'
+              description: 'The replacement text.'
             },
           },
           required: ['oldText', 'newText'],
@@ -737,15 +741,15 @@ export const editTool: ToolExecutor = {
       },
       path: {
         type: 'string',
-        description: '（兼容旧格式）文件路径。'
+        description: '(legacy format) file path.'
       },
       old: {
         type: 'string',
-        description: '（兼容旧格式）要被替换的原始文本。'
+        description: '(legacy format) original text to be replaced.'
       },
       new: {
         type: 'string',
-        description: '（兼容旧格式）替换后的新文本。'
+        description: '(legacy format) replacement text.'
       },
     },
     required: ['filePath'],
@@ -808,10 +812,17 @@ export const editTool: ToolExecutor = {
         const readResult = await readFileForEdit(ops, absolutePath)
         throwIfAborted()
 
-        await safetyGate(absolutePath, context.readState, ops, readResult.normalized)
+        const lastRead = await safetyGate(absolutePath, context.readState, ops, readResult.normalized)
         throwIfAborted()
 
         const resolved = resolveEdits(readResult.normalized, input.edits, absolutePath)
+        const visibleRange = lastRead.visibleRange
+        if (visibleRange && resolved.some((edit) =>
+          edit.startOffset < visibleRange.start
+          || edit.startOffset + edit.actualOldText.length > visibleRange.end
+        )) {
+          throw new Error('编辑位置不在最近一次 read 展示的正文范围内。请先用 offset/limit 读取目标行。')
+        }
         throwIfAborted()
 
         const newContent = applyResolvedEdits(readResult.normalized, resolved)

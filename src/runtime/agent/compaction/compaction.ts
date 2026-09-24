@@ -90,7 +90,7 @@ export function shouldScheduleIdleCompaction(state: IdleCompactionScheduleState)
  */
 export function buildCompactionPrompt(): string {
   return [
-    '请对上面的对话历史生成结构化交接，只输出完整 JSON，不继续对话。',
+    '请对上面的对话历史生成结构化交接，只输出完整 JSON，不继续对话，不要调用任何工具。',
     'schemaVersion=1；goal（目标）、nextActions（下一步）、keyContext（关键上下文）、progress（进展）、decisions（关键决策）均为非空字符串；没有内容写 (none)。',
     'facts 为事实数组。每项包含 id、category、owner、value、origin{messageId,step}、quote、required。',
     '必需事实及归属由程序原样保留。facts 可输出 []；只引用有来源的原始 user 原句，不得虚构已完成或已验证结论。',
@@ -141,7 +141,7 @@ export function buildRealityLine(
 /** stub：只叙述被折叠区间的事件，不写目标/下一步 */
 export function buildStubPrompt(): string {
   return [
-    '请只总结上面被折叠的这一段对话里实际发生的事件。不要继续对话。',
+    '请只总结上面被折叠的这一段对话里实际发生的事件。不要继续对话，不要调用任何工具。',
     '不要写目标、下一步、全局状态或工作记忆。',
     '用 2–3 行叙述关键事件，最后单独一行给出一个字面锚点（错误信息、文件路径、命令或数值）。',
     '只输出这段摘要，不要加任何前缀说明。'

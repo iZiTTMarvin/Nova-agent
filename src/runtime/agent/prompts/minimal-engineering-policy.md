@@ -1,12 +1,12 @@
-# 最小工程策略
+# Minimal Engineering Policy
 
-仅在任务涉及代码实现、Bug 修复、重构、依赖或架构选择时应用。用户明确要求、Project Rules、当前 Skill / 子代理任务、安全边界和正确性优先。
+Applies to implementation, bug fixes, refactors, and dependency or architecture choices. Explicit user requests, project rules, active skills, subagent tasks, security, and correctness override this policy.
 
-1. 动手前先理解目标与真实调用链，定位最早应承担约束的正确边界。
-2. 先检查仓库已有实现、公共类型和现有 Owner；旧代码若违反当前工程规则，不要继续复制。
-3. 优先使用标准库、运行平台原生能力和已安装依赖；只有真实收益明确时才新增依赖。
-4. 选择最小且完整的改动：减少概念、公共契约和需要同时理解的位置；允许为集中必要复杂度多写几行代码，禁止把同一策略摊给多个调用方。
-5. Bug 优先修共享根因，不在多个下游重复补丁，也不借机扩大无关重构。
-6. 不为未来猜测增加抽象、配置、兼容层、脚手架、扩展点或第二条主路径。
-7. 不削减信任边界校验、权限、安全性、数据保护、必要错误处理、可访问性和用户明确要求。
-8. 完成后做与风险匹配的最小验证；优先复用已有测试，不因代码变动机械新增测试。
+1. Understand the goal and the real call chain first; place constraints at the earliest correct boundary.
+2. Reuse existing implementations and shared types; do not copy code that violates current rules.
+3. Prefer the standard library, platform-native capabilities, and installed dependencies; add dependencies only with clear benefit.
+4. Make the smallest complete change: fewer concepts and contracts to hold at once; concentrate necessary complexity instead of spreading one policy across callers.
+5. Fix shared root causes, not downstream symptoms; no drive-by refactors.
+6. No speculative abstractions, configuration, compatibility layers, or second main paths.
+7. Never weaken trust boundaries, permissions, security, data protection, error handling, or explicit user requirements.
+8. Verify proportionally to risk; reuse existing tests rather than adding tests mechanically.

@@ -295,6 +295,35 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
           </SettingsSection>
 
+          <SettingsSection title="系统通知">
+            <SettingsRow
+              label="任务完成时通知我"
+              description="任务到达完成或失败、以及等待你批准（授权/提问/计划）时弹系统通知。"
+              end={
+                <Switch
+                  label="任务完成时通知我"
+                  isLabelHidden
+                  value={settings.notificationsEnabled}
+                  onChange={checked => void update('notificationsEnabled', checked)}
+                  isDisabled={saving}
+                />
+              }
+            />
+            <SettingsRow
+              label="仅在窗口失焦时通知"
+              description="你正看着窗口时不打扰；切到别的应用后才弹通知。"
+              end={
+                <Switch
+                  label="仅在窗口失焦时通知"
+                  isLabelHidden
+                  value={settings.notifyOnlyWhenUnfocused}
+                  onChange={checked => void update('notifyOnlyWhenUnfocused', checked)}
+                  isDisabled={saving}
+                />
+              }
+            />
+          </SettingsSection>
+
           <SettingsSection title="编辑器">
             <SettingsRow
               label="编辑器字号（px）"

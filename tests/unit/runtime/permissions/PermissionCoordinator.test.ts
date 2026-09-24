@@ -5,10 +5,15 @@ import {
 } from '../../../../src/runtime/permissions/PermissionCoordinator'
 import { PermissionManager, hydrateSessionWhitelist, clearSessionWhitelist } from '../../../../src/runtime/permissions/PermissionManager'
 import type { Mode } from '../../../../src/shared/session/types'
+import type { PermissionCapabilityCeiling } from '../../../../src/shared/permissions/types'
 
 type EmittedEvent = Parameters<PermissionCoordinatorDeps['emit']>[0]
 
-function createCoordinator(options?: { mode?: Mode; manager?: PermissionManager }) {
+function createCoordinator(options?: {
+  mode?: Mode
+  manager?: PermissionManager
+  capabilityCeiling?: PermissionCapabilityCeiling | null
+}) {
   const events: EmittedEvent[] = []
   let mode: Mode = options?.mode ?? 'default'
   const manager = options?.manager ?? new PermissionManager()
@@ -19,7 +24,8 @@ function createCoordinator(options?: { mode?: Mode; manager?: PermissionManager 
     getPermissionRuntimeSnapshot: () => ({
       sessionId: 'session-1',
       workspaceRoot: '/workspace',
-      permissionMode: 'request_approval'
+      permissionMode: 'request_approval',
+      capabilityCeiling: options?.capabilityCeiling ?? null
     })
   })
   return {
@@ -74,6 +80,22 @@ describe('PermissionCoordinator allow / deny / ask', () => {
     const bash = await coordinator.checkPermission('bash', { command: 'ls' }, 'msg-1')
     expect(bash.allowed).toBe(false)
     expect(bash.reason).toContain('plan 模式')
+    expect(events).toHaveLength(0)
+  })
+
+  it('只读能力上限沿 coordinator 传递并直接拒绝副作用，不发 permission_request', async () => {
+    const { coordinator, events } = createCoordinator({
+      capabilityCeiling: 'read_only'
+    })
+
+    const result = await coordinator.checkPermission(
+      'task_followup',
+      { child_session_id: 'sess-child', task: 'continue' },
+      'msg-1'
+    )
+
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toContain('只读')
     expect(events).toHaveLength(0)
   })
 

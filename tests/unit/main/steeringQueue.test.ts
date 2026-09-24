@@ -57,4 +57,26 @@ describe('SteeringQueue', () => {
     const head = dequeueSteeringMessage('s1')
     expect(head?.sessionId).toBe('s1')
   })
+
+  it('同 userMessageId 去重：相同 sessionId + userMessageId 的重复入队只保留一条', () => {
+    const msg = { sessionId: 's1', content: 'hello', userMessageId: 'msg-123' }
+    enqueueSteeringMessage('s1', msg)
+    enqueueSteeringMessage('s1', msg)
+    expect(dequeueSteeringMessage('s1')?.content).toBe('hello')
+    expect(dequeueSteeringMessage('s1')).toBeUndefined()
+  })
+
+  it('不同 userMessageId 不去重', () => {
+    enqueueSteeringMessage('s1', { sessionId: 's1', content: 'first', userMessageId: 'msg-a' })
+    enqueueSteeringMessage('s1', { sessionId: 's1', content: 'second', userMessageId: 'msg-b' })
+    expect(dequeueSteeringMessage('s1')?.content).toBe('first')
+    expect(dequeueSteeringMessage('s1')?.content).toBe('second')
+  })
+
+  it('无 userMessageId 不去重', () => {
+    enqueueSteeringMessage('s1', { sessionId: 's1', content: 'no-id-1' })
+    enqueueSteeringMessage('s1', { sessionId: 's1', content: 'no-id-2' })
+    expect(dequeueSteeringMessage('s1')?.content).toBe('no-id-1')
+    expect(dequeueSteeringMessage('s1')?.content).toBe('no-id-2')
+  })
 })

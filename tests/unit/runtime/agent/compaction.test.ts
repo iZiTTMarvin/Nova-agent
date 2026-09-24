@@ -3,6 +3,7 @@ import {
   buildCompactionPrompt,
   buildCompactionRequestTail,
   buildStateInstruction,
+  buildStubPrompt,
   boundSummaryText,
   foldLedgerEntriesToBudget,
   splitForCompactionByTokens,
@@ -60,6 +61,13 @@ describe('compaction', () => {
       for (const field of ['schemaVersion', 'goal', 'nextActions', 'keyContext', 'progress', 'decisions', 'facts', 'origin', 'required']) expect(prompt).toContain(field)
       expect(prompt).toContain('完整 JSON')
       expect(prompt).toContain('不得虚构')
+      expect(prompt).toContain('不要调用任何工具')
+    })
+  })
+
+  describe('buildStubPrompt', () => {
+    it('禁止调用工具', () => {
+      expect(buildStubPrompt()).toContain('不要调用任何工具')
     })
   })
 

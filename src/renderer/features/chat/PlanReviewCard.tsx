@@ -3,7 +3,7 @@ import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import type { ActivePlanDocument } from '../../../shared/workspace/types'
 import { isContentSummary, type ContentSummary } from '../../../shared/tool-input-sanitizer'
-import { CopyIcon, PlanIcon, SpinnerIcon } from '../../components/Icons'
+import { CheckIcon, CopyIcon, PlanIcon, SpinnerIcon } from '../../components/Icons'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import './PlanReviewCard.css'
@@ -106,8 +106,10 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     try {
       await navigator.clipboard.writeText(content)
       setCopyState('copied')
+      window.setTimeout(() => setCopyState('idle'), 1800)
     } catch {
       setCopyState('error')
+      window.setTimeout(() => setCopyState('idle'), 2400)
     }
   }
 
@@ -129,15 +131,19 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
         <span className="plan-review-card__label">
           {status === 'running' ? '正在生成计划' : status === 'error' ? '计划生成失败' : '计划'}
         </span>
-        <IconButton
-          label={copyState === 'copied' ? '已复制计划' : '复制完整计划'}
-          icon={<CopyIcon size={14} />}
-          variant="ghost"
-          size="sm"
-          onClick={() => void copyPlan()}
-          isDisabled={!content}
-          tooltip={copyState === 'error' ? '复制失败，请重试' : copyState === 'copied' ? '已复制' : '复制完整计划'}
-        />
+        <div className="plan-review-card__action">
+          <IconButton
+            label={copyState === 'copied' ? '已复制计划' : '复制完整计划'}
+            icon={copyState === 'copied' ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+            variant="ghost"
+            size="sm"
+            onClick={() => void copyPlan()}
+            isDisabled={!content}
+          />
+          <span className="plan-review-card__tooltip" role="tooltip" aria-hidden="true">
+            {copyState === 'error' ? '复制失败，请重试' : copyState === 'copied' ? '已复制' : '复制完整计划'}
+          </span>
+        </div>
       </header>
 
       <div className="plan-review-card__body">

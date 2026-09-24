@@ -3,7 +3,7 @@ import { getSessionActiveMessages } from './tree'
 import type { CompactionLedger, SessionData } from './types'
 import { extractTextFromSerializableContent } from './types'
 import { alignToUserInputBoundary } from '../request-projection'
-import type { ChatMessage, MessageOrigin } from '../model/types'
+import { isSameMessageOrigin, type ChatMessage, type MessageOrigin } from '../model/types'
 
 /**
  * 仅允许折叠已归档的相同前缀，并留一个可恢复的尾部坐标。
@@ -11,7 +11,7 @@ import type { ChatMessage, MessageOrigin } from '../model/types'
  */
 export function durableCompactionPrefixLength(session: SessionData, visible: readonly ChatMessage[], projection: BuildConversationContextOptions): number {
   const archived = buildConversationContext(session, session.mode, projection)
-  const sameOrigin = (a: ChatMessage, b: ChatMessage): boolean => Boolean(a.origin && b.origin && a.origin.messageId === b.origin.messageId && a.origin.step === b.origin.step)
+  const sameOrigin = (a: ChatMessage, b: ChatMessage): boolean => isSameMessageOrigin(a.origin, b.origin)
   const start = archived.findIndex(message => visible[0] && sameOrigin(message, visible[0]))
   if (start < 0) return 0
   const fact = (message: ChatMessage): string => JSON.stringify({ role: message.role, content: message.content,
@@ -41,7 +41,7 @@ function originMessageId(origin: MessageOrigin | null | undefined): string | nul
 
 function originKey(origin: MessageOrigin | null | undefined): string | null {
   const id = originMessageId(origin)
-  return id && origin ? `${id}\0${origin.step}` : null
+  return id && origin ? `${id}\0${origin.step}\0${origin.runtimeInputId ?? ''}` : null
 }
 
 /**

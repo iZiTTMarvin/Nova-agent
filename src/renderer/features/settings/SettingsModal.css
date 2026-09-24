@@ -349,7 +349,7 @@
 }
 
 .settings-status--warning {
-  color: var(--color-warning, #d97706);
+  color: var(--color-warning);
 }
 
 .settings-help {
@@ -452,7 +452,7 @@
   height: 100%;
   min-height: 0;
   resize: none;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.5;
 }
@@ -618,7 +618,7 @@
 .llm-model-list__id {
   font-size: 0.7rem;
   color: var(--text-muted);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   line-height: 1.2;
   word-break: break-all;
 }
@@ -729,7 +729,7 @@
 }
 
 .perm-rule__tool {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   color: var(--text-primary);
   font-weight: 500;
@@ -977,7 +977,7 @@
   margin-bottom: 12px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-cream);
-  background: var(--bg-sand, #faf8f5);
+  background: var(--bg-sand);
   font-size: 0.74rem;
   line-height: 1.45;
   color: var(--text-muted);
@@ -1008,13 +1008,13 @@
 }
 
 .memory-settings-panel__meta-code {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--text-primary);
 }
 
 .memory-settings-panel__meta-path {
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.72rem;
   color: var(--text-secondary);
   max-width: min(320px, 42vw);
@@ -1300,7 +1300,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.74rem;
   font-weight: 600;
 }
@@ -1495,7 +1495,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.76rem;
   font-weight: 600;
   color: var(--text-primary);
@@ -1542,7 +1542,7 @@
   resize: none;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.8rem;
   line-height: 1.55;
 }
@@ -1668,7 +1668,7 @@
 .subagent-list__skeleton-row {
   height: 44px;
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-sand, var(--bg-card)));
+  background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-sand));
 }
 
 .subagent-workspace {
@@ -1860,7 +1860,7 @@
 
 .subagent-advanced__content textarea {
   min-height: 130px;
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
 }
 
 .subagent-tool-fieldset {

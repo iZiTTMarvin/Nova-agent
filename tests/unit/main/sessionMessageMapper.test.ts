@@ -73,4 +73,29 @@ describe('sessionMessageMapper', () => {
 
     expect(shared.toolCalls?.[0].arguments).toEqual({})
   })
+
+  it('保留内部运行时输入来源与冻结事实', () => {
+    const input = {
+      type: 'runtime_input' as const,
+      version: 1 as const,
+      inputKind: 'subagent_notification' as const,
+      notificationId: 'ntf-1',
+      sourceRunId: 'child-1',
+      afterStep: -1,
+      order: 0,
+      content: '冻结通知'
+    }
+    const shared = toSharedMessage({
+      id: 'relay',
+      parentId: null,
+      role: 'user',
+      internalSource: 'runtime_input',
+      content: '',
+      blocks: [input],
+      messageSchemaVersion: 6,
+      timestamp: 1
+    })
+
+    expect(shared).toMatchObject({ internalSource: 'runtime_input', blocks: [input] })
+  })
 })

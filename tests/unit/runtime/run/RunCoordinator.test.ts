@@ -7,7 +7,26 @@ import * as os from 'os'
 import * as path from 'path'
 import { RunStore } from '../../../../src/runtime/run/RunStore'
 import { RunCoordinator } from '../../../../src/runtime/run/RunCoordinator'
+import type { RunSnapshot } from '../../../../src/shared/run/types'
+import * as atomicFile from '../../../../src/runtime/storage/atomicFile'
 import { applyAgentEventToRun } from '../../../../src/runtime/agent/turn'
+import {
+  decodeSubagentDeliveryBinding,
+  deriveSubagentNotificationId,
+  resolveDispatchExecution,
+  type SubagentRelayTrigger,
+  type SubagentRunDispatch
+} from '../../../../src/shared/run/types'
+
+const validDispatch: SubagentRunDispatch = {
+  version: 1,
+  callKind: 'task',
+  parentSessionId: 's-parent',
+  parentRunId: 'run-parent',
+  parentMessageId: 'msg-parent',
+  execution: 'background_read_only',
+  topParentSessionId: 's-parent'
+}
 
 describe('RunCoordinator', () => {
   let tmpDir: string
@@ -631,4 +650,351 @@ describe('RunCoordinator', () => {
     expect(interrupted[0]!.status).toBe('interrupted')
     expect(loadEvents.mock.calls.map(call => call[0])).toEqual(['run_live'])
   })
+
+  it('终态后投递绑定可更新、幂等且不碰 generation/业务终态', () => {
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-child',
+      runId: 'run_child_bind',
+      dispatch: validDispatch
+    })
+    coord.markRunning('run_child_bind')
+    coord.bindExecutionGeneration('run_child_bind', 3)
+    coord.commitTerminal({
+      runId: 'run_child_bind',
+      status: 'completed',
+      terminalTransitionId: 'tid_x'
+    })
+    const before = coord.getSnapshot('run_child_bind')!.sequence
+
+    const updated = coord.updateDeliveryBinding('run_child_bind', {
+      boundRunId: 'run-parent',
+      boundSessionId: 's-parent'
+    })
+    expect(updated?.deliveryBinding?.version).toBe(1)
+    expect(updated?.deliveryBinding?.boundRunId).toBe('run-parent')
+    expect(updated?.status).toBe('completed')
+    expect(updated?.executionGeneration).toBe(3)
+    expect(updated?.terminalTransitionId).toBe('tid_x')
+    expect(updated!.sequence).toBeGreaterThan(before)
+
+    // 相同 patch 幂等：不重复落盘
+    const again = coord.updateDeliveryBinding('run_child_bind', {
+      boundRunId: 'run-parent',
+      boundSessionId: 's-parent'
+    })
+    expect(again!.sequence).toBe(updated!.sequence)
+
+    expect(store.loadSnapshot('run_child_bind')?.deliveryBinding?.boundRunId).toBe('run-parent')
+
+    const paused = coord.updateDeliveryBinding('run_child_bind', { paused: true })
+    expect(paused?.deliveryBinding?.paused).toBe(true)
+    expect(paused?.deliveryBinding?.boundRunId).toBe('run-parent')
+  })
+
+  it('终态快照落后尾部投递事件，启动对账收敛且普通历史不读事件', () => {
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-a',
+      runId: 'run_proto_a',
+      dispatch: validDispatch
+    })
+    coord.markRunning('run_proto_a')
+    coord.commitTerminal({ runId: 'run_proto_a', status: 'completed' })
+    coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-b', runId: 'run_plain_b' })
+    coord.markRunning('run_plain_b')
+    coord.commitTerminal({ runId: 'run_plain_b', status: 'completed' })
+
+    // 模拟崩溃窗口：投递事件已落盘、快照未写回
+    const snapA = store.loadSnapshot('run_proto_a')!
+    fs.appendFileSync(
+      path.join(tmpDir, 'run_proto_a', 'events.jsonl'),
+      JSON.stringify({
+        runId: 'run_proto_a',
+        sequence: snapA.sequence + 1,
+        type: 'delivery_binding',
+        at: Date.now(),
+        payload: { binding: { version: 1, boundRunId: 'run-parent', updatedAt: Date.now() } }
+      }) + '\n'
+    )
+
+    const loadEvents = vi.spyOn(store, 'loadEvents')
+    const coord2 = new RunCoordinator({ store })
+    coord2.reconcileOnStartup()
+
+    const calls = loadEvents.mock.calls.map(call => call[0])
+    expect(calls).toContain('run_proto_a')
+    expect(calls).not.toContain('run_plain_b')
+    const after = store.loadSnapshot('run_proto_a')!
+    expect(after.deliveryBinding?.boundRunId).toBe('run-parent')
+    expect(after.sequence).toBe(snapA.sequence + 1)
+  })
+
+  it('尾部事件先收敛再更新绑定：不产生重复序号、不掩埋已落盘绑定', () => {
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-child',
+      runId: 'run_tail_conflict',
+      dispatch: validDispatch
+    })
+    coord.markRunning('run_tail_conflict')
+    coord.commitTerminal({ runId: 'run_tail_conflict', status: 'completed' })
+
+    // 模拟崩溃窗口：绑定事件已落盘、快照未写回
+    const snapA = store.loadSnapshot('run_tail_conflict')!
+    fs.appendFileSync(
+      path.join(tmpDir, 'run_tail_conflict', 'events.jsonl'),
+      JSON.stringify({
+        runId: 'run_tail_conflict',
+        sequence: snapA.sequence + 1,
+        type: 'delivery_binding',
+        at: Date.now(),
+        payload: { binding: { version: 1, boundRunId: 'run-parent', updatedAt: Date.now() } }
+      }) + '\n'
+    )
+
+    // 冷启动顺序：先收敛尾部事件，再处理控制意图的绑定更新（失效化/暂停）
+    const cold = new RunCoordinator({ store })
+    cold.convergeProtocolTailsOnStartup()
+    cold.updateDeliveryBinding('run_tail_conflict', { paused: true })
+
+    const coldStore = new RunStore({ runsRoot: tmpDir })
+    const persisted = coldStore.loadSnapshotWithReplay('run_tail_conflict')!
+    // 已落盘的 boundRunId 不被旧快照基线的提交掩埋，新更新在其上叠加
+    expect(persisted.deliveryBinding).toEqual(expect.objectContaining({
+      boundRunId: 'run-parent',
+      paused: true
+    }))
+    const { events } = coldStore.loadEvents('run_tail_conflict')
+    const sequences = events.map(event => event.sequence)
+    expect(new Set(sequences).size).toBe(sequences.length)
+    expect(sequences[sequences.length - 1]).toBeGreaterThan(snapA.sequence)
+  })
+
+  it('updateDeliveryBinding 落盘失败回滚内存，重试真正重新落盘不假成功', () => {
+    class FailingCommitStore extends RunStore {
+      public failNextCommit = false
+      override commitTransaction(
+        nextSnapshot: Parameters<RunStore['commitTransaction']>[0],
+        eventType: Parameters<RunStore['commitTransaction']>[1],
+        payload?: Parameters<RunStore['commitTransaction']>[2]
+      ) {
+        if (this.failNextCommit) {
+          this.failNextCommit = false
+          throw new Error('disk full')
+        }
+        return super.commitTransaction(nextSnapshot, eventType, payload)
+      }
+    }
+    const failing = new FailingCommitStore({ runsRoot: tmpDir })
+    const failingCoord = new RunCoordinator({ store: failing })
+    failingCoord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-bind-fail',
+      runId: 'run_bind_fail'
+    })
+    failingCoord.commitTerminal({ runId: 'run_bind_fail', status: 'completed' })
+
+    failing.failNextCommit = true
+    expect(() =>
+      failingCoord.updateDeliveryBinding('run_bind_fail', { invalidatedReason: 'stop:op' })
+    ).toThrow(/disk full/)
+    // 内存已回滚：失效化未生效，后续重试不会被幂等判断吞掉
+    expect(failingCoord.getSnapshot('run_bind_fail')?.deliveryBinding?.invalidatedReason)
+      .toBeUndefined()
+
+    failingCoord.updateDeliveryBinding('run_bind_fail', { invalidatedReason: 'stop:op' })
+
+    // 冷读验证：重试真正落盘，事件序号严格递增无重复
+    const coldStore = new RunStore({ runsRoot: tmpDir })
+    expect(coldStore.loadSnapshot('run_bind_fail')?.deliveryBinding?.invalidatedReason)
+      .toBe('stop:op')
+    const { events } = coldStore.loadEvents('run_bind_fail')
+    const sequences = events.map(event => event.sequence)
+    expect(new Set(sequences).size).toBe(sequences.length)
+  })
+
+  it('事件已 fsync 而快照失败后，后续绑定更新保留已提交事实且序号唯一', () => {
+    coord.startRun({
+      kind: 'agent', workspaceId: '/ws', sessionId: 's-child',
+      runId: 'run_snapshot_failure', dispatch: validDispatch
+    })
+    coord.markRunning('run_snapshot_failure')
+    coord.commitTerminal({ runId: 'run_snapshot_failure', status: 'completed' })
+    const write = atomicFile.atomicWriteFileSync
+    const snapshotPath = path.join(tmpDir, 'run_snapshot_failure', 'snapshot.json')
+    const fault = vi.spyOn(atomicFile, 'atomicWriteFileSync').mockImplementation((file, content, encoding) => {
+      if (file === snapshotPath) throw new Error('snapshot write failed after fsync')
+      write(file, content, encoding)
+    })
+    try {
+      expect(() => coord.updateDeliveryBinding('run_snapshot_failure', { boundRunId: 'reserved-parent' }))
+        .toThrow(/snapshot write failed/)
+    } finally {
+      fault.mockRestore()
+    }
+
+    coord.updateDeliveryBinding('run_snapshot_failure', { paused: true })
+
+    const cold = new RunStore({ runsRoot: tmpDir })
+    expect(cold.loadSnapshotWithReplay('run_snapshot_failure')?.deliveryBinding)
+      .toMatchObject({ boundRunId: 'reserved-parent', paused: true })
+    const sequences = cold.loadEvents('run_snapshot_failure').events.map(event => event.sequence)
+    expect(new Set(sequences).size).toBe(sequences.length)
+  })
+
+  it('dispatch 未知版本失败关闭；腐坏记录在全盘扫描中被隔离', () => {
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-bad',
+      runId: 'run_bad_proto',
+      dispatch: validDispatch
+    })
+    coord.markRunning('run_bad_proto')
+    coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-ok', runId: 'run_ok' })
+
+    const snapPath = path.join(tmpDir, 'run_bad_proto', 'snapshot.json')
+    const raw = JSON.parse(fs.readFileSync(snapPath, 'utf8')) as { dispatch: { version: number } }
+    raw.dispatch.version = 2
+    fs.writeFileSync(snapPath, JSON.stringify(raw, null, 2))
+
+    expect(() => store.loadSnapshot('run_bad_proto')).toThrow()
+    const found = store.findSnapshotsBySessions(new Set(['s-ok']))
+    expect(found.map(snap => snap.runId)).toEqual(['run_ok'])
+  })
+
+  it('旧记录无 dispatch 归一化为同步；通知 id 派生稳定；绑定 decoder 失败关闭', () => {
+    expect(resolveDispatchExecution({})).toBe('sync')
+    expect(resolveDispatchExecution({ dispatch: validDispatch })).toBe('background_read_only')
+
+    const id = deriveSubagentNotificationId('run_c', 'tid_1')
+    expect(deriveSubagentNotificationId('run_c', 'tid_1')).toBe(id)
+    expect(id).toContain('run_c')
+    expect(id).toContain('tid_1')
+    expect(() => deriveSubagentNotificationId('', 'tid_1')).toThrow()
+    expect(() => deriveSubagentNotificationId('run_c', '')).toThrow()
+
+    expect(decodeSubagentDeliveryBinding(null)).toBeUndefined()
+    expect(() => decodeSubagentDeliveryBinding({ version: 2 })).toThrow()
+  })
+
+  it('启动对账保留未执行的有效接力预约，其余非终态一律 interrupted', () => {
+    const trigger = relayTriggerOf('run_relay_queued')
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-relay',
+      runId: 'run_relay_queued',
+      relayTrigger: trigger
+    })
+    // 接力预约已进入执行：不再有效，按崩溃残留收敛
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-relay',
+      runId: 'run_relay_running',
+      relayTrigger: relayTriggerOf('run_relay_running')
+    })
+    coord.markRunning('run_relay_running')
+    coord.startRun({
+      kind: 'agent',
+      workspaceId: '/ws',
+      sessionId: 's-plain',
+      runId: 'run_plain_queued'
+    })
+
+    const cold = new RunCoordinator({ store })
+    const interrupted = cold.reconcileOnStartup()
+
+    expect(interrupted.map(snapshot => snapshot.runId).sort()).toEqual([
+      'run_plain_queued',
+      'run_relay_running'
+    ])
+    expect(cold.getSnapshot('run_relay_queued')?.status).toBe('queued')
+    expect(cold.getSnapshot('run_relay_queued')?.terminalTransitionId).toBeUndefined()
+    expect(store.loadSnapshot('run_relay_queued')?.status).toBe('queued')
+    expect(cold.getSnapshot('run_relay_running')?.status).toBe('interrupted')
+    expect(cold.getSnapshot('run_plain_queued')?.status).toBe('interrupted')
+    // 保留的预约仍不占用 turn：用户消息可以正常进入该会话
+    expect(cold.hasActiveRunForSession('s-relay')).toBe(false)
+  })
+
+  it('subscribe 在成功落盘后发布 clone，监听器异常隔离且不影响 commit', () => {
+    const snapshots: RunSnapshot[] = []
+    const listener = (snap: RunSnapshot): void => {
+      snapshots.push(snap)
+    }
+    coord.subscribe(listener)
+
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-sub' })
+    coord.markRunning(snap.runId, 'msg-sub')
+    expect(snapshots.length).toBeGreaterThanOrEqual(2)
+    // 发布的是 clone，修改不影响权威状态
+    const first = snapshots[0]!
+    first.status = 'failed'
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('running')
+
+    // 监听器抛错时隔离记录，不破坏后续提交
+    const errorListener = vi.fn(() => {
+      throw new Error('listener boom')
+    })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    coord.subscribe(errorListener)
+    coord.commitTerminal({ runId: snap.runId, status: 'completed' })
+    expect(errorListener).toHaveBeenCalled()
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('completed')
+    errorSpy.mockRestore()
+  })
+
+  it('subscribe 返回的 unsubscribe 幂等，调用后不再收到通知', () => {
+    const received: string[] = []
+    const unsubscribe = coord.subscribe((snap) => {
+      received.push(snap.runId)
+    })
+
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-unsub' })
+    const before = received.length
+    unsubscribe()
+    unsubscribe() // 幂等
+
+    coord.markRunning(snap.runId, 'msg-unsub')
+    expect(received.length).toBe(before)
+  })
+
+  it('每个通用 subscriber 各自收到独立 clone，互不污染', () => {
+    const firstSeen: RunStatus[] = []
+    const secondSeen: RunStatus[] = []
+    coord.subscribe((snap) => {
+      // 第一个 listener 篡改收到的快照，不应影响第二个 listener
+      firstSeen.push(snap.status)
+      snap.status = 'failed'
+    })
+    coord.subscribe((snap) => {
+      secondSeen.push(snap.status)
+    })
+
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's-clone' })
+    coord.markRunning(snap.runId, 'msg-clone')
+    // 第二个 listener 看到的是 running，不是被第一个篡改后的 failed
+    expect(secondSeen.every(status => status !== 'failed')).toBe(true)
+    expect(firstSeen.length).toBeGreaterThanOrEqual(2)
+    expect(coord.getSnapshot(snap.runId)?.status).toBe('running')
+  })
 })
+
+function relayTriggerOf(runId: string): SubagentRelayTrigger {
+  return {
+    version: 1,
+    requestId: runId,
+    receiveMessageId: `msg_relay_${runId}`,
+    originUserMessageId: 'user-origin',
+    anchorMessageId: null,
+    items: [{ notificationId: 'ntf_x', sourceRunId: 'run_child', content: 'frozen' }],
+    createdAt: 1
+  }
+}

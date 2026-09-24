@@ -18,9 +18,11 @@ import {
   SearchIcon,
   ShieldCheckIcon,
   DatabaseIcon,
+  InfoIcon,
   ArrowLeftIcon
 } from '../../components/Icons'
 import { GeneralSettingsPanel } from './GeneralSettingsPanel'
+import { DiagnosticsSettingsPanel } from './DiagnosticsSettingsPanel'
 import { LlmSettingsPanel } from './LlmSettingsPanel'
 import { RulesSettingsPanel } from './RulesSettingsPanel'
 import { SkillsSettingsPanel } from './SkillsSettingsPanel'
@@ -45,6 +47,7 @@ export type SettingsSection =
   | 'websearch'
   | 'permissions'
   | 'storage'
+  | 'diagnostics'
 
 const SECTION_IDS: SettingsSection[] = [
   'general',
@@ -56,7 +59,8 @@ const SECTION_IDS: SettingsSection[] = [
   'codeindex',
   'websearch',
   'permissions',
-  'storage'
+  'storage',
+  'diagnostics'
 ]
 
 interface NavItemMeta {
@@ -147,6 +151,12 @@ const NAV_GROUPS: NavGroupMeta[] = [
         label: '数据与存储',
         description: '查看会话磁盘占用，并清理 checkpoint 快照或彻底删除不再需要的会话。',
         icon: <DatabaseIcon size={16} />
+      },
+      {
+        id: 'diagnostics',
+        label: '诊断',
+        description: '导出脱敏诊断包（日志与系统信息，不含密钥与消息内容），反馈问题时附上。',
+        icon: <InfoIcon size={16} />
       }
     ]
   }
@@ -182,7 +192,8 @@ const SETTINGS_PANELS: Record<SettingsSection, React.FC> = {
   codeindex: CodeIndexSettingsPanel,
   websearch: WebSearchSettingsPanel,
   permissions: PermissionsSettingsPanel,
-  storage: StorageSettingsPanel
+  storage: StorageSettingsPanel,
+  diagnostics: DiagnosticsSettingsPanel
 }
 
 export const SettingsModal: React.FC = () => {

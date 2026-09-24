@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import * as fs from 'fs'
+import fs from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { pruneOldCheckpoints } from '../../../../src/runtime/checkpoints/prune'
-import { writeManifest } from '../../../../src/runtime/checkpoints/manifest'
+import { writeManifest, readManifest } from '../../../../src/runtime/checkpoints/manifest'
 import type { CheckpointManifest } from '../../../../src/runtime/checkpoints/types'
 
 /**
@@ -35,6 +35,7 @@ describe('pruneOldCheckpoints active path filter', () => {
   })
 
   afterEach(() => {
+    vi.restoreAllMocks()
     fs.rmSync(checkpointRoot, { recursive: true, force: true })
   })
 
@@ -48,6 +49,69 @@ describe('pruneOldCheckpoints active path filter', () => {
     expect(fs.existsSync(join(checkpointRoot, sessionId, 'm1', 'files'))).toBe(false)
     expect(fs.existsSync(join(checkpointRoot, sessionId, 'm2', 'files'))).toBe(false)
     expect(fs.existsSync(join(checkpointRoot, sessionId, 'm3', 'files'))).toBe(true)
+  })
+
+  it('只有候选超过保留窗口才读取当前 active path', () => {
+    const activePath = vi.fn(() => new Set(['a', 'b']))
+    pruneOldCheckpoints(checkpointRoot, 'missing', 1, activePath)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1, activePath)
+    writeSessionManifest('a', 1)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1, activePath)
+    expect(activePath).not.toHaveBeenCalled()
+    writeSessionManifest('b', 2)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1, activePath)
+    expect(activePath).toHaveBeenCalledTimes(1)
+    expect(readManifest(checkpointRoot, sessionId, 'a')?.backupPruned).toBe(true)
+    expect(fs.existsSync(join(checkpointRoot, sessionId, 'b', 'files'))).toBe(true)
+  })
+
+  it('重复清理不写盘且保留首次清理时间', () => {
+    writeSessionManifest('old', 1)
+    writeSessionManifest('new', 2)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1)
+    const before = readManifest(checkpointRoot, sessionId, 'old')
+    const write = vi.spyOn(fs, 'writeFileSync')
+    vi.spyOn(Date, 'now').mockReturnValue(123456789)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1)
+    expect(write).not.toHaveBeenCalled()
+    expect(readManifest(checkpointRoot, sessionId, 'old')).toEqual(before)
+  })
+
+  it.each(['backupPruned', 'forwardPruned'] as const)('补全仅有 %s 的清理记录', flag => {
+    writeSessionManifest('old', 1)
+    writeSessionManifest('new', 2)
+    const manifest = readManifest(checkpointRoot, sessionId, 'old')!
+    manifest[flag] = true
+    writeManifest(checkpointRoot, manifest)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1)
+    expect(readManifest(checkpointRoot, sessionId, 'old')).toMatchObject({
+      backupPruned: true, forwardPruned: true, prunedAt: expect.any(Number)
+    })
+    expect(fs.existsSync(join(checkpointRoot, sessionId, 'old', 'files'))).toBe(false)
+  })
+
+  it.each(['files', 'forward'])('重新清理再次出现的 %s 目录', directory => {
+    writeSessionManifest('old', 1)
+    writeSessionManifest('new', 2)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1)
+    const path = join(checkpointRoot, sessionId, 'old', directory)
+    fs.mkdirSync(path)
+    fs.writeFileSync(join(path, 'backup.txt'), 'reappeared')
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1)
+    expect(fs.existsSync(path)).toBe(false)
+    expect(readManifest(checkpointRoot, sessionId, 'new')?.backupPruned).toBeUndefined()
+  })
+
+  it('路径切换后清理新路径过期项，保留边界和同时间戳顺序', () => {
+    for (const id of ['a', 'b', 'c']) writeSessionManifest(id, 1)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 2, new Set(['a', 'b']))
+    expect(['a', 'b', 'c'].map(id => readManifest(checkpointRoot, sessionId, id)?.backupPruned))
+      .toEqual([undefined, undefined, undefined])
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1, new Set(['a', 'b']))
+    expect(readManifest(checkpointRoot, sessionId, 'b')?.backupPruned).toBe(true)
+    pruneOldCheckpoints(checkpointRoot, sessionId, 1, new Set(['a', 'c']))
+    expect(readManifest(checkpointRoot, sessionId, 'c')?.backupPruned).toBe(true)
+    expect(fs.existsSync(join(checkpointRoot, sessionId, 'a', 'files'))).toBe(true)
   })
 
   it('有 activePath 过滤时非激活分支 manifest 不占保留名额', () => {

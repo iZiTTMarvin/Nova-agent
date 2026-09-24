@@ -2,15 +2,134 @@ import type { AgentEvent } from '../../../runtime/agent'
 import { readManifest } from '../../../runtime/checkpoints/manifest'
 import type { SessionMessageAppend, AppendMessageResult } from '../../../runtime/sessions/types'
 import { projectAssistantFieldsFromBlocks, MESSAGE_SCHEMA_VERSION_BLOCKS_SOURCE } from '../../../runtime/sessions/messageProjection'
-import type { MessageBlock, UserDeliveryFacts } from '../../../shared/session/types'
-import { appendTerminalErrorToBlocks } from '../../../shared/session/terminalErrorBlocks'
+import { decodeRuntimeInputBlock, type MessageBlock, type RuntimeInputBlock, type UserDeliveryFacts } from '../../../shared/session/types'
+import { appendTerminalErrorToBlocks, formatTerminalErrorMessage } from '../../../shared/session/terminalErrorBlocks'
 import { retainCommittedBlocksForRetry } from '../../../shared/session/retainCommittedBlocksForRetry'
 import { getSessionStore } from '../../services/SessionStoreHost'
 import { getRunCoordinator } from '../../services/RunCoordinatorHost'
+import { settleSubagentToolCall } from '../../../runtime/subagents/toolSettlement'
 import type { MessageContext, StreamAccumulator } from './types'
 
 /** 当前正在累积的流式消息映射：messageId → 累积器（按 turn identity fencing） */
 export const activeStreams = new Map<string, StreamAccumulator>()
+
+export interface RuntimeInputCommitReceipt {
+  status: 'committed' | 'already_committed'
+  notificationId: string
+  runId: string
+  messageId: string
+}
+
+export interface RuntimeInputCommitCommand {
+  messageId: string
+  input: RuntimeInputBlock
+}
+
+function bindRuntimeInputSource(
+  input: RuntimeInputBlock,
+  runId: string,
+  sessionId: string
+): void {
+  const coordinator = getRunCoordinator()
+  const source = coordinator.getSnapshot(input.sourceRunId)
+  if (!source) throw new Error(`runtime_input source run not found: ${input.sourceRunId}`)
+  if (source.deliveryBinding?.boundRunId && source.deliveryBinding.boundRunId !== runId) {
+    throw new Error('runtime_input source is bound to another run')
+  }
+  if (source.deliveryBinding?.boundSessionId && source.deliveryBinding.boundSessionId !== sessionId) {
+    throw new Error('runtime_input source is bound to another session')
+  }
+  const bound = coordinator.updateDeliveryBinding(input.sourceRunId, {
+    boundRunId: runId,
+    boundSessionId: sessionId
+  })
+  if (!bound) throw new Error('runtime_input source binding was not committed')
+}
+
+/**
+ * 将运行时输入先提交到 turnDraft，再加入活动上下文。调用方只可把返回回执视为 ACK。
+ */
+export function persistRuntimeInputFact(
+  command: RuntimeInputCommitCommand,
+  ctx: MessageContext
+): RuntimeInputCommitReceipt {
+  if (!ctx.runId) throw new Error('runtime_input requires an active run')
+  const stream = resolveStreamForEvent(command.messageId, ctx)
+  if (!stream) throw new Error('runtime_input has no matching active stream')
+  const input = decodeRuntimeInputBlock(command.input)
+  const durableDraft = getRunCoordinator().getSnapshot(ctx.runId)?.turnDraft
+  const durableInputs = durableDraft?.messageId === command.messageId
+    ? durableDraft.blocks.filter((block): block is RuntimeInputBlock => block.type === 'runtime_input')
+    : []
+  const durableExisting = durableInputs.find(block => block.notificationId === input.notificationId)
+  if (durableExisting) {
+    if (JSON.stringify(durableExisting) !== JSON.stringify(input)) {
+      throw new Error('runtime_input conflicts with committed notification')
+    }
+    bindRuntimeInputSource(input, ctx.runId, stream.sessionId)
+    if (!stream.blocks.some(block => block.type === 'runtime_input' && block.notificationId === input.notificationId)) {
+      stream.blocks = [...stream.blocks, structuredClone(durableExisting)]
+    }
+    return {
+      status: 'already_committed',
+      notificationId: input.notificationId,
+      runId: ctx.runId,
+      messageId: command.messageId
+    }
+  }
+  if (durableInputs.some(durable =>
+    !stream.blocks.some(block => block.type === 'runtime_input' && block.notificationId === durable.notificationId))) {
+    throw new Error('active stream is missing committed runtime input')
+  }
+  const existing = stream.blocks.find(
+    (block): block is RuntimeInputBlock =>
+      block.type === 'runtime_input' && block.notificationId === input.notificationId
+  )
+  if (existing) {
+    if (JSON.stringify(existing) !== JSON.stringify(input)) {
+      throw new Error('runtime_input conflicts with committed notification')
+    }
+  }
+
+  const hasCommittedStep = input.afterStep === -1 || stream.blocks.some(
+    block => block.type === 'text' && block.responseStep === input.afterStep
+  )
+  const hasRunningTool = stream.blocks.some(
+    block => block.type === 'tool' && block.responseStep === input.afterStep && block.status === 'running'
+  )
+  if (!hasCommittedStep || hasRunningTool) {
+    throw new Error('runtime_input must follow a complete assistant/tool step')
+  }
+  const samePosition = stream.blocks.filter(
+    (block): block is RuntimeInputBlock =>
+      block.type === 'runtime_input' && block.afterStep === input.afterStep
+  )
+  if (!existing && samePosition.some(block => block.order >= input.order)) {
+    throw new Error('runtime_input order must be strictly increasing')
+  }
+
+  const nextBlocks = existing ? [...stream.blocks] : [...stream.blocks, input]
+  const committed = persistTurnDraft(
+    ctx.runId,
+    command.messageId,
+    nextBlocks,
+    false,
+    ctx.executionGeneration,
+    stream.userDelivery
+  )
+  const persisted = committed?.turnDraft?.blocks.some(
+    block => block.type === 'runtime_input' && block.notificationId === input.notificationId
+  )
+  if (!persisted) throw new Error('runtime_input persistence was not confirmed')
+  bindRuntimeInputSource(input, ctx.runId, stream.sessionId)
+  stream.blocks = nextBlocks
+  return {
+    status: 'committed',
+    notificationId: input.notificationId,
+    runId: ctx.runId,
+    messageId: command.messageId
+  }
+}
 
 /** 把指定 run（或缺省全部）的 active stream 标记为 cancelled */
 export function markActiveStreamsCancelled(runId?: string): void {
@@ -99,7 +218,8 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
       if (!stream) break
       stampThinkingDuration(stream)
       const thinking = [...stream.blocks].reverse().find(block => block.type === 'thinking' && block.responseStep === undefined)
-      stream.blocks = stream.blocks.filter(block => block.type !== 'image' && block.responseStep !== undefined)
+      stream.blocks = stream.blocks.filter(block =>
+        block.type === 'runtime_input' || (block.type !== 'image' && block.responseStep !== undefined))
       if (event.reasoningContent) stream.blocks.push({ type: 'thinking', content: event.reasoningContent,
         responseStep: event.step,
         ...(event.reasoningProviderId ? { providerId: event.reasoningProviderId } : {}),
@@ -182,14 +302,22 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
         const blockIdx = stream.blocks.findIndex(b => b.type === 'tool' && b.toolCallId === event.toolCallId)
         if (blockIdx !== -1 && stream.blocks[blockIdx].type === 'tool') {
           const block = stream.blocks[blockIdx]
+          // 重建前明确丢弃旧消费事实，避免 error/无字段时残留。
+          const { subagentNotificationIds: _discardedReceipt, ...baseBlock } = block
+          void _discardedReceipt
+          // 仅 task_wait 非 error 结果接纳 IDs；其他工具/error 不携带。
+          const subagentNotificationIds = event.toolName === 'task_wait' && !isError && event.subagentNotificationIds?.length
+            ? [...event.subagentNotificationIds]
+            : undefined
           stream.blocks[blockIdx] = {
-            ...block,
+            ...baseBlock,
             status: isError ? 'error' : 'success',
             result: event.result,
             ...(event.processOutcome ? { processOutcome: { ...event.processOutcome } } : {}),
             ...(event.resultImages?.length ? { resultImages: event.resultImages.map(image => ({ ...image })) } : {}),
             ...(event.artifactId ? { artifactId: event.artifactId } : {}),
-            ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {})
+            ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {}),
+            ...(subagentNotificationIds ? { subagentNotificationIds } : {})
           }
         }
         // 工具结果边界：turnDraft 是执行中唯一事实源（fsync via RunStore）
@@ -408,11 +536,30 @@ function saveAssistantMessage(
 /**
  * 终态前收敛残留 running 工具块：message_end / error 之后不会有该工具的结果事件，
  * 原样落盘会让重启后的 UI 把「已中断」渲染成永久执行中（计划审阅卡一直转圈）。
+ * running 块先尝试精确结算（子代理真实结果），回落通用文案。
  */
-function settleRunningBlocksAsInterrupted(blocks: MessageBlock[]): MessageBlock[] {
+function settleRunningBlocks(
+  sessionId: string,
+  runId: string | undefined,
+  messageId: string,
+  blocks: MessageBlock[]
+): MessageBlock[] {
   return blocks.map((block): MessageBlock => {
     if (block.type !== 'tool' || block.status !== 'running') return block
-    return { ...block, status: 'error', result: '工具执行被中断' }
+    if (!runId) return { ...block, status: 'error', result: '工具执行被中断' }
+    const settled = settleSubagentToolCall(
+      { sessionStore: getSessionStore(), runCoordinator: getRunCoordinator() },
+      {
+        sessionId,
+        parentRunId: runId,
+        parentMessageId: messageId,
+        toolCallId: block.toolCallId,
+        toolName: block.toolName,
+        args: block.arguments
+      }
+    )
+    if (settled === null) return { ...block, status: 'error', result: '工具执行被中断' }
+    return { ...block, status: settled.status, result: settled.result }
   })
 }
 
@@ -433,7 +580,7 @@ function finalizeAssistantTurn(
   if (runId && executionGeneration != null &&
       !getRunCoordinator().isExecutionCurrent(runId, executionGeneration)) return
   // 终态统一收口：SessionStore 消息与 turnDraft receipt 都只写无 running 态的 blocks
-  const settledBlocks = settleRunningBlocksAsInterrupted(blocks)
+  const settledBlocks = settleRunningBlocks(sessionId, runId, messageId, blocks)
   const turnEndedAt = Date.now()
   const resolvedTurnStartedAt =
     turnStartedAt ??
@@ -483,8 +630,8 @@ function persistTurnDraft(
   finalized = false,
   executionGeneration?: number,
   userDelivery?: UserDeliveryFacts
-): void {
-  if (!runId) return
+): import('../../../shared/run/types').RunSnapshot | null {
+  if (!runId) return null
   const coord = getRunCoordinator()
   if (
     executionGeneration != null &&
@@ -493,10 +640,10 @@ function persistTurnDraft(
     console.warn(
       `[persistTurnDraft] generation 已失效，拒绝写入 runId=${runId} gen=${executionGeneration}`
     )
-    return
+    return null
   }
   // 落盘失败必须抛出，不得吞掉后继续宣称可恢复
-  coord.upsertTurnDraft(runId, {
+  return coord.upsertTurnDraft(runId, {
     messageId,
     blocks,
     userDelivery: userDelivery ?? activeStreams.get(messageId)?.userDelivery,
@@ -535,10 +682,12 @@ function saveErrorMessage(
   turnEndedAt: number = Date.now()
 ): void {
   const sessionStore = getSessionStore()
+  // 落盘即人话：协议前缀（ModelFailure:/ContextBudgetExceeded:）不进持久化，
+  // 与 blocks 路径的翻译落盘保持同一不变量
   const errorMessage: SessionMessageAppend = {
     id: messageId,
     role: 'assistant',
-    content: error,
+    content: formatTerminalErrorMessage(error),
     timestamp: Date.now(),
     ...(turnStartedAt !== undefined ? { turnStartedAt, turnEndedAt } : {})
   }

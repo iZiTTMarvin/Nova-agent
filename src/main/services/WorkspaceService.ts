@@ -10,21 +10,28 @@
  * - renderer 只订阅 workspace:changed，不反向写其它 store。
  * - 会话列表（availableSessions）随状态一起广播，避免 renderer 二次拉取。
  */
-import { dialog, BrowserWindow } from 'electron'
+import { app, dialog, BrowserWindow } from 'electron'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
-import type { SessionData, SessionSummary } from '../../runtime/sessions/types'
+import type { SessionControlIntent, SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import type { LlmRegistry, ReasoningEffort, ActiveModelRef } from '../../shared/config/llmRegistry'
+import {
+  getSupportedReasoningEfforts,
+  resolveModelReference,
+  resolveSessionModelRef
+} from '../../shared/config/llmRegistry'
 import type {
   ActivePlanDocument,
   ReadActivePlanParams,
+  SetSessionModelParams,
   WorkspaceState,
   Tier1BranchContext
 } from '../../shared/workspace/types'
 import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests } from '../../runtime/checkpoints/restore'
 import { processRegistry } from '../../runtime/process'
+import { loadLlmRegistry } from '../../runtime/model/config'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
 import {
   clearReadStateForSession,
@@ -63,8 +70,16 @@ export interface WorkspaceServiceDeps {
   /** Run 删除由 RunCoordinator 完成；延迟获取避免启动装配顺序耦合。 */
   getRunCoordinator: () => Pick<
     RunCoordinator,
-    'assertNoNonTerminalRunsForSessions' | 'deleteRunsForSessions'
+    'assertNoNonTerminalRunsForSessions' | 'deleteRunsForSessions' | 'listSnapshotsForSessions'
   >
+  /**
+   * 分支变化前的投递失效化临界区（由生命周期协调器实现）：
+   * 持久 branch_invalidate 意图并逐项完成失效化后才返回；抛错时调用方不得改 leaf。
+   */
+  invalidateBranchDelivery?: (
+    sessionId: string,
+    discardedAnchorMessageIds: ReadonlySet<string>
+  ) => void
   /**
    * 离开会话前回调（切走/删除/新建前）：主进程 sync drain + fire-and-forget 落盘。
    * 须在 SessionStore 删除会话之前调用，以便拿到 workspaceRoot。
@@ -72,6 +87,8 @@ export interface WorkspaceServiceDeps {
   onSessionLeaving?: (sessionId: string, workspaceRoot: string) => void
   /** 会话采集收尾：清 pending/buffer 注册表 */
   onSessionCaptureCleanup?: (sessionId: string) => void
+  /** 删除前把会话的 queued 接力预约结算为 cancelled 并解绑源，保证 durable 删除门禁通过。 */
+  settleQueuedRelayReservations?: (sessionIds: ReadonlySet<string>) => void
 }
 
 export interface WorkspaceRootChange {
@@ -96,7 +113,25 @@ export class WorkspaceService {
     currentProjectPath: null,
     currentMode: 'default',
     reasoningEffortOverride: null,
+    activeModelRef: null,
     availableSessions: []
+  }
+
+  /**
+   * 解析会话当前的有效模型引用：会话覆盖可用时按覆盖，
+   * 其余情况（含无会话）跟随注册表的全局最近选择；注册表缺失时为 null。
+   */
+  private resolveEffectiveModelRef(session?: {
+    readonly modelOverride?: ActiveModelRef
+  }): ActiveModelRef | null {
+    let registry: LlmRegistry | null
+    try {
+      registry = loadLlmRegistry(app.getPath('userData'))
+    } catch {
+      return null
+    }
+    if (!registry) return null
+    return resolveSessionModelRef(registry, session?.modelOverride)
   }
 
   /**
@@ -234,6 +269,7 @@ export class WorkspaceService {
       currentProjectPath: selected?.workspaceRoot ?? null,
       currentMode: selected?.mode ?? 'default',
       reasoningEffortOverride: selectedDetail?.reasoningEffortOverride ?? null,
+      activeModelRef: this.resolveEffectiveModelRef(selectedDetail ?? undefined),
       availableSessions: sessions
     }
     if (selected) {
@@ -271,16 +307,22 @@ export class WorkspaceService {
 
     // 创建新会话
     const settings = loadNovaSettings()
+    const inheritedModelRef = this.state.activeModelRef ?? this.resolveEffectiveModelRef() ?? undefined
     const data = store.create(selectedPath, this.state.currentMode, {
       codeIndexEnabled: settings.codeIndexEnabled,
-      permissionMode: settings.defaultPermissionMode
+      permissionMode: settings.defaultPermissionMode,
+      ...(inheritedModelRef ? { modelOverride: inheritedModelRef } : {}),
+      ...(this.state.reasoningEffortOverride
+        ? { reasoningEffortOverride: this.state.reasoningEffortOverride }
+        : {})
     })
 
     this.state = {
       currentSessionId: data.id,
       currentProjectPath: selectedPath,
       currentMode: data.mode,
-      reasoningEffortOverride: null,
+      reasoningEffortOverride: data.reasoningEffortOverride ?? null,
+      activeModelRef: this.resolveEffectiveModelRef(data),
       availableSessions: store.list()
     }
     this.notifyWorkspaceRootChanged(previousRoot, selectedPath)
@@ -296,15 +338,22 @@ export class WorkspaceService {
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store)
     const settings = loadNovaSettings()
+    // 新会话固化当前显示的模型，避免旧会话随全局默认值漂移。
+    const inheritedModelRef = this.state.activeModelRef ?? this.resolveEffectiveModelRef() ?? undefined
     const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode, {
       codeIndexEnabled: settings.codeIndexEnabled,
-      permissionMode: settings.defaultPermissionMode
+      permissionMode: settings.defaultPermissionMode,
+      ...(inheritedModelRef ? { modelOverride: inheritedModelRef } : {}),
+      ...(this.state.reasoningEffortOverride
+        ? { reasoningEffortOverride: this.state.reasoningEffortOverride }
+        : {})
     })
     this.state = {
       currentSessionId: data.id,
       currentProjectPath: params.workspaceRoot,
       currentMode: data.mode,
-      reasoningEffortOverride: null,
+      reasoningEffortOverride: data.reasoningEffortOverride ?? null,
+      activeModelRef: this.resolveEffectiveModelRef(data),
       availableSessions: store.list()
     }
     this.notifyWorkspaceRootChanged(previousRoot, params.workspaceRoot)
@@ -352,15 +401,66 @@ export class WorkspaceService {
       }
       runCoordinator.assertNoNonTerminalRunsForSessions(deletingIdSet)
     }
+
+    // 未执行的接力预约也是非终态 run：先结算为 cancelled 再走门禁（失败仍由 assert 兜底 fail-closed）
+    try {
+      this.deps.settleQueuedRelayReservations?.(deletingIdSet)
+    } catch (error) {
+      console.error('[WorkspaceService] 接力预约结算失败:', error)
+    }
     assertDeletionIdle()
 
     // 整棵会话树的进程清理成功后才能删除历史，失败时保留选择与运行记录供重试。
     const cleanup = await Promise.allSettled(deletingIds.map(id => processRegistry.terminateForSession(id)))
     const failures: unknown[] = cleanup.flatMap(result => result.status === 'rejected' ? [result.reason] : [])
     if (failures.length > 0) throw new AggregateError(failures, '会话进程清理失败，未删除会话')
+    // await 窗口内可能新接纳了接力预约：再结算一轮后才做最终空闲门禁
+    try {
+      this.deps.settleQueuedRelayReservations?.(deletingIdSet)
+    } catch (error) {
+      console.error('[WorkspaceService] 接力预约结算失败:', error)
+    }
     assertDeletionIdle()
+
+    // 全部空闲门禁通过后才落盘删除意图：被门禁拒绝的删除绝不能留下意图，
+    // 否则启动重放会补完一次用户并未成功的删除。意图同时冻结派遣/接力接纳。
+    // 同 operationId 的部分删除重试沿用已持久意图的冻结目标；其他意图冲突则拒绝。
+    const deleteIntent: SessionControlIntent = {
+      version: 1,
+      kind: 'delete',
+      operationId: `delete:${sessionId}`,
+      targetRunIds: runCoordinator
+        .listSnapshotsForSessions(deletingIdSet)
+        .map((snapshot) => snapshot.runId),
+      targetSessionIds: deletingIds,
+      requestedAt: Date.now()
+    }
+    let effectiveIntent = deleteIntent
+    if (requested) {
+      const intentResult = store.setControlIntent(sessionId, deleteIntent)
+      if (!intentResult.ok) {
+        const existing = intentResult.code === 'conflict' ? intentResult.current : undefined
+        if (existing?.kind === 'delete' && existing.operationId === deleteIntent.operationId) {
+          effectiveIntent = existing
+        } else if (intentResult.code === 'conflict') {
+          throw new Error('该会话存在未完成的控制操作，请等待其完成或稍后重试')
+        } else {
+          throw new Error(`会话 ${sessionId} 不存在`)
+        }
+      }
+    }
+    // 会话不存在时维持既有的空操作语义：意图宿主缺失不写意图，仅刷新列表
+    // 保持子先父后：后序遍历顺序处理意图冻结的会话集合
+    const orderedDeletingIds = deletingIds.filter(
+      (id) => effectiveIntent.targetSessionIds.includes(id)
+    )
+    const effectiveDeletingIdSet = new Set(orderedDeletingIds)
+
+    // run 先于会话元数据删除；会话按后序遍历子先父后，父元数据（含删除意图）最后移除。
+    // 中途失败保留删除意图，启动重放按同一冻结目标补完剩余删除。
+    runCoordinator.deleteRunsForSessions(effectiveDeletingIdSet)
     this.clearTier1View()
-    for (const id of deletingIds) {
+    for (const id of orderedDeletingIds) {
       const detail = store.load(id)
       if (detail) this.leaveSession(id, detail.workspaceRoot)
       store.delete(id)
@@ -369,9 +469,10 @@ export class WorkspaceService {
       this.deps.disposeIdleLoopForSession(id)
       clearSteeringQueue(id)
     }
-    runCoordinator.deleteRunsForSessions(deletingIdSet)
+    // 意图随父元数据删除而消失；幂等清除防御「父会话删除失败但意图已读旧值」的边角
+    store.clearControlIntent(sessionId, deleteIntent.operationId)
 
-    for (const id of deletingIds) {
+    for (const id of orderedDeletingIds) {
       planReviewWaiters.cancelForSession(id)
     }
 
@@ -392,6 +493,7 @@ export class WorkspaceService {
             currentProjectPath: detail.workspaceRoot,
             currentMode: detail.mode,
             reasoningEffortOverride: detail.reasoningEffortOverride ?? null,
+            activeModelRef: this.resolveEffectiveModelRef(detail),
             availableSessions: remaining
           }
           hydrateSessionWhitelistFromSession(detail)
@@ -405,6 +507,7 @@ export class WorkspaceService {
           currentProjectPath: null,
           currentMode: 'default',
           reasoningEffortOverride: null,
+          activeModelRef: null,
           availableSessions: []
         }
       }
@@ -454,6 +557,36 @@ export class WorkspaceService {
     return this.getState()
   }
 
+  /** 注册表变化后，重新投影当前会话的有效模型并清理不兼容覆盖。 */
+  refreshModelSelection(): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    const sessionId = this.state.currentSessionId
+    const session = sessionId ? store.loadMetadata(sessionId) : null
+    const activeModelRef = session ? this.resolveEffectiveModelRef(session) : null
+    let reasoningEffortOverride = session?.reasoningEffortOverride ?? null
+
+    if (session && activeModelRef && reasoningEffortOverride) {
+      const registry = loadLlmRegistry(app.getPath('userData'))
+      const resolved = registry ? resolveModelReference(registry, activeModelRef) : null
+      const supported = resolved?.status === 'available'
+        ? getSupportedReasoningEfforts(resolved.entry)
+        : null
+      if (!supported?.includes(reasoningEffortOverride)) {
+        reasoningEffortOverride = null
+        store.updateReasoningEffortOverride(session.id, null)
+      }
+    }
+
+    this.state = {
+      ...this.state,
+      activeModelRef,
+      reasoningEffortOverride,
+      availableSessions: store.list()
+    }
+    this.broadcast()
+    return this.getState()
+  }
+
   /** 切换当前会话（并同步主进程项目路径/模式） */
   selectSession(sessionId: string): WorkspaceState {
     this.clearTier1View()
@@ -472,6 +605,7 @@ export class WorkspaceService {
       currentProjectPath: meta.workspaceRoot,
       currentMode: meta.mode,
       reasoningEffortOverride: meta.reasoningEffortOverride ?? null,
+      activeModelRef: this.resolveEffectiveModelRef(meta),
       availableSessions: this.retainAvailableSessions(meta)
     }
     this.notifyWorkspaceRootChanged(previousRoot, meta.workspaceRoot)
@@ -506,6 +640,22 @@ export class WorkspaceService {
     return next
   }
 
+  /** 就地更新单条会话摘要（模型/强度等元数据变化），不重扫全部会话目录 */
+  private upsertSessionSummary(data: SessionData): void {
+    const next = [...this.state.availableSessions]
+    const index = next.findIndex(session => session.id === data.id)
+    if (index >= 0) {
+      next[index] = this.summaryFromMetadata(data)
+    } else {
+      next.push(this.summaryFromMetadata(data))
+    }
+    next.sort((a, b) => {
+      const byUpdated = b.updatedAt - a.updatedAt
+      return byUpdated !== 0 ? byUpdated : b.createdAt - a.createdAt
+    })
+    this.state.availableSessions = next
+  }
+
   private summaryFromMetadata(data: SessionData): SessionSummary {
     const base = {
       id: data.id,
@@ -518,6 +668,7 @@ export class WorkspaceService {
       title: data.title,
       titleSource: data.titleSource,
       ...(data.pinned ? { pinned: true as const } : {}),
+      ...(data.modelOverride ? { modelOverride: data.modelOverride } : {}),
       ...(data.reasoningEffortOverride
         ? { reasoningEffortOverride: data.reasoningEffortOverride }
         : {})
@@ -617,7 +768,7 @@ export class WorkspaceService {
 
   /**
    * 设置会话思考强度覆盖（并持久化到目标会话）。
-   * effort 为 null 清除覆盖；进行中的 run 不受影响，下一次 run 生效。
+   * effort 为 null 清除覆盖。turn 在装配时捕获强度，运行中切换不影响当前 run。
    */
   setReasoningEffortOverride(params: {
     effort: ReasoningEffort | null
@@ -629,14 +780,87 @@ export class WorkspaceService {
       throw new Error('当前没有会话，无法设置思考强度')
     }
 
-    const session = store.updateReasoningEffortOverride(sessionId, params.effort)
-    if (!session) {
+    const target = store.loadMetadata(sessionId)
+    if (!target) {
       throw new Error(`会话不存在: ${sessionId}`)
     }
+    if (target.kind === 'subagent') {
+      throw new Error('子会话的思考强度由父任务派生，不能单独切换')
+    }
+
+    if (params.effort !== null) {
+      const registry = loadLlmRegistry(app.getPath('userData'))
+      if (!registry) throw new Error('尚未配置任何服务商')
+      const resolved = resolveModelReference(
+        registry,
+        resolveSessionModelRef(registry, target.modelOverride)
+      )
+      if (resolved.status !== 'available') {
+        throw new Error('当前会话的模型不可用')
+      }
+      const supported = getSupportedReasoningEfforts(resolved.entry)
+      if (!supported?.includes(params.effort)) {
+        throw new Error(`当前模型不支持思考强度 ${params.effort}`)
+      }
+    }
+
+    const session = store.updateReasoningEffortOverride(sessionId, params.effort)
+    if (!session) throw new Error(`会话不存在: ${sessionId}`)
 
     const targetIsCurrent = sessionId === this.state.currentSessionId
     if (targetIsCurrent) {
       this.state = { ...this.state, reasoningEffortOverride: params.effort }
+    }
+    this.upsertSessionSummary(session)
+    this.broadcast()
+    return this.getState()
+  }
+
+  /**
+   * 设置会话模型覆盖（并持久化到目标会话）。
+   * ref 为 null 时清除覆盖、回到注册表默认模型。
+   * turn 装配时按会话有效配置创建 client，运行中切换不影响当前 run，下一次 run 生效。
+   */
+  setSessionModel(params: SetSessionModelParams): WorkspaceState {
+    const store = this.deps.getSessionStore()
+    const sessionId = params.sessionId ?? this.state.currentSessionId
+    if (!sessionId) {
+      throw new Error('当前没有会话，无法切换模型')
+    }
+
+    const target = store.loadMetadata(sessionId)
+    if (!target) {
+      throw new Error(`会话不存在: ${sessionId}`)
+    }
+    if (target.kind === 'subagent') {
+      throw new Error('子会话的模型由父任务派生，不能单独切换')
+    }
+
+    const registry = loadLlmRegistry(app.getPath('userData'))
+    if (!registry) throw new Error('尚未配置任何服务商')
+
+    const nextRef = params.ref ?? registry.activeModel
+    const resolved = resolveModelReference(registry, nextRef)
+    if (resolved.status !== 'available') {
+      throw new Error('所选模型不可用（可能已被删除、禁用或未配置密钥）')
+    }
+
+    const supported = getSupportedReasoningEfforts(resolved.entry)
+    const currentEffort = target.reasoningEffortOverride
+    const nextEffort = currentEffort && supported?.includes(currentEffort)
+      ? currentEffort
+      : null
+
+    const session = store.updateModelSelection(sessionId, params.ref, nextEffort)
+    if (!session) throw new Error(`会话不存在: ${sessionId}`)
+
+    this.upsertSessionSummary(session)
+    if (sessionId === this.state.currentSessionId) {
+      this.state = {
+        ...this.state,
+        activeModelRef: nextRef,
+        reasoningEffortOverride: nextEffort
+      }
     }
     this.broadcast()
     return this.getState()
@@ -719,10 +943,11 @@ export class WorkspaceService {
       throw new Error('重新生成失败：用户消息链不一致')
     }
 
-    this.revertFileChangesForMessageIds(
-      session,
-      new Set(activePath.slice(targetIdx).map(m => m.id))
-    )
+    // 失效化先于 leaf 变更：锚点离开激活路径的派遣通知与接力预约先持久作废
+    const discardedIds = new Set(activePath.slice(targetIdx).map(m => m.id))
+    this.deps.invalidateBranchDelivery?.(sessionId, discardedIds)
+
+    this.revertFileChangesForMessageIds(session, discardedIds)
 
     store.setCurrentLeaf(sessionId, userParentId)
     store.clearContextSnapshot(sessionId)
@@ -778,6 +1003,8 @@ export class WorkspaceService {
           ? currentPath.map(m => m.id)
           : currentPath.slice(lcaIdx + 1).map(m => m.id)
       )
+      // 失效化先于 leaf 变更：锚点离开激活路径的派遣通知与接力预约先持久作废
+      this.deps.invalidateBranchDelivery?.(sessionId, toRevertIds)
       this.revertFileChangesForMessageIds(session, toRevertIds)
     }
 
@@ -884,11 +1111,12 @@ export class WorkspaceService {
       throw new Error('编辑重发失败：只能编辑用户消息')
     }
 
+    // 失效化先于 leaf 变更：锚点离开激活路径的派遣通知与接力预约先持久作废
+    const discardedIds = new Set(activePath.slice(targetIdx).map(m => m.id))
+    this.deps.invalidateBranchDelivery?.(sessionId, discardedIds)
+
     // 2. 文件 undo：恢复「目标消息及其之后」区间内仍 active 的 checkpoint
-    this.revertFileChangesForMessageIds(
-      session,
-      new Set(activePath.slice(targetIdx).map(m => m.id))
-    )
+    this.revertFileChangesForMessageIds(session, discardedIds)
 
     // 3. 倒回 currentLeafId 到分叉点（目标用户消息的父；首条消息时为 null）
     store.setCurrentLeaf(sessionId, target.parentId)

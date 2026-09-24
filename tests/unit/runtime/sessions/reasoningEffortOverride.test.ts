@@ -53,8 +53,8 @@ describe('SessionStore 思考强度覆盖', () => {
 })
 
 describe('schema v10 → v11 迁移', () => {
-  it('当前版本包含会话权限模式字段', () => {
-    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(19)
+  it('当前版本包含会话模型覆盖字段', () => {
+    expect(CURRENT_SESSION_SCHEMA_VERSION).toBe(21)
   })
 
   it('v10 会话迁移后无覆盖字段，结构合法', () => {
@@ -74,5 +74,25 @@ describe('schema v10 → v11 迁移', () => {
     expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.reasoningEffortOverride).toBeUndefined()
     expect(migrated.kind).toBe('primary')
+  })
+})
+
+describe('SessionStore 模型选择', () => {
+  it('模型与兼容强度原子写入，重载后保持一致', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create(path.resolve(tmpDir, 'workspace'), 'default')
+    const ref = { providerId: 'provider-a', modelEntryId: 'model-a' }
+
+    const updated = store.updateModelSelection(session.id, ref, 'high')
+    expect(updated?.modelOverride).toEqual(ref)
+    expect(updated?.reasoningEffortOverride).toBe('high')
+    expect(store.load(session.id)?.modelOverride).toEqual(ref)
+    expect(store.load(session.id)?.reasoningEffortOverride).toBe('high')
+
+    const cleared = store.updateModelSelection(session.id, null, null)
+    expect(cleared?.modelOverride).toBeUndefined()
+    expect(cleared?.reasoningEffortOverride).toBeUndefined()
+    expect(store.load(session.id)?.modelOverride).toBeUndefined()
+    expect(store.load(session.id)?.reasoningEffortOverride).toBeUndefined()
   })
 })

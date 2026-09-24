@@ -9,19 +9,19 @@ import type { ToolDefinition } from '../../../../src/runtime/model/types'
 const sampleTools: ToolDefinition[] = [
   {
     name: 'ls',
-    description: '列出目录内容',
+    description: 'List directory contents',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '目录路径' } },
+      properties: { path: { type: 'string', description: 'Directory path' } },
       required: ['path']
     }
   },
   {
     name: 'read',
-    description: '读取文件',
+    description: 'Read a file',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '文件路径' } },
+      properties: { path: { type: 'string', description: 'File path' } },
       required: ['path']
     }
   }
@@ -30,17 +30,35 @@ const sampleTools: ToolDefinition[] = [
 describe('toolPromptRenderer', () => {
   it('native 模式只列出工具名和简短描述', () => {
     const out = renderToolInventory(sampleTools, { dialect: 'native' })
-    expect(out).toContain('- ls({ path: string }) — 列出目录内容')
-    expect(out).toContain('- read({ path: string }) — 读取文件')
+    expect(out).toContain('- ls({ path: string }) — List directory contents')
+    expect(out).toContain('- read({ path: string }) — Read a file')
     expect(out).not.toContain('<invoke>')
   })
 
   it('xml 模式给出完整 XML 调用示例和格式规则', () => {
     const out = renderToolInventory(sampleTools, { dialect: 'xml' })
-    expect(out).toContain('工具目录（XML inband 调用）')
+    expect(out).toContain('Tool catalog (XML inband calls)')
     expect(out).toContain('<invoke name="ls">')
     expect(out).toContain('<parameter name="path">src/example.ts</parameter>')
-    expect(out).toContain('`name` 必须是下面列出的工具名之一')
+    expect(out).toContain('`name` must be one of the tools listed below')
+  })
+
+  it('load_tools 可见时按需加载说明出现，不可见时不出现', () => {
+    const connector = {
+      name: 'load_tools',
+      description: 'Load tool groups',
+      parameters: { type: 'object' as const, properties: {} }
+    }
+    const withConnector = [...sampleTools, connector]
+
+    expect(renderToolInventory(withConnector, { dialect: 'native' }))
+      .toContain('Tool groups load on demand')
+    expect(renderToolInventory(sampleTools, { dialect: 'native' }))
+      .not.toContain('Tool groups load on demand')
+    expect(renderToolInventory(withConnector, { dialect: 'xml' }))
+      .toContain('Tool groups load on demand')
+    expect(renderToolInventory(sampleTools, { dialect: 'xml' }))
+      .not.toContain('Tool groups load on demand')
   })
 
   it('Plan 的 XML 工具目录不暴露写入、命令或子代理工具', () => {
@@ -66,7 +84,7 @@ describe('toolPromptRenderer', () => {
   it('stage_transition 在 XML 方言目录中仅 compose 可见（与 native 同源）', () => {
     const stageTool: ToolDefinition = {
       name: 'stage_transition',
-      description: '推进生命周期阶段',
+      description: 'Advance the lifecycle stage',
       parameters: {
         type: 'object',
         properties: {
@@ -94,21 +112,21 @@ describe('toolPromptRenderer', () => {
   it('renderWorkingDirectoryHint 返回工作区绝对路径', () => {
     const out = renderWorkingDirectoryHint('D:\\work\\project')
     expect(out).toContain('D:\\work\\project')
-    expect(out).toContain('相对路径都基于该绝对路径解析')
+    expect(out).toContain('resolve against this root')
   })
 
   it('xml 模式下 edit 示例不含旧版 path/old/new，避免模型漏传 filePath', () => {
     const editTool: ToolDefinition = {
       name: 'edit',
-      description: '精确修改已有文件',
+      description: 'Precisely modify an existing file',
       parameters: {
         type: 'object',
         properties: {
           filePath: { type: 'string' },
           edits: { type: 'array' },
-          path: { type: 'string', description: '（兼容旧格式）' },
-          old: { type: 'string', description: '（兼容旧格式）' },
-          new: { type: 'string', description: '（兼容旧格式）' }
+          path: { type: 'string', description: '(legacy format)' },
+          old: { type: 'string', description: '(legacy format)' },
+          new: { type: 'string', description: '(legacy format)' }
         },
         required: ['filePath']
       }

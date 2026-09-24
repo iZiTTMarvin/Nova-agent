@@ -89,6 +89,46 @@ describe('SubagentRuntimeFactory', () => {
     prepared.agentLoop.dispose()
   })
 
+  it('子代理即使 profile 点名浏览器工具也不会装配', () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-no-browser-'))
+    roots.push(sessionsDir)
+    const store = new SessionStore(sessionsDir)
+    const parent = store.create(sessionsDir, 'default')
+    const base = resolveSubagentProfileSnapshot({
+      id: 'explore', name: 'explore', description: '只读探索',
+      prompt: '探索', allowedTools: ['read']
+    }, 'explore')
+    const profile = { ...base, toolNames: [...base.toolNames, 'browser_observe', 'browser_act'] }
+    const child = store.createChildIfAbsent({
+      childSessionId: deriveChildSessionId('no-browser'), workspaceRoot: sessionsDir,
+      mode: 'default', permissionMode: 'request_approval', task: '探索',
+      subagent: {
+        header: testHeader, profile,
+        lineage: {
+          parentSessionId: parent.id, parentRunId: 'parent-run', rootRunId: 'parent-run', depth: 1,
+          spawnKey: 'no-browser', spawnRunId: 'child-run',
+          origin: { kind: 'task_tool', parentMessageId: 'parent-message', parentToolCallId: 'parent-call' }
+        }
+      }
+    }).session
+    const browserTool: ToolExecutor = {
+      name: 'browser_observe',
+      description: 'observe pages',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => ({ success: true, output: 'should-not-run' })
+    }
+    const prepared = prepareSubagentRuntime({
+      profile, task: '探索', workingDirectory: sessionsDir, isolation: 'readonly', childSession: child,
+      parentRunId: 'parent-run', rootRunId: 'parent-run', registry: testRegistry,
+      resolveTool: (name) => name === 'browser_observe' ? browserTool : undefined,
+      sessionStore: store, sessionsDir, readState: createReadState()
+    })
+    const prompt = prepared.agentLoop.getFrozenSystemPrompt()
+    expect(prompt).not.toContain('browser_observe')
+    expect(prompt).not.toContain('browser_act')
+    prepared.agentLoop.dispose()
+  })
+
   it('子代理 loop 装配同一完成策略：仅思考最多续做一次，有正文不续做', async () => {
     const spy = vi.spyOn(AgentLoop.prototype, 'setAssistantCompletionPolicy')
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-continue-'))

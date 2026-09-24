@@ -3,6 +3,7 @@
  */
 import { BrowserWindow, app } from 'electron'
 import { recoverSessionTurnDrafts } from '../../../runtime/sessions'
+import { settleSubagentToolCall } from '../../../runtime/subagents/toolSettlement'
 import {
   AgentLoop,
   getSubAgentSpec,
@@ -32,6 +33,8 @@ import type { IpcCommands } from '../../../shared/ipc/types'
 import type { SkillSlashRejection } from '../../../shared/skills/types'
 import type { MessageBlock, Mode, PermissionMode } from '../../../shared/session/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
+import { isTerminalRunStatus, type SubagentRelayTrigger } from '../../../shared/run/types'
+import type { SubagentRelayAdmission } from '../../../runtime/subagents'
 import { getSessionActiveMessages } from '../../../runtime/sessions/tree'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
 import { createEventStallDetector } from '../../../shared/diagnostics/stallDetector'
@@ -39,7 +42,10 @@ import type { ContentBlock } from '../../../runtime/model/types'
 import { loadNovaSettings } from '../../../runtime/settings/novaSettings'
 import { syncTavilyApiKeyFromSettings } from '../../../runtime/settings/syncTavilyApiKey'
 import { subscribeObservationCapture } from '../../../runtime/memory/MemoryObservationBridge'
+import { buildFileReferencePrefix, extractFileReferences } from '../../../shared/chat/fileReferences'
 import { getSessionStore } from '../../services/SessionStoreHost'
+import { resolveSessionModelConfig } from '../../services/sessionModelConfig'
+import { createModelClient } from '../../services/createModelClient'
 import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { ensureObservationCaptureForSession } from '../../services/MemoryConsolidationHost'
@@ -55,7 +61,8 @@ import {
 import {
   accumulateStreamEvent,
   disposeTurnStreams,
-  forwardEventToRenderer
+  forwardEventToRenderer,
+  persistRuntimeInputFact
 } from '../events'
 import {
   prepareAgentRuntime,
@@ -81,6 +88,11 @@ import {
   resolveChildModelFromProfile
 } from '../subagents/childModelRouting'
 import { getSubagentScheduler } from '../../services/SubagentSchedulerHost'
+import { isSubagentsShuttingDown } from '../../services/SubagentLifecycleHost'
+import {
+  getSubagentDeliveryCoordinator,
+  setIdleRelayCallback
+} from '../../services/SubagentDeliveryCoordinatorHost'
 import {
   ensureCodeGraphForWorkspace,
   getCodeContextQueryPort
@@ -140,18 +152,33 @@ export function ensureTerminalHooksRegistered(): void {
         interrupted: true
       })
     })
+    // 注册空闲接力回调
+    setIdleRelayCallback((sessionId) => fireIdleRelay(sessionId))
   } catch {
     // RunCoordinator 尚未初始化时跳过；registerHandlers 会先 init
   }
 }
 
-export interface SendAgentMessageParams {
+export interface SendAgentMessageUserParams {
   sessionId: string
   content: string
   userMessageId?: string
   images?: Array<{ fileName: string; data: string; mimeType: string }>
   regenerate?: boolean
+  internalRelay?: never
 }
+
+/** 内部接力入场：接管已持久化的 queued 接力预约；不是用户新授权。 */
+export interface SendAgentMessageRelayParams {
+  sessionId: string
+  internalRelay: { readonly relayRunId: string }
+  content?: never
+  userMessageId?: never
+  images?: never
+  regenerate?: never
+}
+
+export type SendAgentMessageParams = SendAgentMessageUserParams | SendAgentMessageRelayParams
 
 export interface SendAgentMessageDeps {
   getMainWindow: () => BrowserWindow | null
@@ -169,7 +196,10 @@ export async function sendAgentMessage(
   const { getMainWindow, getModelClient, getImageStore } = deps
 
   const sessionStore = getSessionStore()
-  recoverSessionTurnDrafts(params.sessionId, sessionStore, getRunCoordinator())
+  const runCoordinator = getRunCoordinator()
+  const settle = (input: Parameters<typeof settleSubagentToolCall>[1]) =>
+    settleSubagentToolCall({ sessionStore, runCoordinator }, input)
+  recoverSessionTurnDrafts(params.sessionId, sessionStore, runCoordinator, settle)
   const session = sessionStore.load(params.sessionId)
   if (!session) {
     throw new Error(`会话 ${params.sessionId} 不存在`)
@@ -178,16 +208,38 @@ export async function sendAgentMessage(
     throw new Error('Child Session 由父任务的执行服务管理，不能从普通消息入口启动新 turn')
   }
   const projectPath = session.workspaceRoot
-
-  // 无效 slash 在入口锁之前本地拒绝：不排队、不落盘、不建 run、不调模型。
-  // registry 先对齐本会话工作区，避免用错工作区的目录误拒项目技能。
-  const slashRejection = preflightSlashRejection(
-    params,
-    session,
-    ensureSkillRegistryForWorkspace(projectPath)
-  )
-  if (slashRejection) {
-    return { accepted: false, rejection: slashRejection }
+  // 接力入场（判别联合收窄）不构成用户新授权：不落盘、不建新 run，
+  // 只接管协调器已持久化的 queued 预约。
+  let relayRunId: string | undefined
+  let relayTrigger: SubagentRelayTrigger | null = null
+  if (params.internalRelay !== undefined) {
+    // 退出期间不再接管接力执行；queued 预约由原状保留，下次启动对账后接管
+    if (isSubagentsShuttingDown()) return { accepted: true }
+    // 预约已消失/已取代/已执行/身份不符时静默 no-op，避免对同一通知重复接力或误占他人 turn
+    const reservation = runCoordinator.getSnapshot(params.internalRelay.relayRunId)
+    if (
+      !reservation ||
+      reservation.sessionId !== params.sessionId ||
+      !reservation.relayTrigger ||
+      reservation.status !== 'queued' ||
+      reservation.turnStartedAt !== undefined
+    ) {
+      return { accepted: true }
+    }
+    relayRunId = params.internalRelay.relayRunId
+    relayTrigger = reservation.relayTrigger
+  }
+  if (params.internalRelay === undefined) {
+    // 无效 slash 在入口锁之前本地拒绝：不排队、不落盘、不建 run、不调模型。
+    // registry 先对齐本会话工作区，避免用错工作区的目录误拒项目技能。
+    const slashRejection = preflightSlashRejection(
+      params,
+      session,
+      ensureSkillRegistryForWorkspace(projectPath)
+    )
+    if (slashRejection) {
+      return { accepted: false, rejection: slashRejection }
+    }
   }
 
   // 并发模型：不同会话可同时跑，同一会话同时最多一个 turn。
@@ -198,9 +250,14 @@ export async function sendAgentMessage(
   // guardFollowup：用户在提问面板打开时发送新消息 → 自动 dismiss 本会话挂起的 askQuestion 请求，
   // 避免旧工具死等。空 answers → formatAnswers 输出 "User dismissed the question."。
   // 按会话过滤：并发下其它会话正在等待的提问不受影响。
-  dismissPendingAskQuestionsForSession(params.sessionId)
+  // 接力不是用户应答：不动挂起的提问，否则接力 turn 会替用户把问题丢掉。
+  if (params.internalRelay === undefined) {
+    dismissPendingAskQuestionsForSession(params.sessionId)
+  }
 
-  const modelClient = getModelClient()
+  // 会话有效模型：会话覆盖优先，否则跟随全局最近选择；注册表不可解析时回退全局 client
+  const sessionModelConfig = resolveSessionModelConfig(session)
+  const modelClient = sessionModelConfig ? createModelClient(sessionModelConfig) : getModelClient()
   if (!modelClient) {
     throw new Error('模型未配置，请先在侧边栏底部设置中配置并连接模型。')
   }
@@ -228,8 +285,8 @@ export async function sendAgentMessage(
   const capturedWorkspaceRoot = projectPath
   const capturedSessionsDir = sessionsDir
 
-  // 读取持久化配置以获取模型上下文窗口上限，用于动态压缩阈值
-  const persistedConfig = loadModelConfig(app.getPath('userData'))
+  // 读取会话有效配置以获取模型上下文窗口上限，用于动态压缩阈值
+  const persistedConfig = sessionModelConfig ?? loadModelConfig(app.getPath('userData'))
   const supportsVision = resolveSupportsVision(
     persistedConfig?.modelId ?? '',
     persistedConfig?.supportsVision
@@ -242,7 +299,6 @@ export async function sendAgentMessage(
   syncTavilyApiKeyFromSettings()
 
   // 仅提前取得协调器；所有会抛错的装配和输入准备完成后才创建 run。
-  const runCoordinator = getRunCoordinator()
   const executionRegistry = getRunExecutionRegistry()
 
   // 关键段复查（TOCTOU 防御）：入口锁在第一次检查后到这里隔着
@@ -251,6 +307,16 @@ export async function sendAgentMessage(
   // 另一个 turn 占用，按同一套入口锁规则处理后直接返回，绝不产生同会话双 run。
   // 此处位于 try/finally 之前，return 不会触发任何清理副作用。
   if (handleEntryLock(params)) return { accepted: true }
+
+  // 真实用户入场取代未执行的接力预约：预约消息已在历史中（接收事实不重复投递），
+  // 用户的新 turn 本身就会接管这些通知。
+  if (params.internalRelay === undefined) {
+    try {
+      getSubagentDeliveryCoordinator().supersedeQueuedRelayReservations(params.sessionId)
+    } catch (error) {
+      console.error('[AgentTurnService] 取代接力预约失败:', error)
+    }
+  }
 
   // session 持久化副作用留在 TurnService：factory 只装配，不写 session
   const promptCacheKey = sessionStore.ensureCacheRoutingKey(params.sessionId) ?? undefined
@@ -279,6 +345,7 @@ export async function sendAgentMessage(
     sessionsDir,
     novaSettings,
     modelClient,
+    ...(persistedConfig ? { modelConfig: persistedConfig } : {}),
     getImageStore,
     // readState 按会话隔离：同会话跨 turn 复用，不同会话互不污染
     readState: getReadStateForSession(params.sessionId),
@@ -291,12 +358,36 @@ export async function sendAgentMessage(
   // 本 turn 专属 AgentLoop（局部变量，不污染模块级状态，并发 turn 各自独立）
   const loopForRun = prepared.agentLoop
   const { eventBus, modelPool, runRefs, frozenPrompt } = prepared
+  const deliveryCoordinator = getSubagentDeliveryCoordinator()
+  const deliveryReceiver = deliveryCoordinator.createActiveTurnReceiver({
+    sessionId: capturedSessionId,
+    runId: () => runRefs.runId,
+    persistence: {
+      persist: (messageId, input) => {
+        return persistRuntimeInputFact(
+          { messageId, input },
+          {
+            mode: capturedMode,
+            permissionMode: capturedPermissionMode,
+            workspaceRoot: capturedWorkspaceRoot,
+            sessionsDir: capturedSessionsDir,
+            eventBus,
+            getMainWindow,
+            runId: runRefs.runId,
+            executionGeneration: runRefs.executionGeneration
+          }
+        )
+      }
+    }
+  })
+  loopForRun.setRuntimeInputReceiver(input => deliveryReceiver.receive(input))
   const turnExecutor = new AgentTurnExecutor(runCoordinator, executionRegistry)
   spawnSubagentPort = new SubagentExecutionHost({
     sessionStore,
     runCoordinator,
     turnExecutor,
     scheduler: getSubagentScheduler(),
+    isShuttingDown: isSubagentsShuttingDown,
     isRunExecutionActive: (runId) => executionRegistry.get(runId) !== null,
     hasSessionExecutionHandle: (sessionId) =>
       executionRegistry.listActiveRunIds().some(
@@ -364,6 +455,9 @@ export async function sendAgentMessage(
       disposeTurnStreams(context.runId, context.executionGeneration)
       writerLeaseRegistry.release(context.resourceOwnerRunId)
     },
+    onUnregistered: (context) => {
+      deliveryCoordinator.noteExecutionSettled(context.runId)
+    },
     getMainWindow,
     refreshAvailableSessions: () => {
       getWorkspaceService().refreshAvailableSessions()
@@ -381,9 +475,15 @@ export async function sendAgentMessage(
   let sendContent: string | ContentBlock[]
   let persistContent: string | SerializableContentBlock[] | null = null
   let persistBlocks: MessageBlock[] = []
-  let turnUserMessageId = params.userMessageId
+  let turnUserMessageId: string | undefined
+  // 用户原文：content 只在用户变体上必填，接力变体没有；此处一次性收敛为 string
+  const userContent = params.internalRelay === undefined ? params.content : ''
 
-  if (isRegenerate) {
+  if (relayTrigger !== null) {
+    // 冻结批次正文已作为 runtime_input 随接力消息落盘，turn 只需要内部指令
+    turnUserMessageId = relayTrigger.receiveMessageId
+    sendContent = RELAY_TASK_INSTRUCTION
+  } else if (isRegenerate) {
     const activePath = getSessionActiveMessages(session)
     const leafUser = activePath[activePath.length - 1]
     if (!leafUser || leafUser.role !== 'user') {
@@ -432,8 +532,8 @@ export async function sendAgentMessage(
     })))
   } else {
     // 持久化保留用户原始输入；slash 调度由 resolveAgentTurnRoute 在 startRun 前解析
-    sendContent = params.content
-    persistContent = params.content
+    sendContent = userContent
+    persistContent = userContent
   }
 
   // Turn 路由：在 startRun 和用户消息落盘前确定实际执行类型
@@ -450,7 +550,8 @@ export async function sendAgentMessage(
   }
 
   // 用户消息持久化（在 route 解析和并发限制之后，startRun 之前）
-  if (!isRegenerate && persistContent !== null) {
+  // 接力消息在接纳时已持久化，此处跳过以免重复投递。
+  if (params.internalRelay === undefined && !isRegenerate && persistContent !== null) {
     // 追加前记录是否已有含文字的用户消息（用于首条文字消息自动生成标题）
     const hadTextUserMsg = session.messages.some(
       m => m.role === 'user' && extractTextFromSerializableContent(m.content).trim() !== ''
@@ -466,7 +567,33 @@ export async function sendAgentMessage(
       timestamp: Date.now()
     }
     const userAppend = sessionStore.appendMessageFast(params.sessionId, userMessage)
-    if (!userAppend.ok) {
+    if (userAppend.ok && userAppend.status === 'already_exists') {
+      // 崩溃窗口：append 返回 already_exists 但 turn 未建 run 时，
+      // 按是否已绑定到既有 run 来决定是否跳过执行
+      const isBoundToRun = (): boolean => {
+        // (a) 已完成的 turn 在 assistant 消息上持久化了投递事实
+        const completedBound = session.messages.some((m): boolean => {
+          if (m.role !== 'assistant') return false
+          const msg = m as { userDelivery?: { userMessageId: string } }
+          return msg.userDelivery?.userMessageId === turnUserMessageId
+        })
+        if (completedBound) return true
+        // (b) 在途 turn 的 turnDraft.userDelivery
+        const activeSnapshots = runCoordinator.listSnapshotsForSession(params.sessionId)
+        const draftBound = activeSnapshots.some(
+          snap =>
+            !isTerminalRunStatus(snap.status) &&
+            snap.turnDraft?.userDelivery?.userMessageId === turnUserMessageId
+        )
+        return draftBound
+      }
+      if (isBoundToRun()) {
+        // 同一 userMessageId 已绑定既有 run（已完成或在途）：重复提交不再执行
+        console.info(`[AgentTurnService] already_exists 且已绑定，跳过重复执行: userMessageId=${turnUserMessageId}`)
+        return { accepted: true }
+      }
+      console.info(`[AgentTurnService] already_exists 但无绑定，复用既有消息继续: userMessageId=${turnUserMessageId}`)
+    } else if (!userAppend.ok) {
       throw new Error(`用户消息持久化失败: ${userAppend.error}`)
     }
 
@@ -525,27 +652,32 @@ export async function sendAgentMessage(
   // 不同会话允许并发持有各自执行句柄，此处不再做全局互斥。
 
   try {
+    // @ 文件引用：模型侧任务注入提示行（用户消息落盘保持纯净）
+    let modelTask: string | ContentBlock[] = sendContent
+    if (typeof modelTask === 'string') {
+      const refs = extractFileReferences(modelTask)
+      if (refs.length > 0) modelTask = buildFileReferencePrefix(refs) + modelTask
+    }
+
     await turnExecutor.execute({
       agentLoop: loopForRun,
-      task: sendContent,
+      task: modelTask,
       route: turnRoute,
       sessionId: params.sessionId,
       workingDirectory: projectPath,
       isolation: 'shared',
       runRefs,
+      // 接力 run 身份在接纳时已持久化：executor 的 startRun 按 runId 幂等复用 queued 快照，
+      // 再由 markRunning 完成「先持久再执行」的 queued → running。
+      ...(relayRunId ? { runId: relayRunId } : {}),
       userMessageId: turnUserMessageId,
       onStarted: (context) => {
         agentLoopsByRunId.set(context.runId, loopForRun)
       },
       afterOutcome: (outcome) => {
-        // incomplete 轮次同样已结束（被停止策略截断），对话内容照样值得提炼
+        // incomplete 轮次同样已结束（被停止策略截断），对话内容照样值得固化
         if (outcome.status === 'completed' || outcome.status === 'incomplete') {
-          onUserTurnCompleteForExtract(
-            params.sessionId,
-            projectPath,
-            sessionStore,
-            modelPool
-          )
+          onUserTurnCompleteForExtract(params.sessionId, projectPath)
         }
       },
       onCleanup: (context) => {
@@ -561,7 +693,12 @@ export async function sendAgentMessage(
     retireIdleLoopForSession(params.sessionId)
     idleLoopsBySession.set(params.sessionId, loopForRun)
     // 同会话排队消息：当前 turn 终态后，取出队首发起新 turn（递归，FIFO）
-    drainSteeringQueue(params.sessionId, deps)
+    const dequeued = drainSteeringQueue(params.sessionId, deps)
+    // 真实用户排队输入优先：steering queue 出队后才检查空闲接力。
+    // 仅本轮正常结束（incomplete 也算收敛）才自动接力；失败/中断/取消后只等用户继续。
+    if (!dequeued && runCoordinator.getSnapshot(runRefs.runId)?.status === 'completed') {
+      fireIdleRelay(params.sessionId)
+    }
   }
   return { accepted: true }
 }
@@ -572,7 +709,7 @@ export async function sendAgentMessage(
  * 叶子缺失等输入错误留给既有 preflight 抛错，这里只看 slash 本身。
  */
 function preflightSlashRejection(
-  params: SendAgentMessageParams,
+  params: SendAgentMessageUserParams,
   session: SessionData,
   skillRegistry: SkillRegistry
 ): SkillSlashRejection | null {
@@ -604,9 +741,14 @@ function preflightSlashRejection(
  */
 function handleEntryLock(params: SendAgentMessageParams): boolean {
   const action = resolveEntryLockAction({
-    turnInProgress: isSessionTurnInProgress(params.sessionId)
+    turnInProgress: isSessionTurnInProgress(
+      params.sessionId,
+      params.internalRelay !== undefined ? { excludeRunId: params.internalRelay.relayRunId } : undefined
+    )
   })
   if (action.kind === 'proceed') return false
+  // 接力预约不进 steering queue：保持 queued 预约，等当前 turn 结束后由 finally 重新触发接管
+  if (params.internalRelay !== undefined) return true
   enqueueSteeringMessage(params.sessionId, params)
   return true
 }
@@ -629,19 +771,92 @@ function retireIdleLoopForSession(sessionId: string): void {
  * 取出该会话 steering queue 的队首消息并发起新 turn。
  *
  * 只在当前 turn 真正结束（finally 执行）后调用，保证同会话串行。
- * 队列为空时直接返回；取出后递归进入 sendAgentMessage，下一轮结束时会再次 drain。
+ * 返回是否出队：未出队说明队列已空，调用方据此决定能否检查空闲接力。
+ * 出队后递归进入 sendAgentMessage，下一轮结束时会再次 drain。
  */
-function drainSteeringQueue(sessionId: string, deps: SendAgentMessageDeps): void {
+function drainSteeringQueue(sessionId: string, deps: SendAgentMessageDeps): boolean {
   const next = dequeueSteeringMessage(sessionId)
-  if (!next) return
+  if (!next) return false
   // 新 turn 在 finally 中执行；异常交给 sendAgentMessage 自身上层处理，不再吞掉
-  void sendAgentMessage(fromSteeringMessage(next), deps).catch((err) => {
-    console.error(`[AgentTurnService] steering queue 排队消息执行失败 session=${sessionId}:`, err)
-  })
+  void sendAgentMessage(fromSteeringMessage(next), deps)
+    .then((result) => {
+      // 本地拒绝（如 slash 无效）的排队消息不会进入 finally 链：补一次接力检查
+      if (result && result.accepted === false) fireIdleRelay(sessionId)
+    })
+    .catch((err) => {
+      console.error(`[AgentTurnService] steering queue 排队消息执行失败 session=${sessionId}:`, err)
+    })
+  return true
+}
+
+/** 接力 turn 的固定内部指令：通知正文已在接力消息的 runtime_input 块中。 */
+const RELAY_TASK_INSTRUCTION =
+  '[后台接力] 刚完成的后台子任务结果已作为运行时通知加入上下文。请继续推进当前工作；若有需要用户知晓的结论或需要用户决策的事项，直接说明。'
+
+let idleRelayDeps: SendAgentMessageDeps | null = null
+/** 按 relayRunId 的接管单飞：并发触发 join 同一 Promise。 */
+const relayTakeovers = new Map<string, Promise<void>>()
+
+export function configureIdleRelay(deps: SendAgentMessageDeps): void {
+  idleRelayDeps = deps
+}
+
+/**
+ * 空闲接力：后台子任务终态通知在父会话空闲时自动发起新 turn 处理。
+ *
+ * 是否接力、接力几次、批次内容由投递协调器的持久预约决定；此处只负责接管。
+ */
+function fireIdleRelay(sessionId: string): void {
+  // 退出流程关闭新接力接纳；已持久预约留给下次启动接管，不随进程退出硬跑
+  if (isSubagentsShuttingDown()) return
+  // 活跃 turn 的接收边界自会交付，turn finally 会再检查；此处直接返回避免同一通知双触发
+  if (isSessionTurnInProgress(sessionId)) return
+  let admission: SubagentRelayAdmission | null
+  try {
+    admission = getSubagentDeliveryCoordinator().admitIdleRelay(sessionId)
+  } catch (error) {
+    console.error(`[AgentTurnService] 空闲接力接纳失败 session=${sessionId}:`, error)
+    return
+  }
+  if (!admission) return
+  takeoverRelay(sessionId, admission.relayRunId)
+}
+
+function takeoverRelay(sessionId: string, relayRunId: string): void {
+  if (relayTakeovers.has(relayRunId)) return
+  const deps = idleRelayDeps
+  if (!deps) return
+  const takeover = sendAgentMessage({ sessionId, internalRelay: { relayRunId } }, deps)
+    .catch((error) => {
+      console.error(`[AgentTurnService] 空闲接力执行失败 session=${sessionId} run=${relayRunId}:`, error)
+      try {
+        getSubagentDeliveryCoordinator().settleRelayReservation(
+          relayRunId, 'failed', error instanceof Error ? error.message : String(error)
+        )
+      } catch (settleError) {
+        console.error('[AgentTurnService] 接力预约结算失败:', settleError)
+      }
+    })
+    .then(() => undefined)
+    .finally(() => {
+      if (relayTakeovers.get(relayRunId) === takeover) relayTakeovers.delete(relayRunId)
+    })
+  relayTakeovers.set(relayRunId, takeover)
+}
+
+/** 启动接管：对账后仍有效的预约与 pending 通知所在会话逐个触发接力（模型缺失等失败在接管内结算）。 */
+export function resumeIdleRelaysAfterStartup(): void {
+  try {
+    for (const sessionId of getSubagentDeliveryCoordinator().listSessionsAwaitingRelay()) {
+      fireIdleRelay(sessionId)
+    }
+  } catch (error) {
+    console.error('[AgentTurnService] 启动接力恢复失败:', error)
+  }
 }
 
 /** 把 steering 队列项还原为 sendAgentMessage 入参（结构一致，仅做类型收窄）。 */
-function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageParams {
+function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageUserParams {
   return {
     sessionId: msg.sessionId,
     content: msg.content,

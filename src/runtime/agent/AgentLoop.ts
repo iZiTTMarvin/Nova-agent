@@ -43,7 +43,6 @@ import type { PlanReviewResolution } from '../../shared/planReview'
 import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
 import { isToolDirectlyPresented } from '../code-mode'
-import { formatTerminalErrorMessage } from '../../shared/session/terminalErrorBlocks'
 
 import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
@@ -189,6 +188,12 @@ export class AgentLoop {
   /** 本轮构造时捕获的 active plan；计划正文仍以工作区文件为真源。 */
   private activePlanPath?: string
 
+  setRuntimeInputReceiver(
+    receiver: NonNullable<AgentLoopConfig['receiveRuntimeInputs']>
+  ): void {
+    this.config.receiveRuntimeInputs = receiver
+  }
+
   constructor(
     modelClient: ModelClient | ModelClientPool,
     eventBus: EventBus,
@@ -207,7 +212,8 @@ export class AgentLoop {
         primaryConfig: {
           baseUrl: clientConfig?.baseUrl ?? '',
           apiKey: '',
-          modelId: clientConfig?.modelId ?? 'primary'
+          modelId: clientConfig?.modelId ?? 'primary',
+          ...(config.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {})
         }
       })
     this.eventBus = eventBus
@@ -238,10 +244,12 @@ export class AgentLoop {
       maxParallelToolCalls: Math.max(1, config?.maxParallelToolCalls ?? 4),
       onCompaction: config?.onCompaction,
       onToolResultCommitted: config?.onToolResultCommitted,
+      receiveRuntimeInputs: config?.receiveRuntimeInputs,
       skillsTokenEstimate: config?.skillsTokenEstimate,
       toolDialectOverride: config?.toolDialectOverride,
       promptCacheKey: config?.promptCacheKey,
       reasoningEffort: config?.reasoningEffort,
+      projectionEconomics: config?.projectionEconomics,
       permissionManager: config.permissionManager
     }
     // 按当前 active provider 判定方言；fallback 切换后由 StreamProcessor 重算
@@ -252,7 +260,8 @@ export class AgentLoop {
     this.ctx.permissionCeiling = config?.permissionCeiling ?? null
     this.maxToolRounds = this.config.maxToolRounds ?? 20
     this.contextBudgetManager = createProductionContextBudgetManager({
-      contextWindow: this.config.contextWindow ?? 200_000
+      contextWindow: this.config.contextWindow ?? 200_000,
+      resolveModelId: () => this.modelPool.getActiveProvider().modelId
     })
     this.compactionService = new CompactionService({
       context: this.ctx,
@@ -263,20 +272,20 @@ export class AgentLoop {
       onCompaction: this.config.onCompaction,
       getSystemPrompt: entryCount => this.buildFrozenSystemPrompt(entryCount),
       canWrite: () => !this.cancelled && (this.assertExecutionCurrent?.() ?? true),
-      measureRequest: (messages, tools) => this.modelPool.measureRequest(messages, tools, { purpose: 'main', promptCacheKey: this.config.promptCacheKey, reasoningEffort: this.config.reasoningEffort }),
-      getIdleCacheProfile: () => {
-        const provider = this.modelPool.getActiveProvider()
-        return resolveCacheProfile(provider.baseUrl, provider.modelId, {
-          cacheProfile: provider.cacheProfile,
-          cacheStrategy: provider.cacheStrategy
-        })
-      },
+      measureRequest: (messages, tools, options) => this.modelPool.measureRequest(messages, tools, {
+        purpose: 'main',
+        promptCacheKey: this.config.promptCacheKey,
+        reasoningEffort: this.config.reasoningEffort,
+        ...options
+      }),
+      getIdleCacheProfile: () => this.currentCacheProfile(),
       // 空闲压缩没有活跃轮次可借用缓存：独立缓存投影，取舍见 SummaryProjection 契约
       idleProjection: createSummaryProjection({
         context: this.ctx,
         policy: () => this.currentRequestProjectionPolicy()
       }),
       promptCacheKey: this.config.promptCacheKey,
+      getReasoningEffort: () => this.config.reasoningEffort,
       collectTouchedFiles: this.config.collectCompactionTouchedFiles,
       getRealityAnchors: () => ({
         workspacePath: this.ctx.workingDir,
@@ -293,10 +302,30 @@ export class AgentLoop {
       })
     }
   }
-  /** 当前应使用的投影归档策略：仅当模型具备 archive_read 时启用（含摘要投影） */
+  /** 当前 active provider 的缓存档案；fallback 切换后随之变化 */
+  private currentCacheProfile() {
+    const provider = this.modelPool.getActiveProvider()
+    return resolveCacheProfile(provider.baseUrl, provider.modelId, {
+      cacheProfile: provider.cacheProfile,
+      cacheStrategy: provider.cacheStrategy
+    })
+  }
+
+  /**
+   * 当前应使用的投影归档策略：仅当模型具备 archive_read 时启用（含摘要投影）。
+   * 每次模型请求前由 kernel 重解析——economics 随 provider，pressure 随最近预算评估。
+   */
   private currentRequestProjectionPolicy() {
+    const economicsOff = this.config.projectionEconomics === 'off'
     return resolveRequestProjectionPolicy(
-      getEffectiveToolDefinitions(this.ctx).some(tool => tool.name === 'archive_read')
+      getEffectiveToolDefinitions(this.ctx).some(tool => tool.name === 'archive_read'),
+      this.config.contextWindow ?? 200_000,
+      economicsOff
+        ? undefined
+        : {
+            economics: this.currentCacheProfile().economics,
+            budget: this.compactionService.getBudget()
+          }
     )
   }
 
@@ -867,7 +896,7 @@ export class AgentLoop {
       getModeTransitionInstruction: () => this.getCurrentModeInstruction(),
       runOverflowCompaction: (mode, projection) =>
         this.compactionService.runOverflowCompaction(mode, projection, this.abortController?.signal),
-      requestProjectionPolicy: this.currentRequestProjectionPolicy(),
+      resolveRequestProjectionPolicy: () => this.currentRequestProjectionPolicy(),
     }
 
     // 模型终态错误只在此记录；错误事件与全部收尾由 finalizeTurn 统一执行，
@@ -887,6 +916,7 @@ export class AgentLoop {
       abortSignal: () => this.abortController?.signal,
       executeBatch,
       onToolResultCommitted: this.config.onToolResultCommitted,
+      receiveRuntimeInputs: this.config.receiveRuntimeInputs,
       prepareMainRequest: async (messages, tools, projection) => {
         try {
           return await this.compactionService.prepareMainRequest(messages, tools, projection, this.abortController?.signal)
@@ -991,10 +1021,13 @@ export class AgentLoop {
     }
 
     if (outcome.status === 'failed') {
+      // 发原始文本（可含 ModelFailure:<kind>: / ContextBudgetExceeded: 前缀）；
+      // 翻译统一发生在展示边界（renderer 与主进程落盘共用 formatTerminalErrorMessage），
+      // 在这里预翻译会让前缀到不了动作解析。
       this.eventBus.emit({
         type: 'error',
         messageId,
-        error: formatTerminalErrorMessage(outcome.error.message)
+        error: outcome.error.message
       })
     } else {
       // incomplete 与 completed 一样发 message_end 且不带 interrupted：

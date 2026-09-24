@@ -4,9 +4,8 @@
  */
 export function estimateTextTokens(text: string): number {
   let units = 0
-  for (const char of text) {
-    const point = char.codePointAt(0)!
-    units += point <= 0x7f ? 0.25 : point <= 0xffff ? 1 : 2
+  for (let i = 0; i < text.length; i++) {
+    units += text.charCodeAt(i) <= 0x7f ? 0.25 : 1
   }
   return Math.ceil(units)
 }
