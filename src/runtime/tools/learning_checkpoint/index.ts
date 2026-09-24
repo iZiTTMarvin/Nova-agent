@@ -2,18 +2,18 @@ import { randomUUID } from 'crypto'
 import type { ToolExecutor } from '../types'
 import { claimCheckpointSlot } from '../../learning/progress/checkpointBatchGate'
 import {
-  getDefaultLearningCheckpointTurnStore,
-  type LearningCheckpointTurnStore
-} from '../../learning/progress/checkpointTurnStore'
+  getDefaultLearningProgress,
+  type LearningProgress
+} from '../../learning/progress/LearningProgress'
 
 export interface LearningCheckpointToolDeps {
-  getStore?: () => LearningCheckpointTurnStore | null
+  getProgress?: () => LearningProgress | null
 }
 
 export function createLearningCheckpointTool(
   deps: LearningCheckpointToolDeps = {}
 ): ToolExecutor {
-  const getStore = deps.getStore ?? getDefaultLearningCheckpointTurnStore
+  const getProgress = deps.getProgress ?? getDefaultLearningProgress
 
   return {
     name: 'learning_checkpoint',
@@ -36,7 +36,8 @@ export function createLearningCheckpointTool(
       }
       const sessionId = context.sessionId
       const runId = context.runId
-      if (!sessionId || !runId) {
+      const workingDir = context.workingDir
+      if (!sessionId || !runId || !workingDir) {
         return { success: false, output: '', error: '缺少 session/run 身份' }
       }
       const question = typeof args.question === 'string' ? args.question.trim() : ''
@@ -60,19 +61,19 @@ export function createLearningCheckpointTool(
         }
       }
 
-      const store = getStore()
-      if (!store) {
+      const progress = getProgress()
+      if (!progress) {
         return { success: false, output: '', error: '学习停点存储未接入' }
       }
 
       try {
-        store.save({
-          checkpointId,
+        await progress.saveCheckpoint({
+          workspaceRoot: workingDir,
           sessionId,
           runId,
+          checkpointId,
           cursorVersion: args.cursorVersion as number,
-          question,
-          createdAt: Date.now()
+          question
         })
       } catch (error) {
         return {
