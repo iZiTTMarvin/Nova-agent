@@ -9,19 +9,19 @@ import type { ToolDefinition } from '../../../../src/runtime/model/types'
 const sampleTools: ToolDefinition[] = [
   {
     name: 'ls',
-    description: '列出目录内容',
+    description: 'List directory contents',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '目录路径' } },
+      properties: { path: { type: 'string', description: 'Directory path' } },
       required: ['path']
     }
   },
   {
     name: 'read',
-    description: '读取文件',
+    description: 'Read a file',
     parameters: {
       type: 'object',
-      properties: { path: { type: 'string', description: '文件路径' } },
+      properties: { path: { type: 'string', description: 'File path' } },
       required: ['path']
     }
   }
@@ -30,8 +30,8 @@ const sampleTools: ToolDefinition[] = [
 describe('toolPromptRenderer', () => {
   it('native 模式只列出工具名和简短描述', () => {
     const out = renderToolInventory(sampleTools, { dialect: 'native' })
-    expect(out).toContain('- ls({ path: string }) — 列出目录内容')
-    expect(out).toContain('- read({ path: string }) — 读取文件')
+    expect(out).toContain('- ls({ path: string }) — List directory contents')
+    expect(out).toContain('- read({ path: string }) — Read a file')
     expect(out).not.toContain('<invoke>')
   })
 
@@ -46,7 +46,7 @@ describe('toolPromptRenderer', () => {
   it('load_tools 可见时按需加载说明出现，不可见时不出现', () => {
     const connector = {
       name: 'load_tools',
-      description: '加载工具组',
+      description: 'Load tool groups',
       parameters: { type: 'object' as const, properties: {} }
     }
     const withConnector = [...sampleTools, connector]
@@ -84,7 +84,7 @@ describe('toolPromptRenderer', () => {
   it('stage_transition 在 XML 方言目录中仅 compose 可见（与 native 同源）', () => {
     const stageTool: ToolDefinition = {
       name: 'stage_transition',
-      description: '推进生命周期阶段',
+      description: 'Advance the lifecycle stage',
       parameters: {
         type: 'object',
         properties: {
@@ -118,15 +118,15 @@ describe('toolPromptRenderer', () => {
   it('xml 模式下 edit 示例不含旧版 path/old/new，避免模型漏传 filePath', () => {
     const editTool: ToolDefinition = {
       name: 'edit',
-      description: '精确修改已有文件',
+      description: 'Precisely modify an existing file',
       parameters: {
         type: 'object',
         properties: {
           filePath: { type: 'string' },
           edits: { type: 'array' },
-          path: { type: 'string', description: '（兼容旧格式）' },
-          old: { type: 'string', description: '（兼容旧格式）' },
-          new: { type: 'string', description: '（兼容旧格式）' }
+          path: { type: 'string', description: '(legacy format)' },
+          old: { type: 'string', description: '(legacy format)' },
+          new: { type: 'string', description: '(legacy format)' }
         },
         required: ['filePath']
       }

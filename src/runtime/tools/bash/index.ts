@@ -109,15 +109,15 @@ export const bashTool: ToolExecutor = {
       // args 与 schema.properties 的交集键，未声明的键不参与校验也不报错。
       command: {
         type: 'string',
-        description: '要执行的 shell 命令'
+        description: 'The shell command to execute'
       },
       workdir: {
         type: 'string',
-        description: '相对于 workingDir 的工作目录（可选），不填则在 workingDir 执行。'
+        description: 'Working directory relative to workingDir (optional); when omitted, runs in workingDir.'
       },
       description: {
         type: 'string',
-        description: '5-10 词的简短描述（可选），帮助 UI 展示。'
+        description: 'A short 5-10 word description (optional) to help the UI display the command.'
       }
     },
     required: ['command']

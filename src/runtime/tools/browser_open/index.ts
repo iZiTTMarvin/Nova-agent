@@ -11,15 +11,15 @@ import {
 } from '../../browser'
 import { parseBrowserOpenToolArgs } from '../../../shared/browser'
 
-const DESCRIPTION = `browser_open — 在 Nova 内置浏览器里打开网页或控制已有页面的导航。
+const DESCRIPTION = `browser_open — open a web page in Nova's built-in browser, or navigate an already-open page.
 
-用法（按需填写字段，用不到的字段不要传）：
-- 新建页面：{"action":"open","url":"https://example.com"}
-- 在已有页面跳转：{"action":"open","browserId":"<browserId>","url":"https://example.com/next"}
-- 后退 / 前进 / 刷新 / 停止：{"action":"back","browserId":"<browserId>"}，action 换成 forward / reload / stop
+Usage (fill only the fields you need; omit unused ones):
+- Open a new page: {"action":"open","url":"https://example.com"}
+- Navigate an existing page: {"action":"open","browserId":"<browserId>","url":"https://example.com/next"}
+- Back / forward / reload / stop: {"action":"back","browserId":"<browserId>"}, with action swapped to forward / reload / stop
 
-browserId 来自本工具或 browser_observe list 的返回。已有页面时优先在原页面跳转，不要反复新建（最多同时 2 个页面）。
-只接受不含账号密码的 http(s) 地址。点击、填写等页面内操作用 browser_act。`
+browserId comes from this tool's return or from browser_observe list. When a page is already open, prefer navigating it in place rather than repeatedly creating new ones (at most 2 pages at once).
+Only http(s) addresses without embedded credentials are accepted. For in-page operations such as clicking and filling, use browser_act.`
 
 export function createBrowserOpenTool(deps: BrowserToolDeps): ToolExecutor {
   return {
@@ -32,12 +32,12 @@ export function createBrowserOpenTool(deps: BrowserToolDeps): ToolExecutor {
         action: {
           type: 'string',
           enum: ['open', 'back', 'forward', 'reload', 'stop'],
-          description: 'open=打开网址（带 browserId 时在该页跳转）；back/forward/reload/stop=控制已有页面'
+          description: 'open=open a URL (navigates within that page when browserId is given); back/forward/reload/stop=control an existing page'
         },
-        url: { type: 'string', description: 'action=open 时必填，http(s) 地址' },
+        url: { type: 'string', description: 'Required when action=open; an http(s) address' },
         browserId: {
           type: 'string',
-          description: 'back/forward/reload/stop 必填；open 时可选，填写则在该页面跳转而不新建页面'
+          description: 'Required for back/forward/reload/stop; optional for open, in which case it navigates that page instead of creating a new one'
         }
       },
       required: ['action'],

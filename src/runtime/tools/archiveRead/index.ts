@@ -27,7 +27,7 @@ function shrinkLimitToFit(
 
 const TOOL_NAME = 'archive_read'
 
-const TOOL_DESCRIPTION = '读取已被归档的工具输出内容。按结构预览、关键词搜索或分页读回正文，响应始终有界。'
+const TOOL_DESCRIPTION = 'Read archived tool output. Preview its structure, search by keyword, or page through the body; the response is always bounded.'
 
 const archiveReadTool: ToolExecutor = {
   name: TOOL_NAME,
@@ -37,26 +37,26 @@ const archiveReadTool: ToolExecutor = {
     properties: {
       ref: {
         type: 'string',
-        description: '归档占位符中的 resourceRef 字段'
+        description: 'The resourceRef field from the archive placeholder'
       },
       operation: {
         type: 'string',
         enum: ['inspect', 'search', 'read'],
         default: 'inspect',
-        description: 'inspect=查看结构摘要，search=关键词搜索，read=按行分页读回'
+        description: 'inspect=view the structure summary, search=keyword search, read=page through the body line by line'
       },
       keyword: {
         type: 'string',
-        description: 'search 操作时的搜索关键词'
+        description: 'Search keyword for the search operation'
       },
       offset: {
         type: 'number',
         default: 1,
-        description: 'read 操作的起始行号（1-based）'
+        description: 'Starting line number for the read operation (1-based)'
       },
       limit: {
         type: 'number',
-        description: 'read 操作的最大行数'
+        description: 'Maximum number of lines for the read operation'
       }
     },
     required: ['ref'],

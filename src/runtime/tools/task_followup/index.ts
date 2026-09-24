@@ -16,19 +16,19 @@ export function createTaskFollowupTool(deps: TaskFollowupToolDeps): ToolExecutor
   return {
     name: 'task_followup',
     description:
-      '让既有子代理带着已有上下文继续执行，而不是重新 task 从零开始。适用于：上一轮未完成（如已达工具轮数上限）、方向跑偏需要纠正、或需基于既有结论追问细节。child_session_id 取自此前 task / batch_task 结果中返回的会话 ID；profile、模型与权限沿用该子代理既有配置，不可在此覆盖。',
+      'Have an existing subagent continue with its existing context instead of starting over with a fresh task. Use when the previous run did not finish (e.g. it hit the tool-rounds cap), the direction went off course and needs correcting, or you need to drill into details based on existing conclusions. child_session_id comes from the session ID returned in a previous task / batch_task result; profile, model, and permissions follow that subagent\'s existing configuration and cannot be overridden here.',
     parameters: {
       type: 'object',
       properties: {
         child_session_id: {
           type: 'string',
-          description: '既有子代理的会话 ID，来自此前 task / batch_task 结果中返回的会话 ID'
+          description: 'The existing subagent session ID, from the session ID returned in a previous task / batch_task result'
         },
-        task: { type: 'string', description: '追加指令：说明要继续、纠正或追问什么' },
+        task: { type: 'string', description: 'Follow-up instruction: state what to continue, correct, or drill into' },
         resume_run_id: {
           type: 'string',
           description:
-            '可选：显式指定要恢复的 interrupted 子 run id（来自中断提示）。提供时恢复事实从该 run 派生；不提供保持原语义。'
+            'Optional: explicitly specify the interrupted sub run id to resume (from the interruption notice). When provided, the resume facts derive from that run; when omitted, the original semantics are kept.'
         }
       },
       required: ['child_session_id', 'task'],

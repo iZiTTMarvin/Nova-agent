@@ -28,21 +28,21 @@ const ACTIONS = new Set(['read', 'write', 'interrupt', 'stop'])
 export const shellSessionTool: ToolExecutor = {
   name: 'shell_session',
   description:
-    '操作 bash 长命令让出后的持久进程会话：read 读取新输出（游标推进）；write 向进程 stdin 写入输入（内容需自带换行）；interrupt 尽力发送中断信号（Windows 不支持时返回明确提示）；stop 终止进程并收取最终输出。',
+    'Work with the persistent process session bash hands off for long-running commands: read reads new output (advancing the cursor); write writes input to the process stdin (content must carry its own trailing newline); interrupt sends an interrupt signal on a best-effort basis (returns an explicit notice when unsupported on Windows); stop terminates the process and collects the final output.',
   executionMode: 'sequential',
   maxResultSizeChars: 50_000,
   parameters: {
     type: 'object',
     properties: {
-      ref: { type: 'string', description: 'bash 返回的进程会话引用（processHandle.ref）' },
+      ref: { type: 'string', description: 'Process session reference returned by bash (processHandle.ref)' },
       action: {
         type: 'string',
         enum: ['read', 'write', 'interrupt', 'stop'],
-        description: '要执行的动作'
+        description: 'The action to perform'
       },
       input: {
         type: 'string',
-        description: 'write 动作写入进程 stdin 的内容；需要自带换行符才会被行缓冲程序接收'
+        description: 'Content written to the process stdin by the write action; must carry its own trailing newline to be received by line-buffered programs'
       }
     },
     required: ['ref', 'action']

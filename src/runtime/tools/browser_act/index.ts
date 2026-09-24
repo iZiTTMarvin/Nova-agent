@@ -12,21 +12,21 @@ import {
 } from '../../browser'
 import { parseBrowserActToolArgs } from '../../../shared/browser'
 
-const DESCRIPTION = `browser_act — 在最近一次 browser_observe snapshot 的页面上执行一次点击、填写等操作。
+const DESCRIPTION = `browser_act — perform one click, fill, or similar operation on the page from the most recent browser_observe snapshot.
 
-参数：observation 原样复制快照返回的 observation 行；action 按 kind 只填需要的字段：
-- 点击：{"kind":"click","ref":"e3"}
-- 填写：{"kind":"fill","ref":"e3","text":"内容"}
-- 下拉选择：{"kind":"select","ref":"e3","values":["选项"]}
-- 按键：{"kind":"press","ref":"e3","key":"Enter"}
-- 滚动：{"kind":"scroll","direction":"down","amount":"page"}（amount 可为 page / half-page）
-- 视口：{"kind":"viewport","width":390,"height":844,"device":"mobile"}
+Parameters: copy the snapshot's observation line into observation verbatim; fill only the fields each action kind needs:
+- Click: {"kind":"click","ref":"e3"}
+- Fill: {"kind":"fill","ref":"e3","text":"content"}
+- Select: {"kind":"select","ref":"e3","values":["option"]}
+- Key press: {"kind":"press","ref":"e3","key":"Enter"}
+- Scroll: {"kind":"scroll","direction":"down","amount":"page"} (amount may be page / half-page)
+- Viewport: {"kind":"viewport","width":390,"height":844,"device":"mobile"}
 
-完整示例：{"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"},"action":{"kind":"click","ref":"e3"}}
+Full example: {"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"},"action":{"kind":"click","ref":"e3"}}
 
-ref 取自快照 dom 行。操作前会重新确认目标仍在、唯一、未被遮挡；页面跳转或内容明显变化后，先重新 snapshot 再继续。
-返回 outcome_unknown 时不要重放该动作，先重新观察。
-动作已应用不等于复制、下载或保存成功；此类效果需根据权限通知与可核对的业务结果另行确认。`
+ref comes from the snapshot dom lines. Before acting, the tool re-confirms the target is still present, unique, and unobscured; after a navigation or an obvious content change, snapshot again before continuing.
+When outcome_unknown is returned, do not replay the action — observe again first.
+An applied action does not mean a copy, download, or save succeeded; such effects must be confirmed separately through permission notices and checkable business results.`
 
 export function createBrowserActTool(deps: BrowserToolDeps): ToolExecutor {
   return {
@@ -40,25 +40,25 @@ export function createBrowserActTool(deps: BrowserToolDeps): ToolExecutor {
         observation: observationParameterSchema(),
         action: {
           type: 'object',
-          description: '要执行的操作，只填当前 kind 需要的字段',
+          description: 'The operation to perform; fill only the fields the current kind needs',
           properties: {
             kind: {
               type: 'string',
               enum: ['click', 'fill', 'select', 'press', 'scroll', 'viewport']
             },
-            ref: { type: 'string', description: 'click / fill / select / press：快照 dom 行里的 ref' },
-            text: { type: 'string', description: 'fill：要填入的文字' },
+            ref: { type: 'string', description: 'click / fill / select / press: the ref from the snapshot dom lines' },
+            text: { type: 'string', description: 'fill: the text to type in' },
             values: {
               type: 'array',
               items: { type: 'string' },
-              description: 'select：要选中的选项值或文字'
+              description: 'select: the option values or labels to select'
             },
-            key: { type: 'string', description: 'press：按键名，如 Enter、Tab、Escape' },
-            direction: { type: 'string', enum: ['up', 'down'], description: 'scroll：方向' },
-            amount: { type: 'string', enum: ['page', 'half-page'], description: 'scroll：幅度，默认 page' },
-            width: { type: 'integer', minimum: 1, maximum: 4096, description: 'viewport：宽度' },
-            height: { type: 'integer', minimum: 1, maximum: 4096, description: 'viewport：高度' },
-            device: { type: 'string', enum: ['desktop', 'mobile'], description: 'viewport：设备类型' }
+            key: { type: 'string', description: 'press: the key name, e.g. Enter, Tab, Escape' },
+            direction: { type: 'string', enum: ['up', 'down'], description: 'scroll: direction' },
+            amount: { type: 'string', enum: ['page', 'half-page'], description: 'scroll: amount; defaults to page' },
+            width: { type: 'integer', minimum: 1, maximum: 4096, description: 'viewport: width' },
+            height: { type: 'integer', minimum: 1, maximum: 4096, description: 'viewport: height' },
+            device: { type: 'string', enum: ['desktop', 'mobile'], description: 'viewport: device type' }
           },
           required: ['kind'],
           additionalProperties: false

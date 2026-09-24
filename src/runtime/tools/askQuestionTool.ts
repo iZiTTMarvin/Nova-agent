@@ -24,29 +24,29 @@ export const askQuestionTool: ToolExecutor = {
     properties: {
       questions: {
         type: 'array',
-        description: '问题列表，支持多问题向导（逐题问）',
+        description: 'The list of questions; supports a multi-question wizard (asked one by one)',
         items: {
           type: 'object',
           properties: {
             question: {
               type: 'string',
-              description: '问题正文'
+              description: 'The question text'
             },
             header: {
               type: 'string',
-              description: '问题上方的小标题/上下文（可选）'
+              description: 'Small label / context above the question (optional)'
             },
             options: {
               type: 'array',
-              description: '选项列表（至少 1 个）',
+              description: 'The option list (at least 1)',
               items: {
                 type: 'object',
                 properties: {
-                  label: { type: 'string', description: '选项显示文本' },
-                  description: { type: 'string', description: '选项说明（可选）' },
+                  label: { type: 'string', description: 'The option\'s display text' },
+                  description: { type: 'string', description: 'The option\'s description (optional)' },
                   recommended: {
                     type: 'boolean',
-                    description: '是否为推荐项；UI 渲染 "(Recommended)" 标记（可选）'
+                    description: 'Whether this is the recommended option; the UI renders the "(Recommended)" marker (optional)'
                   }
                 },
                 required: ['label']
@@ -54,11 +54,11 @@ export const askQuestionTool: ToolExecutor = {
             },
             multiple: {
               type: 'boolean',
-              description: '是否允许多选；false/不填 = 单选'
+              description: 'Whether multiple selection is allowed; false/omitted = single select'
             },
             custom: {
               type: 'boolean',
-              description: '是否允许用户自定义输入；true 时 UI 显示 "Type your own answer" 输入框（默认 true）'
+              description: 'Whether the user may type a custom answer; when true the UI shows a "Type your own answer" input (defaults to true)'
             }
           },
           required: ['question', 'options']

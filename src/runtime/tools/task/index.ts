@@ -36,29 +36,29 @@ export interface TaskToolDeps {
 export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
   return {
     name: 'task',
-    description: '启动子代理完成子任务。子代理在干净上下文中运行，结果以摘要形式返回。优先用 explore/code/review 匹配专业任务，general-purpose 仅用于不适合纯探索/编码/审查的混合任务。XForge 下用 critic 挑刺一页纸、inspector 独立核验。',
+    description: 'Launch a subagent to complete a subtask. Subagents run in a clean context and return results as a summary. Prefer explore/code/review for specialized tasks; general-purpose is only for mixed tasks that do not fit pure exploration/coding/review. Under XForge, use critic to poke holes in the one-pager and inspector for independent verification.',
     parameters: {
       type: 'object',
       properties: {
-        subagent_type: { type: 'string', description: '子代理类型，如 explore / code / review / general-purpose / critic / inspector' },
-        task: { type: 'string', description: '子任务描述' },
+        subagent_type: { type: 'string', description: 'The subagent type, e.g. explore / code / review / general-purpose / critic / inspector' },
+        task: { type: 'string', description: 'The subtask description' },
         background: {
           type: 'boolean',
-          description: '可选后台执行：立即返回接纳句柄并继续父任务，结果以后台通知送达。后台任务强制只读执行，不允许写工作区'
+          description: 'Optional background execution: returns an acceptance handle immediately and continues the parent task; results arrive later as a background notification. Background tasks are forced read-only and may not write to the workspace'
         },
         model: {
           type: 'object',
-          description: '可选 canonical 模型覆盖，仅改变模型路由，不改变 profile prompt/工具/权限/isolation',
+          description: 'Optional canonical model override; changes only model routing, not the profile prompt/tools/permissions/isolation',
           properties: {
-            providerId: { type: 'string', description: '目标 providerId' },
-            modelEntryId: { type: 'string', description: '目标 modelEntryId' }
+            providerId: { type: 'string', description: 'The target providerId' },
+            modelEntryId: { type: 'string', description: 'The target modelEntryId' }
           },
           required: ['providerId', 'modelEntryId'],
           additionalProperties: false
         },
         reasoningEffort: {
           type: 'string',
-          description: '可选思考强度覆盖（auto/low/medium/high/max），仅改变推理强度',
+          description: 'Optional reasoning-effort override (auto/low/medium/high/max); changes only the reasoning effort',
           enum: ['auto', 'low', 'medium', 'high', 'max']
         }
       },

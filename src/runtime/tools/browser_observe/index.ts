@@ -11,16 +11,16 @@ import {
 } from '../../browser'
 import { browserNotApplied, parseBrowserObserveToolArgs } from '../../../shared/browser'
 
-const DESCRIPTION = `browser_observe — 读取当前任务里的网页。只读，不滚动、不改焦点、不点击。
+const DESCRIPTION = `browser_observe — read web pages of the current task. Read-only: no scrolling, no focus changes, no clicking.
 
-用法（用不到的字段不要传）：
-- 读取页面快照：{"action":"snapshot","browserId":"<browserId>"}；只开了一个页面时可省略 browserId
-- 聚焦命名区域：{"action":"snapshot","focus":{"role":"region","name":"Production Status"}}；仅在目标唯一且结果完整时返回局部观察
-- 列出已打开页面：{"action":"list"}
+Usage (omit unused fields):
+- Read a page snapshot: {"action":"snapshot","browserId":"<browserId>"}; browserId may be omitted when only one page is open
+- Focus a named region: {"action":"snapshot","focus":{"role":"region","name":"Production Status"}}; returns a focused observation only when the target is unique and the result complete
+- List open pages: {"action":"list"}
 
-快照里 dom 行带 ref，并返回一行 observation。之后 browser_act / browser_capture 原样带上这行 observation 和 ref。
-页面跳转、刷新或用户接管后旧 observation 立即失效，需要重新 snapshot。
-iframe 内部内容不会进入快照，不要期待完整 HTML。`
+Snapshot dom lines carry refs, and one observation line is returned. Pass that observation line and the refs to browser_act / browser_capture unchanged.
+An observation goes stale immediately after a page navigation, refresh, or user takeover — snapshot again.
+Content inside iframes does not enter the snapshot; do not expect complete HTML.`
 
 type SnapshotTarget = { readonly ok: true; readonly browserId: string } | { readonly ok: false; readonly result: ToolResult }
 
@@ -69,15 +69,15 @@ export function createBrowserObserveTool(deps: BrowserToolDeps): ToolExecutor {
         action: {
           type: 'string',
           enum: ['snapshot', 'list'],
-          description: 'snapshot=读取页面内容（默认）；list=列出已打开页面，不需要其它参数'
+          description: 'snapshot=read page content (default); list=list open pages, needs no other parameters'
         },
         browserId: {
           type: 'string',
-          description: 'snapshot 要读取的页面；只开了一个页面时可省略。list 不需要'
+          description: 'The page to snapshot; may be omitted when only one page is open. Not needed for list.'
         },
         focus: {
           type: 'object',
-          description: '可选：按可访问 role 与精确名称聚焦观察；目标不唯一或不完整时回退整页',
+          description: 'Optional: focus the observation by accessible role and exact name; falls back to the whole page when the target is not unique or complete',
           properties: {
             role: { type: 'string', maxLength: 60 },
             name: { type: 'string', maxLength: 120 }

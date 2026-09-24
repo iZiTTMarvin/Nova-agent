@@ -32,23 +32,23 @@ export function createRunCodeTool(deps: RunCodeToolDeps): ToolExecutor {
   return {
     name: 'run_code',
     description: [
-      '在受限沙箱中执行一段 JavaScript，连续编排只读探索工具（tools.ls / tools.read / tools.grep / tools.find）。',
-      '适合需要多轮 检索→阅读→再检索 交替的代码探索：中间结果留在沙箱内，只有 console.log 输出与 return 值会返回给你。',
-      '- 代码是顶层 async 函数体：可直接使用 await 与 return；沙箱内没有定时器（setTimeout 等不可用），只有 tools.* 调用可以等待。',
-      "- 工具调用形如 `const r = await tools.read({ path: 'src/a.ts' })`；成功 resolve `{ output: string }`，失败 throw ToolCallError（含 toolName 与 message，可 try/catch 后调整参数重试）。",
-      '- 支持 Promise.all 并发调用；单次执行有调用次数、时长与大小上限，超限会返回明确原因。',
-      '- 请在代码中筛选、加工出与任务相关的最小结果再 return；原样返回大文件会占用上下文。'
+      'Execute a JavaScript snippet in a restricted sandbox that chains read-only exploration tools (tools.ls / tools.read / tools.grep / tools.find).',
+      'Suited to code exploration that needs multiple rounds of alternating search → read → search: intermediate results stay in the sandbox; only console.log output and the return value come back to you.',
+      '- The code is a top-level async function body: await and return can be used directly; there are no timers in the sandbox (setTimeout etc. are unavailable) — only tools.* calls can be awaited.',
+      "- Tool calls look like `const r = await tools.read({ path: 'src/a.ts' })`; success resolves `{ output: string }`, failure throws ToolCallError (carrying toolName and message, so you can try/catch and retry with adjusted arguments).",
+      '- Promise.all is supported for concurrent calls; a single execution has call-count, duration, and size limits, and exceeding them returns an explicit reason.',
+      '- Filter and process in code down to the minimal task-relevant result before returning it; returning a large file as-is wastes context.'
     ].join('\n'),
     parameters: {
       type: 'object',
       properties: {
         code: {
           type: 'string',
-          description: '要执行的 JavaScript 代码（顶层 async 函数体，可 await 与 return）'
+          description: 'The JavaScript code to execute (top-level async function body; await and return can be used)'
         },
         description: {
           type: 'string',
-          description: '一句话说明这段代码要探索什么（用于展示与诊断）'
+          description: 'One sentence describing what this code explores (for display and diagnostics)'
         }
       },
       required: ['code', 'description']

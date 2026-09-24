@@ -54,23 +54,23 @@ const WORKSPACE_EVIDENCE_TOOLS = new Set([
   'history_read'
 ])
 
-const TOOL_DESCRIPTION = `维护跨会话长期记忆。只在当前任务确认了未来 session 仍然重要、且不容易从代码重新得到的信息时调用；大多数 turn 都不应写记忆。
+const TOOL_DESCRIPTION = `Maintain cross-session long-term memory. Call only when the current task has confirmed information that still matters to future sessions and cannot be cheaply re-derived from code; most turns should not write memory.
 
-适合保存：
-- 用户明确要求长期保持的偏好或约束
-- 已确认的重要架构决策及原因
-- 经代码 / 测试 / 工具结果验证的非显然 bug 根因或踩坑经验
-- 未来任务容易重复做错、但无法低成本重新推导的项目约定
+Worth saving:
+- Preferences or constraints the user explicitly asked to keep long-term
+- Confirmed important architecture decisions and their reasons
+- Non-obvious bug root causes or pitfall lessons verified by code / tests / tool results
+- Project conventions future tasks are likely to get wrong repeatedly but that cannot be cheaply re-derived
 
-不要保存：
-- 当前进度、改了哪些文件、测试刚通过等一次性状态
-- read/grep 很容易重新得到的普通代码事实
-- 未验证的猜测、计划、临时错误
-- 密钥、凭证或其他敏感信息
+Do not save:
+- One-off state such as current progress, which files changed, tests just passed
+- Ordinary code facts that read/grep can trivially re-derive
+- Unverified guesses, plans, temporary errors
+- Secrets, credentials, or other sensitive information
 
-remember：新增或更新。相同 key 的新事实会由记忆策略合并/替换；身份不确定时先 memory_search。
-forget：撤回旧记忆。优先提供旧记忆相同的 key 与内容；不确定时先 memory_search。
-证据 excerpt 必须逐字来自当前激活会话中的用户消息或工具结果。memory_search / memory_manage 的结果不能作为新记忆证据。`
+remember: add or update. New facts under the same key are merged/replaced by the memory policy; when the identity is uncertain, run memory_search first.
+forget: retract old memory. Prefer the same key and content as the old memory; when uncertain, run memory_search first.
+The evidence excerpt must be verbatim from user messages or tool results in the current active session. memory_search / memory_manage results cannot serve as evidence for new memories.`
 
 export interface MemoryManageToolDeps {
   getMemoryCandidateProcessor: () => Promise<Pick<MemoryCandidateProcessor, 'process'> | null>
@@ -259,25 +259,25 @@ export function createMemoryManageTool(deps: MemoryManageToolDeps): ToolExecutor
         action: {
           type: 'string',
           enum: ['remember', 'forget'],
-          description: 'remember=新增/更新长期记忆；forget=撤回旧记忆。'
+          description: 'remember=add/update long-term memory; forget=retract old memory.'
         },
         kind: {
           type: 'string',
           enum: [...MEMORY_KINDS],
-          description: '记忆类型。优先选择最贴近事实语义的类型。'
+          description: 'Memory kind. Pick the kind closest to the fact\'s semantics.'
         },
         scope: {
           type: 'string',
           enum: ['project', 'global'],
-          description: '默认 project。只有真正跨项目长期成立的用户偏好/工作方式才用 global。'
+          description: 'Defaults to project. Use global only for user preferences / ways of working that hold across projects.'
         },
         key: {
           type: 'string',
-          description: '可选稳定键。会变化的决策/约束建议提供，例如 context.compaction.placeholder。'
+          description: 'Optional stable key. Recommended for decisions/constraints that can change, e.g. context.compaction.placeholder.'
         },
         content: {
           type: 'string',
-          description: '要长期保存或撤回的精炼事实。不要塞执行日志、整段工具输出或猜测。'
+          description: 'The distilled fact to keep or retract. Do not stuff execution logs, whole tool outputs, or guesses.'
         },
         evidence: {
           type: 'object',
@@ -285,11 +285,11 @@ export function createMemoryManageTool(deps: MemoryManageToolDeps): ToolExecutor
             type: {
               type: 'string',
               enum: ['user_message', 'tool_result'],
-              description: '事实来自用户明确消息，还是本会话工具结果。'
+              description: 'Whether the fact comes from an explicit user message or from this session\'s tool results.'
             },
             excerpt: {
               type: 'string',
-              description: '当前激活会话里能逐字找到的短证据。不要改写。'
+              description: 'A short piece of evidence that can be found verbatim in the current active session. Do not paraphrase.'
             }
           },
           required: ['type', 'excerpt'],

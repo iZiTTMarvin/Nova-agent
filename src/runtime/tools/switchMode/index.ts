@@ -3,9 +3,9 @@ import type { ToolExecutor } from '../types'
 export const switchModeTool: ToolExecutor = {
   name: 'switch_mode',
   description:
-    '在同一会话中切换 plan 与 default 模式。' +
-    '进入 plan 会立即在当前任务中继续规划；从 plan 返回 default 需要用户批准；' +
-    '不能进入或退出由独立生命周期管理的 XForge。',
+    'Switch between plan and default modes within the same session. ' +
+    'Entering plan continues planning immediately in the current task; returning from plan to default requires user approval; ' +
+    'XForge, governed by an independent lifecycle, cannot be entered or exited here.',
   executionMode: 'sequential',
   isConcurrencySafe: () => false,
   parameters: {
@@ -14,11 +14,11 @@ export const switchModeTool: ToolExecutor = {
       mode: {
         type: 'string',
         enum: ['plan', 'default'],
-        description: '目标模式。用户明确批准计划并准备实施时使用 default。'
+        description: 'Target mode. Use default when the user has explicitly approved the plan and is ready to implement.'
       },
       reason: {
         type: 'string',
-        description: '向用户说明切换原因和下一步动作。'
+        description: 'Explain to the user why you are switching and what happens next.'
       }
     },
     required: ['mode', 'reason']

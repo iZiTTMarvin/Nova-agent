@@ -21,7 +21,7 @@ export const HISTORY_READ_MAX_LIMIT = 6000
 
 const TOOL_NAME = 'history_read'
 const TOOL_DESCRIPTION =
-  '读取已被压缩折叠的对话原文。按 checkpoint id（如 c3）inspect / search / read；缺省覆盖全部被折叠区间。大工具结果为占位符时再用 archive_read 读全文。'
+  'Read conversation text folded away by compaction. inspect / search / read by checkpoint id (e.g. c3); when omitted, covers all folded intervals. When a large tool result is a placeholder, use archive_read to read the full text.'
 
 function sameOrigin(left: MessageOrigin | undefined, right: MessageOrigin): boolean {
   return isSameMessageOrigin(left, right)
@@ -148,24 +148,24 @@ const historyReadTool: ToolExecutor = {
         type: 'string',
         enum: ['inspect', 'search', 'read'],
         default: 'inspect',
-        description: 'inspect=查看被折叠区间结构，search=字面搜索，read=分页读回 transcript'
+        description: 'inspect=view the folded-interval structure, search=literal search, read=page through the transcript'
       },
       checkpoint: {
         type: 'string',
-        description: '账本条目 id，如 c3；缺省覆盖全部被折叠区间'
+        description: 'Ledger entry id, e.g. c3; when omitted, covers all folded intervals'
       },
       query: {
         type: 'string',
-        description: 'search 操作的字面关键词，不区分大小写'
+        description: 'Literal keyword for the search operation, case-insensitive'
       },
       offset: {
         type: 'number',
         default: 1,
-        description: 'read 操作的起始行号（1-based）'
+        description: 'Starting line number for the read operation (1-based)'
       },
       limit: {
         type: 'number',
-        description: 'read 操作的最大行数'
+        description: 'Maximum number of lines for the read operation'
       }
     },
     additionalProperties: false

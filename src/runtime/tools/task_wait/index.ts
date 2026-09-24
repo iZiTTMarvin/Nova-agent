@@ -163,24 +163,24 @@ function isReady(target: TaskWaitTarget | null): target is TaskWaitTarget {
 export function createTaskWaitTool(deps: TaskWaitToolDeps): ToolExecutor {
   return {
     name: 'task_wait',
-    description: '等待后台子代理到达终态或等待用户输入。run_ids 与 all_unfinished 二选一。',
+    description: 'Wait for background subagents to reach a terminal state or for user input. Provide exactly one of run_ids or all_unfinished.',
     parameters: {
       type: 'object',
       properties: {
         run_ids: {
           type: 'array',
           items: { type: 'string' },
-          description: '要等待的子代理 run id 列表，非空；与 all_unfinished 二选一'
+          description: 'The list of subagent run ids to wait for, non-empty; mutually exclusive with all_unfinished'
         },
         all_unfinished: {
           type: 'boolean',
-          description: 'true 表示等待当前会话所有可访问的未终态后台子代理；与 run_ids 二选一'
+          description: 'true waits for all accessible non-terminal background subagents of the current session; mutually exclusive with run_ids'
         },
         timeout_ms: {
           type: 'integer',
           minimum: 0,
           maximum: 60000,
-          description: `等待超时毫秒，默认 ${DEFAULT_TIMEOUT_MS}，最大 ${MAX_TIMEOUT_MS}，0 表示立即复查返回`
+          description: `Wait timeout in milliseconds; defaults to ${DEFAULT_TIMEOUT_MS}, maximum ${MAX_TIMEOUT_MS}; 0 returns an immediate recheck`
         }
       },
       additionalProperties: false

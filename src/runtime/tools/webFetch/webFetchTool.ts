@@ -18,20 +18,20 @@ const PATHOLOGICAL_MAX_CHARS = 200_000
 /** 手动跟随重定向的上限（含环与长链保护） */
 const MAX_REDIRECTS = 8
 
-const TOOL_DESCRIPTION = `web_fetch — 读网页全文工具。打开一个 HTTP(S) 链接，提取正文转为 Markdown 返回。
-当 web_search 的摘要不够、或用户直接给了链接时使用。
+const TOOL_DESCRIPTION = `web_fetch — fetch the full text of a web page. Opens an HTTP(S) URL, extracts the main content, and returns it as Markdown.
+Use it when a web_search snippet is not enough, or when the user hands you a link directly.
 
-**参数**
-- url (string, 必需): 要读取的完整 URL（http/https）。
-- force (boolean, 可选): 跳过缓存强制重抓。默认 false——同一链接 2 天内重读直接返回缓存。
+**Parameters**
+- url (string, required): the full URL to read (http/https).
+- force (boolean, optional): bypass the cache and re-fetch. Defaults to false — a re-read of the same URL within 2 days returns the cached copy directly.
 
-**行为**
-- 正文提取剥掉导航/广告/侧栏，典型页面减重 60–80%；
-- 需要 JS 渲染的页面会明确报错（建议改用浏览器工具），不返回垃圾内容；
-- 页面过大时明确报错而不是静默截断；
-- localhost 可直接读取（本地开发服务器）。
+**Behavior**
+- Content extraction strips navigation / ads / sidebars, typically cutting 60–80% of the page;
+- Pages that need JS rendering fail with an explicit error (use the browser tools instead) rather than returning junk;
+- Oversized pages fail with an explicit error instead of being silently truncated;
+- localhost can be fetched directly (local dev servers).
 
-**与 web_search 配对**：先用 web_search 找到链接，确需全文时再用本工具读。`
+**Paired with web_search**: find the link with web_search first, then use this tool when you need the full text.`
 
 interface FetchedPage {
   finalUrl: string
@@ -113,11 +113,11 @@ export const webFetchTool: ToolExecutor = {
     properties: {
       url: {
         type: 'string',
-        description: '要读取的完整 URL，必须是 http 或 https。'
+        description: 'The full URL to read; must be http or https.'
       },
       force: {
         type: 'boolean',
-        description: '跳过缓存强制重新抓取。默认 false。'
+        description: 'Bypass the cache and re-fetch. Defaults to false.'
       }
     },
     required: ['url'],

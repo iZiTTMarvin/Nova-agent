@@ -707,33 +707,33 @@ export async function writeEditedFile(
 export const editTool: ToolExecutor = {
   name: 'edit',
   description:
-    '精确修改已有文件。支持一次调用修改多处（edits 数组）。' +
-    '所有 oldText 与原始文件匹配（非增量），必须唯一且互不重叠。' +
-    '编辑前必须先用 read 工具读取文件。',
+    'Precisely modify an existing file. Supports multiple edit points in one call (edits array). ' +
+    'All oldText entries match against the original file (not incrementally), must be unique, and must not overlap. ' +
+    'The file must be read with the read tool before editing.',
   executionMode: 'sequential',
   parameters: {
     type: 'object',
     properties: {
       filePath: {
         type: 'string',
-        description: '要修改的文件路径（绝对或相对工作区）。'
+        description: 'Path of the file to modify (absolute or relative to the workspace).'
       },
       edits: {
         type: 'array',
         minItems: 1,
         description:
-          '一个或多个精确替换。每个 oldText 匹配原始文件（非增量），必须唯一。' +
-          '如果两处修改在同一块或相邻行，合并为一个 edit。',
+          'One or more precise replacements. Each oldText matches the original file (not incrementally) and must be unique. ' +
+          'If two edits touch the same block or adjacent lines, merge them into one edit.',
         items: {
           type: 'object',
           properties: {
             oldText: {
               type: 'string',
-              description: '原始文件中要查找的精确文本，必须唯一。'
+              description: 'Exact text to find in the original file; must be unique.'
             },
             newText: {
               type: 'string',
-              description: '替换后的新文本。'
+              description: 'The replacement text.'
             },
           },
           required: ['oldText', 'newText'],
@@ -741,15 +741,15 @@ export const editTool: ToolExecutor = {
       },
       path: {
         type: 'string',
-        description: '（兼容旧格式）文件路径。'
+        description: '(legacy format) file path.'
       },
       old: {
         type: 'string',
-        description: '（兼容旧格式）要被替换的原始文本。'
+        description: '(legacy format) original text to be replaced.'
       },
       new: {
         type: 'string',
-        description: '（兼容旧格式）替换后的新文本。'
+        description: '(legacy format) replacement text.'
       },
     },
     required: ['filePath'],

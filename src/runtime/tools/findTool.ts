@@ -60,7 +60,7 @@ function compileGlob(pattern: string): RegExp {
 
 export const findTool: ToolExecutor = {
   name: 'find',
-  description: '按 glob 模式在工作区中查找文件。支持 * 和 ** 通配符。',
+  description: 'Find files in the workspace by glob pattern. Supports the * and ** wildcards.',
   executionMode: 'parallel',
   isConcurrencySafe: () => true,
   maxResultSizeChars: 100_000,
@@ -69,11 +69,11 @@ export const findTool: ToolExecutor = {
     properties: {
       pattern: {
         type: 'string',
-        description: 'glob 模式，例如 "**/*.ts"、"src/**/*.test.ts"'
+        description: 'Glob pattern, e.g. "**/*.ts", "src/**/*.test.ts"'
       },
       path: {
         type: 'string',
-        description: '搜索的起始目录，相对于工作区根目录（绝对路径见 session context）。默认为工作区根目录。'
+        description: 'Search root directory, relative to the workspace root (absolute paths appear in session context). Defaults to the workspace root.'
       }
     },
     required: ['pattern']

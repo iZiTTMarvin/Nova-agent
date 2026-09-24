@@ -53,116 +53,115 @@ function headerFor(family: ShellFamily, platform: NodeJS.Platform): string[] {
   if (family === 'pwsh') {
     return [
       `# bash (PowerShell on ${os})`,
-      '在当前工作区中执行 PowerShell 命令并返回 stdout/stderr。'
+      'Execute PowerShell commands in the current workspace and return stdout/stderr.'
     ]
   }
   if (family === 'cmd') {
     return [
       `# bash (cmd.exe on ${os})`,
-      '在当前工作区中执行 cmd.exe 批处理命令并返回 stdout/stderr。',
-      '注意：cmd 语法与 POSIX shell 差异很大，请避免使用 bash 风格的管道 / 字符串插值。'
+      'Execute cmd.exe batch commands in the current workspace and return stdout/stderr.',
+      'Note: cmd syntax differs greatly from POSIX shells — avoid bash-style pipelines / string interpolation.'
     ]
   }
   return [
     `# bash (POSIX shell on ${os})`,
-    '在当前工作区中执行 shell 命令并返回 stdout/stderr。'
+    'Execute shell commands in the current workspace and return stdout/stderr.'
   ]
 }
 
 function workdirHint(family: ShellFamily): string[] {
   if (family === 'pwsh') {
     return [
-      '## 工作目录',
-      '优先用 `workdir` 参数（相对于 workingDir），避免在命令中写 `Push-Location`。',
-      '不要写 `cd xxx && <cmd>`——这会污染当前 shell 状态，影响后续命令。'
+      '## Working directory',
+      'Prefer the `workdir` parameter (relative to workingDir) over writing `Push-Location` in the command.',
+      'Do not write `cd xxx && <cmd>` — it pollutes the current shell state and affects later commands.'
     ]
   }
   if (family === 'cmd') {
     return [
-      '## 工作目录',
-      '优先用 `workdir` 参数（相对于 workingDir），避免在命令中写 `cd /d xxx`。',
-      '不要写 `cd xxx && <cmd>`——这会让后续命令的工作目录不可预期。'
+      '## Working directory',
+      'Prefer the `workdir` parameter (relative to workingDir) over writing `cd /d xxx` in the command.',
+      'Do not write `cd xxx && <cmd>` — it makes the working directory of later commands unpredictable.'
     ]
   }
   return [
-    '## 工作目录',
-    '优先用 `workdir` 参数（相对于 workingDir），避免在命令中写 `cd xxx && <cmd>`。',
-    '`cd` 的状态不会保留到下一条 bash 调用，每个命令都是独立子进程。'
+    '## Working directory',
+    'Prefer the `workdir` parameter (relative to workingDir) over writing `cd xxx && <cmd>` in the command.',
+    '`cd` state does not persist to the next bash call; each command runs as an independent subprocess.'
   ]
 }
 
 function executionHint(family: ShellFamily): string[] {
   if (family === 'pwsh') {
     return [
-      '## 命令执行注意事项',
-      '- 路径含空格时用双引号包裹：`Get-Content "C:/Program Files/..."`。',
-      '- 避免使用 Unix 风格的反引号或 `$()` 嵌套陷阱——PowerShell 的字符串插值是 `"$var"`。',
-      '- 重要操作前先 dry-run：例如 `Remove-Item -WhatIf`、`Get-ChildItem` 先看。',
-      '- 长任务不用预判时长，直接跑：仍在运行时会返回进程引用（ref），用 shell_session 的 read 继续看输出、write 写入输入（内容需自带换行）、stop 终止。'
+      '## Command execution notes',
+      '- Wrap paths containing spaces in double quotes: `Get-Content "C:/Program Files/..."`.',
+      '- Avoid Unix-style backticks and `$()` nesting traps — PowerShell string interpolation is `"$var"`.',
+      '- Dry-run before important operations: e.g. `Remove-Item -WhatIf`, look with `Get-ChildItem` first.',
+      '- Long-running tasks need no time-boxing — just run them: while still running, the tool returns a process reference (ref); use shell_session\'s read to watch more output, write to send input (content must carry its own trailing newline), stop to terminate.'
     ]
   }
   if (family === 'cmd') {
     return [
-      '## 命令执行注意事项',
-      '- 路径含空格时用双引号包裹：`type "C:/Program Files/..."`。',
-      '- cmd 没有反引号；命令嵌套用 `call`。',
-      '- 重要操作前先 dry-run：例如先 `dir` 看一眼再 `del`。',
-      '- 避免依赖 Unix 工具——`find` / `grep` 在 Windows 上不可用。',
-      '- 长任务不用预判时长，直接跑：仍在运行时会返回进程引用（ref），用 shell_session 的 read 继续看输出、write 写入输入（内容需自带换行）、stop 终止。'
+      '## Command execution notes',
+      '- Wrap paths containing spaces in double quotes: `type "C:/Program Files/..."`.',
+      '- cmd has no backticks; use `call` for nested commands.',
+      '- Dry-run before important operations: e.g. look with `dir` first, then `del`.',
+      '- Avoid Unix tools — `find` / `grep` are unavailable on Windows.',
+      '- Long-running tasks need no time-boxing — just run them: while still running, the tool returns a process reference (ref); use shell_session\'s read to watch more output, write to send input (content must carry its own trailing newline), stop to terminate.'
     ]
   }
   return [
-    '## 命令执行注意事项',
-    '- 路径含空格或包含 `$` 时用单引号包裹：`cat \'/path with $dollar/file\'`。',
-    '- 重要操作前先 dry-run：例如 `rm -i`、先 `ls` 再 `rm`。',
-    '- 长任务不用预判时长，直接跑：仍在运行时会返回进程引用（ref），用 shell_session 的 read 继续看输出、write 写入输入（内容需自带换行）、stop 终止。',
-    '- 如果命令会写入工作区文件，会被 checkpoint 系统自动追踪。'
+    '## Command execution notes',
+    '- Wrap paths containing spaces or `$` in single quotes: `cat \'/path with $dollar/file\'`.',
+    '- Dry-run before important operations: e.g. `rm -i`, `ls` before `rm`.',
+    '- Long-running tasks need no time-boxing — just run them: while still running, the tool returns a process reference (ref); use shell_session\'s read to watch more output, write to send input (content must carry its own trailing newline), stop to terminate.',
+    '- Commands that write files into the workspace are tracked automatically by the checkpoint system.'
   ]
 }
 
 function truncationHint(): string[] {
   return [
-    '## 输出截断',
-    `超过 ${DEFAULT_MAX_LINES} 行或 ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB 的输出会被截断，只保留末尾，`,
-    `输出量超过 ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB 时完整内容会写入 \`os.tmpdir()/nova-bash-*.log\`，`,
-    '结果末尾会附带文件路径，有路径时用 read 工具打开可看完整内容。'
+    '## Output truncation',
+    `Output longer than ${DEFAULT_MAX_LINES} lines or ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB is truncated, keeping only the tail,`,
+    `and when output exceeds ${Math.round(DEFAULT_MAX_BYTES / 1024)}KB the full content is written to \`os.tmpdir()/nova-bash-*.log\`;`,
+    'the result ends with the file path — when a path is present, open it with the read tool to see the full content.'
   ]
 }
 
 function toolPreferenceHint(family: ShellFamily): string[] {
   if (family === 'pwsh') {
     return [
-      '## 工具偏好',
-      '- 文件查找优先用 Glob 工具（结构化、可缓存），不要写 `Get-ChildItem -Recurse`。',
-      '- 内容搜索优先用 Grep 工具（支持正则 + ripgrep），不要写 `Select-String -Pattern`。',
-      '- 读文件用 Read 工具，不要写 `Get-Content`。',
-      '- 写文件用 Write / Edit 工具，不要用 `Set-Content` / `Add-Content` 改文件。'
+      '## Tool preference',
+      '- Prefer the Glob tool for file lookup (structured, cacheable) instead of `Get-ChildItem -Recurse`.',
+      '- Prefer the Grep tool for content search (regex + ripgrep) instead of `Select-String -Pattern`.',
+      '- Use the Read tool instead of `Get-Content`.',
+      '- Use the Write / Edit tools instead of `Set-Content` / `Add-Content` for file changes.'
     ]
   }
   if (family === 'cmd') {
     return [
-      '## 工具偏好',
-      '- 文件查找优先用 Glob 工具，不要写 `dir /s`。',
-      '- 内容搜索优先用 Grep 工具，不要写 `findstr`。',
-      '- 读文件用 Read 工具，不要写 `type`。',
-      '- 写文件用 Write / Edit 工具，不要用 `echo >` 这种重定向。'
+      '## Tool preference',
+      '- Prefer the Glob tool for file lookup instead of `dir /s`.',
+      '- Prefer the Grep tool for content search instead of `findstr`.',
+      '- Use the Read tool instead of `type`.',
+      '- Use the Write / Edit tools instead of `echo >` redirection.'
     ]
   }
   return [
-    '## 工具偏好',
-    '- 文件查找优先用 Glob 工具（结构化、可缓存），不要写 `find ... -name`。',
-    '- 内容搜索优先用 Grep 工具（支持正则 + ripgrep），不要写 `grep -R`。',
-    '- 读文件用 Read 工具，不要写 `cat`。',
-    '- 写文件用 Write / Edit 工具，不要用 `sed -i` / `echo >` 这种 shell 重写。'
+    '## Tool preference',
+    '- Prefer the Glob tool for file lookup (structured, cacheable) instead of `find ... -name`.',
+    '- Prefer the Grep tool for content search (regex + ripgrep) instead of `grep -R`.',
+    '- Use the Read tool instead of `cat`.',
+    '- Use the Write / Edit tools instead of shell rewrites such as `sed -i` / `echo >`.'
   ]
 }
 
 function parallelHint(family: ShellFamily): string[] {
   const sep = family === 'pwsh' ? '; ' : family === 'cmd' ? '& ' : ' && '
   return [
-    '## 并行命令',
-    '需要顺序时用链式分隔符（POSIX: `&&` / PowerShell: `;` / cmd: `&&`），',
-    `需要把多条独立命令并行执行时一次发多次 bash 调用（每条命令用 \`${sep.trim()}\` 链起来也可以，但\n` +
-      '工具会按并发安全策略决定是否真正并行——`workdir` / `checkpoint` 等有副作用的命令仍会串行）。'
+    '## Parallel commands',
+    'Use chained separators when order matters (POSIX: `&&` / PowerShell: `;` / cmd: `&&`);',
+    `issue multiple bash calls in one message to run independent commands in parallel (chaining each command with \`${sep.trim()}\` is fine too, but\nthe tool decides true parallelism by its concurrency-safety policy — commands with side effects such as \`workdir\` / \`checkpoint\` still run serially).`
   ]
 }

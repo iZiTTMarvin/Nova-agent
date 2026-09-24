@@ -23,7 +23,7 @@ export interface BatchTaskToolDeps {
 export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
   return {
     name: 'batch_task',
-    description: '只读并行批次：仅在至少两个子任务独立、非重复且并行有明确收益时使用；2-4个只读子代理并发执行，结果按输入顺序汇总，单项失败不取消兄弟。小任务、顺序依赖、共享写状态与重复展示工作必须直接做或串行。先查询 agent_list/model_list；用户显式指定模型/effort 时严格传递。',
+    description: 'Read-only parallel batch: use only when at least two subtasks are independent, non-duplicative, and parallelism has a clear benefit; 2-4 read-only subagents run concurrently, results are aggregated in input order, and one item\'s failure does not cancel its siblings. Small tasks, sequential dependencies, shared write state, and duplicated presentation work must be done directly or serially. Check agent_list/model_list first; when the user explicitly specifies a model/effort, pass it through strictly.',
     parameters: {
       type: 'object',
       properties: {
@@ -31,16 +31,16 @@ export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
           type: 'array',
           minItems: 2,
           maxItems: 4,
-          description: '批次项（2-4项），每项含稳定 itemId、profileId、task、可选 canonical 模型覆盖',
+          description: 'Batch items (2-4); each has a stable itemId, profileId, task, and an optional canonical model override',
           items: {
             type: 'object',
             properties: {
-              itemId: { type: 'string', description: '稳定项标识（批次内唯一，不可为空）' },
-              profileId: { type: 'string', description: '稳定 profileId（仅只读 profile 可进入批次）' },
-              task: { type: 'string', description: '子任务描述（非空，≤8192）' },
+              itemId: { type: 'string', description: 'Stable item identifier (unique within the batch, non-empty)' },
+              profileId: { type: 'string', description: 'Stable profileId (only read-only profiles may enter the batch)' },
+              task: { type: 'string', description: 'Subtask description (non-empty, ≤8192)' },
               model: {
                 type: 'object',
-                description: '可选 canonical 模型覆盖，仅改变模型路由',
+                description: 'Optional canonical model override; changes only model routing',
                 properties: {
                   providerId: { type: 'string' },
                   modelEntryId: { type: 'string' }
@@ -51,7 +51,7 @@ export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
               reasoningEffort: {
                 type: 'string',
                 enum: ['auto', 'low', 'medium', 'high', 'max'],
-                description: '可选思考强度覆盖'
+                description: 'Optional reasoning-effort override'
               }
             },
             required: ['itemId', 'profileId', 'task'],

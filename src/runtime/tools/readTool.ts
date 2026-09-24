@@ -416,7 +416,7 @@ async function readFromArtifact(
 
 export const readTool: ToolExecutor = {
   name: 'read',
-  description: '读取指定文件的内容。中等文本默认返回预览，可用 offset/limit 续读或 full:true 请求未压缩读取。编辑预览外内容前须先读取目标范围。支持图片输入。',
+  description: 'Read a file\'s contents. Medium-sized text returns a preview by default; use offset/limit to continue reading, or full: true to request an uncompressed read. The target range must be read before editing content outside the preview. Supports image input.',
   executionMode: 'parallel',
   isConcurrencySafe: () => true,
   parameters: {
@@ -424,21 +424,21 @@ export const readTool: ToolExecutor = {
     properties: {
       path: {
         type: 'string',
-        description: '要读取的文件路径，相对于工作区根目录（绝对路径见 session context）。',
+        description: 'File to read, relative to the workspace root (absolute paths appear in session context).',
       },
       offset: {
         type: 'number',
         description:
-          '起始行号（0-indexed），跳过前 N 行。不传 limit 时从 offset 读到文件末尾。',
+          'Starting line number (0-indexed), skipping the first N lines. Without limit, reads from offset to the end of the file.',
       },
       limit: {
         type: 'number',
         description:
-          '最多读取的行数。与 offset 配合使用实现分页。',
+          'Maximum number of lines to read. Combine with offset for pagination.',
       },
       full: {
         type: 'boolean',
-        description: '无 offset/limit 时请求未压缩文本读取；仍受文件大小和单次输出安全上限约束。'
+        description: 'Request an uncompressed read when no offset/limit is given; still bounded by the file-size limit and the per-read output safety caps.'
       },
     },
     required: ['path'],

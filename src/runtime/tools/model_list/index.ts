@@ -8,7 +8,7 @@ export interface ModelListToolDeps {
 export function createModelListTool(deps: ModelListToolDeps): ToolExecutor {
   return {
     name: 'model_list',
-    description: '列出已配置模型的只读目录：canonical selector、displayName、provider、aliases、可用性与支持的 effort；不含凭据与完整 ModelConfig。',
+    description: 'List a read-only directory of configured models: canonical selector, displayName, provider, aliases, availability, and supported effort; contains no credentials or full ModelConfig.',
     parameters: {
       type: 'object',
       properties: {},

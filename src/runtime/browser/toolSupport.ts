@@ -134,7 +134,7 @@ export function formatList(snapshot: BrowserSurfaceSnapshot): string {
 export function observationParameterSchema(): Record<string, unknown> {
   return {
     type: 'object',
-    description: '原样复制最近一次 browser_observe snapshot 返回的 observation 行',
+    description: 'Verbatim copy of the observation line returned by the most recent browser_observe snapshot',
     properties: {
       browserId: { type: 'string' },
       generation: { type: 'integer', minimum: 1 },

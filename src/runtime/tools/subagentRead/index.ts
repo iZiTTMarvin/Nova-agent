@@ -173,36 +173,36 @@ function buildReadPayload(
 export const subagentReadTool: ToolExecutor = {
   name: 'subagent_read',
   description:
-    '读取当前会话派生出的子代理持久化记录，用于核对 task/task_followup 摘要背后的原始证据。inspect 查看规模和 artifact，search 定位关键词，read 分页读 child transcript，artifact_read 读取该 child toolCall 明确引用的大输出 artifact 全文；记录保留 message/toolCall/toolName/artifactId，可反向追到具体工具结果。',
+    'Read the persisted records of subagents derived from the current session, to verify the raw evidence behind task/task_followup summaries. inspect shows the size and artifacts, search locates keywords, read pages through the child transcript, artifact_read reads the full text of a large-output artifact explicitly referenced by a child toolCall; records keep message/toolCall/toolName/artifactId so you can trace back to the concrete tool result.',
   parameters: {
     type: 'object',
     properties: {
       child_session_id: {
         type: 'string',
-        description: 'task / batch_task / task_followup 返回的子代理会话 ID'
+        description: 'The subagent session ID returned by task / batch_task / task_followup'
       },
       operation: {
         type: 'string',
         enum: ['inspect', 'search', 'read', 'artifact_read'],
         default: 'inspect',
-        description: 'inspect=查看记录规模，search=关键词定位，read=读 transcript，artifact_read=读取 child toolCall 引用的 artifact 原文'
+        description: 'inspect=view record size, search=keyword location, read=read the transcript, artifact_read=read the raw artifact referenced by a child toolCall'
       },
       query: {
         type: 'string',
-        description: 'search 的字面关键词，不区分大小写'
+        description: 'Literal keyword for search, case-insensitive'
       },
       artifact_id: {
         type: 'string',
-        description: 'artifact_read 使用的 artifact ID；必须来自 inspect 或 transcript 中的 artifact=...'
+        description: 'The artifact ID used by artifact_read; must come from an artifact=... entry in inspect or the transcript'
       },
       offset: {
         type: 'number',
         default: 0,
-        description: 'read / artifact_read 的 0-based 字符偏移；search 返回的 offset 可直接用于 transcript 回读'
+        description: '0-based character offset for read / artifact_read; the offset returned by search can be used directly to read back the transcript'
       },
       limit: {
         type: 'number',
-        description: `read / artifact_read 最多读取的字符数，默认 ${DEFAULT_READ_CHARS}，最大 ${MAX_READ_CHARS}`
+        description: `Maximum characters read by read / artifact_read; defaults to ${DEFAULT_READ_CHARS}, maximum ${MAX_READ_CHARS}`
       }
     },
     required: ['child_session_id'],

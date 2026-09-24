@@ -33,12 +33,12 @@ export interface BrowserCaptureToolDeps extends BrowserToolDeps {
   ) => Promise<boolean>
 }
 
-const DESCRIPTION = `browser_capture — 捕获当前已设置好的视口截图。不滚动、不改视口。
+const DESCRIPTION = `browser_capture — capture a screenshot of the currently set-up viewport. No scrolling, no viewport changes.
 
-参数：{"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"}}，observation 原样复制最近一次 browser_observe snapshot 返回的 observation 行。
-图片受预算约束：DPR=1、长边≤1440、≤2MP、单张≤1MiB、单轮≤6张。
-当前模型不能消费图片时，返回文字说明和本地证据路径，不能把截图当作视觉验收已通过。
-多模态图片不会被归档，只靠本轮预算控制。`
+Parameters: {"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"}}; copy the observation line returned by the most recent browser_observe snapshot verbatim.
+Images are budget-constrained: DPR=1, long edge ≤1440, ≤2MP, ≤1MiB per image, ≤6 per turn.
+When the current model cannot consume images, the tool returns a text explanation plus a local evidence path — a screenshot must not be treated as passed visual acceptance.
+Multimodal images are not archived; only this turn's budget constrains them.`
 
 export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExecutor {
   const probe = deps.probeVision ?? probeProviderVision

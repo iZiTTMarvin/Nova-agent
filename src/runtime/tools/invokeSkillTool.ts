@@ -24,12 +24,12 @@ export interface InvokeSkillToolDeps {
 export function createInvokeSkillTool(deps: InvokeSkillToolDeps): ToolExecutor {
   return {
     name: 'invoke_skill',
-    description: '调用一个已注册的技能；普通技能注入当前对话，fork 技能在独立 Child Session 中执行。',
+    description: 'Invoke a registered skill; regular skills are injected into the current conversation, fork skills run in an independent child session.',
     parameters: {
       type: 'object',
       properties: {
-        skill_name: { type: 'string', description: '技能名称（不含路径）' },
-        task: { type: 'string', description: '传给技能的具体任务描述' }
+        skill_name: { type: 'string', description: 'The skill name (no path)' },
+        task: { type: 'string', description: 'The concrete task description passed to the skill' }
       },
       required: ['skill_name', 'task']
     },

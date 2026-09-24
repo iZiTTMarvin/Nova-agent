@@ -14,20 +14,20 @@ const TOOL_NAME = 'web_search'
  * 年份在 buildDescription 时通过模板字符串注入当前年份。
  */
 function buildDescription(year: number): string {
-  return `web_search — 联网搜索工具。当需要查找最新信息（如版本号、最佳实践、API 文档、框架特性）且本地工具无法回答时使用。
+  return `web_search — search the web. Use it when you need up-to-date information (version numbers, best practices, API docs, framework features) that local tools cannot answer.
 
-**无需 API Key 也可用**：默认通过 Bing / DuckDuckGo 爬虫获取搜索结果。若在设置中配置了 Tavily API Key，将作为质量增强参与 fallback 链。
+**Works without an API key**: results are scraped via Bing / DuckDuckGo by default. If a Tavily API key is configured in settings, it joins the fallback chain as a quality enhancement.
 
-**参数**
-- query (string, 必需): 搜索关键词或问句。建议包含明确时间词或版本号，例如 "React ${year} new features"。
-- maxResults (number, 可选): 最大返回结果数，默认 5，上限受 provider 限制。
-- recency (string, 可选): 时间范围过滤，取值 day | week | month | year，表示只返回指定时间内的结果（仅 Tavily 支持）。
+**Parameters**
+- query (string, required): search keywords or question. Include an explicit time word or version number, e.g. "React ${year} new features".
+- maxResults (number, optional): maximum number of results to return; defaults to 5, upper bound limited by the provider.
+- recency (string, optional): time-range filter, one of day | week | month | year, to keep only results from that window (Tavily only).
 
-**结果格式**
-返回摘要（answer，爬虫结果通常无 answer）和 URL 来源列表（sources）。**多数问题靠 snippet + answer 就够；确需全文时用 web_fetch 读取来源链接**（同一链接 2 天内重读走缓存，零成本）。
+**Result format**
+Returns a summary (answer — usually absent for scraped results) and a list of URL sources. **For most questions snippet + answer suffice; use web_fetch to read the full page only when truly needed** (re-reading the same URL within 2 days hits the cache at zero cost).
 
-**使用示例**
-当用户问 "React 最新版本是多少" 时，搜索 "React ${year} latest version"，参考返回的 sources 摘要作答。`
+**Example**
+When the user asks "What is the latest version of React?", search "React ${year} latest version" and answer from the returned sources' summaries.`
 }
 
 const TOOL_DESCRIPTION = buildDescription(new Date().getFullYear())
@@ -41,17 +41,17 @@ export const webSearchTool: ToolExecutor = {
     properties: {
       query: {
         type: 'string',
-        description: '搜索关键词或问句。建议包含明确时间词，例如 "React 2026 new features"。'
+        description: 'Search keywords or question. Include an explicit time word, e.g. "React 2026 new features".'
       },
       maxResults: {
         type: 'number',
-        description: '最大返回结果数。默认 5。',
+        description: 'Maximum number of results to return. Defaults to 5.',
         minimum: 1,
         maximum: 20
       },
       recency: {
         type: 'string',
-        description: '时间范围过滤：day | week | month | year。',
+        description: 'Time-range filter: day | week | month | year.',
         enum: ['day', 'week', 'month', 'year']
       }
     },

@@ -12,9 +12,9 @@ import { OutputSink } from '../OutputSink'
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
 
 export const CODE_CONTEXT_TOOL_DESCRIPTION = [
-  '查询当前工作区的本地代码索引，返回定义、关系证据与建议阅读范围。',
-  '用 locate 定位符号，understand 建立局部上下文，impact 查找修改前应检查的影响候选。',
-  '关系是可追溯候选，不代表已证明完整调用链或影响范围；按 recommendedReads 继续用 read 确认源码。'
+  'Query the local code index of the current workspace, returning definitions, relationship evidence, and recommended reading ranges.',
+  'Use locate to find a symbol, understand to build local context, impact to find the impact candidates to check before modifying.',
+  'Relationships are traceable candidates, not proven complete call chains or impact scope; follow recommendedReads to confirm the source with read.'
 ].join('\n')
 
 export interface CodeContextToolDeps {
@@ -32,16 +32,16 @@ export function createCodeContextTool(deps: CodeContextToolDeps): ToolExecutor {
       properties: {
         query: {
           type: 'string',
-          description: '要定位的符号、模块、路径或代码概念。'
+          description: 'The symbol, module, path, or code concept to locate.'
         },
         intent: {
           type: 'string',
           enum: ['locate', 'understand', 'impact'],
-          description: '查询意图；默认 locate。'
+          description: 'Query intent; defaults to locate.'
         },
         scope: {
           type: 'string',
-          description: '可选的工作区相对目录或文件范围。'
+          description: 'Optional workspace-relative directory or file scope.'
         }
       },
       required: ['query'],
