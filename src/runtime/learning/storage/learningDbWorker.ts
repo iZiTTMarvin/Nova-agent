@@ -2,6 +2,10 @@ import { parentPort } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { parseLearningDbHostMessage, type LearningDbWorkerMessage } from './protocol'
+import { assertLearningDbPathAllowed } from './dbPathPolicy'
+import { migrateLearningDatabase, assertLearningDatabaseWritable } from './migrations'
+import { parseLearningDbWorkerOp } from './workerCommand'
+import { executeLearningDbWorkerOp } from './workerExecutor'
 
 const port = parentPort
 if (!port) {
@@ -22,16 +26,18 @@ port.postMessage({ kind: 'ready' } satisfies LearningDbWorkerMessage)
 port.on('message', (value: unknown) => {
   const message = parseLearningDbHostMessage(value)
   if (!message) {
-    post({ kind: 'error', requestId: -1, message: '无效协议消息' })
+    post({ kind: 'error', requestId: -1, message: '无效协议消息', code: 'invalid' })
     return
   }
   try {
     if (message.kind === 'open') {
+      assertLearningDbPathAllowed(message.dbPath)
       if (db) db.close()
       const Database = require('better-sqlite3') as typeof import('better-sqlite3')
       const opened = new Database(message.dbPath)
       opened.pragma('journal_mode = WAL')
       opened.pragma('foreign_keys = ON')
+      migrateLearningDatabase(opened)
       db = opened
       post({ kind: 'ok', requestId: message.requestId })
       return
@@ -45,21 +51,29 @@ port.on('message', (value: unknown) => {
       post({ kind: 'ok', requestId: message.requestId })
       return
     }
-    if (message.kind === 'transaction') {
+    if (message.kind === 'invoke') {
       if (!db) throw new Error('数据库未打开')
-      const run = db.transaction(() => {
-        for (const statement of message.statements) {
-          db!.prepare(statement.sql).run(...(statement.params ?? []))
-        }
-      })
-      run()
-      post({ kind: 'ok', requestId: message.requestId })
+      assertLearningDatabaseWritable(db)
+      const op = parseLearningDbWorkerOp(message.command)
+      const run = db.transaction(() => executeLearningDbWorkerOp(db!, op))
+      const outcome = run()
+      if (!outcome.ok) {
+        post({
+          kind: 'error',
+          requestId: message.requestId,
+          message: outcome.message,
+          code: 'exec'
+        })
+        return
+      }
+      post({ kind: 'ok', requestId: message.requestId, result: outcome.result })
     }
   } catch (error) {
-    post({
-      kind: 'error',
-      requestId: message.requestId,
-      message: error instanceof Error ? error.message : String(error)
-    })
+    const msg = error instanceof Error ? error.message : String(error)
+    const code =
+      error instanceof Error && error.name === 'LearningSchemaFutureError'
+        ? 'future_schema'
+        : 'error'
+    post({ kind: 'error', requestId: message.requestId, message: msg, code })
   }
 })

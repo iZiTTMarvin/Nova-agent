@@ -1,12 +1,12 @@
 export type LearningDbHostMessage =
   | { kind: 'open'; requestId: number; dbPath: string }
-  | { kind: 'transaction'; requestId: number; statements: readonly { sql: string; params?: readonly unknown[] }[] }
   | { kind: 'close'; requestId: number }
+  | { kind: 'invoke'; requestId: number; command: unknown }
 
 export type LearningDbWorkerMessage =
   | { kind: 'ready' }
-  | { kind: 'ok'; requestId: number }
-  | { kind: 'error'; requestId: number; message: string }
+  | { kind: 'ok'; requestId: number; result?: unknown }
+  | { kind: 'error'; requestId: number; message: string; code?: string }
 
 export function parseLearningDbHostMessage(raw: unknown): LearningDbHostMessage | null {
   if (!raw || typeof raw !== 'object') return null
@@ -20,16 +20,8 @@ export function parseLearningDbHostMessage(raw: unknown): LearningDbHostMessage 
   if (kind === 'close') {
     return { kind: 'close', requestId: requestId as number }
   }
-  if (kind === 'transaction' && Array.isArray(value.statements)) {
-    const statements: { sql: string; params?: readonly unknown[] }[] = []
-    for (const item of value.statements) {
-      if (!item || typeof item !== 'object') continue
-      const row = item as Record<string, unknown>
-      if (typeof row.sql !== 'string') continue
-      const params = Array.isArray(row.params) ? [...row.params] : undefined
-      statements.push({ sql: row.sql, params })
-    }
-    return { kind: 'transaction', requestId: requestId as number, statements }
+  if (kind === 'invoke' && value.command !== undefined) {
+    return { kind: 'invoke', requestId: requestId as number, command: value.command }
   }
   return null
 }

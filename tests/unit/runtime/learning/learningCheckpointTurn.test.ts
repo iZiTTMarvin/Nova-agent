@@ -1,8 +1,6 @@
-import { mkdtempSync, rmSync } from 'fs'
-import { join } from 'path'
+import { mkdtempSync, rmSync, existsSync } from 'fs'
+import { join as pathJoin } from 'path'
 import { tmpdir } from 'os'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import {
   AgentTurnExecutor,
   type AgentTurnOutcome,
@@ -13,13 +11,19 @@ import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import { createLearningCheckpointTool } from '../../../../src/runtime/tools/learning_checkpoint'
-import {
-  createFileLearningCheckpointTurnStore,
-  setDefaultLearningCheckpointTurnStore
-} from '../../../../src/runtime/learning/progress/checkpointTurnStore'
 import { releaseCheckpointSlot } from '../../../../src/runtime/learning/progress/checkpointBatchGate'
 import type { AgentLoop } from '../../../../src/runtime/agent'
 import { createLearnToolAuthorizationPolicy } from '../../../../src/runtime/learning/policy/createLearnToolAuthorizationPolicy'
+import {
+  LearningProgress,
+  setDefaultLearningProgress
+} from '../../../../src/runtime/learning/progress/LearningProgress'
+import { LearningProgressRepository } from '../../../../src/runtime/learning/progress/LearningProgressRepository'
+import { LearningDbWorkerClient } from '../../../../src/runtime/learning/storage/LearningDbWorkerClient'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+
+const workerJs = pathJoin(process.cwd(), 'out', 'main', 'learningDbWorker.js')
 
 function fakeLoop(sendMessage: () => Promise<AgentTurnOutcome>) {
   const loop = {
@@ -33,27 +37,37 @@ function fakeLoop(sendMessage: () => Promise<AgentTurnOutcome>) {
 
 describe('learning_checkpoint turn 可行性', () => {
   let sessionsRoot: string
-  let checkpointRoot: string
+  let learningTemp: string
   let store: SessionStore
+  let workerClient: LearningDbWorkerClient | null = null
 
-  beforeEach(() => {
-    sessionsRoot = mkdtempSync(join(tmpdir(), 'nova-learning-sess-'))
-    checkpointRoot = mkdtempSync(join(tmpdir(), 'nova-learning-ckpt-'))
+  beforeEach(async () => {
+    if (!existsSync(workerJs)) {
+      throw new Error(`缺少 ${workerJs}，请先 npm run build`)
+    }
+    sessionsRoot = mkdtempSync(pathJoin(tmpdir(), 'nova-learning-sess-'))
+    learningTemp = mkdtempSync(pathJoin(tmpdir(), 'nova-learning-db-'))
     store = new SessionStore(sessionsRoot)
-    setDefaultLearningCheckpointTurnStore(
-      createFileLearningCheckpointTurnStore(checkpointRoot)
-    )
+    workerClient = new LearningDbWorkerClient(workerJs)
+    await workerClient.start()
+    await workerClient.open(pathJoin(learningTemp, 'learning.db'))
+    const progress = new LearningProgress(new LearningProgressRepository(workerClient))
+    setDefaultLearningProgress(progress)
   })
 
-  afterEach(() => {
-    setDefaultLearningCheckpointTurnStore(null)
+  afterEach(async () => {
+    setDefaultLearningProgress(null)
+    if (workerClient) {
+      await workerClient.close()
+      workerClient = null
+    }
     rmSync(sessionsRoot, { recursive: true, force: true })
-    rmSync(checkpointRoot, { recursive: true, force: true })
+    rmSync(learningTemp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   })
 
   it('停点持久化后 turn_complete，执行释放后可启动新 turn', async () => {
     const session = store.create('/proj', 'learn')
-    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-learning-run-'))
+    const runsRoot = mkdtempSync(pathJoin(tmpdir(), 'nova-learning-run-'))
     const coordinator = createRunCoordinator(runsRoot)
     const registry = new RunExecutionRegistry()
     const executor = new AgentTurnExecutor(coordinator, registry)
@@ -71,7 +85,7 @@ describe('learning_checkpoint turn 可行性', () => {
             name: 'learning_checkpoint',
             arguments: JSON.stringify({
               question: '刷新后数据从哪来？',
-              cursorVersion: 1,
+              cursorVersion: 0,
               checkpointId: 'ckpt-1'
             })
           }
@@ -116,7 +130,8 @@ describe('learning_checkpoint turn 可行性', () => {
       }
     })
 
-    const persisted = createFileLearningCheckpointTurnStore(checkpointRoot).getForSession(session.id)
+    const progress = new LearningProgress(new LearningProgressRepository(workerClient!))
+    const persisted = await progress.getCheckpointForSession(session.id)
     expect(persisted?.checkpointId).toBe('ckpt-1')
     expect(coordinator.getSnapshot(first.runId)?.status).toBe('completed')
     expect(registry.get(first.runId)).toBeNull()
@@ -150,13 +165,13 @@ describe('learning_checkpoint turn 可行性', () => {
     }
 
     const ok = await tool.execute(
-      { question: 'Q1', cursorVersion: 1, checkpointId: 'a' },
+      { question: 'Q1', cursorVersion: 0, checkpointId: 'a' },
       baseContext
     )
     expect(ok.control).toEqual({ type: 'turn_complete' })
 
     const rejected = await tool.execute(
-      { question: 'Q2', cursorVersion: 1, checkpointId: 'b' },
+      { question: 'Q2', cursorVersion: 0, checkpointId: 'b' },
       baseContext
     )
     expect(rejected.success).toBe(false)
@@ -164,7 +179,7 @@ describe('learning_checkpoint turn 可行性', () => {
   })
 
   it('取消走现有 RunCoordinator 路径', async () => {
-    const runsRoot = mkdtempSync(join(tmpdir(), 'nova-learning-cancel-'))
+    const runsRoot = mkdtempSync(pathJoin(tmpdir(), 'nova-learning-cancel-'))
     const coordinator = createRunCoordinator(runsRoot)
     const snap = coordinator.startRun({
       kind: 'agent',

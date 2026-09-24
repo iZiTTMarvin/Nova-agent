@@ -3,8 +3,8 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { LearningDbWorkerClient } from '../../../src/runtime/learning/storage/LearningDbWorkerClient'
-
-const workerJs = join(process.cwd(), 'out', 'main', 'learningDbWorker.js')
+import { CURRENT_LEARNING_SCHEMA_VERSION } from '../../../src/runtime/learning/storage/schema'
+import { createLearningDbHarness, learningWorkerJs } from './learningTestHarness'
 
 describe('learningDbWorker integration', () => {
   let tempDir: string
@@ -14,40 +14,51 @@ describe('learningDbWorker integration', () => {
     try {
       rmSync(tempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     } catch {
-      // Windows 上 WAL 句柄释放可能略滞后，不将清理失败误判为事务失败
+      // Windows 上 WAL 句柄释放可能略滞后
     }
   })
 
-  it('加载原生模块、执行事务、关闭后重开仍能读到已提交数据', async () => {
-    if (!existsSync(workerJs)) {
-      throw new Error(`缺少构建产物 ${workerJs}，请先 npm run build`)
+  it('加载原生模块、迁移 schema、ACK 后重开可恢复游标', async () => {
+    if (!existsSync(learningWorkerJs)) {
+      throw new Error(`缺少构建产物 ${learningWorkerJs}，请先 npm run build`)
     }
     tempDir = mkdtempSync(join(tmpdir(), 'nova-learning-db-'))
     const dbPath = join(tempDir, 'learning.db')
+    const workspace = join(tempDir, 'ws')
 
-    const client = new LearningDbWorkerClient(workerJs)
-    await client.start()
-    await client.open(dbPath)
-    await client.runTransaction([
-      {
-        sql: 'CREATE TABLE IF NOT EXISTS probe (id INTEGER PRIMARY KEY, value TEXT NOT NULL)'
-      },
-      { sql: 'INSERT INTO probe (value) VALUES (?)', params: ['batch-one'] }
-    ])
-    await client.close()
+    const harness = await createLearningDbHarness(dbPath)
+    await harness.progress.saveCheckpoint({
+      workspaceRoot: workspace,
+      sessionId: 'sess-1',
+      runId: 'run-1',
+      checkpointId: 'ckpt-1',
+      cursorVersion: 0,
+      question: 'Q?'
+    })
+    await harness.close()
 
-    const client2 = new LearningDbWorkerClient(workerJs)
-    await client2.start()
-    await client2.open(dbPath)
-    await client2.runTransaction([
-      { sql: 'INSERT INTO probe (value) VALUES (?)', params: ['batch-two'] }
-    ])
-    await client2.close()
+    const harness2 = await createLearningDbHarness(dbPath)
+    const loaded = await harness2.progress.getCheckpointForSession('sess-1')
+    expect(loaded?.checkpointId).toBe('ckpt-1')
+    await harness2.close()
 
     const Database = (await import('better-sqlite3')).default
-    const row = new Database(dbPath).prepare('SELECT COUNT(*) AS c FROM probe').get() as {
-      c: number
+    const version = new Database(dbPath)
+      .prepare(`SELECT value FROM schema_meta WHERE key = 'schema_version'`)
+      .get() as { value: string }
+    expect(Number.parseInt(version.value, 10)).toBe(CURRENT_LEARNING_SCHEMA_VERSION)
+  }, 30_000)
+
+  it('拒绝非临时目录的数据库路径', async () => {
+    if (!existsSync(learningWorkerJs)) {
+      throw new Error(`缺少构建产物 ${learningWorkerJs}，请先 npm run build`)
     }
-    expect(row.c).toBe(2)
+    tempDir = mkdtempSync(join(tmpdir(), 'nova-learning-db-'))
+    const client = new LearningDbWorkerClient(learningWorkerJs)
+    await client.start()
+    await expect(client.open(join(process.cwd(), 'learning-forbidden.db'))).rejects.toThrow(
+      /临时或测试目录/
+    )
+    await client.close()
   }, 30_000)
 })

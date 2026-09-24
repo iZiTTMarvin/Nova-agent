@@ -1,0 +1,192 @@
+import { createHash } from 'node:crypto'
+import { computeWorkspaceHash, normalizeWorkspaceRoot } from '../../memory/MemoryPaths'
+import type { LearningCommand, LearningCommandReceipt } from '../../../shared/learning/command'
+import {
+  parseLearningCommand,
+  parseLearningCommandReceipt
+} from '../../../shared/learning/command'
+
+export type LearningDbWorkerOp =
+  | {
+      domain: 'progress'
+      op: 'save_checkpoint'
+      workspaceRoot: string
+      sessionId: string
+      runId: string
+      checkpointId: string
+      cursorVersion: number
+      question: string
+      createdAt: number
+    }
+  | {
+      domain: 'progress'
+      op: 'get_checkpoint'
+      sessionId: string
+    }
+  | { domain: 'progress'; op: 'apply_command'; command: LearningCommand }
+  | {
+      domain: 'progress'
+      op: 'clear_personal'
+      workspaceRoot: string
+      sessionId: string
+    }
+  | {
+      domain: 'knowledge'
+      op: 'publish_version'
+      workspaceRoot: string
+      knowledgeRevision: string
+      parentRevision: string | null
+      inputFingerprint: string
+      expectedCurrentRevision: string | null
+      nodes: readonly {
+        nodeId: string
+        nodeRevision: string
+        title: string
+        bodyJson: string
+      }[]
+      members: readonly { nodeId: string; nodeRevision: string }[]
+    }
+
+export type LearningDbWorkerResult =
+  | { ok: true; result?: unknown }
+  | { ok: false; message: string }
+
+export function deriveProjectId(workspaceRoot: string): string {
+  return computeWorkspaceHash(workspaceRoot)
+}
+
+export function stablePayloadHash(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function readString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${field} 无效`)
+  }
+  return value.trim()
+}
+
+function readInt(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`${field} 无效`)
+  }
+  return value as number
+}
+
+export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Worker 命令必须是对象')
+  }
+  const value = raw as Record<string, unknown>
+  const domain = value.domain
+  const op = value.op
+  if (domain === 'progress' && op === 'save_checkpoint') {
+    return {
+      domain: 'progress',
+      op: 'save_checkpoint',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      sessionId: readString(value.sessionId, 'sessionId'),
+      runId: readString(value.runId, 'runId'),
+      checkpointId: readString(value.checkpointId, 'checkpointId'),
+      cursorVersion: readInt(value.cursorVersion, 'cursorVersion'),
+      question: readString(value.question, 'question'),
+      createdAt: readInt(value.createdAt, 'createdAt')
+    }
+  }
+  if (domain === 'progress' && op === 'get_checkpoint') {
+    return {
+      domain: 'progress',
+      op: 'get_checkpoint',
+      sessionId: readString(value.sessionId, 'sessionId')
+    }
+  }
+  if (domain === 'progress' && op === 'apply_command') {
+    return { domain: 'progress', op: 'apply_command', command: parseLearningCommand(value.command) }
+  }
+  if (domain === 'progress' && op === 'clear_personal') {
+    return {
+      domain: 'progress',
+      op: 'clear_personal',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      sessionId: readString(value.sessionId, 'sessionId')
+    }
+  }
+  if (domain === 'knowledge' && op === 'publish_version') {
+    const nodesRaw = value.nodes
+    if (!Array.isArray(nodesRaw)) throw new Error('nodes 必须是数组')
+    const nodes = nodesRaw.map((item, index) => {
+      if (!item || typeof item !== 'object') throw new Error(`nodes[${index}] 无效`)
+      const row = item as Record<string, unknown>
+      return {
+        nodeId: readString(row.nodeId, 'nodeId'),
+        nodeRevision: readString(row.nodeRevision, 'nodeRevision'),
+        title: readString(row.title, 'title'),
+        bodyJson: readString(row.bodyJson, 'bodyJson')
+      }
+    })
+    const membersRaw = value.members
+    if (!Array.isArray(membersRaw)) throw new Error('members 必须是数组')
+    const members = membersRaw.map((item, index) => {
+      if (!item || typeof item !== 'object') throw new Error(`members[${index}] 无效`)
+      const row = item as Record<string, unknown>
+      return {
+        nodeId: readString(row.nodeId, 'nodeId'),
+        nodeRevision: readString(row.nodeRevision, 'nodeRevision')
+      }
+    })
+    return {
+      domain: 'knowledge',
+      op: 'publish_version',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      knowledgeRevision: readString(value.knowledgeRevision, 'knowledgeRevision'),
+      parentRevision:
+        value.parentRevision === null
+          ? null
+          : typeof value.parentRevision === 'string'
+            ? value.parentRevision.trim()
+            : null,
+      inputFingerprint: readString(value.inputFingerprint, 'inputFingerprint'),
+      expectedCurrentRevision:
+        value.expectedCurrentRevision === null
+          ? null
+          : typeof value.expectedCurrentRevision === 'string'
+            ? value.expectedCurrentRevision.trim()
+            : null,
+      nodes,
+      members
+    }
+  }
+  throw new Error(`未知 Worker 命令 ${String(domain)}/${String(op)}`)
+}
+
+export function parseLearningDbWorkerResult(raw: unknown): LearningDbWorkerResult {
+  if (!raw || typeof raw !== 'object') {
+    throw new Error('Worker 结果无效')
+  }
+  const value = raw as Record<string, unknown>
+  if (value.ok === true) {
+    return { ok: true, result: value.result }
+  }
+  if (value.ok === false && typeof value.message === 'string') {
+    return { ok: false, message: value.message }
+  }
+  throw new Error('Worker 结果无效')
+}
+
+export type PersistedCheckpointView = {
+  checkpointId: string
+  sessionId: string
+  runId: string
+  cursorVersion: number
+  question: string
+  createdAt: number
+  state: string
+}
+
+export function receiptFromRaw(raw: unknown): LearningCommandReceipt {
+  return parseLearningCommandReceipt(raw)
+}
+
+export function normalizeWorkspaceForProject(workspaceRoot: string): string {
+  return normalizeWorkspaceRoot(workspaceRoot)
+}
