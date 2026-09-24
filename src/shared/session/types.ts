@@ -28,7 +28,7 @@ export type ToolDelivery =
  * - compose：编排脚本强制推进（阶段 C1）
  * 权限档位由 PermissionMode 独立表达，不再用 Mode 表达 auto。
  */
-export type Mode = 'plan' | 'default' | 'compose'
+export type Mode = 'plan' | 'default' | 'compose' | 'learn'
 
 /** 当前会话的工具执行权限档位。 */
 export type PermissionMode = 'request_approval' | 'auto' | 'full_access'

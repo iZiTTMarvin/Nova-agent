@@ -5,6 +5,7 @@ import {
   isToolAvailableWithinCapabilityCeiling
 } from '../permissions/toolEffects'
 import type { ToolPermissionDescriptor } from '../permissions/types'
+import { isLearnVisibleTool, isLearningDomainTool } from '../learning/learnToolPolicy'
 
 function hasPlanHiddenEffects(
   descriptor: ToolPermissionDescriptor,
@@ -20,6 +21,12 @@ function hasPlanHiddenEffects(
 
 /** 当前产品模式下模型/UI 是否应该看见该工具 */
 export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
+  if (mode === 'learn') {
+    return isLearnVisibleTool(toolName)
+  }
+  if (isLearningDomainTool(toolName)) {
+    return false
+  }
   if (toolName === 'stage_transition') {
     return mode === 'compose'
   }

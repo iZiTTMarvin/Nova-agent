@@ -30,6 +30,13 @@ describe('modeInstruction', () => {
     expect(instruction).toContain('同一 run 内恢复 switch_mode')
   })
 
+  it('learn 强调只读与领域工具', () => {
+    const instruction = getModeInstruction('learn')
+    expect(instruction).toContain('learn')
+    expect(instruction).toContain('learning_checkpoint')
+    expect(instruction).toContain('禁止修改仓库')
+  })
+
   it('Default 只在存在合法 active plan 时注入实施指针', () => {
     const withPlan = getModeInstruction('default', {
       activePlanPath: '.nova/plans/2026-07-24-auth.md'

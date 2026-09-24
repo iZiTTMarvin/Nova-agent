@@ -20,6 +20,7 @@ import type {
 } from '../../shared/subagents'
 import type { ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { Mode, PermissionMode } from '../../shared/session/types'
+import { parseStrictMode } from '../../shared/session/mode'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, SESSION_BACKUP_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
@@ -32,7 +33,7 @@ import {
 } from '../../shared/composeLifecycle'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 21
+export const CURRENT_SESSION_SCHEMA_VERSION = 22
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -485,6 +486,15 @@ export function migrateV20ToV21(data: unknown): SessionData {
   }
 }
 
+/** v21 → v22：引入 learn mode；既有 default/plan/compose 语义不变。 */
+export function migrateV21ToV22(data: unknown): SessionData {
+  const session = data as SessionData
+  return {
+    ...session,
+    schemaVersion: 22
+  }
+}
+
 function loadDefaultPermissionMode(): PermissionMode {
   try {
     return loadNovaSettings().defaultPermissionMode
@@ -698,7 +708,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV17ToV18, // v17 → v18
   migrateV18ToV19, // v18 → v19
   migrateV19ToV20, // v19 → v20
-  migrateV20ToV21 // v20 → v21
+  migrateV20ToV21, // v20 → v21
+  migrateV21ToV22 // v21 → v22
 ]
 
 /**
@@ -730,6 +741,7 @@ export function migrateSessionData(data: unknown): SessionData {
       ...session,
       messages: withTree,
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      mode: parseStrictMode(session.mode),
       currentLeafId: session.currentLeafId ?? withTree.at(-1)?.id ?? null,
       permissionMode: normalizeAvailablePermissionMode(session.permissionMode),
       codeIndexEnabled: session.codeIndexEnabled === true
@@ -754,6 +766,7 @@ export function migrateSessionData(data: unknown): SessionData {
   const result: SessionData = {
     ...migrated,
     schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+    mode: parseStrictMode(migrated.mode),
     messages,
     currentLeafId: migrated.currentLeafId ?? messages.at(-1)?.id ?? null,
     permissionMode: normalizeAvailablePermissionMode(migrated.permissionMode),

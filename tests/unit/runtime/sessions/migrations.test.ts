@@ -625,15 +625,15 @@ describe('migrateSessionData', () => {
       subagent
     })
 
-    expect(primary).toMatchObject({ schemaVersion: 21, mode: 'plan' })
+    expect(primary).toMatchObject({ schemaVersion: 22, mode: 'plan' })
     expect(child).toMatchObject({
-      schemaVersion: 21,
+      schemaVersion: 22,
       mode: 'default',
       messages,
       currentLeafId: 'm1',
       subagent
     })
-    expect(historicalComposeChild).toMatchObject({ schemaVersion: 21, mode: 'compose' })
+    expect(historicalComposeChild).toMatchObject({ schemaVersion: 22, mode: 'compose' })
   })
 
   it('完全访问持久值按当前 schema 原样恢复', () => {
@@ -677,7 +677,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.composeStages).toEqual([
       { id: 'interview', status: 'completed', completedAt: 10 },
       { id: 'blueprint', status: 'in_progress', note: '正在写方案' },
@@ -807,7 +807,7 @@ describe('migrateSessionData', () => {
       ]
     })
 
-    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.composeStages?.map(s => s.id)).toEqual([
       'interview',
       'blueprint',
@@ -839,7 +839,7 @@ describe('migrateSessionData', () => {
       updatedAt: 1
     })
 
-    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.composeStages).toBeUndefined()
   })
 
@@ -859,7 +859,7 @@ describe('migrateSessionData', () => {
     }
 
     const migrated = migrateSessionData(v19)
-    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.controlIntent).toBeUndefined()
   })
 
@@ -887,7 +887,7 @@ describe('migrateSessionData', () => {
       controlIntent
     })
 
-    expect(migrated.schemaVersion).toBe(21)
+    expect(migrated.schemaVersion).toBe(CURRENT_SESSION_SCHEMA_VERSION)
     expect(migrated.controlIntent).toEqual(controlIntent)
     expect(() => decodeSessionControlIntent({ ...controlIntent, version: 2 })).toThrow()
     expect(decodeSessionControlIntent(null)).toBeUndefined()

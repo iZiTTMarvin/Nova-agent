@@ -20,6 +20,14 @@ describe('toolVisibility', () => {
       expect(isToolVisibleInMode('plan', 'read')).toBe(true)
     })
 
+    it('学习工具只在 learn 可见', () => {
+      expect(isToolVisibleInMode('learn', 'learning_checkpoint')).toBe(true)
+      expect(isToolVisibleInMode('learn', 'bash')).toBe(false)
+      expect(isToolVisibleInMode('default', 'learning_checkpoint')).toBe(false)
+      expect(isToolVisibleInMode('plan', 'learning_context')).toBe(false)
+      expect(isToolVisibleInMode('compose', 'learning_assess')).toBe(false)
+    })
+
     it('stage_transition 仅 compose 可见', () => {
       expect(isToolVisibleInMode('compose', 'stage_transition')).toBe(true)
       expect(isToolVisibleInMode('default', 'stage_transition')).toBe(false)

@@ -16,6 +16,7 @@ import type { SessionControlIntent, SessionData, SessionSummary } from '../../ru
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
+import { assertSessionModeMutable } from '../../shared/session/mode'
 import type { LlmRegistry, ReasoningEffort, ActiveModelRef } from '../../shared/config/llmRegistry'
 import {
   getSupportedReasoningEfforts,
@@ -710,6 +711,7 @@ export class WorkspaceService {
       if (source === 'user' && isSessionTurnInProgress(sessionId)) {
         throw new Error('当前会话仍在运行，不能切换模式。请先等待完成或停止当前任务。')
       }
+      assertSessionModeMutable(session.mode, params.mode)
       store.updateMode(sessionId, params.mode)
       // 同步 availableSessions 里的 mode 字段
       this.state.availableSessions = store.list()

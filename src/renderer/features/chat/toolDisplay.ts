@@ -79,6 +79,12 @@ export function getToolDisplayName(toolName: string): string {
       return '提交核验结果 (inspection_report)'
     case 'load_tools':
       return '加载工具组 (load_tools)'
+    case 'learning_context':
+      return '读取学习上下文 (learning_context)'
+    case 'learning_checkpoint':
+      return '保存学习停点 (learning_checkpoint)'
+    case 'learning_assess':
+      return '提交学习评估 (learning_assess)'
     default:
       return `运行自动化工具 (${toolName})`
   }
@@ -291,6 +297,12 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       if (action === 'return') return '正在回退生命周期阶段'
       return '正在推进生命周期阶段'
     }
+    case 'learning_checkpoint':
+      return '正在保存学习停点'
+    case 'learning_context':
+      return '正在读取学习材料'
+    case 'learning_assess':
+      return '正在提交学习评估'
     default:
       return ''
   }

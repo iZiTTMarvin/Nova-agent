@@ -21,6 +21,7 @@ import { ToolRegistry } from '../../../../src/runtime/tools/ToolRegistry'
 import type { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
 import { registerBuiltinTools } from '../../../../src/main/agent/runtime/registerBuiltinTools'
+import { registerLearningTools } from '../../../../src/main/agent/runtime/registerLearningTools'
 import type { BuiltinToolRegistrationDeps } from '../../../../src/main/agent/runtime/registerBuiltinTools'
 import { getModeVisibleTools } from '../../../../src/shared/session/toolVisibility'
 import { getToolDisplayName } from '../../../../src/renderer/features/chat/toolDisplay'
@@ -33,6 +34,7 @@ import { resolvePermissionEffects } from '../../../../src/runtime/permissions/ef
  */
 function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): ToolRegistry {
   const registry = new ToolRegistry()
+  registerLearningTools(registry)
   registerBuiltinTools(registry, {
     skillRegistry: {} as SkillRegistry,
     getAgentLoop: () => null,

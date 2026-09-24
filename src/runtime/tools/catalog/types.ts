@@ -33,6 +33,7 @@ export type ToolCapabilityTag =
   | 'interaction'
   | 'archive'
   | 'internal'
+  | 'learning'
 
 /** Code Mode 嵌套策略：决定工具是进入只读 SDK 还是仅允许模型直调。 */
 export type ToolCodeModeNesting = 'nestable-readonly' | 'direct-only'

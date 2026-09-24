@@ -73,11 +73,9 @@ import { getWorkspaceService } from '../../services/WorkspaceService'
 import { createAskQuestionHandler, type PendingAskQuestionEntry } from '../interaction/askQuestionWaiters'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
-import {
-  createComposeModeInstructionProvider,
-  createComposeStageFactsProvider,
-  createComposeStageToolPolicy
-} from './composeStageWiring'
+import { createComposeStageFactsProvider } from './composeStageWiring'
+import { resolveSessionAgentBinding } from './sessionAgentBinding/resolveSessionAgentBinding'
+import { assertLearningModuleAvailable } from './learningModuleGate'
 import { getSubagentProjectionService } from '../../services/SubagentProjectionServiceHost'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
@@ -250,6 +248,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   // 两阶段局部持有：invoke_skill 创建早于 AgentLoop，执行时惰性读取
   let loop: AgentLoop | null = null
 
+  assertLearningModuleAvailable(session.mode)
+
   registerBuiltinTools(toolRegistry, {
     skillRegistry,
     getAgentLoop: () => loop,
@@ -288,6 +288,13 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       }
       return createComposeStageFactsProvider({ sessionStore, projection })(sid)
     }
+  })
+
+  const sessionBinding = resolveSessionAgentBinding(session.mode)
+  sessionBinding.registerDomainTools(toolRegistry, {
+    sessionStore,
+    sessionId,
+    projectPath
   })
 
   toolAvailability.bindRegisteredToolNames(
@@ -408,16 +415,11 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   // 部署开关随设置生效：关闭时 bash 到前台等待边界退回强制终止语义
   setPersistentShellEnabled(novaSettings.persistentShellSessions)
   agentLoop.setMode(session.mode)
-  // compose：模式指令与阶段指南挂 user 消息尾部（每轮实时读取阶段表），
-  // 阶段工具门禁作为 overlay 在基础权限判定之前生效
-  let toolAuthorizationPolicy: ToolAuthorizationPolicy | null = null
-  if (session.mode === 'compose') {
-    agentLoop.setModeInstructionProvider(
-      createComposeModeInstructionProvider(sessionStore, sessionId)
-    )
-    toolAuthorizationPolicy = createComposeStageToolPolicy(sessionStore, sessionId)
-    agentLoop.setToolAuthorizationPolicy(toolAuthorizationPolicy)
-  }
+  const toolAuthorizationPolicy = sessionBinding.applyToAgentLoop(agentLoop, {
+    sessionStore,
+    sessionId,
+    projectPath
+  })
   agentLoop.restoreSkillRoots(session.grantedSkillRoots)
   agentLoop.setOnSkillRootAdded((dir) => {
     sessionStore.addGrantedSkillRoot(sessionId, dir)
@@ -430,6 +432,9 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     }
     if (currentSession.mode === 'compose') {
       throw new Error('compose 模式不能通过 switch_mode 切换')
+    }
+    if (currentSession.mode === 'learn') {
+      throw new Error('学习会话不能通过 switch_mode 切换')
     }
     if (currentSession.mode === 'plan' && targetMode === 'default') {
       const activePath = currentSession.activePlan?.path

@@ -57,6 +57,7 @@ import {
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode, PermissionMode, RuntimeInputBlock } from '../../shared/session'
+import { assertSessionModeMutable } from '../../shared/session/mode'
 import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import {
@@ -1241,6 +1242,8 @@ export class SessionStore {
   updateMode(sessionId: string, mode: Mode): SessionData | null {
     const session = this.load(sessionId)
     if (!session) return null
+
+    assertSessionModeMutable(session.mode, mode)
 
     session.mode = mode
     session.updatedAt = Date.now()

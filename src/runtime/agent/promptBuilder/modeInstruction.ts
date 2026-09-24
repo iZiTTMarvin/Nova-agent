@@ -76,12 +76,27 @@ export function getHeadlessExecutionInstruction(): string {
 }
 
 /** 获取当前模式的约束指令文本，附加到 user 消息尾部 */
+function buildLearnInstruction(opts?: ModeInstructionOptions): string {
+  const lines = [
+    '[当前模式: learn — 项目学习教练]',
+    '只读源码与教材；应用内学习状态仅通过 learning_checkpoint / learning_assess 写入。',
+    '禁止修改仓库、执行 shell、编排子代理或切换模式；需要改代码请返回开发会话。',
+    '用户选点、答题与跳过由产品命令处理，不要替用户执行这些动作。'
+  ]
+  if (opts?.dialect === 'xml') {
+    lines.push('请继续用 system prompt 中指定的 XML \u003cinvoke\u003e 格式调用这些工具。')
+  }
+  return lines.join('\n')
+}
+
 export function getModeInstruction(mode: Mode, opts?: ModeInstructionOptions): string {
   switch (mode) {
     case 'plan':
       return buildPlanInstruction(opts)
     case 'compose':
       return buildComposeInstruction(opts)
+    case 'learn':
+      return buildLearnInstruction(opts)
     case 'default':
     default:
       return buildDefaultInstruction(opts)

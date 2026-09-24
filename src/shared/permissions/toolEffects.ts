@@ -56,7 +56,10 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   batch_task: { effects: ['orchestration'], pathScope: 'none' },
   invoke_skill: { effects: ['orchestration'], pathScope: 'none' },
   agent_list: { effects: [], pathScope: 'none' },
-  model_list: { effects: [], pathScope: 'none' }
+  model_list: { effects: [], pathScope: 'none' },
+  learning_context: { effects: ['filesystem.read'], pathScope: 'none' },
+  learning_checkpoint: { effects: ['session.write'], pathScope: 'none' },
+  learning_assess: { effects: ['session.write'], pathScope: 'none' }
 }
 
 export function getToolPermissionDescriptor(

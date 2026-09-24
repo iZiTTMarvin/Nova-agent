@@ -54,7 +54,8 @@ export default defineConfig({
         input: [
           'src/main/index.ts',
           'src/runtime/code-mode/quickjs/codeModeWorker.ts',
-          'src/runtime/code-graph/worker/codeGraphWorker.ts'
+          'src/runtime/code-graph/worker/codeGraphWorker.ts',
+          'src/runtime/learning/storage/learningDbWorker.ts'
         ]
       }
     }
