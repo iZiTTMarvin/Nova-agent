@@ -261,6 +261,41 @@ describe('knowledge skeleton build', () => {
     const validation = await validateCompileCandidate({ workspaceRoot: workspace, evidence, output })
     expect(validation.ok).toBe(false)
     if (!validation.ok) expect(validation.failure.code).toBe('out_of_bounds_path')
+
+    const windowsOutput = parseCompileOutputText(
+      compileJsonFromEvidence(evidence, nodes => {
+        nodes[0] = {
+          ...nodes[0]!,
+          summary: '引用 ..\\outside\\leak.ts 与 C:\\secret.ts'
+        }
+      })
+    )
+    const windowsValidation = await validateCompileCandidate({
+      workspaceRoot: workspace,
+      evidence,
+      output: windowsOutput
+    })
+    expect(windowsValidation.ok).toBe(false)
+    if (!windowsValidation.ok) expect(windowsValidation.failure.code).toBe('out_of_bounds_path')
+    await harness.close()
+  })
+
+  it('没有 sourceId 的 source_fact 不能发布为已核实', async () => {
+    const { harness, workspace } = await openHarness()
+    const evidence = await new WorkspaceEvidencePort(null).collectSkeletonEvidence({
+      workspaceRoot: workspace
+    })
+    const output = parseCompileOutputText(
+      compileJsonFromEvidence(evidence, nodes => {
+        nodes[0] = {
+          ...nodes[0]!,
+          claims: [{ kind: 'source_fact', text: '没有出处的事实', sourceIds: [] }]
+        }
+      })
+    )
+    const validation = await validateCompileCandidate({ workspaceRoot: workspace, evidence, output })
+    expect(validation.ok).toBe(false)
+    if (!validation.ok) expect(validation.failure.code).toBe('unknown_source_id')
     await harness.close()
   })
 

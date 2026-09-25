@@ -4,7 +4,8 @@ import { verifyFragmentAgainstDisk } from '../evidence/WorkspaceEvidencePort'
 import { isPathWithinRoot, lexicalNormalize } from '../../../permissions/pathAccess'
 import { isAbsolute, join, resolve } from 'node:path'
 
-const PATH_LIKE = /(?:^|[\s"'`])([\w./-]+\.(?:ts|tsx|js|jsx|json|md))(?:[\s"'`:]|$)/g
+const PATH_LIKE =
+  /(?:^|[\s"'`])((?:[a-zA-Z]:\/)?(?:\.\.\/)?[\w./-]*\.(?:ts|tsx|js|jsx|json|md))(?:[\s"'`:\/]|$)/g
 
 export type CompileValidationFailure =
   | { code: 'unknown_source_id' }
@@ -40,7 +41,8 @@ function detectParentCycle(nodes: readonly CompileOutputNode[]): boolean {
 
 function scanPathLikeStrings(text: string): string[] {
   const hits: string[] = []
-  for (const match of text.matchAll(PATH_LIKE)) {
+  const normalized = text.replace(/\\/g, '/')
+  for (const match of normalized.matchAll(PATH_LIKE)) {
     if (match[1]) hits.push(match[1])
   }
   return hits
@@ -74,6 +76,9 @@ export async function validateCompileCandidate(params: {
     }
     for (const claim of node.claims) {
       if (claim.kind === 'source_fact' || claim.kind === 'inference') {
+        if (claim.sourceIds.length === 0) {
+          return { ok: false, failure: { code: 'unknown_source_id' }, message: '主张缺少 sourceId' }
+        }
         for (const sourceId of claim.sourceIds) {
           if (!allowedIds.has(sourceId)) {
             return { ok: false, failure: { code: 'unknown_source_id' }, message: '未知 sourceId' }
