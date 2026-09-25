@@ -1,5 +1,5 @@
 /** 学习库 schema 版本；与 SessionStore 独立版本化。 */
-export const CURRENT_LEARNING_SCHEMA_VERSION = 2
+export const CURRENT_LEARNING_SCHEMA_VERSION = 3
 
 export const LEARNING_SCHEMA_META_KEY = 'schema_version'
 
@@ -185,4 +185,9 @@ export function learningSchemaV2Statements(): readonly string[] {
     `ALTER TABLE source_receipts ADD COLUMN strategy_version TEXT NOT NULL DEFAULT 'learning-evidence-v1'`,
     `ALTER TABLE source_receipts ADD COLUMN symbol_label TEXT`
   ]
+}
+
+/** v2 → v3：停点冻结判据。 */
+export function learningSchemaV3Statements(): readonly string[] {
+  return [`ALTER TABLE checkpoints ADD COLUMN rubric_json TEXT`]
 }

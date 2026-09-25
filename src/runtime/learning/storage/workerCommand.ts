@@ -16,6 +16,7 @@ export type LearningDbWorkerOp =
       checkpointId: string
       cursorVersion: number
       question: string
+      rubricJson: string
       createdAt: number
     }
   | {
@@ -30,6 +31,27 @@ export type LearningDbWorkerOp =
       workspaceRoot: string
       sessionId: string
     }
+  | {
+      domain: 'progress'
+      op: 'submit_assessment'
+      workspaceRoot: string
+      sessionId: string
+      runId: string
+      cursorVersion: number
+      submissionJson: string
+      createdAt: number
+    }
+  | {
+      domain: 'progress'
+      op: 'get_learning_context'
+      workspaceRoot: string
+      sessionId: string
+      nodeId?: string
+      page: number
+    }
+  | { domain: 'progress'; op: 'get_cursor'; workspaceRoot: string; sessionId: string }
+  | { domain: 'progress'; op: 'get_pending_outbox'; sessionId: string }
+  | { domain: 'progress'; op: 'mark_outbox_delivered'; commandId: string }
   | {
       domain: 'knowledge'
       op: 'publish_version'
@@ -170,6 +192,7 @@ export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
       checkpointId: readString(value.checkpointId, 'checkpointId'),
       cursorVersion: readInt(value.cursorVersion, 'cursorVersion'),
       question: readString(value.question, 'question'),
+      rubricJson: readString(value.rubricJson, 'rubricJson'),
       createdAt: readInt(value.createdAt, 'createdAt')
     }
   }
@@ -189,6 +212,52 @@ export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
       op: 'clear_personal',
       workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
       sessionId: readString(value.sessionId, 'sessionId')
+    }
+  }
+  if (domain === 'progress' && op === 'submit_assessment') {
+    return {
+      domain: 'progress',
+      op: 'submit_assessment',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      sessionId: readString(value.sessionId, 'sessionId'),
+      runId: readString(value.runId, 'runId'),
+      cursorVersion: readInt(value.cursorVersion, 'cursorVersion'),
+      submissionJson: readString(value.submissionJson, 'submissionJson'),
+      createdAt: readInt(value.createdAt, 'createdAt')
+    }
+  }
+  if (domain === 'progress' && op === 'get_learning_context') {
+    return {
+      domain: 'progress',
+      op: 'get_learning_context',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      sessionId: readString(value.sessionId, 'sessionId'),
+      ...(typeof value.nodeId === 'string' && value.nodeId.trim()
+        ? { nodeId: value.nodeId.trim() }
+        : {}),
+      page: readInt(value.page ?? 0, 'page')
+    }
+  }
+  if (domain === 'progress' && op === 'get_cursor') {
+    return {
+      domain: 'progress',
+      op: 'get_cursor',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      sessionId: readString(value.sessionId, 'sessionId')
+    }
+  }
+  if (domain === 'progress' && op === 'get_pending_outbox') {
+    return {
+      domain: 'progress',
+      op: 'get_pending_outbox',
+      sessionId: readString(value.sessionId, 'sessionId')
+    }
+  }
+  if (domain === 'progress' && op === 'mark_outbox_delivered') {
+    return {
+      domain: 'progress',
+      op: 'mark_outbox_delivered',
+      commandId: readString(value.commandId, 'commandId')
     }
   }
   if (domain === 'knowledge' && op === 'publish_version') {
@@ -287,6 +356,7 @@ export type PersistedCheckpointView = {
   runId: string
   cursorVersion: number
   question: string
+  rubricJson: string | null
   createdAt: number
   state: string
 }

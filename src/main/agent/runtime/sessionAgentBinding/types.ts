@@ -14,5 +14,7 @@ export interface SessionAgentBinding {
   readonly mode: Mode
   applyToAgentLoop(loop: AgentLoop, ctx: SessionAgentBindingContext): ToolAuthorizationPolicy | null
   registerDomainTools(registry: ToolRegistry, ctx: SessionAgentBindingContext): () => void
+  /** 仅 learn 等模式追加角色材料，不改动 default/plan/compose 前缀。 */
+  extendAgentRole?(ctx: SessionAgentBindingContext): string | null
   assertTurnAdmissible?(ctx: SessionAgentBindingContext): void
 }

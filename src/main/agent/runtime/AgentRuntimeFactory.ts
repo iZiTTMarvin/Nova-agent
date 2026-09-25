@@ -376,10 +376,19 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const frozenPrompt = buildStableSystemPrompt({
     workingDir: projectPath
   })
+  const learnRoleAppend = sessionBinding.extendAgentRole?.({
+    sessionStore,
+    sessionId,
+    projectPath
+  })
+  const agentRole =
+    learnRoleAppend && learnRoleAppend.trim()
+      ? `${frozenPrompt}\n\n${learnRoleAppend.trim()}`
+      : frozenPrompt
 
   const agentLoop = new AgentLoop(modelPool, eventBus, {
     systemPromptLayers: {
-      agentRole: frozenPrompt,
+      agentRole,
       baseRules,
       projectRules,
       memoryContext,

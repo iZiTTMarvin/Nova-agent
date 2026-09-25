@@ -86,7 +86,13 @@ describe('learning_checkpoint turn 可行性', () => {
             arguments: JSON.stringify({
               question: '刷新后数据从哪来？',
               cursorVersion: 0,
-              checkpointId: 'ckpt-1'
+              checkpointId: 'ckpt-1',
+              rubric: {
+                targetClaim: '指出持久化来源',
+                knowledgeRevision: null,
+                verificationMethod: 'open_answer',
+                criteria: '能说明刷新后数据来源'
+              }
             })
           }
         ],
@@ -164,14 +170,20 @@ describe('learning_checkpoint turn 可行性', () => {
       mode: 'learn' as const
     }
 
+    const rubric = {
+      targetClaim: 'c',
+      knowledgeRevision: null,
+      verificationMethod: 'open_answer',
+      criteria: 'c'
+    }
     const ok = await tool.execute(
-      { question: 'Q1', cursorVersion: 0, checkpointId: 'a' },
+      { question: 'Q1', cursorVersion: 0, checkpointId: 'a', rubric },
       baseContext
     )
     expect(ok.control).toEqual({ type: 'turn_complete' })
 
     const rejected = await tool.execute(
-      { question: 'Q2', cursorVersion: 0, checkpointId: 'b' },
+      { question: 'Q2', cursorVersion: 0, checkpointId: 'b', rubric },
       baseContext
     )
     expect(rejected.success).toBe(false)

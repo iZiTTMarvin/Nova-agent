@@ -18,6 +18,10 @@ export interface SteeringMessage {
   userMessageId?: string
   images?: Array<{ fileName: string; data: string; mimeType: string }>
   regenerate?: boolean
+  /** 学习交接身份。缺省表示普通用户消息；出队后必须原样恢复，不能降成公开 send。 */
+  learningHandoff?:
+    | { readonly kind: 'coach' }
+    | { readonly kind: 'delivery'; readonly commandId: string }
 }
 
 const queuesBySession = new Map<string, SteeringMessage[]>()

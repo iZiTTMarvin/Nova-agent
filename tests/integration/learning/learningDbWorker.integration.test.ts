@@ -33,7 +33,9 @@ describe('learningDbWorker integration', () => {
       runId: 'run-1',
       checkpointId: 'ckpt-1',
       cursorVersion: 0,
-      question: 'Q?'
+      question: 'Q?',
+      rubricJson:
+        '{"targetClaim":"t","knowledgeRevision":null,"verificationMethod":"open","criteria":"c"}'
     })
     await harness.close()
 

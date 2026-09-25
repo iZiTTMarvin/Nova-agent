@@ -40,7 +40,8 @@ describe('learning persistence integration', () => {
       runId: 'run-a',
       checkpointId: 'ckpt-a',
       cursorVersion: 0,
-      question: '题目'
+      question: '题目',
+      rubricJson: '{"targetClaim":"t","knowledgeRevision":null,"verificationMethod":"open","criteria":"c"}'
     })
 
     const base: LearningCommand = {
@@ -73,7 +74,8 @@ describe('learning persistence integration', () => {
       runId: 'run-ans',
       checkpointId: 'ckpt-ans',
       cursorVersion: 0,
-      question: '题目'
+      question: '题目',
+      rubricJson: '{"targetClaim":"t","knowledgeRevision":null,"verificationMethod":"open","criteria":"c"}'
     })
     const receipt = await harness.progress.applyCommand({
       commandId: 'cmd-ans',
@@ -134,7 +136,8 @@ describe('learning persistence integration', () => {
       runId: 'run-clear',
       checkpointId: 'ckpt-clear',
       cursorVersion: 0,
-      question: '题目'
+      question: '题目',
+      rubricJson: '{"targetClaim":"t","knowledgeRevision":null,"verificationMethod":"open","criteria":"c"}'
     })
     const gen = await harness.progress.clearPersonalRecords(workspace, 'sess-clear')
     expect(gen).toBe(1)

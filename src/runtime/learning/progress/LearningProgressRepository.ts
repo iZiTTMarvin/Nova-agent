@@ -13,6 +13,7 @@ export class LearningProgressRepository {
     checkpointId: string
     cursorVersion: number
     question: string
+    rubricJson: string
     createdAt: number
   }): Promise<PersistedCheckpointView> {
     const command: LearningDbWorkerOp = {
@@ -48,5 +49,68 @@ export class LearningProgressRepository {
       workspaceRoot,
       sessionId
     })
+  }
+
+  submitAssessment(params: {
+    workspaceRoot: string
+    sessionId: string
+    runId: string
+    cursorVersion: number
+    submissionJson: string
+    createdAt: number
+  }): Promise<{ assessmentId: string }> {
+    return this.client.invoke({
+      domain: 'progress',
+      op: 'submit_assessment',
+      ...params
+    })
+  }
+
+  getLearningContext(params: {
+    workspaceRoot: string
+    sessionId: string
+    nodeId?: string
+    page: number
+  }): Promise<unknown> {
+    return this.client.invoke({
+      domain: 'progress',
+      op: 'get_learning_context',
+      ...params
+    })
+  }
+
+  getCursor(workspaceRoot: string, sessionId: string): Promise<{
+    cursorVersion: number
+    clearGeneration: number
+    selectedNodeId: string | null
+  }> {
+    return this.client.invoke({
+      domain: 'progress',
+      op: 'get_cursor',
+      workspaceRoot,
+      sessionId
+    })
+  }
+
+  getPendingOutbox(sessionId: string): Promise<{
+    command_id: string
+    user_message_id: string
+    payload_json: string
+  } | null> {
+    return this.client.invoke({
+      domain: 'progress',
+      op: 'get_pending_outbox',
+      sessionId
+    })
+  }
+
+  markOutboxDelivered(commandId: string): Promise<void> {
+    return this.client
+      .invoke({
+        domain: 'progress',
+        op: 'mark_outbox_delivered',
+        commandId
+      })
+      .then(() => undefined)
   }
 }

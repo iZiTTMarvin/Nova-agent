@@ -9,6 +9,7 @@ export interface LearningCheckpointPersistInput {
   readonly checkpointId: string
   readonly cursorVersion: number
   readonly question: string
+  readonly rubricJson: string
 }
 
 export class LearningProgress {
@@ -32,6 +33,37 @@ export class LearningProgress {
   async clearPersonalRecords(workspaceRoot: string, sessionId: string): Promise<number> {
     const result = await this.repo.clearPersonal(workspaceRoot, sessionId)
     return result.clearGeneration
+  }
+
+  async submitAssessment(input: {
+    workspaceRoot: string
+    sessionId: string
+    runId: string
+    cursorVersion: number
+    submissionJson: string
+  }): Promise<{ assessmentId: string }> {
+    return this.repo.submitAssessment({ ...input, createdAt: Date.now() })
+  }
+
+  getLearningContext(input: {
+    workspaceRoot: string
+    sessionId: string
+    nodeId?: string
+    page: number
+  }): Promise<unknown> {
+    return this.repo.getLearningContext(input)
+  }
+
+  getCursor(workspaceRoot: string, sessionId: string) {
+    return this.repo.getCursor(workspaceRoot, sessionId)
+  }
+
+  getPendingOutbox(sessionId: string) {
+    return this.repo.getPendingOutbox(sessionId)
+  }
+
+  markOutboxDelivered(commandId: string) {
+    return this.repo.markOutboxDelivered(commandId)
   }
 }
 

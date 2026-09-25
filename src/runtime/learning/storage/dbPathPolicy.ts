@@ -8,11 +8,21 @@ function isPathUnder(child: string, root: string): boolean {
   return c.toLowerCase().startsWith(prefix.toLowerCase()) || c.toLowerCase() === r.toLowerCase()
 }
 
+let configuredUserLearningRoot: string | null = null
+
+/** main 装配：允许 userData 下 learning 目录（单一路径）。 */
+export function setConfiguredUserLearningRoot(dir: string | null): void {
+  configuredUserLearningRoot = dir ? resolve(dir) : null
+}
+
 function allowedRoots(): string[] {
   const roots = [tmpdir()]
   const testRoot = process.env.NOVA_LEARNING_TEST_DB_ROOT
   if (testRoot && testRoot.trim()) {
     roots.push(resolve(testRoot.trim()))
+  }
+  if (configuredUserLearningRoot) {
+    roots.push(configuredUserLearningRoot)
   }
   return roots
 }

@@ -176,9 +176,49 @@ export interface SendAgentMessageRelayParams {
   userMessageId?: never
   images?: never
   regenerate?: never
+  trustedLearningTurn?: never
+  trustedLearningDelivery?: never
 }
 
-export type SendAgentMessageParams = SendAgentMessageUserParams | SendAgentMessageRelayParams
+/** 学习命令接纳后启动教练 turn；Renderer 不可伪造。 */
+export interface SendAgentMessageLearningCoachParams {
+  sessionId: string
+  trustedLearningTurn: { readonly userMessageId?: string; readonly content: string }
+  content?: never
+  userMessageId?: never
+  images?: never
+  regenerate?: never
+  internalRelay?: never
+  trustedLearningDelivery?: never
+}
+
+/** 学习 outbox 固定身份交接；Renderer 不可伪造。 */
+export interface SendAgentMessageLearningDeliveryParams {
+  sessionId: string
+  trustedLearningDelivery: {
+    readonly userMessageId: string
+    readonly content: string
+    readonly commandId: string
+  }
+  content?: never
+  userMessageId?: never
+  images?: never
+  regenerate?: never
+  internalRelay?: never
+  trustedLearningTurn?: never
+}
+
+export type SendAgentMessageParams =
+  | SendAgentMessageUserParams
+  | SendAgentMessageRelayParams
+  | SendAgentMessageLearningCoachParams
+  | SendAgentMessageLearningDeliveryParams
+
+function isPublicUserMessageParams(
+  params: SendAgentMessageParams
+): params is SendAgentMessageUserParams {
+  return 'content' in params
+}
 
 export interface SendAgentMessageDeps {
   getMainWindow: () => BrowserWindow | null
@@ -208,6 +248,29 @@ export async function sendAgentMessage(
     throw new Error('Child Session 由父任务的执行服务管理，不能从普通消息入口启动新 turn')
   }
   const projectPath = session.workspaceRoot
+  const trustedCoach = 'trustedLearningTurn' in params ? params.trustedLearningTurn : undefined
+  const trustedDelivery =
+    'trustedLearningDelivery' in params ? params.trustedLearningDelivery : undefined
+  const hasPublicContent = 'content' in params && typeof params.content === 'string'
+  if (
+    session.mode === 'learn' &&
+    params.internalRelay === undefined &&
+    !(trustedCoach && !hasPublicContent) &&
+    !(trustedDelivery && !hasPublicContent)
+  ) {
+    return {
+      accepted: false,
+      rejection: {
+        reason: 'agent_not_allowed',
+        skillName: 'learning-command',
+        suggestions: []
+      }
+    }
+  }
+  if (session.mode === 'learn') {
+    const { ensureLearningDatabaseReady } = await import('../../learning/LearningDbHost')
+    await ensureLearningDatabaseReady()
+  }
   // 接力入场（判别联合收窄）不构成用户新授权：不落盘、不建新 run，
   // 只接管协调器已持久化的 queued 预约。
   let relayRunId: string | undefined
@@ -229,7 +292,7 @@ export async function sendAgentMessage(
     relayRunId = params.internalRelay.relayRunId
     relayTrigger = reservation.relayTrigger
   }
-  if (params.internalRelay === undefined) {
+  if (isPublicUserMessageParams(params)) {
     // 无效 slash 在入口锁之前本地拒绝：不排队、不落盘、不建 run、不调模型。
     // registry 先对齐本会话工作区，避免用错工作区的目录误拒项目技能。
     const slashRejection = preflightSlashRejection(
@@ -477,7 +540,16 @@ export async function sendAgentMessage(
   let persistBlocks: MessageBlock[] = []
   let turnUserMessageId: string | undefined
   // 用户原文：content 只在用户变体上必填，接力变体没有；此处一次性收敛为 string
-  const userContent = params.internalRelay === undefined ? params.content : ''
+  let userContent = ''
+  if (params.internalRelay !== undefined) {
+    userContent = ''
+  } else if ('trustedLearningTurn' in params && params.trustedLearningTurn) {
+    userContent = params.trustedLearningTurn.content
+  } else if ('trustedLearningDelivery' in params && params.trustedLearningDelivery) {
+    userContent = params.trustedLearningDelivery.content
+  } else if (isPublicUserMessageParams(params)) {
+    userContent = params.content
+  }
 
   if (relayTrigger !== null) {
     // 冻结批次正文已作为 runtime_input 随接力消息落盘，turn 只需要内部指令
@@ -557,7 +629,15 @@ export async function sendAgentMessage(
       m => m.role === 'user' && extractTextFromSerializableContent(m.content).trim() !== ''
     )
 
-    turnUserMessageId = params.userMessageId ?? `msg_${Date.now()}_user`
+    if ('trustedLearningDelivery' in params && params.trustedLearningDelivery) {
+      turnUserMessageId = params.trustedLearningDelivery.userMessageId
+    } else if ('trustedLearningTurn' in params && params.trustedLearningTurn?.userMessageId) {
+      turnUserMessageId = params.trustedLearningTurn.userMessageId
+    } else if (isPublicUserMessageParams(params)) {
+      turnUserMessageId = params.userMessageId ?? `msg_${Date.now()}_user`
+    } else {
+      turnUserMessageId = `msg_${Date.now()}_user`
+    }
     const userMessage: SessionMessageAppend = {
       // 与 renderer 乐观消息共用 id，避免分叉/编辑时「目标不在激活路径」
       id: turnUserMessageId,
@@ -700,6 +780,13 @@ export async function sendAgentMessage(
       fireIdleRelay(params.sessionId)
     }
   }
+  if ('trustedLearningDelivery' in params && params.trustedLearningDelivery) {
+    const progress = (await import('../../learning/LearningDbHost')).getLearningProgressOrNull()
+    if (progress) {
+      const { markLearningDeliveryComplete } = await import('../../learning/LearningHost')
+      await markLearningDeliveryComplete(progress, params.trustedLearningDelivery.commandId)
+    }
+  }
   return { accepted: true }
 }
 
@@ -749,7 +836,26 @@ function handleEntryLock(params: SendAgentMessageParams): boolean {
   if (action.kind === 'proceed') return false
   // 接力预约不进 steering queue：保持 queued 预约，等当前 turn 结束后由 finally 重新触发接管
   if (params.internalRelay !== undefined) return true
-  enqueueSteeringMessage(params.sessionId, params)
+  if ('trustedLearningTurn' in params && params.trustedLearningTurn) {
+    enqueueSteeringMessage(params.sessionId, {
+      sessionId: params.sessionId,
+      content: params.trustedLearningTurn.content,
+      userMessageId: params.trustedLearningTurn.userMessageId,
+      learningHandoff: { kind: 'coach' }
+    })
+  } else if ('trustedLearningDelivery' in params && params.trustedLearningDelivery) {
+    enqueueSteeringMessage(params.sessionId, {
+      sessionId: params.sessionId,
+      content: params.trustedLearningDelivery.content,
+      userMessageId: params.trustedLearningDelivery.userMessageId,
+      learningHandoff: {
+        kind: 'delivery',
+        commandId: params.trustedLearningDelivery.commandId
+      }
+    })
+  } else if (isPublicUserMessageParams(params)) {
+    enqueueSteeringMessage(params.sessionId, params)
+  }
   return true
 }
 
@@ -856,13 +962,32 @@ export function resumeIdleRelaysAfterStartup(): void {
 }
 
 /** 把 steering 队列项还原为 sendAgentMessage 入参（结构一致，仅做类型收窄）。 */
-function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageUserParams {
+export function fromSteeringMessage(msg: SteeringMessage): SendAgentMessageParams {
+  if (msg.learningHandoff?.kind === 'delivery') {
+    return {
+      sessionId: msg.sessionId,
+      trustedLearningDelivery: {
+        content: msg.content,
+        userMessageId: msg.userMessageId ?? '',
+        commandId: msg.learningHandoff.commandId
+      }
+    }
+  }
+  if (msg.learningHandoff?.kind === 'coach') {
+    return {
+      sessionId: msg.sessionId,
+      trustedLearningTurn: {
+        content: msg.content,
+        ...(msg.userMessageId !== undefined ? { userMessageId: msg.userMessageId } : {})
+      }
+    }
+  }
   return {
     sessionId: msg.sessionId,
     content: msg.content,
     ...(msg.userMessageId !== undefined ? { userMessageId: msg.userMessageId } : {}),
     ...(msg.images !== undefined ? { images: msg.images } : {}),
-    ...(msg.regenerate !== undefined ? { regenerate: msg.regenerate } : {}),
+    ...(msg.regenerate !== undefined ? { regenerate: msg.regenerate } : {})
   }
 }
 

@@ -3,7 +3,8 @@ import {
   CURRENT_LEARNING_SCHEMA_VERSION,
   LEARNING_SCHEMA_META_KEY,
   learningSchemaV1Statements,
-  learningSchemaV2Statements
+  learningSchemaV2Statements,
+  learningSchemaV3Statements
 } from './schema'
 
 export { CURRENT_LEARNING_SCHEMA_VERSION, LEARNING_SCHEMA_META_KEY } from './schema'
@@ -50,6 +51,9 @@ export function migrateLearningDatabase(db: BetterSqlite3.Database): void {
     for (const sql of learningSchemaV2Statements()) {
       db.exec(sql)
     }
+    for (const sql of learningSchemaV3Statements()) {
+      db.exec(sql)
+    }
     db.prepare(
       `INSERT INTO schema_meta (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`
@@ -63,6 +67,16 @@ export function migrateLearningDatabase(db: BetterSqlite3.Database): void {
     db.prepare(
       `INSERT INTO schema_meta (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+    ).run(LEARNING_SCHEMA_META_KEY, '2')
+  })
+
+  const applyV3 = db.transaction(() => {
+    for (const sql of learningSchemaV3Statements()) {
+      db.exec(sql)
+    }
+    db.prepare(
+      `INSERT INTO schema_meta (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
     ).run(LEARNING_SCHEMA_META_KEY, String(CURRENT_LEARNING_SCHEMA_VERSION))
   })
 
@@ -70,8 +84,15 @@ export function migrateLearningDatabase(db: BetterSqlite3.Database): void {
     applyFresh()
     return
   }
-  if (stored === 1 && CURRENT_LEARNING_SCHEMA_VERSION === 2) {
+  if (stored === 1 && CURRENT_LEARNING_SCHEMA_VERSION >= 2) {
     applyV2()
+    if (CURRENT_LEARNING_SCHEMA_VERSION >= 3) {
+      applyV3()
+    }
+    return
+  }
+  if (stored === 2 && CURRENT_LEARNING_SCHEMA_VERSION === 3) {
+    applyV3()
     return
   }
   throw new Error(`不支持的学习 schema 中间版本 ${stored}`)

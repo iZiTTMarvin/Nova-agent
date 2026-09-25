@@ -5,6 +5,7 @@ import {
   getDefaultLearningProgress,
   type LearningProgress
 } from '../../learning/progress/LearningProgress'
+import { parseFrozenCheckpointRubric } from '../../../shared/learning/rubric'
 
 export interface LearningCheckpointToolDeps {
   getProgress?: () => LearningProgress | null
@@ -26,9 +27,10 @@ export function createLearningCheckpointTool(
       properties: {
         question: { type: 'string', description: 'Complete question shown to the user.' },
         cursorVersion: { type: 'integer', description: 'Expected cursor version.' },
-        checkpointId: { type: 'string', description: 'Stable checkpoint id for idempotent retries.' }
+        checkpointId: { type: 'string', description: 'Stable checkpoint id for idempotent retries.' },
+        rubric: { type: 'object', description: 'Frozen rubric fields.' }
       },
-      required: ['question', 'cursorVersion']
+      required: ['question', 'cursorVersion', 'rubric']
     },
     async execute(args, context) {
       if (context.mode !== 'learn') {
@@ -46,6 +48,16 @@ export function createLearningCheckpointTool(
       }
       if (!Number.isSafeInteger(args.cursorVersion) || (args.cursorVersion as number) < 0) {
         return { success: false, output: '', error: 'cursorVersion 无效' }
+      }
+      let rubricJson: string
+      try {
+        rubricJson = JSON.stringify(parseFrozenCheckpointRubric(args.rubric))
+      } catch (error) {
+        return {
+          success: false,
+          output: '',
+          error: error instanceof Error ? error.message : String(error)
+        }
       }
       const checkpointId =
         typeof args.checkpointId === 'string' && args.checkpointId.trim()
@@ -73,7 +85,8 @@ export function createLearningCheckpointTool(
           runId,
           checkpointId,
           cursorVersion: args.cursorVersion as number,
-          question
+          question,
+          rubricJson
         })
       } catch (error) {
         return {
