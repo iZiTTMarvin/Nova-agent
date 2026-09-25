@@ -45,6 +45,35 @@ export type LearningDbWorkerOp =
         bodyJson: string
       }[]
       members: readonly { nodeId: string; nodeRevision: string }[]
+      edges: readonly {
+        fromNodeId: string
+        toNodeId: string
+        edgeKind: string
+      }[]
+      sourceReceipts: readonly {
+        receiptId: string
+        filePath: string
+        startLine: number
+        endLine: number
+        contentHash: string
+        snippetHash: string
+        symbolLabel: string | null
+        strategyVersion: string
+        collectedAt: number
+      }[]
+      nodeSources: readonly {
+        nodeId: string
+        nodeRevision: string
+        receiptId: string
+      }[]
+    }
+  | { domain: 'knowledge'; op: 'get_current_revision'; workspaceRoot: string }
+  | { domain: 'knowledge'; op: 'get_tree_projection'; workspaceRoot: string }
+  | {
+      domain: 'knowledge'
+      op: 'get_node_material'
+      workspaceRoot: string
+      nodeId: string
     }
 
 export type LearningDbWorkerResult =
@@ -71,6 +100,57 @@ function readInt(value: unknown, field: string): number {
     throw new Error(`${field} 无效`)
   }
   return value as number
+}
+
+function parseEdgeList(raw: unknown, field: string) {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) throw new Error(`${field} 必须是数组`)
+  return raw.map((item, index) => {
+    if (!item || typeof item !== 'object') throw new Error(`${field}[${index}] 无效`)
+    const row = item as Record<string, unknown>
+    return {
+      fromNodeId: readString(row.fromNodeId, 'fromNodeId'),
+      toNodeId: readString(row.toNodeId, 'toNodeId'),
+      edgeKind: readString(row.edgeKind, 'edgeKind')
+    }
+  })
+}
+
+function parseReceiptList(raw: unknown, field: string) {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) throw new Error(`${field} 必须是数组`)
+  return raw.map((item, index) => {
+    if (!item || typeof item !== 'object') throw new Error(`${field}[${index}] 无效`)
+    const row = item as Record<string, unknown>
+    return {
+      receiptId: readString(row.receiptId, 'receiptId'),
+      filePath: readString(row.filePath, 'filePath'),
+      startLine: readInt(row.startLine, 'startLine'),
+      endLine: readInt(row.endLine, 'endLine'),
+      contentHash: readString(row.contentHash, 'contentHash'),
+      snippetHash: readString(row.snippetHash, 'snippetHash'),
+      symbolLabel:
+        row.symbolLabel === null || row.symbolLabel === undefined
+          ? null
+          : readString(row.symbolLabel, 'symbolLabel'),
+      strategyVersion: readString(row.strategyVersion, 'strategyVersion'),
+      collectedAt: readInt(row.collectedAt, 'collectedAt')
+    }
+  })
+}
+
+function parseNodeSourceList(raw: unknown, field: string) {
+  if (raw === undefined) return []
+  if (!Array.isArray(raw)) throw new Error(`${field} 必须是数组`)
+  return raw.map((item, index) => {
+    if (!item || typeof item !== 'object') throw new Error(`${field}[${index}] 无效`)
+    const row = item as Record<string, unknown>
+    return {
+      nodeId: readString(row.nodeId, 'nodeId'),
+      nodeRevision: readString(row.nodeRevision, 'nodeRevision'),
+      receiptId: readString(row.receiptId, 'receiptId')
+    }
+  })
 }
 
 export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
@@ -134,6 +214,9 @@ export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
         nodeRevision: readString(row.nodeRevision, 'nodeRevision')
       }
     })
+    const edges = parseEdgeList(value.edges, 'edges')
+    const sourceReceipts = parseReceiptList(value.sourceReceipts, 'sourceReceipts')
+    const nodeSources = parseNodeSourceList(value.nodeSources, 'nodeSources')
     return {
       domain: 'knowledge',
       op: 'publish_version',
@@ -153,7 +236,32 @@ export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
             ? value.expectedCurrentRevision.trim()
             : null,
       nodes,
-      members
+      members,
+      edges,
+      sourceReceipts,
+      nodeSources
+    }
+  }
+  if (domain === 'knowledge' && op === 'get_current_revision') {
+    return {
+      domain: 'knowledge',
+      op: 'get_current_revision',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot')
+    }
+  }
+  if (domain === 'knowledge' && op === 'get_tree_projection') {
+    return {
+      domain: 'knowledge',
+      op: 'get_tree_projection',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot')
+    }
+  }
+  if (domain === 'knowledge' && op === 'get_node_material') {
+    return {
+      domain: 'knowledge',
+      op: 'get_node_material',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      nodeId: readString(value.nodeId, 'nodeId')
     }
   }
   throw new Error(`未知 Worker 命令 ${String(domain)}/${String(op)}`)

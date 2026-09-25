@@ -4,6 +4,8 @@ import { LearningProgressRepository } from '../../../src/runtime/learning/progre
 import { LearningProgress } from '../../../src/runtime/learning/progress/LearningProgress'
 import { ProjectKnowledgeRepository } from '../../../src/runtime/learning/knowledge/ProjectKnowledgeRepository'
 import { ProjectKnowledge } from '../../../src/runtime/learning/knowledge/ProjectKnowledgeRepository'
+import { ProjectKnowledgeReader } from '../../../src/runtime/learning/knowledge/ProjectKnowledgeReader'
+import { LearningKnowledgeSurface } from '../../../src/runtime/learning/knowledge/LearningKnowledgeSurface'
 
 export const learningWorkerJs = join(process.cwd(), 'out', 'main', 'learningDbWorker.js')
 
@@ -11,6 +13,8 @@ export async function createLearningDbHarness(dbPath: string): Promise<{
   client: LearningDbWorkerClient
   progress: LearningProgress
   knowledge: ProjectKnowledge
+  reader: ProjectKnowledgeReader
+  surface: LearningKnowledgeSurface
   close: () => Promise<void>
 }> {
   const client = new LearningDbWorkerClient(learningWorkerJs)
@@ -18,10 +22,13 @@ export async function createLearningDbHarness(dbPath: string): Promise<{
   await client.open(dbPath)
   const progressRepo = new LearningProgressRepository(client)
   const knowledgeRepo = new ProjectKnowledgeRepository(client)
+  const reader = new ProjectKnowledgeReader(client)
   return {
     client,
     progress: new LearningProgress(progressRepo),
     knowledge: new ProjectKnowledge(knowledgeRepo),
+    reader,
+    surface: new LearningKnowledgeSurface(reader),
     close: async () => {
       await client.close()
     }

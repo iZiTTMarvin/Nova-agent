@@ -1,5 +1,5 @@
 /** 学习库 schema 版本；与 SessionStore 独立版本化。 */
-export const CURRENT_LEARNING_SCHEMA_VERSION = 1
+export const CURRENT_LEARNING_SCHEMA_VERSION = 2
 
 export const LEARNING_SCHEMA_META_KEY = 'schema_version'
 
@@ -175,5 +175,14 @@ export function learningSchemaV1Statements(): readonly string[] {
       ON node_versions(project_id, node_id)`,
     `CREATE INDEX IF NOT EXISTS idx_source_receipts_project_path
       ON source_receipts(project_id, file_path)`
+  ]
+}
+
+/** v1 → v2：出处 receipt 补片段 hash 与策略版本。 */
+export function learningSchemaV2Statements(): readonly string[] {
+  return [
+    `ALTER TABLE source_receipts ADD COLUMN snippet_hash TEXT NOT NULL DEFAULT ''`,
+    `ALTER TABLE source_receipts ADD COLUMN strategy_version TEXT NOT NULL DEFAULT 'learning-evidence-v1'`,
+    `ALTER TABLE source_receipts ADD COLUMN symbol_label TEXT`
   ]
 }

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import type BetterSqlite3 from 'better-sqlite3'
 import type { LearningCommand, LearningCommandReceipt } from '../../../shared/learning/command'
+import type { KnowledgeEdgeKind } from '../../../shared/learning/knowledgeProjection'
+import { nodeSummaryFromBody, parsePublishedNodeBody } from '../knowledge/nodeBody'
 import {
   deriveProjectId,
   normalizeWorkspaceForProject,
@@ -9,6 +11,8 @@ import {
   type LearningDbWorkerResult,
   type PersistedCheckpointView
 } from './workerCommand'
+
+const ALLOWED_EDGE_KINDS = new Set<KnowledgeEdgeKind>(['prerequisite', 'related', 'flow_next'])
 
 function ensureProject(
   db: BetterSqlite3.Database,
@@ -420,38 +424,215 @@ function executePublishVersion(
     throw new Error('revision 已存在，拒绝覆盖旧基线')
   }
 
-  db.prepare(
-    `INSERT INTO knowledge_versions (
-      project_id, knowledge_revision, parent_revision, input_fingerprint, created_at
-    ) VALUES (?, ?, ?, ?, ?)`
-  ).run(
-    projectId,
-    op.knowledgeRevision,
-    op.parentRevision,
-    op.inputFingerprint,
-    now
-  )
-
-  for (const node of op.nodes) {
-    db.prepare(
-      `INSERT INTO node_versions (
-        project_id, node_id, node_revision, title, body_json, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(projectId, node.nodeId, node.nodeRevision, node.title, node.bodyJson, now)
-  }
-  for (const member of op.members) {
-    db.prepare(
-      `INSERT INTO version_members (
-        project_id, knowledge_revision, node_id, node_revision
-      ) VALUES (?, ?, ?, ?)`
-    ).run(projectId, op.knowledgeRevision, member.nodeId, member.nodeRevision)
+  for (const edge of op.edges) {
+    if (!ALLOWED_EDGE_KINDS.has(edge.edgeKind as KnowledgeEdgeKind)) {
+      throw new Error('边类型无效')
+    }
   }
 
-  db.prepare(
-    `UPDATE projects SET current_knowledge_revision = ?, updated_at = ? WHERE project_id = ?`
-  ).run(op.knowledgeRevision, now, projectId)
+  const publish = db.transaction(() => {
+    db.prepare(
+      `INSERT INTO knowledge_versions (
+        project_id, knowledge_revision, parent_revision, input_fingerprint, created_at
+      ) VALUES (?, ?, ?, ?, ?)`
+    ).run(
+      projectId,
+      op.knowledgeRevision,
+      op.parentRevision,
+      op.inputFingerprint,
+      now
+    )
 
+    for (const node of op.nodes) {
+      db.prepare(
+        `INSERT INTO node_versions (
+          project_id, node_id, node_revision, title, body_json, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?)`
+      ).run(projectId, node.nodeId, node.nodeRevision, node.title, node.bodyJson, now)
+    }
+    for (const member of op.members) {
+      db.prepare(
+        `INSERT INTO version_members (
+          project_id, knowledge_revision, node_id, node_revision
+        ) VALUES (?, ?, ?, ?)`
+      ).run(projectId, op.knowledgeRevision, member.nodeId, member.nodeRevision)
+    }
+    for (const edge of op.edges) {
+      db.prepare(
+        `INSERT INTO knowledge_edges (
+          project_id, knowledge_revision, from_node_id, to_node_id, edge_kind
+        ) VALUES (?, ?, ?, ?, ?)`
+      ).run(
+        projectId,
+        op.knowledgeRevision,
+        edge.fromNodeId,
+        edge.toNodeId,
+        edge.edgeKind
+      )
+    }
+    for (const receipt of op.sourceReceipts) {
+      db.prepare(
+        `INSERT INTO source_receipts (
+          receipt_id, project_id, file_path, start_line, end_line,
+          content_hash, snippet_hash, strategy_version, symbol_label, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        receipt.receiptId,
+        projectId,
+        receipt.filePath,
+        receipt.startLine,
+        receipt.endLine,
+        receipt.contentHash,
+        receipt.snippetHash,
+        receipt.strategyVersion,
+        receipt.symbolLabel,
+        receipt.collectedAt
+      )
+    }
+    for (const link of op.nodeSources) {
+      db.prepare(
+        `INSERT INTO node_sources (
+          project_id, node_id, node_revision, receipt_id
+        ) VALUES (?, ?, ?, ?)`
+      ).run(projectId, link.nodeId, link.nodeRevision, link.receiptId)
+    }
+
+    db.prepare(
+      `UPDATE projects SET current_knowledge_revision = ?, updated_at = ? WHERE project_id = ?`
+    ).run(op.knowledgeRevision, now, projectId)
+  })
+
+  publish()
   return { knowledgeRevision: op.knowledgeRevision }
+}
+
+function executeGetCurrentRevision(
+  db: BetterSqlite3.Database,
+  workspaceRoot: string
+): { revision: string | null } {
+  const now = Date.now()
+  const { projectId } = ensureProject(db, workspaceRoot, now)
+  const project = db
+    .prepare(`SELECT current_knowledge_revision FROM projects WHERE project_id = ?`)
+    .get(projectId) as { current_knowledge_revision: string | null }
+  return { revision: project.current_knowledge_revision }
+}
+
+function executeGetTreeProjection(db: BetterSqlite3.Database, workspaceRoot: string) {
+  const now = Date.now()
+  const { projectId } = ensureProject(db, workspaceRoot, now)
+  const project = db
+    .prepare(`SELECT current_knowledge_revision FROM projects WHERE project_id = ?`)
+    .get(projectId) as { current_knowledge_revision: string | null }
+  const revision = project.current_knowledge_revision
+  if (!revision) {
+    return { knowledgeRevision: null, nodes: [], edges: [] }
+  }
+
+  const memberRows = db
+    .prepare(
+      `SELECT vm.node_id, vm.node_revision, nv.title, nv.body_json
+       FROM version_members vm
+       INNER JOIN node_versions nv
+         ON nv.project_id = vm.project_id
+        AND nv.node_id = vm.node_id
+        AND nv.node_revision = vm.node_revision
+       WHERE vm.project_id = ? AND vm.knowledge_revision = ?`
+    )
+    .all(projectId, revision) as {
+    node_id: string
+    node_revision: string
+    title: string
+    body_json: string
+  }[]
+
+  const nodes = memberRows.map(row => {
+    const body = parsePublishedNodeBody(row.body_json)
+    return {
+      nodeId: row.node_id,
+      nodeRevision: row.node_revision,
+      title: row.title,
+      summary: nodeSummaryFromBody(row.title, body),
+      materialStatus: body.materialStatus,
+      navDimension: body.navDimension,
+      parentNodeId: body.parentNodeId
+    }
+  })
+
+  const edgeRows = db
+    .prepare(
+      `SELECT from_node_id, to_node_id, edge_kind FROM knowledge_edges
+       WHERE project_id = ? AND knowledge_revision = ?`
+    )
+    .all(projectId, revision) as {
+    from_node_id: string
+    to_node_id: string
+    edge_kind: string
+  }[]
+
+  const edges = edgeRows.map(row => ({
+    fromNodeId: row.from_node_id,
+    toNodeId: row.to_node_id,
+    edgeKind: row.edge_kind as KnowledgeEdgeKind
+  }))
+
+  return { knowledgeRevision: revision, nodes, edges }
+}
+
+function executeGetNodeMaterial(
+  db: BetterSqlite3.Database,
+  workspaceRoot: string,
+  nodeId: string
+) {
+  const now = Date.now()
+  const { projectId } = ensureProject(db, workspaceRoot, now)
+  const project = db
+    .prepare(`SELECT current_knowledge_revision FROM projects WHERE project_id = ?`)
+    .get(projectId) as { current_knowledge_revision: string | null }
+  const revision = project.current_knowledge_revision
+  if (!revision) return null
+
+  const member = db
+    .prepare(
+      `SELECT vm.node_revision, nv.title, nv.body_json
+       FROM version_members vm
+       INNER JOIN node_versions nv
+         ON nv.project_id = vm.project_id
+        AND nv.node_id = vm.node_id
+        AND nv.node_revision = vm.node_revision
+       WHERE vm.project_id = ? AND vm.knowledge_revision = ? AND vm.node_id = ?`
+    )
+    .get(projectId, revision, nodeId) as
+    | { node_revision: string; title: string; body_json: string }
+    | undefined
+  if (!member) return null
+
+  const sourceRows = db
+    .prepare(
+      `SELECT sr.receipt_id, sr.file_path, sr.start_line, sr.end_line
+       FROM node_sources ns
+       INNER JOIN source_receipts sr ON sr.receipt_id = ns.receipt_id
+       WHERE ns.project_id = ? AND ns.node_id = ? AND ns.node_revision = ?`
+    )
+    .all(projectId, nodeId, member.node_revision) as {
+    receipt_id: string
+    file_path: string
+    start_line: number
+    end_line: number
+  }[]
+
+  return {
+    nodeId,
+    nodeRevision: member.node_revision,
+    title: member.title,
+    bodyJson: member.body_json,
+    sources: sourceRows.map(row => ({
+      receiptId: row.receipt_id,
+      filePath: row.file_path,
+      startLine: row.start_line,
+      endLine: row.end_line
+    }))
+  }
 }
 
 export function executeLearningDbWorkerOp(
@@ -472,6 +653,15 @@ export function executeLearningDbWorkerOp(
   }
   if (op.domain === 'knowledge' && op.op === 'publish_version') {
     return { ok: true, result: executePublishVersion(db, op) }
+  }
+  if (op.domain === 'knowledge' && op.op === 'get_current_revision') {
+    return { ok: true, result: executeGetCurrentRevision(db, op.workspaceRoot) }
+  }
+  if (op.domain === 'knowledge' && op.op === 'get_tree_projection') {
+    return { ok: true, result: executeGetTreeProjection(db, op.workspaceRoot) }
+  }
+  if (op.domain === 'knowledge' && op.op === 'get_node_material') {
+    return { ok: true, result: executeGetNodeMaterial(db, op.workspaceRoot, op.nodeId) }
   }
   return { ok: false, message: '未知命令' }
 }
