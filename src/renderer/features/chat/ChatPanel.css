@@ -184,6 +184,29 @@
   margin-bottom: 8px;
   z-index: 5;
   pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 「学懂这次改动」：开发结果旁的轻量学习入口（§2.4） */
+.chat-learn-change {
+  appearance: none;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 4px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--transition-fast, 120ms), border-color var(--transition-fast, 120ms);
+}
+
+.chat-learn-change:hover {
+  color: var(--text-primary);
+  border-color: var(--border-brand);
+  background: var(--surface-brand);
 }
 
 .chat-scroll-to-bottom {

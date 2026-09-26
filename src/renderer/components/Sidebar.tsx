@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useChatStore } from '../stores/useChatStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useLayoutStore, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX } from '../stores/useLayoutStore'
 import type { PrimarySession, Session } from '../../shared/session/types'
 import {
@@ -30,10 +31,14 @@ import { useRunStore } from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
 import { selectCurrentCodeIndexStatus, useCodeIndexStore } from '../stores/useCodeIndexStore'
 import {
-  listPinnedSessions,
   listSidebarRootSessions,
+  listSidebarSessionsForSurface,
   resolveSidebarActiveSessionId
 } from '../features/subagents/sidebarSessions'
+import {
+  switchToDevSurface,
+  switchToLearningSurface
+} from '../features/learning/learningSurfaceSwitch'
 import type { AppUpdateSnapshot } from '../../shared/update'
 import { UpdateIndicator } from '../features/update/UpdateIndicator'
 import { formatCompactRelativeTime } from '../lib/time'
@@ -176,6 +181,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
 }: SidebarSessionsProps) {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
+  const currentMode = useWorkspaceStore(state => state.currentMode)
   const createNewSession = useChatStore(state => state.createNewSession)
   const selectSession = useChatStore(state => state.selectSession)
   const deleteSession = useChatStore(state => state.deleteSession)
@@ -399,9 +405,10 @@ const SidebarSessions = React.memo(function SidebarSessions({
   }, [])
 
   const sidebarActiveSessionId = resolveSidebarActiveSessionId(sessions, currentSessionId)
+  const surface: 'dev' | 'learn' = currentMode === 'learn' ? 'learn' : 'dev'
 
-  // 项目分组派生
-  const rootSessions = listSidebarRootSessions(sessions)
+  // 项目分组派生：会话抽屉按面过滤（§20.2）
+  const rootSessions = listSidebarSessionsForSurface(sessions, surface)
   const projectGroups = useMemo(() => {
     return rootSessions.reduce((acc, session) => {
       const p = session.workspaceRoot
@@ -529,7 +536,9 @@ const SidebarSessions = React.memo(function SidebarSessions({
     }
   }
 
-  const pinnedSessions = listPinnedSessions(sessions)
+  const pinnedSessions = listSidebarSessionsForSurface(sessions, surface).filter(
+    session => session.pinned === true
+  )
 
   const togglePin = (session: PrimarySession) => {
     setOpenMenuSessionId(null)
@@ -666,6 +675,32 @@ const SidebarSessions = React.memo(function SidebarSessions({
         style={{ width: '100%' }}
         topContent={(
           <div className="sidebar-top-actions flex flex-col gap-0.5 w-full px-2 pt-2">
+            {/* 项目级表面切换：开发 | 学习（§12.1）。学习有独立会话，不原地改变开发会话 */}
+            <div
+              className="sidebar-surface-switch"
+              role="group"
+              aria-label="开发或学习表面"
+            >
+              <button
+                type="button"
+                className={`sidebar-surface-switch__btn${surface === 'dev' ? ' sidebar-surface-switch__btn--active' : ''}`}
+                aria-pressed={surface === 'dev'}
+                disabled={!currentProject || surface === 'dev'}
+                onClick={() => void switchToDevSurface()}
+              >
+                开发
+              </button>
+              <button
+                type="button"
+                className={`sidebar-surface-switch__btn${surface === 'learn' ? ' sidebar-surface-switch__btn--active' : ''}`}
+                aria-pressed={surface === 'learn'}
+                disabled={!currentProject || surface === 'learn'}
+                onClick={() => void switchToLearningSurface()}
+              >
+                学习
+              </button>
+            </div>
+
             {/* 1. 主动作按钮：新会话（默认透明无边框，hover 才有轻微背景） */}
             <button
               type="button"

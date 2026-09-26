@@ -81,7 +81,10 @@ describe('learning vertical path integration', () => {
     }
     const applied = await applyLearningCommand(harness.progress, workspace, command)
     expect(applied.receipt.ok).toBe(true)
-    expect(applied.coachTurn).toContain('node-save')
+    expect(applied.delivery).not.toBeNull()
+    // 交付消息不携带内部节点标识；模型经 learning_context 读取当前节点身份
+    expect(applied.delivery!.content).toContain('学习选点')
+    expect(applied.delivery!.content).not.toContain('node-save')
 
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
@@ -137,7 +140,7 @@ describe('learning vertical path integration', () => {
     const ok = await assessTool.execute(
       {
         attemptId: JSON.parse(
-          (await harness.progress.getPendingOutbox('sess-assess'))!.payload_json
+          (await harness.progress.getPendingOutbox('sess-assess', 'cmd-ans'))!.payload_json
         ).attemptId,
         checkpointId: 'ckpt-a',
         verdict: 'needs_clarification',
@@ -176,7 +179,7 @@ describe('learning vertical path integration', () => {
     const badQuote = await assessTool.execute(
       {
         attemptId: JSON.parse(
-          (await harness.progress.getPendingOutbox('sess-assess-2'))!.payload_json
+          (await harness.progress.getPendingOutbox('sess-assess-2', 'cmd-ans2'))!.payload_json
         ).attemptId,
         checkpointId: 'ckpt-b',
         verdict: 'needs_clarification',
@@ -222,7 +225,7 @@ describe('learning vertical path integration', () => {
     const blocked = await assessTool.execute(
       {
         attemptId: JSON.parse(
-          (await harness.progress.getPendingOutbox('sess-hint'))!.payload_json
+          (await harness.progress.getPendingOutbox('sess-hint', 'cmd-ans-h'))!.payload_json
         ).attemptId,
         checkpointId: 'ckpt-h',
         verdict: 'understanding_observed',

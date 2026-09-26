@@ -3,7 +3,9 @@ import { open, readdir } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import {
   LEARNING_EVIDENCE_PER_FILE_MAX_BYTES,
-  LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS
+  LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS,
+  LEARNING_EVIDENCE_TOTAL_MAX_BYTES,
+  LEARNING_DISCOVERY_MAX_ENTRIES
 } from '../../../../shared/learning/buildLimits'
 import {
   canonicalizeExistingPath,
@@ -35,6 +37,7 @@ const TEXT_EXTENSIONS = new Set([
 ])
 
 const ENTRY_PRIORITY = ['package.json', 'README.md', 'readme.md', 'README.MD']
+const MAX_FRAGMENT_BYTES = Math.min(LEARNING_EVIDENCE_PER_FILE_MAX_BYTES, Math.floor(LEARNING_EVIDENCE_TOTAL_MAX_BYTES / LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS))
 
 function hashText(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
@@ -71,15 +74,18 @@ function isBinaryBuffer(buf: Buffer): boolean {
   return false
 }
 
-async function listReadableFiles(workspaceRoot: string): Promise<string[]> {
+async function listReadableFiles(workspaceRoot: string, signal?: AbortSignal): Promise<string[]> {
   const ignore = await loadIgnoreMatcher(workspaceRoot)
   const cache = createCanonicalPathCache()
   const rootCanon = canonicalizeExistingPath(resolve(workspaceRoot), cache)
   if (!rootCanon.ok) return []
 
   const found: string[] = []
+  let visited = 0
 
   async function walk(absDir: string): Promise<void> {
+    signal?.throwIfAborted()
+    if (visited >= LEARNING_DISCOVERY_MAX_ENTRIES) return
     let entries: import('node:fs').Dirent[]
     try {
       entries = await readdir(absDir, { withFileTypes: true })
@@ -87,6 +93,8 @@ async function listReadableFiles(workspaceRoot: string): Promise<string[]> {
       return
     }
     for (const entry of entries) {
+      signal?.throwIfAborted()
+      if (++visited > LEARNING_DISCOVERY_MAX_ENTRIES) return
       const name = entry.name
       if (isPathSkipped(name)) continue
       const absPath = join(absDir, name)
@@ -145,6 +153,7 @@ export class WorkspaceEvidencePort {
   async collectSkeletonEvidence(params: {
     workspaceRoot: string
     focusRelativePaths?: readonly string[]
+    signal?: AbortSignal
   }): Promise<EvidencePackage> {
     const normalizedRoot = normalizeWorkspaceForProject(params.workspaceRoot)
     const projectId = deriveProjectId(normalizedRoot)
@@ -154,7 +163,7 @@ export class WorkspaceEvidencePort {
       throw new Error('工作区路径无效')
     }
 
-    let candidates = prioritizePaths(await listReadableFiles(normalizedRoot))
+    let candidates = prioritizePaths(await listReadableFiles(normalizedRoot, params.signal))
     if (params.focusRelativePaths?.length) {
       const focus = params.focusRelativePaths.map(p => p.replace(/\\/g, '/'))
       const focusSet = new Set(focus)
@@ -180,6 +189,7 @@ export class WorkspaceEvidencePort {
     const collectedAt = Date.now()
 
     for (const relPath of candidates) {
+      params.signal?.throwIfAborted()
       if (fragments.length >= LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS) break
       const absPath = join(rootCanon.path, relPath.split('/').join(sep))
       const targetCanon = canonicalizeExistingPath(absPath, cache)
@@ -192,7 +202,7 @@ export class WorkspaceEvidencePort {
       try {
         capped = await readCappedText(
           targetCanon.path,
-          LEARNING_EVIDENCE_PER_FILE_MAX_BYTES - used
+          MAX_FRAGMENT_BYTES
         )
       } catch {
         continue
@@ -260,7 +270,7 @@ export async function verifyFragmentAgainstDisk(
   if (!targetCanon.ok || !isPathWithinRoot(rootCanon.path, targetCanon.path)) return false
   let capped: { text: string } | null
   try {
-    capped = await readCappedText(targetCanon.path, LEARNING_EVIDENCE_PER_FILE_MAX_BYTES)
+    capped = await readCappedText(targetCanon.path, MAX_FRAGMENT_BYTES)
   } catch {
     return false
   }
@@ -268,4 +278,28 @@ export async function verifyFragmentAgainstDisk(
   const content = capped.text
   const { text } = sliceFragmentLines(content, fragment.startLine, fragment.endLine)
   return hashText(text) === fragment.snippetHash
+}
+
+export async function readKnowledgeSource(
+  workspaceRoot: string,
+  source: import('../../../../shared/learning/knowledgeProjection').KnowledgeNodeSourceView
+): Promise<import('../../../../shared/learning/surface').LearningSourceResult> {
+  try {
+    if (isSensitiveRelativePath(source.filePath) || (await loadIgnoreMatcher(workspaceRoot))(source.filePath, false)) {
+      return { ok: false, message: '来源已被当前项目的读取策略排除' }
+    }
+    const cache = createCanonicalPathCache()
+    const root = canonicalizeExistingPath(resolve(workspaceRoot), cache)
+    const target = canonicalizeExistingPath(resolve(workspaceRoot, source.filePath), cache)
+    if (!root.ok || !target.ok || !isPathWithinRoot(root.path, target.path)) {
+      return { ok: false, message: '来源已删除、不可访问或不在授权工作区中' }
+    }
+    const content = await readCappedText(target.path, MAX_FRAGMENT_BYTES)
+    if (!content) return { ok: false, message: '来源不是可读文本' }
+    const snippet = sliceFragmentLines(content.text, source.startLine, source.endLine)
+    return { ok: true, filePath: source.filePath, startLine: snippet.startLine,
+      text: snippet.text, changed: hashText(snippet.text) !== source.snippetHash }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  }
 }

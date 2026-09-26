@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { ModelClient } from '../../model/ModelClient'
 import type { ChatMessage } from '../../model/types'
-import { LEARNING_SCHEMA_REPAIR_MAX_EXTRA_CALLS } from '../../../shared/learning/buildLimits'
+import { LEARNING_SCHEMA_REPAIR_MAX_EXTRA_CALLS, LEARNING_MAX_COMPILE_OUTPUT_BYTES, LEARNING_COMPILE_MAX_INPUT_TOKENS } from '../../../shared/learning/buildLimits'
+import { estimateTextTokens } from '../../../shared/model/tokenEstimate'
 import { WorkspaceEvidencePort } from '../knowledge/evidence/WorkspaceEvidencePort'
 import type { EvidencePackage, LearningCodeIndexQueryPort } from '../knowledge/evidence/evidenceTypes'
 import {
@@ -44,7 +45,7 @@ function evidencePrompt(evidence: EvidencePackage): string {
           title: 'string',
           summary: 'string',
           learningGoal: 'string',
-          navDimension: 'key_user_flows | ...',
+          navDimension: 'project_purpose | startup_runtime | module_roles | key_user_flows | data_and_state | design_tradeoffs',
           parentNodeId: 'string | null',
           claims: [],
           prerequisiteNodeIds: [],
@@ -63,11 +64,20 @@ function evidencePrompt(evidence: EvidencePackage): string {
 
 async function collectModelText(
   model: ModelClient,
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  signal?: AbortSignal
 ): Promise<string> {
+  signal?.throwIfAborted()
+  const measured = model.measureRequest?.(messages, [])
+  const budget = Math.min(LEARNING_COMPILE_MAX_INPUT_TOKENS, measured ? Math.max(0, measured.contextWindow - 4096) : LEARNING_COMPILE_MAX_INPUT_TOKENS)
+  if ((measured?.budgetUnits ?? estimateTextTokens(JSON.stringify(messages))) > budget) {
+    throw new Error('教材输入超出模型预算，请缩小项目范围')
+  }
   let text = ''
-  for await (const event of model.chat(messages, [])) {
+  for await (const event of model.chat(messages, [], { abortSignal: signal })) {
+    signal?.throwIfAborted()
     if (event.type === 'text_delta') text += event.delta
+    if (Buffer.byteLength(text, 'utf8') > LEARNING_MAX_COMPILE_OUTPUT_BYTES) throw new Error('教材输出超出上限')
   }
   return text
 }
@@ -86,6 +96,7 @@ export class SkeletonKnowledgeBuild {
     reader: ProjectKnowledgeReader
     focusRelativePaths?: readonly string[]
     expectedCurrentRevision?: string | null
+    signal?: AbortSignal
   }): Promise<SkeletonBuildResult> {
     if (!params.modelClient) {
       return { ok: false, reason: '无可用模型', modelCallCount: 0 }
@@ -93,7 +104,8 @@ export class SkeletonKnowledgeBuild {
 
     const evidence = await this.evidencePort.collectSkeletonEvidence({
       workspaceRoot: params.workspaceRoot,
-      focusRelativePaths: params.focusRelativePaths
+      focusRelativePaths: params.focusRelativePaths,
+      signal: params.signal
     })
 
     const current =
@@ -114,7 +126,7 @@ export class SkeletonKnowledgeBuild {
 
     for (let attempt = 0; attempt <= LEARNING_SCHEMA_REPAIR_MAX_EXTRA_CALLS; attempt++) {
       modelCallCount++
-      const text = await collectModelText(params.modelClient, messages)
+      const text = await collectModelText(params.modelClient, messages, params.signal)
       try {
         output = parseCompileOutputText(text)
         lastError = ''
@@ -195,6 +207,7 @@ export class SkeletonKnowledgeBuild {
       }))
 
     try {
+      params.signal?.throwIfAborted()
       await params.knowledge.publishVersion({
         workspaceRoot: params.workspaceRoot,
         knowledgeRevision,

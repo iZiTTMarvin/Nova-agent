@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
 import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
 import { InspectorPanel } from '../inspector/InspectorPanel'
+import { LearningSurface } from '../learning/LearningSurface'
 import {
   BROWSER_SPLIT_MIN_PX,
   useLayoutStore
 } from '../../stores/useLayoutStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { BrowserPanel } from './BrowserPanel'
 
 export function BrowserWorkspaceBody(props: {
@@ -15,7 +17,12 @@ export function BrowserWorkspaceBody(props: {
   const browserOpen = useLayoutStore((state) => state.browserSurfaceOpen)
   const inspectorOpen = useLayoutStore((state) => state.inspectorOpen)
   const inspectorWidth = useLayoutStore((state) => state.inspectorWidth)
+  const currentSessionId = useWorkspaceStore((state) => state.currentSessionId)
+  const currentMode = useWorkspaceStore((state) => state.currentMode)
   const [split, setSplit] = useState(false)
+
+  // learn 会话走独立学习表面；会话焦点仍由主进程 Workspace Owner 决定
+  const isLearnSurface = currentMode === 'learn' && currentSessionId !== null
 
   useEffect(() => {
     const el = bodyRef.current
@@ -43,7 +50,11 @@ export function BrowserWorkspaceBody(props: {
         aria-hidden={expanded}
         data-browser-expanded={expanded ? 'true' : 'false'}
       >
-        <ChatPanel ref={chatPanelRef} />
+        {isLearnSurface && currentSessionId ? (
+          <LearningSurface sessionId={currentSessionId} />
+        ) : (
+          <ChatPanel ref={chatPanelRef} />
+        )}
       </div>
       {browserOpen && <BrowserPanel mode={expanded ? 'expanded' : 'split'} />}
       <InspectorPanel

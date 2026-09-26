@@ -31,6 +31,7 @@ asarUnpack:
   # worker 入口与主进程共享的 rollup chunk 也必须真实落盘（worker 以相对路径 require）
   - "out/main/codeModeWorker.js"
   - "out/main/codeGraphWorker.js"
+  - "out/main/learningDbWorker.js"
   - "out/main/chunks/**"
 
 # 任务栏 / 窗口图标（开发态与打包后路径不同，见 src/main/appIcon.ts）

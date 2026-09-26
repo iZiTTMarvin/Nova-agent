@@ -34,6 +34,13 @@ export const SESSION_EXPORT_MARKDOWN = 'session:export-markdown' as const
 export const CODEINDEX_GET_STATUS = 'codeindex:get-status' as const
 export const CODEINDEX_REBUILD = 'codeindex:rebuild' as const
 export const CODEINDEX_OPEN_DIR = 'codeindex:open-dir' as const
+/** 学习表面：投影、节点材料与学习命令 */
+export const LEARNING_GET_SURFACE = 'learning:get-surface' as const
+export const LEARNING_GET_NODE_MATERIAL = 'learning:get-node-material' as const
+export const LEARNING_COMMAND = 'learning:command' as const
+export const LEARNING_BUILD = 'learning:build' as const
+export const LEARNING_CANCEL_BUILD = 'learning:cancel-build' as const
+export const LEARNING_GET_SOURCE = 'learning:get-source' as const
 /** Rules 管理 */
 export const RULES_LIST = 'rules:list' as const
 export const RULES_READ = 'rules:read' as const
@@ -202,6 +209,8 @@ export const RUN_SNAPSHOT = 'run:snapshot' as const
 export const CODEINDEX_STATUS = 'codeindex:status' as const
 /** Child relation 已持久化；renderer 收到后重拉权威投影。 */
 export const SUBAGENT_LINKED = 'subagent:linked' as const
+/** 学习投影失效通知；Renderer 收到后按 sessionId 重拉权威投影。 */
+export const LEARNING_SURFACE_CHANGED = 'learning:surface-changed' as const
 export const WINDOW_MAXIMIZE_CHANGE = 'window:maximize-change' as const
 export const SKILL_CHANGED = 'skill:changed' as const
 /** 工作区状态变更广播（PRD §5.1） */

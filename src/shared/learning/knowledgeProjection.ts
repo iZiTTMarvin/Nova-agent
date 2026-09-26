@@ -31,6 +31,7 @@ export interface KnowledgeNodeSourceView {
   readonly filePath: string
   readonly startLine: number
   readonly endLine: number
+  readonly snippetHash: string
 }
 
 export interface KnowledgeNodeMaterialView {

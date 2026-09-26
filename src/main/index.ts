@@ -9,6 +9,9 @@ import { registerIpcHandlers } from './ipc/registerHandlers'
 import { runStartupStorageGc } from './ipc/storageHandler'
 import { cleanupStaleAtomicTmpFiles } from '../runtime/storage/atomicFile'
 import { registerAgentHandler } from './ipc/agentHandler'
+import { registerLearningHandler } from './ipc/learningHandler'
+import { shutdownLearningDatabase } from './learning/LearningDbHost'
+import { shutdownLearningKnowledge } from './learning/LearningKnowledgeHost'
 import { syncTavilyApiKeyFromSettings } from '../runtime/settings/syncTavilyApiKey'
 import { createModelClient } from './services/createModelClient'
 import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
@@ -243,6 +246,9 @@ async function bootstrap(): Promise<void> {
   // 4. 注册 Agent 运行时专属事件与通道（复用 imageStore，用于历史图片 URL→base64 转换）
   registerAgentHandler(getMainWindow, getModelClient, () => imageStore)
 
+  // 4.4. 学习表面 IPC（投影、节点材料与学习命令）；学习数据库按需懒启动
+  registerLearningHandler(getMainWindow, getModelClient, () => imageStore)
+
   // 4.5. 注册窗口控制的 IPC 处理器
   registerWindowHandler(getMainWindow)
 
@@ -312,8 +318,9 @@ async function bootstrap(): Promise<void> {
       // 与 Memory 一致：退出前释放全部会话索引 SQLite 句柄，避免残留锁
       closeAllSessionIndexes()
       // Worker 关闭可能需要等待取消边界；will-quit 已被拦截，结束后再真正退出。
-      await Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll()])
-        .then(([graphs, processes]) => {
+      await Promise.allSettled([closeAllCodeGraphs(), processRegistry.terminateAll(), shutdownLearningKnowledge().then(shutdownLearningDatabase)])
+        .then(([graphs, processes, learning]) => {
+          if (learning.status === 'rejected') console.error('[LearningDbHost] 退出前释放失败:', learning.reason)
           if (graphs.status === 'rejected') {
             console.error('[CodeGraphHost] 退出前释放失败:', graphs.reason)
           }

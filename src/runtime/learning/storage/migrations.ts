@@ -4,7 +4,9 @@ import {
   LEARNING_SCHEMA_META_KEY,
   learningSchemaV1Statements,
   learningSchemaV2Statements,
-  learningSchemaV3Statements
+  learningSchemaV3Statements,
+  learningSchemaV4Statements,
+  learningSchemaV5Statements
 } from './schema'
 
 export { CURRENT_LEARNING_SCHEMA_VERSION, LEARNING_SCHEMA_META_KEY } from './schema'
@@ -35,6 +37,24 @@ function readStoredVersion(db: BetterSqlite3.Database): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+/** 每个版本的迁移语句；版本号即升级后的 schema 版本。 */
+const SCHEMA_VERSION_STEPS: readonly {
+  readonly version: number
+  readonly statements: () => readonly string[]
+}[] = [
+  { version: 2, statements: learningSchemaV2Statements },
+  { version: 3, statements: learningSchemaV3Statements },
+  { version: 4, statements: learningSchemaV4Statements },
+  { version: 5, statements: learningSchemaV5Statements }
+]
+
+function setStoredVersion(db: BetterSqlite3.Database, version: number): void {
+  db.prepare(
+    `INSERT INTO schema_meta (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ).run(LEARNING_SCHEMA_META_KEY, String(version))
+}
+
 export function migrateLearningDatabase(db: BetterSqlite3.Database): void {
   const stored = readStoredVersion(db)
   if (stored > CURRENT_LEARNING_SCHEMA_VERSION) {
@@ -48,54 +68,32 @@ export function migrateLearningDatabase(db: BetterSqlite3.Database): void {
     for (const sql of learningSchemaV1Statements()) {
       db.exec(sql)
     }
-    for (const sql of learningSchemaV2Statements()) {
-      db.exec(sql)
+    for (const step of SCHEMA_VERSION_STEPS) {
+      if (step.version > CURRENT_LEARNING_SCHEMA_VERSION) continue
+      for (const sql of step.statements()) {
+        db.exec(sql)
+      }
     }
-    for (const sql of learningSchemaV3Statements()) {
-      db.exec(sql)
-    }
-    db.prepare(
-      `INSERT INTO schema_meta (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-    ).run(LEARNING_SCHEMA_META_KEY, String(CURRENT_LEARNING_SCHEMA_VERSION))
+    setStoredVersion(db, CURRENT_LEARNING_SCHEMA_VERSION)
   })
 
-  const applyV2 = db.transaction(() => {
-    for (const sql of learningSchemaV2Statements()) {
-      db.exec(sql)
-    }
-    db.prepare(
-      `INSERT INTO schema_meta (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-    ).run(LEARNING_SCHEMA_META_KEY, '2')
-  })
-
-  const applyV3 = db.transaction(() => {
-    for (const sql of learningSchemaV3Statements()) {
-      db.exec(sql)
-    }
-    db.prepare(
-      `INSERT INTO schema_meta (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-    ).run(LEARNING_SCHEMA_META_KEY, String(CURRENT_LEARNING_SCHEMA_VERSION))
-  })
+  const applyStep = (version: number, statements: () => readonly string[]) =>
+    db.transaction(() => {
+      for (const sql of statements()) {
+        db.exec(sql)
+      }
+      setStoredVersion(db, version)
+    })
 
   if (stored === 0) {
     applyFresh()
     return
   }
-  if (stored === 1 && CURRENT_LEARNING_SCHEMA_VERSION >= 2) {
-    applyV2()
-    if (CURRENT_LEARNING_SCHEMA_VERSION >= 3) {
-      applyV3()
-    }
-    return
+  // 旧库逐版本升级；每步独立事务，任一步失败不留下半迁移状态
+  for (const step of SCHEMA_VERSION_STEPS) {
+    if (step.version <= stored || step.version > CURRENT_LEARNING_SCHEMA_VERSION) continue
+    applyStep(step.version, step.statements)()
   }
-  if (stored === 2 && CURRENT_LEARNING_SCHEMA_VERSION === 3) {
-    applyV3()
-    return
-  }
-  throw new Error(`不支持的学习 schema 中间版本 ${stored}`)
 }
 
 export function assertLearningDatabaseWritable(db: BetterSqlite3.Database): void {

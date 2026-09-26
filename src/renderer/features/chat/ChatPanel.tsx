@@ -72,6 +72,9 @@ import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
 import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
 import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
+import { retainDevComposerDrafts, useDevComposerDraft } from './devComposerDraft'
+import { useLearningStore } from '../learning/useLearningStore'
+import { switchToLearningSurface } from '../learning/learningSurfaceSwitch'
 import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
@@ -236,7 +239,16 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     await rejectFile(sessionId, messageId, filePath)
   }, [rejectFile])
 
-  const [inputVal, setInputVal] = useState('')
+  // 草稿按会话暂存：切会话、切学习表面再返回时各自原文可用
+  const chatSessions = useChatStore(state => state.sessions)
+  const [inputVal, setInputVal] = useDevComposerDraft(currentSessionId)
+  // 会话删除或工作区切换后清掉已不存在会话的草稿；
+  // 空列表是 hydration 前状态，跳过以免把全部草稿误清
+  useEffect(() => {
+    if (chatSessions.length > 0) {
+      retainDevComposerDrafts(chatSessions.map(session => session.id))
+    }
+  }, [chatSessions])
   /** compose 点「补充要求」后的输入框提示；切会话即清，避免带到非 compose */
   const [composeSupplementHint, setComposeSupplementHint] = useState(false)
   /** 用户上滚离开底部时显示「回到底部」 */
@@ -323,7 +335,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       })
       return
     }
-    setInputVal(text)
+    // 已有未发送草稿时不覆盖：预填内容追加其后，用户输入不丢
+    setInputVal(current => current.trim() ? `${current}\n${text}` : text)
     requestAnimationFrame(() => {
       composerInputHandleRef.current?.focus()
     })
@@ -587,6 +600,33 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // 处理受控输入；行高由 ChatComposerInput maxRows 拥有，不再手调 textarea 高度
   const handleInputChange = (nextValue: string) => {
     setInputVal(nextValue)
+  }
+
+  // 「学懂这次改动」入口：开发会话里已有可绑定的结果消息时才出现（§2.4）
+  const canOfferLearningEntry =
+    !isComposeSession &&
+    !isGenerating &&
+    messages.some(message => message.role === 'assistant' && !message.isError && !message.interrupted)
+
+  // 「学懂这次改动」：把最近一次开发结果带进本项目学习会话（不原地改变开发会话模式）
+  const handleLearnThisChange = async () => {
+    if (!currentSessionId || !currentProject) return
+    const lastAssistant = [...messages]
+      .reverse()
+      .find(message => message.role === 'assistant' && !message.isError && !message.interrupted)
+    if (!lastAssistant) return
+    await switchToLearningSurface()
+    const learnSessionId = useWorkspaceStore.getState().currentSessionId
+    if (!learnSessionId) return
+    await useLearningStore.getState().sendCommand({
+      sessionId: learnSessionId,
+      action: { type: 'message', text: '学懂这次改动' },
+      devReference: {
+        devSessionId: currentSessionId,
+        devMessageId: lastAssistant.id,
+        filePaths: []
+      }
+    })
   }
 
   const handleSend = async () => {
@@ -961,6 +1001,15 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
           {!isEmptyState && currentSessionId && (
             <div className="chat-session-export">
+              {canOfferLearningEntry && (
+                <button
+                  type="button"
+                  className="chat-learn-change"
+                  onClick={() => void handleLearnThisChange()}
+                >
+                  学懂这次改动
+                </button>
+              )}
               <DropdownMenu
                 button={{ label: '导出会话', variant: 'ghost', size: 'sm', icon: <CopyIcon size={14} /> }}
                 placement="above"

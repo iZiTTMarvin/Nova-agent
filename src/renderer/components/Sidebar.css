@@ -83,6 +83,47 @@
   color: var(--text-primary);
 }
 
+/* 项目级表面切换：开发 | 学习 */
+.sidebar-surface-switch {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin: 0 0 4px;
+  padding: 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  background: var(--surface-card);
+}
+
+.sidebar-surface-switch__btn {
+  flex: 1 1 0;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 4px 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-surface-switch__btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.sidebar-surface-switch__btn--active {
+  background: var(--surface-brand);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.sidebar-surface-switch__btn:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
 /* 项目树标题行：高密度紧凑，无多余边框 */
 .sidebar-project-header {
   position: relative;

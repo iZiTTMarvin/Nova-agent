@@ -15,7 +15,10 @@ export class LearningDbWorkerClient {
   private readonly pending = new Map<number, Pending>()
   private crashed = false
 
-  constructor(private readonly workerPath: string) {}
+  constructor(
+    private readonly workerPath: string,
+    private readonly userLearningRoot: string | null = null
+  ) {}
 
   static defaultWorkerPath(): string {
     return join(__dirname, 'learningDbWorker.js')
@@ -24,9 +27,12 @@ export class LearningDbWorkerClient {
   async start(): Promise<void> {
     if (this.worker) return
     this.crashed = false
-    this.worker = new Worker(this.workerPath)
+    this.worker = new Worker(this.workerPath, { workerData: { userLearningRoot: this.userLearningRoot } })
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('学习 Worker 启动超时')), 10_000)
+      const timeout = setTimeout(() => {
+        this.crashed = true
+        reject(new Error('学习 Worker 启动超时'))
+      }, 10_000)
       this.worker!.once('message', (msg: LearningDbWorkerMessage) => {
         clearTimeout(timeout)
         if (msg.kind === 'ready') resolve()
@@ -34,6 +40,7 @@ export class LearningDbWorkerClient {
       })
       this.worker!.once('error', err => {
         clearTimeout(timeout)
+        this.crashed = true
         reject(err)
       })
     })
@@ -52,8 +59,8 @@ export class LearningDbWorkerClient {
       }
       this.pending.clear()
     })
-    this.worker.on('exit', code => {
-      if (code !== 0) {
+    this.worker.on('exit', () => {
+      if (this.worker) {
         this.crashed = true
         for (const [, p] of this.pending) {
           p.reject(new Error('学习 Worker 已退出'))
@@ -81,10 +88,16 @@ export class LearningDbWorkerClient {
   }
 
   async close(): Promise<void> {
-    if (!this.worker) return
-    await this.postMessage({ kind: 'close', requestId: 0 })
-    await this.worker.terminate()
-    this.worker = null
+    const worker = this.worker
+    if (!worker) return
+    try {
+      if (!this.crashed) await this.postMessage({ kind: 'close', requestId: 0 })
+    } finally {
+      await worker.terminate()
+      this.worker = null
+      for (const request of this.pending.values()) request.reject(new Error('学习 Worker 已关闭'))
+      this.pending.clear()
+    }
   }
 
   /** 测试用：强制终止 Worker，模拟崩溃。 */

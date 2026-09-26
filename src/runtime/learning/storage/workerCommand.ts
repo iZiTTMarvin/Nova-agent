@@ -50,7 +50,13 @@ export type LearningDbWorkerOp =
       page: number
     }
   | { domain: 'progress'; op: 'get_cursor'; workspaceRoot: string; sessionId: string }
-  | { domain: 'progress'; op: 'get_pending_outbox'; sessionId: string }
+  | {
+      domain: 'progress'
+      op: 'get_surface'
+      workspaceRoot: string
+      sessionId: string
+    }
+  | { domain: 'progress'; op: 'get_pending_outbox'; sessionId: string; commandId?: string }
   | { domain: 'progress'; op: 'mark_outbox_delivered'; commandId: string }
   | {
       domain: 'knowledge'
@@ -246,11 +252,22 @@ export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
       sessionId: readString(value.sessionId, 'sessionId')
     }
   }
+  if (domain === 'progress' && op === 'get_surface') {
+    return {
+      domain: 'progress',
+      op: 'get_surface',
+      workspaceRoot: readString(value.workspaceRoot, 'workspaceRoot'),
+      sessionId: readString(value.sessionId, 'sessionId')
+    }
+  }
   if (domain === 'progress' && op === 'get_pending_outbox') {
     return {
       domain: 'progress',
       op: 'get_pending_outbox',
-      sessionId: readString(value.sessionId, 'sessionId')
+      sessionId: readString(value.sessionId, 'sessionId'),
+      ...(typeof value.commandId === 'string' && value.commandId.trim()
+        ? { commandId: value.commandId.trim() }
+        : {})
     }
   }
   if (domain === 'progress' && op === 'mark_outbox_delivered') {

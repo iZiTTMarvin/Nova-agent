@@ -58,8 +58,12 @@ export class LearningProgress {
     return this.repo.getCursor(workspaceRoot, sessionId)
   }
 
-  getPendingOutbox(sessionId: string) {
-    return this.repo.getPendingOutbox(sessionId)
+  getSurface(workspaceRoot: string, sessionId: string) {
+    return this.repo.getSurface(workspaceRoot, sessionId)
+  }
+
+  getPendingOutbox(sessionId: string, commandId?: string) {
+    return this.repo.getPendingOutbox(sessionId, commandId)
   }
 
   markOutboxDelivered(commandId: string) {

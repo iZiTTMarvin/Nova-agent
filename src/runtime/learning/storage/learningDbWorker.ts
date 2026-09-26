@@ -1,4 +1,4 @@
-import { parentPort } from 'node:worker_threads'
+import { parentPort, workerData } from 'node:worker_threads'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { parseLearningDbHostMessage, type LearningDbWorkerMessage } from './protocol'
@@ -16,6 +16,10 @@ const require = createRequire(fileURLToPath(import.meta.url))
 import type BetterSqlite3 from 'better-sqlite3'
 
 let db: BetterSqlite3.Database | null = null
+const initialization: unknown = workerData
+const userLearningRoot = initialization && typeof initialization === 'object' &&
+  'userLearningRoot' in initialization && typeof initialization.userLearningRoot === 'string'
+  ? initialization.userLearningRoot : null
 
 function post(message: LearningDbWorkerMessage): void {
   port!.postMessage(message)
@@ -31,14 +35,19 @@ port.on('message', (value: unknown) => {
   }
   try {
     if (message.kind === 'open') {
-      assertLearningDbPathAllowed(message.dbPath)
+      assertLearningDbPathAllowed(message.dbPath, userLearningRoot)
       if (db) db.close()
       const Database = require('better-sqlite3') as typeof import('better-sqlite3')
       const opened = new Database(message.dbPath)
       opened.pragma('journal_mode = WAL')
       opened.pragma('foreign_keys = ON')
-      migrateLearningDatabase(opened)
-      db = opened
+      try {
+        migrateLearningDatabase(opened)
+        db = opened
+      } catch (error) {
+        opened.close()
+        throw error
+      }
       post({ kind: 'ok', requestId: message.requestId })
       return
     }

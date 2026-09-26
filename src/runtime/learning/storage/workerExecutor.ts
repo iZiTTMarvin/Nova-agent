@@ -59,6 +59,8 @@ function ensureProject(
     if (row.workspace_path_hash !== hash) {
       throw new Error('项目路径身份不匹配')
     }
+    const identity = db.prepare('SELECT workspace_path FROM projects WHERE project_id = ?').get(projectId) as { workspace_path: string }
+    if (identity.workspace_path !== normalized) throw new Error('项目路径身份不匹配')
     return { projectId, clearGeneration: existing.clear_generation }
   }
   db.prepare(
@@ -79,10 +81,11 @@ function ensureCursor(
 ): { cursorVersion: number; clearGeneration: number } {
   const row = db
     .prepare(
-      `SELECT cursor_version, clear_generation FROM learning_cursors WHERE session_id = ?`
+      `SELECT cursor_version, clear_generation, project_id FROM learning_cursors WHERE session_id = ?`
     )
-    .get(sessionId) as { cursor_version: number; clear_generation: number } | undefined
+    .get(sessionId) as { cursor_version: number; clear_generation: number; project_id: string } | undefined
   if (row) {
+    if (row.project_id !== projectId) throw new Error('会话不属于当前项目')
     if (row.clear_generation !== clearGeneration) {
       throw new Error('游标 clearGeneration 与项目不一致')
     }
@@ -158,6 +161,9 @@ function executeSaveCheckpoint(
     now
   )
 
+  db.prepare(`UPDATE checkpoints SET node_id =
+    (SELECT selected_node_id FROM learning_cursors WHERE session_id = ?) WHERE checkpoint_id = ?`
+  ).run(op.sessionId, op.checkpointId)
   const nextVersion = op.cursorVersion + 1
   db.prepare(
     `UPDATE learning_cursors SET
@@ -267,7 +273,11 @@ function executeApplyCommand(
     return staleReceipt('cursorVersion 已变化')
   }
 
-  const applied = applyCommandMutation(db, command, projectRow.project_id, now)
+  const changed = applyCommandMutation(db, command, projectRow.project_id, now)
+  const resumesPending = command.action.type === 'resume' && executeGetPendingOutbox(db, command.sessionId) !== null
+  const applied = changed.receipt.ok && !changed.outbox && !resumesPending
+    ? { ...changed, outbox: { userMessageId: randomUUID(), payloadJson: JSON.stringify({ kind: 'deliver_command', action: command.action }) } }
+    : changed
   if (applied.receipt.ok === true) {
     db.prepare(
       `INSERT INTO learning_commands (
@@ -333,12 +343,12 @@ function applyCommandMutation(
       return mutation(staleReceipt('停点不可回答'))
     }
     const attemptId = randomUUID()
+    const userMessageId = randomUUID()
     db.prepare(
       `INSERT INTO attempts (
-        attempt_id, checkpoint_id, session_id, project_id, answer_excerpt, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(attemptId, action.checkpointId, command.sessionId, projectId, action.text, now)
-    const userMessageId = randomUUID()
+        attempt_id, checkpoint_id, session_id, project_id, answer_excerpt, source_message_ref, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(attemptId, action.checkpointId, command.sessionId, projectId, action.text, userMessageId, now)
     const nextVersion = (command.expectedCursorVersion as number) + 1
     db.prepare(
       `UPDATE learning_cursors SET cursor_version = ?, updated_at = ? WHERE session_id = ?`
@@ -367,11 +377,15 @@ function applyCommandMutation(
     const checkpoint = db
       .prepare(`SELECT state FROM checkpoints WHERE checkpoint_id = ? AND session_id = ?`)
       .get(action.checkpointId, command.sessionId) as { state: string } | undefined
-    if (!checkpoint) {
-      return mutation(staleReceipt('停点不存在'))
+    if (!checkpoint || checkpoint.state !== 'awaiting_answer') {
+      return mutation(staleReceipt('停点已不再等待回答'))
     }
     recordHelpEvent(db, action.checkpointId, command.sessionId, projectId, action.type, now)
-    if (action.type === 'skip' && checkpoint.state === 'awaiting_answer') {
+    // §9.3：跳过与直接讲解都记为 skipped 的明确原因，同时记入帮助事件；提示不消费问题
+    if (
+      (action.type === 'skip' || action.type === 'explain') &&
+      checkpoint.state === 'awaiting_answer'
+    ) {
       db.prepare(
         `UPDATE checkpoints SET state = 'skipped', updated_at = ? WHERE checkpoint_id = ?`
       ).run(now, action.checkpointId)
@@ -388,14 +402,61 @@ function applyCommandMutation(
     })
   }
 
+  if (action.type === 'dispute') {
+    // 质疑保留原评估，另立 dispute 记录；不得静默篡改历史。
+    const assessment = db
+      .prepare(
+        `SELECT observation_id, checkpoint_id FROM learning_observations
+         WHERE observation_id = ? AND session_id = ? AND kind = 'assessment'`
+      )
+      .get(action.assessmentId, command.sessionId) as { observation_id: string; checkpoint_id: string } | undefined
+    if (!assessment) {
+      return mutation(staleReceipt('评估不存在'))
+    }
+    db.prepare(
+      `INSERT INTO learning_observations (
+        observation_id, attempt_id, checkpoint_id, session_id, project_id, kind, payload_json, created_at
+      ) VALUES (?, NULL, NULL, ?, ?, 'dispute', ?, ?)`
+    ).run(
+      randomUUID(),
+      command.sessionId,
+      projectId,
+      JSON.stringify({ assessmentId: assessment.observation_id, reason: action.reason }),
+      now
+    )
+    db.prepare(`UPDATE checkpoints SET state = 'superseded', updated_at = ?
+      WHERE session_id = ? AND checkpoint_id <> ? AND state IN ('awaiting_answer', 'answer_pending')`
+    ).run(now, command.sessionId, assessment.checkpoint_id)
+    const nextVersion = command.expectedCursorVersion + 1
+    db.prepare(
+      `UPDATE learning_cursors SET cursor_version = ?, updated_at = ?, current_checkpoint_id = ?,
+       selected_node_id = (SELECT node_id FROM checkpoints WHERE checkpoint_id = ?) WHERE session_id = ?`
+    ).run(nextVersion, now, assessment.checkpoint_id, assessment.checkpoint_id, command.sessionId)
+    return mutation({
+      ok: true,
+      commandId: command.commandId,
+      cursorVersion: nextVersion,
+      applied: true
+    })
+  }
+
   if (action.type === 'select_node' || action.type === 'message') {
     const nextVersion = command.expectedCursorVersion + 1
     if (action.type === 'select_node') {
+      const member = db.prepare(
+        `SELECT vm.knowledge_revision FROM version_members vm
+         JOIN projects p ON p.project_id = vm.project_id AND p.current_knowledge_revision = vm.knowledge_revision
+         WHERE vm.project_id = ? AND vm.node_id = ?`
+      ).get(projectId, action.nodeId) as { knowledge_revision: string } | undefined
+      if (!member) return mutation(invalidReceipt('节点尚无已发布教材'))
+      db.prepare(`UPDATE checkpoints SET state = 'superseded', updated_at = ?
+        WHERE session_id = ? AND state IN ('awaiting_answer', 'answer_pending')`).run(now, command.sessionId)
+      db.prepare(`UPDATE outbox SET status = 'cancelled' WHERE session_id = ? AND status = 'pending'`).run(command.sessionId)
       db.prepare(
         `UPDATE learning_cursors SET
-          selected_node_id = ?, cursor_version = ?, updated_at = ?
-         WHERE session_id = ?`
-      ).run(action.nodeId, nextVersion, now, command.sessionId)
+          selected_node_id = ?, knowledge_revision = ?, current_checkpoint_id = NULL,
+          cursor_version = ?, updated_at = ? WHERE session_id = ?`
+      ).run(action.nodeId, member.knowledge_revision, nextVersion, now, command.sessionId)
     } else {
       db.prepare(
         `UPDATE learning_cursors SET cursor_version = ?, updated_at = ? WHERE session_id = ?`
@@ -643,7 +704,7 @@ function executeGetNodeMaterial(
 
   const sourceRows = db
     .prepare(
-      `SELECT sr.receipt_id, sr.file_path, sr.start_line, sr.end_line
+      `SELECT sr.receipt_id, sr.file_path, sr.start_line, sr.end_line, sr.snippet_hash
        FROM node_sources ns
        INNER JOIN source_receipts sr ON sr.receipt_id = ns.receipt_id
        WHERE ns.project_id = ? AND ns.node_id = ? AND ns.node_revision = ?`
@@ -653,6 +714,7 @@ function executeGetNodeMaterial(
     file_path: string
     start_line: number
     end_line: number
+    snippet_hash: string
   }[]
 
   return {
@@ -664,7 +726,8 @@ function executeGetNodeMaterial(
       receiptId: row.receipt_id,
       filePath: row.file_path,
       startLine: row.start_line,
-      endLine: row.end_line
+      endLine: row.end_line,
+      snippetHash: row.snippet_hash
     }))
   }
 }
@@ -711,9 +774,14 @@ function executeSubmitAssessment(
   if (submission.verdict === 'understanding_observed' && helpCount > 0) {
     throw new Error('存在提示或跳过后不能记为无帮助理解')
   }
+  const currentCheckpoint = db.prepare('SELECT current_checkpoint_id FROM learning_cursors WHERE session_id = ?').get(op.sessionId) as { current_checkpoint_id: string | null }
+  if (currentCheckpoint.current_checkpoint_id !== submission.checkpointId) throw new Error('该问题已不是当前停点')
+  const previous = latestAssessmentForSession(db, op.sessionId)
+  if (previous?.checkpointId === submission.checkpointId && !previous.disputed) throw new Error('该回答已有有效评估；需要用户请求复核')
   const assessmentId = randomUUID()
   const payload = {
     ...submission,
+    replacesAssessmentId: previous?.checkpointId === submission.checkpointId ? previous.assessmentId : null,
     derivedHelpEventCount: helpCount,
     rubricJson: checkpoint.rubric_json ?? null
   }
@@ -744,73 +812,38 @@ function executeGetLearningContext(
   db: BetterSqlite3.Database,
   op: Extract<LearningDbWorkerOp, { op: 'get_learning_context' }>
 ) {
-  const now = Date.now()
-  const { projectId } = ensureProject(db, op.workspaceRoot, now)
-  const cursorRow = db
-    .prepare(
-      `SELECT selected_node_id, knowledge_revision, current_checkpoint_id FROM learning_cursors WHERE session_id = ?`
-    )
-    .get(op.sessionId) as
-    | {
-        selected_node_id: string | null
-        knowledge_revision: string | null
-        current_checkpoint_id: string | null
-      }
-    | undefined
-  const nodeId = op.nodeId ?? cursorRow?.selected_node_id ?? null
-  let material: ReturnType<typeof executeGetNodeMaterial> = null
-  if (nodeId) {
-    material = executeGetNodeMaterial(db, op.workspaceRoot, nodeId)
-  }
-  let checkpoint: PersistedCheckpointView | null = null
-  if (cursorRow?.current_checkpoint_id) {
-    const row = db
-      .prepare(`SELECT * FROM checkpoints WHERE checkpoint_id = ?`)
-      .get(cursorRow.current_checkpoint_id) as Record<string, unknown> | undefined
-    if (row) {
-      checkpoint = {
-        checkpointId: row.checkpoint_id as string,
-        sessionId: row.session_id as string,
-        runId: row.run_id as string,
-        cursorVersion: row.cursor_version as number,
-        question: row.question as string,
-        rubricJson: (row.rubric_json as string | null) ?? null,
-        createdAt: row.created_at as number,
-        state: row.state as string
-      }
-    }
-  }
-  if (!material && !checkpoint) {
-    return {
-      status: 'empty' as const,
-      message: '尚无已发布教材或进行中的停点；请先选点或等待教材整理。'
-    }
-  }
+  const cursor = executeGetCursor(db, op.workspaceRoot, op.sessionId)
+  const nodeId = op.nodeId ?? cursor.selectedNodeId
+  const material = nodeId ? executeGetNodeMaterial(db, op.workspaceRoot, nodeId) : null
+  const checkpoint = executeGetCheckpoint(db, op.sessionId)
+  const attempt = checkpoint ? db.prepare(
+    `SELECT attempt_id AS attemptId, answer_excerpt AS answer, source_message_ref AS messageId
+     FROM attempts WHERE checkpoint_id = ? AND session_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`
+  ).get(checkpoint.checkpointId, op.sessionId) as { attemptId: string; answer: string; messageId: string | null } | undefined : undefined
+  const assessment = latestAssessmentForSession(db, op.sessionId)
+  const dispute = assessment?.disputed ? db.prepare(
+    `SELECT json_extract(payload_json, '$.reason') AS reason FROM learning_observations
+     WHERE session_id = ? AND kind = 'dispute' AND json_extract(payload_json, '$.assessmentId') = ?
+     ORDER BY created_at DESC, rowid DESC LIMIT 1`
+  ).get(op.sessionId, assessment.assessmentId) as { reason: string } | undefined : undefined
   const page = Math.max(0, op.page)
-  let bodySlice = ''
-  let bodyTotalPages = 0
-  if (material?.bodyJson) {
-    const full = material.bodyJson
-    bodyTotalPages = Math.max(1, Math.ceil(full.length / CONTEXT_PAGE_CHARS))
-    const start = page * CONTEXT_PAGE_CHARS
-    bodySlice = full.slice(start, start + CONTEXT_PAGE_CHARS)
-  }
   return {
-    status: 'ok' as const,
+    status: material || checkpoint ? 'ok' : 'empty',
+    cursorVersion: cursor.cursorVersion,
+    clearGeneration: cursor.clearGeneration,
     nodeId,
-    knowledgeRevision: cursorRow?.knowledge_revision ?? null,
-    material: material
-      ? {
-          nodeId: material.nodeId,
-          title: material.title,
-          nodeRevision: material.nodeRevision,
-          sources: material.sources,
-          bodyPage: page,
-          bodyTotalPages,
-          bodySlice
-        }
-      : null,
-    checkpoint
+    knowledgeRevision: executeGetCurrentRevision(db, op.workspaceRoot).revision,
+    material: material ? {
+      nodeId: material.nodeId, title: material.title, nodeRevision: material.nodeRevision,
+      sources: material.sources, bodyPage: page,
+      bodyTotalPages: Math.max(1, Math.ceil(material.bodyJson.length / CONTEXT_PAGE_CHARS)),
+      bodySlice: material.bodyJson.slice(page * CONTEXT_PAGE_CHARS, (page + 1) * CONTEXT_PAGE_CHARS)
+    } : null,
+    checkpoint,
+    attempt: attempt ?? null,
+    assessment,
+    disputeReason: dispute?.reason ?? null,
+    helpRequestCount: checkpoint ? countHelpEvents(db, checkpoint.checkpointId) : 0
   }
 }
 
@@ -832,16 +865,148 @@ function executeGetCursor(
   }
 }
 
-function executeGetPendingOutbox(db: BetterSqlite3.Database, sessionId: string) {
+function latestAssessmentForSession(
+  db: BetterSqlite3.Database,
+  sessionId: string
+): {
+  assessmentId: string
+  checkpointId: string
+  verdict: string
+  summary: string
+  userQuote: string
+  disputed: boolean
+  createdAt: number
+} | null {
   const row = db
     .prepare(
-      `SELECT command_id, user_message_id, payload_json FROM outbox
-       WHERE session_id = ? AND status = 'pending'
-       ORDER BY created_at ASC LIMIT 1`
+      `SELECT observation_id, checkpoint_id, payload_json, created_at
+       FROM learning_observations
+       WHERE session_id = ? AND kind = 'assessment'
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`
     )
     .get(sessionId) as
-    | { command_id: string; user_message_id: string; payload_json: string }
+    | { observation_id: string; checkpoint_id: string; payload_json: string; created_at: number }
     | undefined
+  if (!row) return null
+  const payload = parseLearningAssessSubmission(JSON.parse(row.payload_json))
+  const disputed =
+    (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM learning_observations
+           WHERE session_id = ? AND kind = 'dispute'
+             AND json_extract(payload_json, '$.assessmentId') = ?`
+        )
+        .get(sessionId, row.observation_id) as { c: number }
+    ).c > 0
+  return {
+    assessmentId: row.observation_id,
+    checkpointId: row.checkpoint_id,
+    verdict: typeof payload.verdict === 'string' ? payload.verdict : 'inconclusive',
+    summary: typeof payload.summary === 'string' ? payload.summary : '',
+    userQuote: typeof payload.userQuote === 'string' ? payload.userQuote : '',
+    disputed,
+    createdAt: row.created_at
+  }
+}
+
+function executeGetSurface(
+  db: BetterSqlite3.Database,
+  op: Extract<LearningDbWorkerOp, { op: 'get_surface' }>
+) {
+  const cursor = executeGetCursor(db, op.workspaceRoot, op.sessionId)
+  let checkpoint: PersistedCheckpointView | null = null
+  const checkpointRow = db
+    .prepare(
+      `SELECT c.checkpoint_id, c.session_id, c.run_id, c.cursor_version, c.question,
+              c.rubric_json, c.created_at, c.state
+       FROM learning_cursors lc
+       INNER JOIN checkpoints c ON c.checkpoint_id = lc.current_checkpoint_id
+       WHERE lc.session_id = ?`
+    )
+    .get(op.sessionId) as Record<string, unknown> | undefined
+  if (checkpointRow) {
+    checkpoint = {
+      checkpointId: checkpointRow.checkpoint_id as string,
+      sessionId: checkpointRow.session_id as string,
+      runId: checkpointRow.run_id as string,
+      cursorVersion: checkpointRow.cursor_version as number,
+      question: checkpointRow.question as string,
+      rubricJson: (checkpointRow.rubric_json as string | null) ?? null,
+      createdAt: checkpointRow.created_at as number,
+      state: checkpointRow.state as string
+    }
+  }
+  const latestAssessment = latestAssessmentForSession(db, op.sessionId)
+
+  const evidence = db.prepare(`
+    WITH ranked AS (
+      SELECT o.*, ROW_NUMBER() OVER (PARTITION BY o.checkpoint_id ORDER BY o.created_at DESC, o.rowid DESC) AS position
+      FROM learning_observations o WHERE o.project_id = ? AND o.kind = 'assessment'
+    )
+    SELECT c.node_id,
+      CASE WHEN EXISTS (SELECT 1 FROM learning_observations d
+        WHERE d.session_id = o.session_id AND d.kind = 'dispute'
+          AND json_extract(d.payload_json, '$.assessmentId') = o.observation_id)
+      THEN 'pending_review' ELSE COALESCE(json_extract(o.payload_json, '$.verdict'), 'explained') END AS state,
+      COUNT(*) AS count
+    FROM checkpoints c LEFT JOIN ranked o ON o.checkpoint_id = c.checkpoint_id AND o.position = 1
+    WHERE c.project_id = ? GROUP BY 1, 2
+  `).all(deriveProjectId(op.workspaceRoot), deriveProjectId(op.workspaceRoot)) as {
+    node_id: string | null; state: string; count: number
+  }[]
+  const independentCount = evidence.filter(row => row.state === 'understanding_observed').reduce((sum, row) => sum + row.count, 0)
+  const needsClarificationCount = evidence.filter(row => row.state === 'needs_clarification').reduce((sum, row) => sum + row.count, 0)
+  const nodeStates = new Map<string, import('../../../shared/learning/surface').LearningNodeProgressView['state']>()
+  const rank = { explained: 0, understanding_observed: 1, needs_clarification: 2, pending_review: 3 }
+  for (const row of evidence) {
+    if (!row.node_id) continue
+    const state = row.state === 'understanding_observed' || row.state === 'needs_clarification' || row.state === 'pending_review'
+      ? row.state : 'explained'
+    const previous = nodeStates.get(row.node_id)
+    if (!previous || rank[state] > rank[previous]) nodeStates.set(row.node_id, state)
+  }
+  const nodeProgress = [...nodeStates].map(([nodeId, state]) => ({ nodeId, state }))
+
+  return {
+    cursorVersion: cursor.cursorVersion,
+    clearGeneration: cursor.clearGeneration,
+    selectedNodeId: cursor.selectedNodeId,
+    checkpoint,
+    latestAssessment,
+    nodeProgress,
+    summary: {
+      independentCount,
+      needsClarificationCount
+    }
+  }
+}
+
+function executeGetPendingOutbox(
+  db: BetterSqlite3.Database,
+  sessionId: string,
+  commandId?: string
+) {
+  // 按 commandId 精确取：多条 pending 并存时各自命令只交付自己的意图；
+  // 未指定 commandId（resume 续接）时取最早一条
+  const row = commandId
+    ? db
+        .prepare(
+          `SELECT command_id, user_message_id, payload_json FROM outbox
+           WHERE session_id = ? AND command_id = ? AND status = 'pending'`
+        )
+        .get(sessionId, commandId) as
+        | { command_id: string; user_message_id: string; payload_json: string }
+        | undefined
+    : db
+        .prepare(
+          `SELECT command_id, user_message_id, payload_json FROM outbox
+           WHERE session_id = ? AND status = 'pending'
+           ORDER BY created_at ASC LIMIT 1`
+        )
+        .get(sessionId) as
+        | { command_id: string; user_message_id: string; payload_json: string }
+        | undefined
   return row ?? null
 }
 
@@ -881,8 +1046,11 @@ export function executeLearningDbWorkerOp(
   if (op.domain === 'progress' && op.op === 'get_cursor') {
     return { ok: true, result: executeGetCursor(db, op.workspaceRoot, op.sessionId) }
   }
+  if (op.domain === 'progress' && op.op === 'get_surface') {
+    return { ok: true, result: executeGetSurface(db, op) }
+  }
   if (op.domain === 'progress' && op.op === 'get_pending_outbox') {
-    return { ok: true, result: executeGetPendingOutbox(db, op.sessionId) }
+    return { ok: true, result: executeGetPendingOutbox(db, op.sessionId, op.commandId) }
   }
   if (op.domain === 'progress' && op.op === 'mark_outbox_delivered') {
     executeMarkOutboxDelivered(db, op.commandId)

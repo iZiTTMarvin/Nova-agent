@@ -1,5 +1,5 @@
 /** 学习库 schema 版本；与 SessionStore 独立版本化。 */
-export const CURRENT_LEARNING_SCHEMA_VERSION = 3
+export const CURRENT_LEARNING_SCHEMA_VERSION = 5
 
 export const LEARNING_SCHEMA_META_KEY = 'schema_version'
 
@@ -190,4 +190,22 @@ export function learningSchemaV2Statements(): readonly string[] {
 /** v2 → v3：停点冻结判据。 */
 export function learningSchemaV3Statements(): readonly string[] {
   return [`ALTER TABLE checkpoints ADD COLUMN rubric_json TEXT`]
+}
+
+/** v3 → v4：观察与停点查询索引（get_surface 每次水合都按会话/停点过滤）。 */
+export function learningSchemaV4Statements(): readonly string[] {
+  return [
+    `CREATE INDEX IF NOT EXISTS idx_learning_observations_session_kind
+      ON learning_observations(session_id, kind, created_at DESC)`,
+    `CREATE INDEX IF NOT EXISTS idx_learning_observations_checkpoint_kind
+      ON learning_observations(checkpoint_id, kind)`
+  ]
+}
+
+export function learningSchemaV5Statements(): readonly string[] {
+  return [
+    `ALTER TABLE checkpoints ADD COLUMN node_id TEXT`,
+    `CREATE INDEX idx_checkpoints_project_node ON checkpoints(project_id, node_id)`,
+    `CREATE INDEX idx_learning_observations_project_kind ON learning_observations(project_id, kind, created_at)`
+  ]
 }

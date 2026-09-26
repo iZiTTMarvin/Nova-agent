@@ -27,3 +27,16 @@ export function resolveSidebarActiveSessionId(
   }
   return currentSessionId
 }
+
+/**
+ * 按表面过滤：开发面只显示 default/plan/compose 会话，学习面只显示 learn 会话
+ * （§20.2 会话抽屉按面过滤，学习会话不混入开发列表）。
+ */
+export function listSidebarSessionsForSurface(
+  sessions: readonly Session[],
+  surface: 'dev' | 'learn'
+): PrimarySession[] {
+  return listSidebarRootSessions(sessions).filter(session =>
+    surface === 'learn' ? session.mode === 'learn' : session.mode !== 'learn'
+  )
+}

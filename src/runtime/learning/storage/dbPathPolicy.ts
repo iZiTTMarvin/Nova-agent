@@ -8,33 +8,26 @@ function isPathUnder(child: string, root: string): boolean {
   return c.toLowerCase().startsWith(prefix.toLowerCase()) || c.toLowerCase() === r.toLowerCase()
 }
 
-let configuredUserLearningRoot: string | null = null
-
-/** main 装配：允许 userData 下 learning 目录（单一路径）。 */
-export function setConfiguredUserLearningRoot(dir: string | null): void {
-  configuredUserLearningRoot = dir ? resolve(dir) : null
-}
-
-function allowedRoots(): string[] {
+function allowedRoots(userLearningRoot: string | null): string[] {
   const roots = [tmpdir()]
   const testRoot = process.env.NOVA_LEARNING_TEST_DB_ROOT
   if (testRoot && testRoot.trim()) {
     roots.push(resolve(testRoot.trim()))
   }
-  if (configuredUserLearningRoot) {
-    roots.push(configuredUserLearningRoot)
+  if (userLearningRoot) {
+    roots.push(resolve(userLearningRoot))
   }
   return roots
 }
 
-/** Worker 打开库前校验：仅临时目录或显式测试根，避免误写 userData 或源码树。 */
-export function assertLearningDbPathAllowed(dbPath: string): void {
+/** 允许目录来自宿主初始化，不接受普通数据库命令扩大路径权限。 */
+export function assertLearningDbPathAllowed(dbPath: string, userLearningRoot: string | null = null): void {
   if (typeof dbPath !== 'string' || !dbPath.trim()) {
     throw new Error('学习数据库路径无效')
   }
   const resolved = resolve(dbPath)
   const dir = dirname(resolved)
-  if (!allowedRoots().some(root => isPathUnder(dir, root))) {
+  if (!allowedRoots(userLearningRoot).some(root => isPathUnder(dir, root))) {
     throw new Error('学习数据库路径不在允许的临时或测试目录内')
   }
 }

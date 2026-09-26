@@ -87,6 +87,11 @@ import type {
 import type { MainLoopLagSnapshot } from '../diagnostics/mainLoopLagTypes'
 import type { AppUpdateSnapshot } from '../update'
 import type {
+  LearningSurfaceProjection,
+  LearningNodeMaterialResult
+} from '../learning/surface'
+import type { LearningCommandReceipt } from '../learning/command'
+import type {
   ActionOutcome,
   BrowserActIpcParams,
   BrowserAttachIpcParams,
@@ -165,6 +170,28 @@ export interface IpcCommands {
   'codeindex:open-dir': {
     params: void
     result: void
+  }
+  'learning:get-surface': {
+    params: { sessionId: string }
+    result: LearningSurfaceProjection
+  }
+  'learning:get-node-material': {
+    params: { sessionId: string; nodeId: string }
+    result: LearningNodeMaterialResult
+  }
+  'learning:build': { params: { sessionId: string }; result: void }
+  'learning:cancel-build': { params: { sessionId: string }; result: void }
+  'learning:get-source': {
+    params: { sessionId: string; nodeId: string; receiptId: string }
+    result: import('../learning/surface').LearningSourceResult
+  }
+  'learning:command': {
+    params: {
+      sessionId: string
+      command: unknown
+      devReference?: unknown
+    }
+    result: LearningCommandReceipt
   }
   'dialog:confirm': {
     params: {
@@ -804,6 +831,10 @@ export interface IpcEvents {
   'subagent:linked': {
     parentSessionId: string
     childSessionId: string
+  }
+  'learning:surface-changed': {
+    sessionId: string
+    workspaceRoot: string
   }
   'agent:todos-updated': {
     sessionId: string

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { listPinnedSessions, listSidebarRootSessions, resolveSidebarActiveSessionId } from '../../../src/renderer/features/subagents/sidebarSessions'
+import {
+  listPinnedSessions,
+  listSidebarRootSessions,
+  listSidebarSessionsForSurface,
+  resolveSidebarActiveSessionId
+} from '../../../src/renderer/features/subagents/sidebarSessions'
 import type { Session } from '../../../src/shared/session/types'
 
 const parent: Session = {
@@ -56,6 +61,20 @@ describe('resolveSidebarActiveSessionId', () => {
 
   it('焦点为 primary 时原样返回', () => {
     expect(resolveSidebarActiveSessionId([parent, child], parent.id)).toBe(parent.id)
+  })
+})
+
+const learnSession: Session = {
+  ...parent,
+  id: 'learn',
+  mode: 'learn',
+  title: 'Learn session'
+}
+
+describe('listSidebarSessionsForSurface', () => {
+  it('开发面不显示 learn 会话，学习面只显示 learn 会话', () => {
+    expect(listSidebarSessionsForSurface([parent, learnSession, child], 'dev').map(s => s.id)).toEqual(['parent'])
+    expect(listSidebarSessionsForSurface([parent, learnSession, child], 'learn').map(s => s.id)).toEqual(['learn'])
   })
 })
 
