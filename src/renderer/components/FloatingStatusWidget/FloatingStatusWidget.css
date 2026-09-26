@@ -1,0 +1,155 @@
+.floating-status-widget {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  pointer-events: auto;
+  user-select: none;
+}
+
+/* 胶囊态：1:1 对标 ZCode 药丸 (Pill) */
+.floating-status-widget__capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 12px 0 14px;
+  border-radius: 9999px;
+  background: light-dark(rgba(255, 255, 255, 0.90), rgba(30, 30, 34, 0.88));
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.12));
+  box-shadow: 0 6px 18px -4px light-dark(rgba(0, 0, 0, 0.10), rgba(0, 0, 0, 0.55)),
+              inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.10));
+  color: var(--text-primary);
+  font-size: var(--font-size-xs, 12px);
+  font-weight: 500;
+  cursor: pointer;
+  transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+  white-space: nowrap;
+}
+
+.floating-status-widget__capsule:hover {
+  background: light-dark(rgba(255, 255, 255, 0.98), rgba(40, 40, 45, 0.94));
+  border-color: light-dark(rgba(0, 0, 0, 0.14), rgba(255, 255, 255, 0.20));
+  transform: translateY(-1px);
+}
+
+.floating-status-widget__capsule:active {
+  transform: translateY(0);
+}
+
+.floating-status-widget__capsule-arrow {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 1px;
+}
+
+/* 展开卡片态：1:1 对标 ZCode 卡片 (285px 宽、深邃磨砂、精致阴影) */
+.floating-status-widget__card {
+  width: 285px;
+  max-width: calc(100vw - 36px);
+  max-height: min(520px, calc(100vh - 100px));
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl, 16px);
+  background: light-dark(rgba(255, 255, 255, 0.94), rgba(30, 30, 34, 0.90));
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid light-dark(rgba(0, 0, 0, 0.08), rgba(255, 255, 255, 0.12));
+  box-shadow: 0 16px 40px -8px light-dark(rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0.70)),
+              inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.08));
+  animation: floating-widget-enter var(--transition-fast) ease-out;
+  overflow: hidden;
+}
+
+@keyframes floating-widget-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.floating-status-widget__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+  flex-shrink: 0;
+}
+
+.floating-status-widget__title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.floating-status-widget__title {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floating-status-widget__badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent-primary);
+  background: var(--surface-brand);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm, 6px);
+  flex-shrink: 0;
+}
+
+.floating-status-widget__actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.floating-status-widget__action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm, 6px);
+  cursor: pointer;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.floating-status-widget__action-btn:hover {
+  color: var(--text-primary);
+  background: var(--surface-hover);
+}
+
+.floating-status-widget__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 14px 14px;
+  scrollbar-gutter: stable;
+}
+
+.floating-status-widget__footer {
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}

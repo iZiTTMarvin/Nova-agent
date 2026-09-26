@@ -1,17 +1,27 @@
-import { useEffect, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import type { ExtendedMessage } from '../../stores/types'
-import { MarkdownRenderer } from '../chat/MarkdownRenderer'
-import { getToolDisplayName } from '../chat/toolDisplay'
+import { TurnProcessTree } from '../chat/TurnProcessTree'
+import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from '../chat/turnProcessModel'
+import {
+  AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+  getDistanceFromBottom,
+  scrollContainerToBottom
+} from '../chat/autoScroll'
+import { ChevronIcon } from '../../components/Icons'
+
+/**
+ * 学习会话复用开发侧同一套回合渲染管线（TurnProcessTree → ProcessTraceList →
+ * ToolCallGroup / ToolTraceRow / ThinkingBlock），不另建工具轨迹渲染器。
+ */
+const LEARN_MODE = 'learn' as const
 
 interface LearningConversationProps {
   messages: readonly ExtendedMessage[]
   isGenerating: boolean
+  currentGeneratingMessageId: string | null
+  sessionId: string
   /** 阅读区滚动容器由父级拥有；本组件只请求滚动位置，不自建滚动区 */
   scrollContainerRef: RefObject<HTMLDivElement | null>
-}
-
-interface ExpandedToolState {
-  readonly [toolCallId: string]: boolean
 }
 
 function messageText(message: ExtendedMessage): string {
@@ -23,55 +33,117 @@ function messageText(message: ExtendedMessage): string {
   return parts.join('\n')
 }
 
-function LearningToolRow({
-  toolName,
-  status,
-  result,
-  expanded,
-  onToggle
+function LearningAssistantMessage({
+  message,
+  sessionId,
+  isGenerating,
+  currentGeneratingMessageId
 }: {
-  toolName: string
-  status: string | undefined
-  result: string | undefined
-  expanded: boolean
-  onToggle: () => void
+  message: ExtendedMessage
+  sessionId: string
+  isGenerating: boolean
+  currentGeneratingMessageId: string | null
 }): React.ReactElement {
-  const statusLabel =
-    status === 'error' ? '失败' : status === 'running' ? '进行中' : '完成'
+  const hasBlocks = Boolean(message.blocks && message.blocks.length > 0)
+  const turnPhase = resolveTurnPhase(message.id, currentGeneratingMessageId, isGenerating)
+  const isCurrentAssistantGenerating = isGenerating && message.id === currentGeneratingMessageId
+
+  // timeline 增量缓存：流式 tick 只浅拷贝尾部 blocks，前缀段引用稳定
+  const turnBuildCacheRef = useRef<TurnBuildCache | undefined>(undefined)
+  turnBuildCacheRef.current ??= {
+    blocks: [], mode: LEARN_MODE, answerIndex: -1, lastSavePlanIndex: -1,
+    timeline: [], segmentEndBlockIndex: []
+  }
+
+  const model = useMemo(
+    () =>
+      buildTurnRenderModel({
+        blocks: hasBlocks ? message.blocks : undefined,
+        toolCalls: message.toolCalls,
+        mode: LEARN_MODE,
+        phase: turnPhase,
+        turnStartedAt: message.turnStartedAt,
+        turnEndedAt: message.turnEndedAt,
+        thinking: hasBlocks ? undefined : message.thinking || undefined,
+        content: message.content || undefined,
+        cache: turnBuildCacheRef.current
+      }),
+    [
+      hasBlocks,
+      message.blocks,
+      message.toolCalls,
+      message.turnStartedAt,
+      message.turnEndedAt,
+      message.thinking,
+      message.content,
+      turnPhase
+    ]
+  )
+
   return (
-    <div className={`learning-tool learning-tool--${status ?? 'success'}`}>
-      <button type="button" className="learning-tool__head" onClick={onToggle} aria-expanded={expanded}>
-        <span className="learning-tool__name">{getToolDisplayName(toolName)}</span>
-        <span className="learning-tool__status">{statusLabel}</span>
-        <span className="learning-tool__toggle" aria-hidden="true">
-          {expanded ? '收起' : '展开'}
-        </span>
-      </button>
-      {expanded && (
-        <pre className="learning-tool__result">{result ? result.slice(0, 4000) : '（无输出）'}</pre>
-      )}
-    </div>
+    <TurnProcessTree
+      model={model}
+      messageId={message.id}
+      isLive={turnPhase === 'live'}
+      interrupted={message.interrupted}
+      isCurrentAssistantGenerating={isCurrentAssistantGenerating}
+      isTurnActiveForThisMsg={isCurrentAssistantGenerating}
+      isPausedForInput={false}
+      blocks={message.blocks ?? []}
+      sessionId={sessionId}
+    />
   )
 }
 
-/**
- * 教练对话：学习会话的真实消息流（与开发会话同一会话系统、同一事件链路）。
- * 只渲染学习表面需要的部分，不提供编辑、重发、分叉等开发操作。
- * 文本与工具按消息内原始顺序交错渲染；无文本的用户消息不产生空气泡。
- */
 export function LearningConversation({
   messages,
   isGenerating,
+  currentGeneratingMessageId,
+  sessionId,
   scrollContainerRef
 }: LearningConversationProps): React.ReactElement {
-  const [expandedTools, setExpandedTools] = useState<ExpandedToolState>({})
-  const lastMessageId = messages.length > 0 ? messages[messages.length - 1]!.id : null
+  const [showScrollBottom, setShowScrollBottom] = useState(false)
+  const userScrolledUpRef = useRef(false)
+
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // 监听容器滚动：区分用户主动上滚与在底部跟随
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const distance = getDistanceFromBottom(el)
+    const isUp = distance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+    userScrolledUpRef.current = isUp
+    setShowScrollBottom(isUp)
+  }, [scrollContainerRef])
 
   useEffect(() => {
     const el = scrollContainerRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-  }, [lastMessageId, messages.length, scrollContainerRef])
+    el.addEventListener('scroll', handleScroll, { passive: true })
+    return () => el.removeEventListener('scroll', handleScroll)
+  }, [scrollContainerRef, handleScroll])
+
+  // 内容高度增量推进时（流式文字、块展开）：未上滚时自动贴底跟随
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (userScrolledUpRef.current) return
+      const el = scrollContainerRef.current
+      if (el) scrollContainerToBottom(el)
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [scrollContainerRef])
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    userScrolledUpRef.current = false
+    setShowScrollBottom(false)
+    scrollContainerToBottom(el, 'smooth')
+  }, [scrollContainerRef])
 
   if (messages.length === 0) {
     return (
@@ -88,7 +160,7 @@ export function LearningConversation({
   }
 
   return (
-    <div className="learning-conversation">
+    <div className="learning-conversation" ref={contentRef}>
       {messages.map(message => {
         if (message.role === 'user') {
           const text = messageText(message)
@@ -100,32 +172,14 @@ export function LearningConversation({
           )
         }
         if (message.role !== 'assistant') return null
-        const blocks = message.blocks ?? []
         return (
           <div key={message.id} className="learning-msg learning-msg--assistant">
-            {blocks.map((block, index) => {
-              if (block.type === 'text') {
-                if (!block.content.trim()) return null
-                return (
-                  <div key={`${message.id}-text-${index}`} className="learning-msg__bubble learning-msg__bubble--assistant">
-                    <MarkdownRenderer content={block.content} isStreaming={isGenerating && index === blocks.length - 1} />
-                  </div>
-                )
-              }
-              if (block.type !== 'tool') return null
-              return (
-                <LearningToolRow
-                  key={`${message.id}-tool-${block.toolCallId}`}
-                  toolName={block.toolName}
-                  status={block.status}
-                  result={block.result}
-                  expanded={expandedTools[block.toolCallId] === true}
-                  onToggle={() =>
-                    setExpandedTools(prev => ({ ...prev, [block.toolCallId]: !prev[block.toolCallId] }))
-                  }
-                />
-              )
-            })}
+            <LearningAssistantMessage
+              message={message}
+              sessionId={sessionId}
+              isGenerating={isGenerating}
+              currentGeneratingMessageId={currentGeneratingMessageId}
+            />
             {message.interrupted && <div className="learning-msg__interrupted">本轮已取消</div>}
             {message.isError && <div className="learning-msg__interrupted">这段出错了，可以换个问法重试</div>}
           </div>
@@ -136,6 +190,16 @@ export function LearningConversation({
           <span className="learning-conversation__generating-dot" aria-hidden="true" />
           教练正在整理与核对…
         </div>
+      )}
+      {showScrollBottom && (
+        <button
+          type="button"
+          className="learning-scroll-bottom"
+          aria-label="回到底部"
+          onClick={scrollToBottom}
+        >
+          <ChevronIcon size={14} direction="down" />
+        </button>
       )}
     </div>
   )

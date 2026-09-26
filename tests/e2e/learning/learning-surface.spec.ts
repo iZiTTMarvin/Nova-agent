@@ -87,17 +87,19 @@ test.describe('学习表面主路径', () => {
     expect(devSession?.mode).toBe('default')
     expect(sessions.some(session => session.id === learnSessionId && session.mode === 'learn')).toBe(true)
 
-    // 学习表面：分段切换、知识导航骨架、空对话状态
+    // 学习表面：分段切换、悬浮状态胶囊与卡片、空对话状态
     await expect(nova.page.getByRole('button', { name: '学习' }).first()).toHaveAttribute(
       'aria-pressed',
       'true'
     )
-    await expect(nova.page.locator('.learning-surface__nav')).toBeVisible()
-    await expect(nova.page.getByText('项目用途', { exact: false })).toBeVisible()
-    await expect(nova.page.locator('.learning-tree__empty')).toBeVisible()
+    await expect(nova.page.locator('.floating-status-widget__capsule')).toBeVisible()
     await expect(nova.page.locator('.learning-conversation--empty')).toBeVisible()
     await expect(nova.page.getByRole('button', { name: '帮我选一个起点' })).toBeVisible()
-    await expect(nova.page.getByRole('button', { name: '返回开发' })).toBeVisible()
+    // 点击胶囊展开状态卡片，验证知识大纲与空状态
+    await nova.page.locator('.floating-status-widget__capsule').click()
+    await expect(nova.page.locator('.floating-status-widget__card')).toBeVisible()
+    await expect(nova.page.getByText('项目用途', { exact: false })).toBeVisible()
+    await expect(nova.page.locator('.learning-tree__empty')).toBeVisible()
   })
 
   test('教练讲解后落停点，回答保存待评估', async ({ nova }) => {
@@ -212,8 +214,8 @@ test.describe('学习表面主路径', () => {
 
     const learnSessionId = await createLearnSession(nova)
 
-    // 返回开发：原开发会话恢复，草稿仍在
-    await nova.page.getByRole('button', { name: '返回开发' }).click()
+    // 切回开发面：原开发会话恢复，草稿仍在
+    await nova.page.getByRole('button', { name: '开发' }).first().click()
     await expect(nova.page.getByLabel('消息输入')).toBeVisible()
     expect(await readComposerValue(nova.page)).toContain('DEV_DRAFT_KEEP_ME')
     const backWorkspace = await nova.getWorkspace()

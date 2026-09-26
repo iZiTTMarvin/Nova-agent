@@ -75,6 +75,12 @@ export function getToolTraceAction(toolName: string): string {
       return 'Mode'
     case 'run_code':
       return 'Explored'
+    case 'learning_context':
+      return 'Context'
+    case 'learning_checkpoint':
+      return 'Checkpoint'
+    case 'learning_assess':
+      return 'Assessed'
     default:
       return toolName
   }
@@ -224,6 +230,16 @@ export function getToolTraceTarget(
       const description = typeof args.description === 'string' ? args.description : ''
       return description ? truncateTarget(description) : 'with code'
     }
+    case 'learning_checkpoint': {
+      const question = typeof args.question === 'string' ? args.question : ''
+      return question ? truncateTarget(question) : 'checkpoint'
+    }
+    case 'learning_assess': {
+      const summary = typeof args.summary === 'string' ? args.summary : ''
+      return summary ? truncateTarget(summary) : 'assessment'
+    }
+    case 'learning_context':
+      return '学习上下文'
     default: {
       // 兜底：尝试常见 path / command 字段
       const path = (args.path as string) || (args.filePath as string) || ''
@@ -307,6 +323,12 @@ export function getToolTraceActionChinese(toolName: string): string {
       return '已切换模式'
     case 'run_code':
       return '已探索'
+    case 'learning_context':
+      return '已读取学习上下文'
+    case 'learning_checkpoint':
+      return '已保存核对点'
+    case 'learning_assess':
+      return '已提交评估'
     default:
       return getToolTraceAction(toolName)
   }

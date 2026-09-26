@@ -26,11 +26,15 @@ export function isPermissionDeniedResult(result?: string): boolean {
   return Boolean(result?.startsWith('权限拒绝:'))
 }
 
-/** 不在消息流里渲染的工具：plan 模式隐藏写入类、会话级面板统一展示的 todo_write，以及 harness 内部控制动作 */
+/** 不在消息流里渲染的工具：plan 模式隐藏写入类、会话级面板统一展示的 todo_write 与 learning 卡片，以及 harness 内部控制动作 */
 export function shouldRenderToolBlock(mode: Mode, toolName: string): boolean {
   if (toolName === 'todo_write') return false
   // load_tools 是 Harness 内部控制动作：不生成工具卡片、不展示参数与结果；
   // 激活痕迹仅通过开发诊断日志观测
   if (toolName === 'load_tools') return false
+  // 学习模式下的核对点与评估由会话级交互卡片独占展示，上下文读取属只读准备，不在流式轨迹重复暴露底层 RPC
+  if (mode === 'learn' && (toolName === 'learning_checkpoint' || toolName === 'learning_assess' || toolName === 'learning_context')) {
+    return false
+  }
   return !isModeHiddenWriteTool(mode, toolName)
 }

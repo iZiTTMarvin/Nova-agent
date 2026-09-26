@@ -33,6 +33,13 @@ describe('renderingPolicy', () => {
     expect(shouldRenderToolBlock('compose', 'load_tools')).toBe(false)
   })
 
+  it('学习模式核对点、评估与上下文不作为工具卡片重复渲染', () => {
+    expect(shouldRenderToolBlock('learn', 'learning_checkpoint')).toBe(false)
+    expect(shouldRenderToolBlock('learn', 'learning_assess')).toBe(false)
+    expect(shouldRenderToolBlock('learn', 'learning_context')).toBe(false)
+    expect(shouldRenderToolBlock('learn', 'read')).toBe(true)
+  })
+
   it('权限拒绝结果应隐藏 arguments', () => {
     expect(isPermissionDeniedResult('权限拒绝: 当前为 plan 模式')).toBe(true)
     expect(isPermissionDeniedResult('工具执行失败: boom')).toBe(false)
