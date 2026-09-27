@@ -12,6 +12,12 @@ export interface DiffEntry {
   filePath: string
   hunks: DiffHunk[]
   status: 'added' | 'modified' | 'deleted'
+  /**
+   * 生成该 diff 时工作区文件原始字节的 sha256 hex；null 表示文件不存在，
+   * undefined 表示该条目尚未从工作区读取，不能据此拒绝改动。
+   * 用于拒绝恢复前的并发校验（用户看完 diff 后又改了文件则不覆盖），不是安全令牌。
+   */
+  currentDigest: string | null | undefined
 }
 
 /** 文件级审查状态 */

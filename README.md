@@ -14,8 +14,8 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License: MIT"></a>
-  <img src="https://img.shields.io/badge/Version-0.1.1-blue" alt="Version">
-  <img src="https://img.shields.io/badge/Platforms-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey" alt="Platforms">
+  <a href="https://github.com/iZiTTMarvin/Nova-agent/releases"><img src="https://img.shields.io/github/v/release/iZiTTMarvin/Nova-agent" alt="Latest Release"></a>
+  <img src="https://img.shields.io/badge/Platform-Windows-lightgrey" alt="Platform">
   <img src="https://img.shields.io/badge/Stack-Electron%20%2B%20React%20%2B%20TypeScript-9cf" alt="Stack">
 </p>
 
@@ -94,7 +94,7 @@ Nova Agent 在底层工具链上做了很多实在的防御设计：
 - **读大文件不抓瞎**：遇到超 400 行或超 256KB 的大文件，自动提取 AST 代码大纲（函数名、类型定义、导出接口），首轮探路**节省 80%~90% 的 Token 消耗**，摸清骨架再精准读细节
 - **杜绝未读盲改**：内置 `readState` 状态快照锁，模型改代码前必须先读过该文件，防止凭空臆想和文件并发冲突
 - **搜代码一步到位**：原生 Ripgrep 双引擎，支持 `-C` 上下文行提取，**一次搜索直接带出周围代码**，免去多余的二次读取
-- **超大日志防爆窗**：遇到几千行编译或搜索日志，自动转存为虚拟流分段查阅，绝不冲淡主对话上下文
+- **超大日志防爆窗**：遇到几千行编译或搜索日志，自动转存为虚拟流分段查阅，不会一次性冲进主对话上下文
 - **跨平台换行符容错**：自动抹平 Windows `\r\n` 与 Linux `\n` 差异，告别因为空格换行不匹配导致的修改失败
 
 👉 [深入了解 Nova 工具链设计与上下文工程实践 →](docs/tools-architecture.md)
@@ -124,24 +124,19 @@ Nova Agent 在底层工具链上做了很多实在的防御设计：
 | 聊错方向就完蛋 | 随时分叉，反悔不丢工作 |
 | 换项目要重新介绍背景 | 项目记忆自动续上 |
 | 只有 IDE 插件 | 完整桌面 app，独立的 |
-| 跟着别人用哪个模型 | 想用啥用啥，自带 Key 接任意兼容服务 |
+| 跟着别人用哪个模型 | 自带 Key 接 OpenAI 兼容接口的服务 |
 
 ---
 
 ## 3 分钟上手
 
-需要装 [Node.js 18+](https://nodejs.org/)。准备好你的 API Key：MiniMax / GLM / DeepSeek 有内置预设一键填；Ollama 本地模型和任意 OpenAI 兼容服务（Kimi、通义等）也能接。
+从 [GitHub Releases](https://github.com/iZiTTMarvin/Nova-agent/releases) 下载 Windows 安装包，装完就能用。
 
-```bash
-git clone <repository-url>
-cd nova-agent
-npm install
-npm run dev
-```
+> 当前安装包未做代码签名，Windows 可能弹出 SmartScreen 提示，选择「仍要运行」即可。
 
 启动后：
 
-1. 填 API Key（侧边栏底部 **设置 → LLM 配置**）
+1. 填 API Key（侧边栏底部 **设置 → LLM 配置**）：MiniMax / GLM / DeepSeek 有内置预设一键填；Ollama 本地模型和 OpenAI 兼容接口的服务（Kimi、通义等）可手动配置，能否正常调用工具取决于服务商的兼容程度
 2. 选个模型
 3. 选个项目文件夹
 
@@ -150,6 +145,23 @@ npm run dev
 第一次不知道说啥？输入 `/onboard`，Nova Agent 会带你熟悉一遍。
 
 想直接跑完整流程？新建会话选 **XForge** 模式，输入 `帮我做一个待办事项 app`。
+
+### 开发者：从源码运行
+
+需要装 [Node.js 18+](https://nodejs.org/)。
+
+```bash
+git clone https://github.com/iZiTTMarvin/Nova-agent.git
+cd nova-agent
+npm install
+npm run dev
+```
+
+## 使用前须知
+
+- 应用本身不需要装 Node；但让 Agent 运行或构建你的项目时，需要你机器上已装好项目所需工具（Node.js、Git、Python 等），缺失时对应命令会报错。
+- 你的代码片段与对话上下文会发送给你配置的模型服务商。
+- 拒绝改动时如果文件已被你再次修改，会停止恢复并提示你重新查看，不会直接覆盖你的编辑。
 
 ---
 

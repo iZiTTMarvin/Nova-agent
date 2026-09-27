@@ -60,7 +60,7 @@ function applyDiffReviewStatus(
   const existingDiff = cache.diffs.find(diff => diff.filePath === filePath)
   const nextDiffs = existingDiff
     ? cache.diffs
-    : [...cache.diffs, { filePath, hunks: [], status: 'modified' as const }]
+    : [...cache.diffs, { filePath, hunks: [], status: 'modified' as const, currentDigest: undefined }]
 
   return {
     diffs: nextDiffs,

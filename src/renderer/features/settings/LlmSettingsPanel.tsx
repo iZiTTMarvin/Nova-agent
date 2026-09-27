@@ -273,7 +273,8 @@ export const LlmSettingsPanel: React.FC = () => {
     }
   }
 
-  const isPresetConnected = (presetId: PresetProviderId) => {
+  // 只判断本地是否已填 Key，不代表真实连通性
+  const isPresetConfigured = (presetId: PresetProviderId) => {
     const p = findProviderByPreset(draft, presetId)
     return Boolean(p?.apiKey.trim() && p.enabled)
   }
@@ -296,7 +297,7 @@ export const LlmSettingsPanel: React.FC = () => {
           <div className="llm-provider-list__section-title">预设服务商</div>
           {PRESET_PROVIDER_IDS.map(presetId => {
             const meta = PRESET_PROVIDERS[presetId]
-            const connected = isPresetConnected(presetId)
+            const configured = isPresetConfigured(presetId)
             const isActive =
               selection.kind === 'preset' && selection.presetId === presetId
             return (
@@ -312,10 +313,10 @@ export const LlmSettingsPanel: React.FC = () => {
                 <span className="settings-split__item-title">{meta.name}</span>
                 <span
                   className={`settings-split__item-meta${
-                    connected ? ' llm-provider-card__status--ok' : ''
+                    configured ? ' llm-provider-card__status--ok' : ''
                   }`}
                 >
-                  {connected ? '已连接' : '未连接'}
+                  {configured ? '已配置' : '未配置'}
                 </span>
               </ClickableCard>
             )
@@ -343,7 +344,7 @@ export const LlmSettingsPanel: React.FC = () => {
                     p.apiKey.trim() ? ' llm-provider-card__status--ok' : ''
                   }`}
                 >
-                  {p.apiKey.trim() ? '已连接' : '未连接'}
+                  {p.apiKey.trim() ? '已配置' : '未配置'}
                 </span>
               </ClickableCard>
             )

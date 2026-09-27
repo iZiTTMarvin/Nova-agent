@@ -152,7 +152,6 @@ vi.mock('../../../src/main/services/SubagentProjectionServiceHost', () => ({
       mockProjectionState.runs.filter(run => run.parentSessionId === parentId)
   })
 }))
-vi.mock('../../../src/runtime/checkpoints/restore', () => ({ rejectFile: vi.fn() }))
 vi.mock('../../../src/runtime/checkpoints/diffState', () => ({ buildMessageDiffState: vi.fn() }))
 vi.mock('../../../src/runtime/checkpoints/manifest', () => ({
   readManifest: vi.fn(),

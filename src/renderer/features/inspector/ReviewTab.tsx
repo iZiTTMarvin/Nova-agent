@@ -80,6 +80,8 @@ const ReviewContent: React.FC<{
   const [syntaxMode, setSyntaxMode] = useState<'syntax' | 'text'>('syntax')
   const [wrap, setWrap] = useState(false)
   const [busy, setBusy] = useState(false)
+  /** 最近一次保留/回退失败的就地提示 */
+  const [actionError, setActionError] = useState<string | null>(null)
   /** diff 区外层滚动容器：大 hunk 虚拟化共享同一滚动条 */
   const bodyScrollRef = useRef<HTMLDivElement>(null)
 
@@ -122,8 +124,11 @@ const ReviewContent: React.FC<{
   const handleAccept = async () => {
     if (!currentSessionId || !currentFilePath || tier1Stale) return
     setBusy(true)
+    setActionError(null)
     try {
       await acceptFile(currentSessionId, messageId, currentFilePath)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '保留失败')
     } finally {
       setBusy(false)
     }
@@ -132,8 +137,11 @@ const ReviewContent: React.FC<{
   const handleReject = async () => {
     if (!currentSessionId || !currentFilePath || tier1Stale) return
     setBusy(true)
+    setActionError(null)
     try {
       await rejectFile(currentSessionId, messageId, currentFilePath)
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : '回退失败')
     } finally {
       setBusy(false)
     }
@@ -231,6 +239,12 @@ const ReviewContent: React.FC<{
       {tier1Stale && (
         <div className="inspector-review__stale-banner" title="此消息的文件改动未同步到当前工作区，以下 diff 仅作历史参考">
           工作区未同步，仅作历史参考
+        </div>
+      )}
+
+      {actionError && (
+        <div className="inspector-review__error" role="alert">
+          {actionError}
         </div>
       )}
 

@@ -1,115 +1,19 @@
 /**
- * 回退与拒绝恢复模块
+ * 回退与分支重放模块
  *
  * 核心职责：
- * 1. 按文件拒绝（reject single file）：从 checkpoint 恢复单个文件的原始内容，并标记 manifest
- * 2. 按消息回退（revert to message）：回退到某条消息之前的完整状态，彻底清理后续所有痕迹
+ * 1. 按消息回退（revert to message）：回退到某条消息之前的完整状态，彻底清理后续所有痕迹
+ * 2. 工作区级撤销 / forward 重放（分支切换用，不删 checkpoint）
  *
  * 设计约束：
  * - 回退操作不可撤销
- * - 会话是线性的，不存在分支
  * - 清理范围包括：checkpoint 目录、manifest 条目、会话历史记录
- * - 新建文件的拒绝意味着删除该文件
+ * - 审阅场景的按文件拒绝由 reviewRestore 的 plan/execute 承担，不在本模块
  */
 import { existsSync, readFileSync, writeFileSync, unlinkSync, rmSync, readdirSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import type { CheckpointManifest } from './types'
-import { readManifest, writeManifest, getCheckpointDir, getFilesDir, getForwardDir } from './manifest'
-
-/**
- * 按文件拒绝：恢复单个文件到 checkpoint 中的原始内容
- *
- * 逻辑：
- * - 如果文件在 modifiedFiles 中，从备份恢复原始内容到工作区
- * - 如果文件在 createdFiles 中，从工作区删除该文件
- * - 从 manifest 中移除该文件条目
- * - 如果 manifest 所有文件列表都变空，标记为 rolled-back
- *
- * @param checkpointRoot checkpoint 根目录
- * @param workspaceRoot 工作区根目录
- * @param sessionId 会话 ID
- * @param messageId 消息 ID
- * @param relFilePath 相对路径（相对于工作区根目录）
- * @returns 操作是否成功
- */
-export function rejectFile(
-  checkpointRoot: string,
-  workspaceRoot: string,
-  sessionId: string,
-  messageId: string,
-  relFilePath: string
-): boolean {
-  const manifest = readManifest(checkpointRoot, sessionId, messageId)
-  if (!manifest) return false
-
-  const absFilePath = join(workspaceRoot, relFilePath)
-  const filesDir = getFilesDir(checkpointRoot, sessionId, messageId)
-
-  // 修改过的文件：从备份恢复原始内容，备份缺失时严禁静默跳过
-  if (manifest.modifiedFiles.includes(relFilePath)) {
-    const backupPath = join(filesDir, relFilePath)
-    if (!existsSync(backupPath)) {
-      const reason = manifest.backupPruned
-        ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法恢复'
-        : '备份文件不存在'
-      throw new Error(
-        `[rejectFile] ${reason}: session=${sessionId}, message=${messageId}, file=${relFilePath}`
-      )
-    }
-
-    // 确保目标目录存在
-    const targetDir = dirname(absFilePath)
-    if (!existsSync(targetDir)) {
-      mkdirSync(targetDir, { recursive: true })
-    }
-    // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
-    writeFileSync(absFilePath, readFileSync(backupPath))
-    manifest.modifiedFiles = manifest.modifiedFiles.filter(f => f !== relFilePath)
-  }
-  // 新建的文件：从工作区删除
-  else if (manifest.createdFiles.includes(relFilePath)) {
-    if (existsSync(absFilePath)) {
-      unlinkSync(absFilePath)
-    }
-    manifest.createdFiles = manifest.createdFiles.filter(f => f !== relFilePath)
-  }
-  // 删除的文件：从备份恢复原始内容到工作区，备份缺失时严禁静默跳过
-  else if (manifest.deletedFiles.includes(relFilePath)) {
-    const backupPath = join(filesDir, relFilePath)
-    if (!existsSync(backupPath)) {
-      const reason = manifest.backupPruned
-        ? '该消息备份已被滚动清理（仅保留最近 checkpoint），无法恢复'
-        : '备份文件不存在'
-      throw new Error(
-        `[rejectFile] ${reason}: session=${sessionId}, message=${messageId}, file=${relFilePath}`
-      )
-    }
-
-    const targetDir = dirname(absFilePath)
-    if (!existsSync(targetDir)) {
-      mkdirSync(targetDir, { recursive: true })
-    }
-    // 不带 encoding：readFileSync 返回 Buffer，writeFileSync 字节级写入，二进制安全
-    writeFileSync(absFilePath, readFileSync(backupPath))
-    manifest.deletedFiles = manifest.deletedFiles.filter(f => f !== relFilePath)
-  }
-  else {
-    // 文件不在 manifest 中，无法拒绝
-    return false
-  }
-
-  // 更新 manifest：如果所有文件列表都为空，标记为 rolled-back
-  if (
-    manifest.modifiedFiles.length === 0 &&
-    manifest.createdFiles.length === 0 &&
-    manifest.deletedFiles.length === 0
-  ) {
-    manifest.status = 'rolled-back'
-  }
-
-  writeManifest(checkpointRoot, manifest)
-  return true
-}
+import { readManifest, getCheckpointDir, getFilesDir, getForwardDir } from './manifest'
 
 /**
  * 按消息回退：回退到某条消息之前的完整状态
@@ -326,6 +230,9 @@ export function applyForwardForMessageIds(
   const manifestById = new Map(allManifests.map(m => [m.messageId, m]))
   const appliedMessageIds: string[] = []
   const incompleteMessageIds: string[] = []
+  // 只重放完整可验证的前缀：一旦出现缺口，其后所有有改动的消息都不再应用，
+  // 否则后续消息的快照会跨过缺口写到错误基线上
+  let gapSeen = false
 
   for (const messageId of messageIds) {
     const manifest = manifestById.get(messageId)
@@ -340,7 +247,8 @@ export function applyForwardForMessageIds(
       continue
     }
 
-    if (!manifest.forwardCaptured || manifest.forwardPruned) {
+    if (gapSeen || !manifest.forwardCaptured || manifest.forwardPruned) {
+      gapSeen = true
       incompleteMessageIds.push(messageId)
       continue
     }
@@ -354,6 +262,7 @@ export function applyForwardForMessageIds(
     if (ok) {
       appliedMessageIds.push(messageId)
     } else {
+      gapSeen = true
       incompleteMessageIds.push(messageId)
     }
   }
@@ -384,7 +293,7 @@ function undoSingleManifestWorkspace(
   }
 }
 
-/** 将单条 manifest 的 forward 快照应用到工作区 */
+/** 将单条 manifest 的 forward 快照应用到工作区；先整体校验再写，保证不半写 */
 function applySingleManifestForward(
   checkpointRoot: string,
   workspaceRoot: string,
@@ -393,14 +302,16 @@ function applySingleManifestForward(
 ): boolean {
   const forwardDir = getForwardDir(checkpointRoot, sessionId, manifest.messageId)
   const skippedPaths = new Set((manifest.skippedFiles ?? []).map(s => s.path))
+  const toWrite = [...manifest.modifiedFiles, ...manifest.createdFiles]
 
-  for (const relPath of manifest.modifiedFiles) {
+  // 全部 modified/created 路径必须未被 skipped 且 forward 文件存在，否则整条不应用
+  for (const relPath of toWrite) {
     if (skippedPaths.has(relPath)) return false
-    if (!writeForwardFileToWorkspace(forwardDir, workspaceRoot, relPath)) return false
+    if (!existsSync(join(forwardDir, relPath))) return false
   }
-  for (const relPath of manifest.createdFiles) {
-    if (skippedPaths.has(relPath)) return false
-    if (!writeForwardFileToWorkspace(forwardDir, workspaceRoot, relPath)) return false
+
+  for (const relPath of toWrite) {
+    writeForwardFileToWorkspace(forwardDir, workspaceRoot, relPath)
   }
   for (const relPath of manifest.deletedFiles) {
     const absPath = join(workspaceRoot, relPath)
@@ -438,16 +349,14 @@ function writeForwardFileToWorkspace(
   forwardDir: string,
   workspaceRoot: string,
   relPath: string
-): boolean {
+): void {
   const forwardPath = join(forwardDir, relPath)
-  if (!existsSync(forwardPath)) return false
   const absPath = join(workspaceRoot, relPath)
   const targetDir = dirname(absPath)
   if (!existsSync(targetDir)) {
     mkdirSync(targetDir, { recursive: true })
   }
   writeFileSync(absPath, readFileSync(forwardPath))
-  return true
 }
 
 function verifyWorkspaceRevertPossible(

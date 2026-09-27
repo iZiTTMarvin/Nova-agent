@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
@@ -91,7 +91,8 @@ async function rendererInvoke<C extends IpcCommandChannel>(
 }
 
 async function prepareWorkspace(codeFileCount = 0): Promise<string> {
-  const workspacePath = await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-workspace-'))
+  // realpath 让测试工作区路径与用户从系统目录框选出的 canonical 形态一致
+  const workspacePath = await realpath(await mkdtemp(path.join(os.tmpdir(), 'nova-e2e-workspace-')))
   await writeFile(
     path.join(workspacePath, 'e2e-marker.txt'),
     'Nova Electron E2E marker\n',

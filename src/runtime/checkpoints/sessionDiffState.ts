@@ -18,6 +18,7 @@ import type {
   SkippedFileInfo
 } from '../../shared/diff/types'
 import { computeFileDiff } from '../../shared/diff/compute'
+import { digestFileBytes } from './fileDigest'
 import { readManifest, getFilesDir } from './manifest'
 import type { CheckpointManifest } from './types'
 
@@ -149,14 +150,18 @@ function buildAggregatedEntry(
     (manifest) => manifest.messageId === appearance.messageId
   )
   const currentPath = join(workspaceRoot, relPath)
-  const currentExists = existsSync(currentPath)
+  // 工作区文件只读一次：diff 文本与 currentDigest 共用这次读取
+  const currentBytes = existsSync(currentPath) ? readFileSync(currentPath) : null
+  const currentDigest = currentBytes === null ? null : digestFileBytes(currentBytes)
 
   if (appearance.op === 'created') {
     // 先建后删：净变化为零，不产生 diff
-    if (!currentExists) return null
-    const newContent = readFileSync(currentPath, 'utf-8')
+    if (currentBytes === null) return null
     return {
-      entry: computeFileDiff(relPath, '', newContent, 'added'),
+      entry: {
+        ...computeFileDiff(relPath, '', currentBytes.toString('utf-8'), 'added'),
+        currentDigest
+      },
       routeMessageId: appearance.messageId
     }
   }
@@ -177,10 +182,12 @@ function buildAggregatedEntry(
   // 备份全部缺失（被清理或命中跳过规则）：与消息级口径一致，跳过该文件
   if (oldContent === null) return null
 
-  const newContent = currentExists ? readFileSync(currentPath, 'utf-8') : ''
-  const status: DiffEntry['status'] = currentExists ? 'modified' : 'deleted'
+  const status: DiffEntry['status'] = currentBytes === null ? 'deleted' : 'modified'
   return {
-    entry: computeFileDiff(relPath, oldContent, newContent, status),
+    entry: {
+      ...computeFileDiff(relPath, oldContent, currentBytes?.toString('utf-8') ?? '', status),
+      currentDigest
+    },
     routeMessageId
   }
 }

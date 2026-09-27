@@ -247,6 +247,13 @@
   font-size: 0.74rem;
 }
 
+.inspector-review__error {
+  padding: 6px 12px;
+  color: var(--nova-status-error);
+  background: color-mix(in srgb, var(--nova-status-error) 7%, var(--bg-card));
+  font-size: 0.74rem;
+}
+
 /* ── ReviewTab ── */
 
 .inspector-review {

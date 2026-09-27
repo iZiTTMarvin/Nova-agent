@@ -710,7 +710,8 @@ describe('useChatStore Zustand Store', () => {
       diffs: [{
         filePath: 'src/final.ts',
         status: 'modified',
-        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: ' a' }]
+        hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: ' a' }],
+        currentDigest: undefined
       }],
       reviews: { 'src/final.ts': 'pending' }
     })
@@ -725,7 +726,7 @@ describe('useChatStore Zustand Store', () => {
     )
 
     expect(useChatStore.getState().messageDiffs['msg_1']).toEqual({
-      diffs: [{ filePath: 'src/live.ts', status: 'modified', hunks: [] }],
+      diffs: [{ filePath: 'src/live.ts', status: 'modified', hunks: [], currentDigest: undefined }],
       reviews: {}
     })
   })
@@ -758,7 +759,7 @@ describe('useChatStore Zustand Store', () => {
       currentSessionId: 'sess_1',
       messageDiffs: {
         msg_1: {
-          diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [] }],
+          diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [], currentDigest: 'd-app' }],
           reviews: {}
         }
       }
@@ -769,7 +770,8 @@ describe('useChatStore Zustand Store', () => {
     expect(mockInvoke).toHaveBeenCalledWith('reject-file', {
       sessionId: 'sess_1',
       messageId: 'msg_1',
-      filePath: 'src/app.ts'
+      filePath: 'src/app.ts',
+      expectedDigest: 'd-app'
     })
     expect(useChatStore.getState().messageDiffs['msg_1'].reviews['src/app.ts']).toBe('rejected')
   })
@@ -778,11 +780,18 @@ describe('useChatStore Zustand Store', () => {
     mockInvoke.mockImplementation(async (channel: string) => {
       if (channel === 'run:get-snapshot') return { snapshot: null, waitingSessions: [] }
       if (channel === 'reject-file') throw new Error('boom')
+      if (channel === 'get-message-diffs') return { diffs: [], reviews: {} }
       return undefined
     })
     const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     useChatStore.setState({
-      currentSessionId: 'sess_1'
+      currentSessionId: 'sess_1',
+      messageDiffs: {
+        msg_1: {
+          diffs: [{ filePath: 'src/app.ts', status: 'modified', hunks: [], currentDigest: 'd-app' }],
+          reviews: {}
+        }
+      }
     })
 
     try {

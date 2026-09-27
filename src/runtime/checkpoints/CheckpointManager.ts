@@ -9,6 +9,7 @@
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, statSync } from 'fs'
 import { join, relative, dirname } from 'path'
+import { toWorkspaceRelativePath } from '../permissions/pathAccess'
 import type { CheckpointConfig, CheckpointManifest } from './types'
 import type { SkippedFileInfo } from '../../shared/diff/types'
 import { writeManifest, readManifest, getFilesDir, getForwardDir } from './manifest'
@@ -44,6 +45,16 @@ export class CheckpointManager {
   /** 获取生效的滚动保留消息数 */
   private getKeepRecentCheckpointMessages(): number {
     return this.config.keepRecentCheckpointMessages ?? DEFAULT_KEEP_RECENT_CHECKPOINT_MESSAGES
+  }
+
+  /**
+   * 工作区相对路径：两侧都规范化到 canonical 形式再求相对，
+   * 避免 junction/symlink/短路径别名让 relative() 算出 ../../.. 逃逸路径。
+   * realpath 失败（如目标链路全不存在）退回词法相对路径。
+   */
+  private workspaceRelPath(absoluteFilePath: string): string {
+    return toWorkspaceRelativePath(this.config.workspaceRoot, absoluteFilePath)
+      ?? relative(this.config.workspaceRoot, absoluteFilePath).replace(/\\/g, '/')
   }
 
   /** 获取 checkpoint 根目录 */
@@ -95,7 +106,7 @@ export class CheckpointManager {
       throw new Error('必须先调用 beginMessage() 设置消息事务边界')
     }
 
-    const relPath = relative(this.config.workspaceRoot, absoluteFilePath).replace(/\\/g, '/')
+    const relPath = this.workspaceRelPath(absoluteFilePath)
     const manifest = this.getOrCreateManifest()
 
     // 同一消息内，同一文件只备份一次
@@ -288,7 +299,7 @@ export class CheckpointManager {
   recordBashSkippedFile(absoluteFilePath: string, bytes: number): void {
     if (!this.currentMessageId) return
 
-    const relPath = relative(this.config.workspaceRoot, absoluteFilePath).replace(/\\/g, '/')
+    const relPath = this.workspaceRelPath(absoluteFilePath)
 
     if (this.backedUpFiles.has(relPath)) return
     this.backedUpFiles.add(relPath)
@@ -311,7 +322,7 @@ export class CheckpointManager {
   ): void {
     if (!this.currentMessageId) return
 
-    const relPath = relative(this.config.workspaceRoot, absoluteFilePath).replace(/\\/g, '/')
+    const relPath = this.workspaceRelPath(absoluteFilePath)
 
     // 如果 write/edit 已经处理过该文件，跳过
     if (this.backedUpFiles.has(relPath)) return

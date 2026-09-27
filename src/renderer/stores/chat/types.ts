@@ -270,8 +270,8 @@ export interface DiffSliceState {
   acceptAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<void>
   /** 批量拒绝多个文件改动，返回恢复成功与失败的文件 */
   rejectAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
-  /** 加载某条消息的 diff 数据 */
-  loadMessageDiffs: (sessionId: string, messageId: string) => Promise<void>
+  /** 加载某条消息的 diff 数据；force 跳过缓存守卫，用于操作失败后的权威重拉 */
+  loadMessageDiffs: (sessionId: string, messageId: string, force?: boolean) => Promise<void>
   /** 清除指定消息的 diff 缓存（拒绝后刷新用） */
   clearMessageDiffs: (messageId: string) => void
   handleDiffUpdate: (

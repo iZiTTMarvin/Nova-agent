@@ -25,12 +25,16 @@ describe('DiffReviewService 路径安全', () => {
 
   it('rejectAllFiles 拒绝含 .. 的相对路径', () => {
     const session = store.create(workspaceRoot)
-    expect(() => service.rejectAllFiles(session.id, 'msg_x', ['../../etc/passwd'])).toThrow(/路径越界/)
+    const result = service.rejectAllFiles(session.id, 'msg_x', [
+      { filePath: '../../etc/passwd', expectedDigest: null }
+    ])
+    expect(result.restored).toEqual([])
+    expect(result.failed[0]?.error).toMatch(/路径越界/)
   })
 
   it('rejectFile 拒绝绝对路径', () => {
     const session = store.create(workspaceRoot)
     const abs = path.join(workspaceRoot, '..', 'escape.txt')
-    expect(() => service.rejectFile(session.id, 'msg_x', abs)).toThrow(/路径越界/)
+    expect(() => service.rejectFile(session.id, 'msg_x', abs, null)).toThrow(/路径越界/)
   })
 })

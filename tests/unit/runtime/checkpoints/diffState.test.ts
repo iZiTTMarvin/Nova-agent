@@ -5,6 +5,7 @@ import * as path from 'path'
 import { buildMessageDiffState } from '../../../../src/runtime/checkpoints/diffState'
 import { writeManifest, getFilesDir } from '../../../../src/runtime/checkpoints/manifest'
 import type { CheckpointManifest } from '../../../../src/runtime/checkpoints/types'
+import { digestFileBytes } from '../../../../src/runtime/checkpoints/fileDigest'
 
 let tmpDir: string
 let checkpointRoot: string
@@ -37,6 +38,33 @@ afterEach(() => {
 })
 
 describe('buildMessageDiffState', () => {
+  it('删除的文件被用户重建后展示真实内容，文件仍不存在时保留删除状态', () => {
+    const messageId = 'msg_recreated'
+    const relPath = 'src/recreated.ts'
+    writeBackupFile(messageId, relPath, 'ORIGINAL')
+    writeManifest(checkpointRoot, {
+      sessionId,
+      messageId,
+      workspaceRoot,
+      createdFiles: [],
+      modifiedFiles: [],
+      deletedFiles: [relPath],
+      status: 'active',
+      createdAt: Date.now()
+    })
+
+    writeWorkspaceFile(relPath, 'USER_RECREATED')
+    const recreated = buildMessageDiffState(checkpointRoot, workspaceRoot, sessionId, messageId).diffs[0]!
+    expect(recreated.status).toBe('modified')
+    expect(recreated.hunks.map(h => h.content).join('\n')).toContain('+USER_RECREATED')
+    expect(recreated.currentDigest).toBe(digestFileBytes(Buffer.from('USER_RECREATED')))
+
+    fs.unlinkSync(path.join(workspaceRoot, relPath))
+    const deleted = buildMessageDiffState(checkpointRoot, workspaceRoot, sessionId, messageId).diffs[0]!
+    expect(deleted.status).toBe('deleted')
+    expect(deleted.currentDigest).toBeNull()
+  })
+
   it('返回当前可见 diff，并保留 rejected 文件状态', () => {
     const messageId = 'msg_1'
     writeWorkspaceFile('src/visible.ts', 'new visible')

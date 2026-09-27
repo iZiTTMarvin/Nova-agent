@@ -38,6 +38,7 @@ export interface RecordedRequest {
   path: string
   body: JsonObject
   aborted: boolean
+  authorization?: string
 }
 
 interface Deferred {
@@ -105,6 +106,8 @@ export class FakeRuntime {
   private readonly lanes: Array<{ marker: string; turns: FakeTurn[] }> = []
   private readonly holds = new Map<string, Deferred>()
   private readonly sockets = new Set<Socket>()
+  /** 设置后校验 Authorization 头，不匹配直接 401（覆盖首次配置错 Key 的链路） */
+  private expectedApiKey: string | undefined
   private readonly server = createServer((req, res) => {
     void this.handle(req, res)
   })
@@ -143,6 +146,10 @@ export class FakeRuntime {
 
   setTurnFactory(factory: TurnFactory | null): void {
     this.turnFactory = factory
+  }
+
+  setExpectedApiKey(key: string | undefined): void {
+    this.expectedApiKey = key
   }
 
   /**
@@ -227,9 +234,19 @@ export class FakeRuntime {
     const record: RecordedRequest = {
       path: req.url,
       body,
-      aborted: false
+      aborted: false,
+      authorization: req.headers.authorization
     }
     this.requests.push(record)
+
+    if (
+      this.expectedApiKey !== undefined &&
+      req.headers.authorization !== `Bearer ${this.expectedApiKey}`
+    ) {
+      res.writeHead(401, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ error: { message: 'invalid api key' } }))
+      return
+    }
 
     if (JSON.stringify(body).includes(BROWSER_VISION_PROBE_MARKER)) {
       res.writeHead(200, {

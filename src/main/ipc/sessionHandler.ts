@@ -22,8 +22,7 @@ import {
   ACCEPT_ALL_FILES,
   REJECT_ALL_FILES
 } from '../../shared/ipc/channels'
-import { initSessionStoreHost, getSessionStore } from '../services/SessionStoreHost'
-import { rejectFile } from '../../runtime/checkpoints/restore'
+import { initSessionStoreHost } from '../services/SessionStoreHost'
 import { buildMessageDiffState } from '../../runtime/checkpoints/diffState'
 import { buildSessionDiffState } from '../../runtime/checkpoints/sessionDiffState'
 import type { MessageDiffsState } from '../../shared/diff/types'
@@ -37,7 +36,6 @@ import {
 import { getSessionActiveMessages, attachBranchMeta, ensureMessageParentChain, resolveCurrentLeafId } from '../../runtime/sessions/tree'
 import { exportSessionToMarkdown } from '../../runtime/sessions/sessionMarkdown'
 import { writeFileSync } from 'fs'
-import { readManifest, writeManifest } from '../../runtime/checkpoints/manifest'
 import { GET_MESSAGE_DIFFS, GET_SESSION_DIFFS } from '../../shared/ipc/channels'
 import { toSharedMessage } from './sessionMessageMapper'
 import { getWorkspaceService } from '../services/WorkspaceService'
@@ -222,20 +220,12 @@ export function registerSessionHandler(): void {
     return toSessionDetail(data)
   })
 
-  // 接受文件改动：标记为已审查
+  // 接受文件改动：标记为已审查（委托 WorkspaceService → DiffReviewService）
   handle(ACCEPT_FILE, async (
     _event,
     params: { sessionId: string; messageId: string; filePath: string }
   ): Promise<void> => {
-    const checkpointRoot = sessionStore.getSessionsDir()
-    const manifest = readManifest(checkpointRoot, params.sessionId, params.messageId)
-    if (!manifest) {
-      throw new Error('接受文件失败：找不到对应的 checkpoint')
-    }
-
-    if (!manifest.fileReviews) manifest.fileReviews = {}
-    manifest.fileReviews[params.filePath] = 'accepted'
-    writeManifest(checkpointRoot, manifest)
+    getWorkspaceService().acceptFile(params.sessionId, params.messageId, params.filePath)
   })
 
   // 批量接受文件改动（PRD §5.3）：委托给 WorkspaceService
@@ -248,13 +238,17 @@ export function registerSessionHandler(): void {
   })
 
   // 批量拒绝文件改动（PRD §5.3）：委托给 WorkspaceService
-  // 逐个从 checkpoint 恢复，任一失败收集到 failed 数组返回（不中断剩余）
+  // 预检零副作用；任一目标失败整批不执行，失败原因收集到 failed 返回
   handle(REJECT_ALL_FILES, async (
     _event,
-    params: { sessionId: string; messageId: string; filePaths: string[] }
+    params: {
+      sessionId: string
+      messageId: string
+      files: Array<{ filePath: string; expectedDigest: string | null }>
+    }
   ): Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }> => {
     const ws = getWorkspaceService()
-    return ws.rejectAllFiles(params.sessionId, params.messageId, params.filePaths)
+    return ws.rejectAllFiles(params.sessionId, params.messageId, params.files)
   })
 
   // 获取某条消息的所有文件 diff（含审查状态）
@@ -291,37 +285,16 @@ export function registerSessionHandler(): void {
     )
   })
 
-  // 按文件拒绝：从 checkpoint 恢复该文件到原始内容
+  // 按文件拒绝：委托 WorkspaceService（忙碌守卫）→ DiffReviewService（plan/execute 恢复）
   handle(REJECT_FILE, async (
     _event,
-    params: { sessionId: string; messageId: string; filePath: string }
+    params: { sessionId: string; messageId: string; filePath: string; expectedDigest: string | null }
   ) => {
-    // 使用会话绑定的 workspaceRoot 而非全局 currentProjectPath
-    const session = sessionStore.load(params.sessionId)
-    if (!session) {
-      throw new Error(`会话 ${params.sessionId} 不存在`)
-    }
-
-    const checkpointRoot = sessionStore.getSessionsDir()
-    const success = rejectFile(
-      checkpointRoot,
-      session.workspaceRoot,
+    getWorkspaceService().rejectFile(
       params.sessionId,
       params.messageId,
-      params.filePath
+      params.filePath,
+      params.expectedDigest
     )
-
-    if (!success) {
-      throw new Error('文件拒绝失败：该文件不在当前消息的 checkpoint 中')
-    }
-
-    // 标记文件审查状态为 rejected；被拒绝的文件不再参与 diff 计算，
-    // 但状态需要保留，供 renderer 展示“已拒绝”痕迹。
-    const manifest = readManifest(checkpointRoot, params.sessionId, params.messageId)
-    if (manifest) {
-      if (!manifest.fileReviews) manifest.fileReviews = {}
-      manifest.fileReviews[params.filePath] = 'rejected'
-      writeManifest(checkpointRoot, manifest)
-    }
   })
 }

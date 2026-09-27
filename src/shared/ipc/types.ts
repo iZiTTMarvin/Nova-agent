@@ -296,7 +296,11 @@ export interface IpcCommands {
     result: SessionMessageDiffsState
   }
   'reject-file': {
-    params: { sessionId: string; messageId: string; filePath: string }
+    /**
+     * expectedDigest：调用方审阅时看到的文件版本摘要（工作区字节 sha256，
+     * null 表示当时不存在）。主进程据此在恢复前比对，防止覆盖用户之后的新改动。
+     */
+    params: { sessionId: string; messageId: string; filePath: string; expectedDigest: string | null }
     result: void
   }
   'respond-permission': {
@@ -582,7 +586,12 @@ export interface IpcCommands {
     result: void
   }
   'reject-all-files': {
-    params: { sessionId: string; messageId: string; filePaths: string[] }
+    /** files 携带每个文件审阅时看到的摘要，语义同 reject-file.expectedDigest */
+    params: {
+      sessionId: string
+      messageId: string
+      files: Array<{ filePath: string; expectedDigest: string | null }>
+    }
     result: { restored: string[]; failed: Array<{ filePath: string; error: string }> }
   }
   // ── 存储治理（WS3 后端） ──

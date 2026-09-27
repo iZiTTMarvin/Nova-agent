@@ -159,6 +159,28 @@ describe('DiffViewer', () => {
     renderer.unmount()
   })
 
+  it('批量拒绝失败时在原位显示文件和原因', async () => {
+    const renderer = renderDom(
+      <DiffViewer
+        diffs={[makeDiff()]}
+        reviews={{}}
+        sessionId="sess_1"
+        messageId="msg_1"
+        onRejectAll={async () => ({
+          restored: [],
+          failed: [{ filePath: 'src/a.ts', error: '文件在查看后又被修改' }]
+        })}
+      />
+    )
+
+    await act(async () => {
+      renderer.container.querySelector<HTMLButtonElement>('.diff-header-btn')?.click()
+    })
+    expect(renderer.container.querySelector('.diff-viewer__batch-error')?.textContent)
+      .toContain('src/a.ts：文件在查看后又被修改')
+    renderer.unmount()
+  })
+
   it('默认折叠 hunk；点击「审查」按钮打开 Inspector 审阅', async () => {
     const map = new Map<string, string>()
     Object.defineProperty(globalThis, 'localStorage', {

@@ -55,12 +55,33 @@ export const SubagentDiffCard: React.FC<{ projection: SubagentActivityProjection
     channel: 'accept-file' | 'reject-file'
   ): Promise<void> => {
     const messageId = diffState?.messageIdByFile[filePath]
-    if (!messageId) return
-    await window.api.invoke(channel, {
-      sessionId: projection.childSessionId,
-      messageId,
-      filePath
-    })
+    const entry = diffState?.diffs.find(d => d.filePath === filePath)
+    // 拒绝需要当前展示版本的摘要；路由或条目缺失说明缓存已过期，重拉后让用户重审
+    if (!messageId || (channel === 'reject-file' && (!entry || entry.currentDigest === undefined))) {
+      await refresh()
+      throw new Error('改动已过期，请重新查看')
+    }
+    try {
+      await window.api.invoke(
+        channel,
+        channel === 'reject-file'
+          ? {
+              sessionId: projection.childSessionId,
+              messageId,
+              filePath,
+              expectedDigest: entry!.currentDigest
+            }
+          : {
+              sessionId: projection.childSessionId,
+              messageId,
+              filePath
+            }
+      )
+    } catch (err) {
+      // 失败后缓存可能已过期（如摘要冲突）：重拉权威聚合再向上抛错
+      await refresh()
+      throw err
+    }
     // 审查状态落盘后重拉，保证徽章与路由表一致
     await refresh()
   }

@@ -151,6 +151,8 @@ export function computeFileDiff(
     return {
       filePath,
       status: 'added',
+      // 纯文本比较不持有工作区字节，摘要由 checkpoint 侧覆盖填入
+      currentDigest: undefined,
       hunks: [{
         oldStart: 0, oldLines: 0, newStart: 1, newLines: lines.length,
         content: lines.map(l => '+' + l).join('\n')
@@ -163,6 +165,7 @@ export function computeFileDiff(
     return {
       filePath,
       status: 'deleted',
+      currentDigest: undefined,
       hunks: [{
         oldStart: 1, oldLines: lines.length, newStart: 0, newLines: 0,
         content: lines.map(l => '-' + l).join('\n')
@@ -176,6 +179,7 @@ export function computeFileDiff(
   return {
     filePath,
     status: 'modified',
+    currentDigest: undefined,
     hunks: toHunks(dLines)
   }
 }

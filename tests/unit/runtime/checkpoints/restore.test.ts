@@ -2,8 +2,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import { rejectFile, revertToMessage, listManifests } from '../../../../src/runtime/checkpoints/restore'
+import { revertToMessage, listManifests } from '../../../../src/runtime/checkpoints/restore'
+import {
+  planReviewReject,
+  executeReviewRestore,
+  createDefaultReviewRestoreIo
+} from '../../../../src/runtime/checkpoints/reviewRestore'
 import { writeManifest, getCheckpointDir, getFilesDir } from '../../../../src/runtime/checkpoints/manifest'
+import { digestFileBytes } from '../../../../src/runtime/checkpoints/fileDigest'
 import type { CheckpointManifest } from '../../../../src/runtime/checkpoints/types'
 
 /** 创建临时目录用于测试 */
@@ -79,7 +85,42 @@ function readWorkspaceFile(relPath: string): string | null {
   }
 }
 
-// ── rejectFile ──────────────────────────────────────────────
+// ── rejectFile（经 reviewRestore plan/execute）──────────────────────────────
+
+/**
+ * 旧的按文件 rejectFile 已收口到 reviewRestore；这里用其窄入口执行等价流程，
+ * expectedDigest 为 null 即「以当前字节为准」之外还需比对摘要，本文件用例
+ * 直接传当前字节摘要或 null 走通主路径。
+ */
+function rejectViaReview(
+  messageId: string,
+  relPath: string,
+  expectedDigest: string | null
+): void {
+  const io = createDefaultReviewRestoreIo(checkpointRoot)
+  const result = planReviewReject(
+    {
+      checkpointRoot,
+      workspaceRoot,
+      sessionId,
+      messageId,
+      targets: [{ filePath: relPath, expectedDigest }],
+      isWithinWorkspace: () => true
+    },
+    io
+  )
+  if (!result.ok) {
+    throw new Error(result.failures[0]!.error)
+  }
+  executeReviewRestore(result.plan, io)
+}
+
+function currentDigestOrNull(relPath: string): string | null {
+  const abs = path.join(workspaceRoot, relPath)
+  return fs.existsSync(abs)
+    ? digestFileBytes(fs.readFileSync(abs))
+    : null
+}
 
 describe('rejectFile', () => {
   it('拒绝修改过的文件：从备份恢复原始内容', () => {
@@ -90,15 +131,11 @@ describe('rejectFile', () => {
       modifiedFiles: ['src/app.ts']
     })
 
-    const result = rejectFile(
-      checkpointRoot, workspaceRoot, sessionId, 'msg_1', 'src/app.ts'
-    )
+    rejectViaReview('msg_1', 'src/app.ts', currentDigestOrNull('src/app.ts'))
 
-    expect(result).toBe(true)
     expect(readWorkspaceFile('src/app.ts')).toBe('original content')
 
     // manifest 应更新，modifiedFiles 应变空
-    const updated = writeManifest // 重新读取验证
     const checkpointDir = getCheckpointDir(checkpointRoot, sessionId, 'msg_1')
     const manifestPath = path.join(checkpointDir, 'manifest.json')
     const updatedManifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
@@ -112,26 +149,21 @@ describe('rejectFile', () => {
       createdFiles: ['src/new.ts']
     })
 
-    const result = rejectFile(
-      checkpointRoot, workspaceRoot, sessionId, 'msg_1', 'src/new.ts'
-    )
+    rejectViaReview('msg_1', 'src/new.ts', currentDigestOrNull('src/new.ts'))
 
-    expect(result).toBe(true)
     expect(readWorkspaceFile('src/new.ts')).toBeNull()
   })
 
-  it('拒绝 manifest 中不存在的文件返回 false', () => {
+  it('拒绝 manifest 中不存在的文件抛「不在 checkpoint」', () => {
     createManifest('msg_1', {
       modifiedFiles: ['src/other.ts']
     })
 
     writeWorkspaceFile('src/untracked.ts', 'content')
 
-    const result = rejectFile(
-      checkpointRoot, workspaceRoot, sessionId, 'msg_1', 'src/untracked.ts'
-    )
-
-    expect(result).toBe(false)
+    expect(() =>
+      rejectViaReview('msg_1', 'src/untracked.ts', currentDigestOrNull('src/untracked.ts'))
+    ).toThrow('不在当前消息的 checkpoint 中')
   })
 
   it('拒绝删除的文件：从备份恢复原始内容', () => {
@@ -140,19 +172,15 @@ describe('rejectFile', () => {
       deletedFiles: ['src/deleted.ts']
     })
 
-    const result = rejectFile(
-      checkpointRoot, workspaceRoot, sessionId, 'msg_1', 'src/deleted.ts'
-    )
+    rejectViaReview('msg_1', 'src/deleted.ts', null)
 
-    expect(result).toBe(true)
     expect(readWorkspaceFile('src/deleted.ts')).toBe('original deleted content')
   })
 
-  it('manifest 不存在时返回 false', () => {
-    const result = rejectFile(
-      checkpointRoot, workspaceRoot, sessionId, 'non_existent_msg', 'src/app.ts'
-    )
-    expect(result).toBe(false)
+  it('manifest 不存在时抛「找不到对应的 checkpoint」', () => {
+    expect(() =>
+      rejectViaReview('non_existent_msg', 'src/app.ts', null)
+    ).toThrow('找不到对应的 checkpoint')
   })
 
   it('所有文件都拒绝后 manifest 状态变为 rolled-back', () => {
@@ -163,7 +191,7 @@ describe('rejectFile', () => {
       modifiedFiles: ['src/app.ts']
     })
 
-    rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_1', 'src/app.ts')
+    rejectViaReview('msg_1', 'src/app.ts', currentDigestOrNull('src/app.ts'))
 
     const checkpointDir = getCheckpointDir(checkpointRoot, sessionId, 'msg_1')
     const manifestPath = path.join(checkpointDir, 'manifest.json')
@@ -332,25 +360,25 @@ describe('listManifests', () => {
 // ── C2 回归：二进制文件字节级回退（不再因 utf8 编码损坏） ──
 
 describe('缺失备份硬校验', () => {
-  it('rejectFile 恢复 modifiedFiles 时备份缺失会抛 Error', () => {
+  it('拒绝恢复 modifiedFiles 时备份缺失会抛 Error', () => {
     writeWorkspaceFile('src/app.ts', 'modified content')
     // 故意不创建备份
     createManifest('msg_missing', { modifiedFiles: ['src/app.ts'] })
 
     expect(() =>
-      rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_missing', 'src/app.ts')
+      rejectViaReview('msg_missing', 'src/app.ts', currentDigestOrNull('src/app.ts'))
     ).toThrow('备份文件不存在')
   })
 
-  it('rejectFile 恢复 deletedFiles 时备份缺失会抛 Error', () => {
+  it('拒绝恢复 deletedFiles 时备份缺失会抛 Error', () => {
     createManifest('msg_missing', { deletedFiles: ['src/app.ts'] })
 
     expect(() =>
-      rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_missing', 'src/app.ts')
+      rejectViaReview('msg_missing', 'src/app.ts', null)
     ).toThrow('备份文件不存在')
   })
 
-  it('backupPruned 的 manifest 触发 rejectFile 时给出滚动清理提示', () => {
+  it('backupPruned 的 manifest 触发拒绝时给出滚动清理提示', () => {
     writeWorkspaceFile('src/app.ts', 'modified content')
     const manifest = createManifest('msg_pruned', { modifiedFiles: ['src/app.ts'] })
     manifest.backupPruned = true
@@ -358,7 +386,7 @@ describe('缺失备份硬校验', () => {
     writeManifest(checkpointRoot, manifest)
 
     expect(() =>
-      rejectFile(checkpointRoot, workspaceRoot, sessionId, 'msg_pruned', 'src/app.ts')
+      rejectViaReview('msg_pruned', 'src/app.ts', currentDigestOrNull('src/app.ts'))
     ).toThrow('已被滚动清理')
   })
 
@@ -410,7 +438,7 @@ describe('C2: 二进制文件回退字节级一致', () => {
     ])
   }
 
-  it('rejectFile 回退二进制文件后字节级一致', () => {
+  it('拒绝回退二进制文件后字节级一致', () => {
     const original = makePngBuffer()
     const modified = Buffer.from('modified text content', 'utf8')
 
@@ -423,11 +451,8 @@ describe('C2: 二进制文件回退字节级一致', () => {
 
     createManifest('msg_bin', { modifiedFiles: ['img.png'] })
 
-    const result = rejectFile(
-      checkpointRoot, workspaceRoot, sessionId, 'msg_bin', 'img.png'
-    )
+    rejectViaReview('msg_bin', 'img.png', currentDigestOrNull('img.png'))
 
-    expect(result).toBe(true)
     const restored = fs.readFileSync(path.join(workspaceRoot, 'img.png'))
     // C2 修复前：restore.ts 用 utf8 读写，0x89 等字节会被替换 → 字节级不等。
     // C2 修复后：直接 readFileSync/writeFileSync 不带编码 → 字节级一致。

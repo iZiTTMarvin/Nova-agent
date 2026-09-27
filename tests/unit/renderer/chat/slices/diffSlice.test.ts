@@ -128,7 +128,7 @@ describe('chat diff slice generation fence', () => {
     useChatStore.setState({
       messageDiffs: {
         'message-a': {
-          diffs: [{ filePath: 'src/a.ts', status: 'modified', hunks: [] }],
+          diffs: [{ filePath: 'src/a.ts', status: 'modified', hunks: [], currentDigest: 'd-a' }],
           reviews: {}
         }
       }
@@ -197,6 +197,143 @@ describe('chat diff slice generation fence', () => {
     expect(useChatStore.getState().loadingDiffs.has('message-a')).toBe(false)
   })
 
+  it('rejectFile 请求携带缓存条目的 currentDigest', async () => {
+    useChatStore.setState({
+      messageDiffs: {
+        'message-a': {
+          diffs: [{ filePath: 'src/a.ts', status: 'modified', hunks: [], currentDigest: 'digest-aaa' }],
+          reviews: {}
+        }
+      }
+    })
+    mockInvoke.mockResolvedValueOnce(undefined)
+
+    await useChatStore.getState().rejectFile('session-a', 'message-a', 'src/a.ts')
+
+    expect(mockInvoke).toHaveBeenCalledWith('reject-file', {
+      sessionId: 'session-a',
+      messageId: 'message-a',
+      filePath: 'src/a.ts',
+      expectedDigest: 'digest-aaa'
+    })
+  })
+
+  it('rejectAllFiles 请求携带每个文件对应的缓存摘要', async () => {
+    useChatStore.setState({
+      messageDiffs: {
+        'message-a': {
+          diffs: [
+            { filePath: 'src/a.ts', status: 'modified', hunks: [], currentDigest: 'digest-a' },
+            { filePath: 'src/b.ts', status: 'modified', hunks: [], currentDigest: null }
+          ],
+          reviews: {}
+        }
+      }
+    })
+    mockInvoke.mockResolvedValueOnce({ restored: ['src/a.ts', 'src/b.ts'], failed: [] })
+
+    await useChatStore.getState().rejectAllFiles('session-a', 'message-a', ['src/a.ts', 'src/b.ts'])
+
+    expect(mockInvoke).toHaveBeenCalledWith('reject-all-files', {
+      sessionId: 'session-a',
+      messageId: 'message-a',
+      files: [
+        { filePath: 'src/a.ts', expectedDigest: 'digest-a' },
+        { filePath: 'src/b.ts', expectedDigest: null }
+      ]
+    })
+  })
+
+  it.each(['rejectFile', 'rejectAllFiles'] as const)(
+    '%s 不把事件里未知的摘要当成文件不存在',
+    async (action) => {
+      useChatStore.getState().handleDiffUpdate('message-a', 'final', [
+        { filePath: 'src/a.ts', status: 'modified', hunks: [] }
+      ], {})
+      mockInvoke.mockResolvedValue({
+        diffs: [{ filePath: 'src/a.ts', status: 'modified', hunks: [], currentDigest: null }],
+        reviews: {}
+      })
+
+      const review = action === 'rejectFile'
+        ? useChatStore.getState().rejectFile('session-a', 'message-a', 'src/a.ts')
+        : useChatStore.getState().rejectAllFiles('session-a', 'message-a', ['src/a.ts'])
+      await expect(review).rejects.toThrow('改动已过期')
+      expect(mockInvoke).toHaveBeenCalledWith('get-message-diffs', {
+        sessionId: 'session-a', messageId: 'message-a'
+      })
+      expect(mockInvoke).not.toHaveBeenCalledWith('reject-file', expect.anything())
+      expect(mockInvoke).not.toHaveBeenCalledWith('reject-all-files', expect.anything())
+      expect(useChatStore.getState().messageDiffs['message-a']?.diffs[0]?.currentDigest).toBeNull()
+    }
+  )
+
+  it('缓存里找不到文件条目时不发拒绝请求、报过期并重新拉取', async () => {
+    useChatStore.setState({
+      messageDiffs: {
+        'message-a': {
+          diffs: [{ filePath: 'src/other.ts', status: 'modified', hunks: [], currentDigest: 'd1' }],
+          reviews: {}
+        }
+      }
+    })
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'get-message-diffs') {
+        return Promise.resolve({ diffs: [], reviews: {} })
+      }
+      return Promise.resolve(undefined)
+    })
+
+    await expect(
+      useChatStore.getState().rejectFile('session-a', 'message-a', 'src/a.ts')
+    ).rejects.toThrow('改动已过期')
+    expect(mockInvoke).not.toHaveBeenCalledWith('reject-file', expect.anything())
+    // 已触发重新拉取权威 diff
+    await vi.waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith('get-message-diffs', {
+        sessionId: 'session-a',
+        messageId: 'message-a'
+      })
+    })
+  })
+
+  it('拒绝失败后清缓存、重新拉取权威 diff 并 rethrow', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    useChatStore.setState({
+      messageDiffs: {
+        'message-a': {
+          diffs: [{ filePath: 'src/a.ts', status: 'modified', hunks: [], currentDigest: 'stale' }],
+          reviews: {}
+        }
+      }
+    })
+    const authoritative = {
+      diffs: [{ filePath: 'src/a.ts', status: 'modified', hunks: [], currentDigest: 'fresh' }],
+      reviews: {}
+    }
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'reject-file') {
+        return Promise.reject(new Error('文件在你查看改动后又被修改过'))
+      }
+      if (channel === 'get-message-diffs') {
+        return Promise.resolve(authoritative)
+      }
+      return Promise.resolve(undefined)
+    })
+
+    try {
+      await expect(
+        useChatStore.getState().rejectFile('session-a', 'message-a', 'src/a.ts')
+      ).rejects.toThrow('文件在你查看改动后又被修改过')
+    } finally {
+      consoleError.mockRestore()
+    }
+
+    await vi.waitFor(() => {
+      expect(useChatStore.getState().messageDiffs['message-a']?.diffs).toEqual(authoritative.diffs)
+    })
+  })
+
   it('diff 加载失败不抛错并清理当前 generation 的 loading', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     mockInvoke.mockRejectedValueOnce(new Error('diff unavailable'))
@@ -211,5 +348,27 @@ describe('chat diff slice generation fence', () => {
 
     expect(useChatStore.getState().messageDiffs['message-a']).toBeUndefined()
     expect(useChatStore.getState().loadingDiffs.has('message-a')).toBe(false)
+  })
+
+  it('非 force 的空结果不清 live 占位，force 的终态空结果正常提交并清占位', async () => {
+    // 流式期间挂载触发的早期拉取先于 checkpoint 落盘：空结果不得覆盖 live 占位
+    useChatStore.getState().handleDiffUpdate('message-a', 'live', [
+      { filePath: 'src/a.ts', status: 'modified' }
+    ], {})
+    mockInvoke.mockResolvedValueOnce({ diffs: [], reviews: {} })
+
+    await useChatStore.getState().loadMessageDiffs('session-a', 'message-a')
+
+    expect(useChatStore.getState().messageDiffs['message-a']).toBeUndefined()
+    expect(useChatStore.getState().loadingDiffs.has('message-a')).toBe(true)
+    expect(useChatStore.getState().loadingDiffPlaceholders['message-a']).toHaveLength(1)
+
+    // message_end 终态加载返回空（如文件被跳过/改动已撤回）：权威结果必须提交并清占位
+    mockInvoke.mockResolvedValueOnce({ diffs: [], reviews: {} })
+    await useChatStore.getState().loadMessageDiffs('session-a', 'message-a', true)
+
+    expect(useChatStore.getState().messageDiffs['message-a']?.diffs).toEqual([])
+    expect(useChatStore.getState().loadingDiffs.has('message-a')).toBe(false)
+    expect(useChatStore.getState().loadingDiffPlaceholders['message-a']).toBeUndefined()
   })
 })

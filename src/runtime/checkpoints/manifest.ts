@@ -2,8 +2,9 @@
  * Manifest 读写
  * 负责将 CheckpointManifest 持久化到 manifest.json 并读取回来
  */
-import { readFileSync, writeFileSync, mkdirSync } from 'fs'
+import { readFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 import type { CheckpointManifest } from './types'
 
 /** manifest 文件名 */
@@ -45,7 +46,7 @@ export function getForwardDir(
   return join(getCheckpointDir(checkpointRoot, sessionId, messageId), 'forward')
 }
 
-/** 创建并写入 manifest 文件（目录不存在时自动创建） */
+/** 创建并原子写入 manifest 文件（临时文件 + rename，避免半截 JSON 落盘） */
 export function writeManifest(
   checkpointRoot: string,
   manifest: CheckpointManifest
@@ -53,7 +54,7 @@ export function writeManifest(
   const dir = getCheckpointDir(checkpointRoot, manifest.sessionId, manifest.messageId)
   mkdirSync(dir, { recursive: true })
   const filePath = join(dir, MANIFEST_FILE)
-  writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8')
+  atomicWriteFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8')
 }
 
 /** 读取指定消息的 manifest，不存在时返回 null */

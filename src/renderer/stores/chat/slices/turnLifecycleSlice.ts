@@ -187,7 +187,8 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
     // 更新当前会话的消息数属性，并自动加载 diff
     const { currentSessionId, sessions, messages } = get()
     if (currentSessionId) {
-      get().loadMessageDiffs(currentSessionId, messageId)
+      // 终态加载是权威结果：force 绕过缓存守卫，空结果也要提交以清掉 live 占位
+      get().loadMessageDiffs(currentSessionId, messageId, true)
       set({
         sessions: sessions.map(s =>
           s.id === currentSessionId ? { ...s, messageCount: messages.length, updatedAt: Date.now() } : s

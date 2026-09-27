@@ -34,6 +34,9 @@ import { revertWorkspaceForMessageIds, applyForwardForMessageIds, listManifests 
 import { processRegistry } from '../../runtime/process'
 import { loadLlmRegistry } from '../../runtime/model/config'
 import { DiffReviewService } from '../../runtime/checkpoints/DiffReviewService'
+import type { ReviewRejectTarget } from '../../runtime/checkpoints/reviewRestore'
+import { writerLeaseRegistry } from '../../runtime/workspace'
+import { toWorkspaceRelativePath } from '../../runtime/permissions/pathAccess'
 import {
   clearReadStateForSession,
   deleteReadStateForSession,
@@ -1143,26 +1146,61 @@ export class WorkspaceService {
     this.getDiffReviewService().acceptFile(sessionId, messageId, filePath)
   }
 
-  /** 拒绝单个文件改动（从 checkpoint 恢复） */
-  rejectFile(sessionId: string, messageId: string, filePath: string): void {
-    this.getDiffReviewService().rejectFile(sessionId, messageId, filePath)
+  /**
+   * 拒绝会改写工作区文件：同工作区有 run 持写租约或仍在跑 turn 时禁止，
+   * 否则恢复内容与 agent 后续写入会互相覆盖。
+   * 会话可用链接目录指向同一工作区，忙碌判断需按真实目录身份比较。
+   */
+  private assertWorkspaceIdleForReject(sessionId: string): void {
+    const workspaceRoot = this.deps.getSessionStore().loadMetadata(sessionId)?.workspaceRoot
+    if (!workspaceRoot) return
+    const sessions = this.deps.getSessionStore().listInternal()
+    const sameWorkspace = (otherRoot: string): boolean =>
+      otherRoot === workspaceRoot || toWorkspaceRelativePath(workspaceRoot, otherRoot) === '.'
+    const leaseBusy = writerLeaseRegistry.holder(workspaceRoot) !== null || sessions.some(s =>
+      writerLeaseRegistry.holder(s.workspaceRoot) !== null && sameWorkspace(s.workspaceRoot)
+    )
+    const turnBusy = sessions.some(s =>
+      isSessionTurnInProgress(s.id) && sameWorkspace(s.workspaceRoot)
+    )
+    if (leaseBusy || turnBusy) {
+      throw new Error('当前工作区还有任务正在运行，请先停止后再拒绝改动。')
+    }
   }
 
-  /** 批量接受多个文件（Phase E） */
+  /**
+   * 拒绝单个文件改动（从 checkpoint 恢复）。
+   * expectedDigest 为调用方审阅时看到的版本摘要，不匹配则拒绝覆盖。
+   */
+  rejectFile(
+    sessionId: string,
+    messageId: string,
+    filePath: string,
+    expectedDigest: string | null
+  ): void {
+    this.assertWorkspaceIdleForReject(sessionId)
+    this.getDiffReviewService().rejectFile(sessionId, messageId, filePath, expectedDigest)
+    // 工作区字节已变化：清掉该会话的 readState，防止 agent 用旧读取状态继续改
+    clearReadStateForSession(sessionId)
+  }
+
+  /** 批量接受多个文件 */
   acceptAllFiles(sessionId: string, messageId: string, filePaths: string[]): void {
     this.getDiffReviewService().acceptAllFiles(sessionId, messageId, filePaths)
   }
 
-  /**
-   * 批量拒绝多个文件（Phase E，PRD §5.3.3 事务性）。
-   * 委托给 DiffReviewService，逐个恢复，任一失败则回滚已恢复文件（保持原子性）。
-   */
+  /** 批量拒绝成功后失效化该会话的读取状态。 */
   rejectAllFiles(
     sessionId: string,
     messageId: string,
-    filePaths: string[]
+    files: ReviewRejectTarget[]
   ): { restored: string[]; failed: Array<{ filePath: string; error: string }> } {
-    return this.getDiffReviewService().rejectAllFiles(sessionId, messageId, filePaths)
+    this.assertWorkspaceIdleForReject(sessionId)
+    const result = this.getDiffReviewService().rejectAllFiles(sessionId, messageId, files)
+    if (result.restored.length > 0) {
+      clearReadStateForSession(sessionId)
+    }
+    return result
   }
 
   /** 懒加载 DiffReviewService（首次访问时用 SessionStore 构造） */

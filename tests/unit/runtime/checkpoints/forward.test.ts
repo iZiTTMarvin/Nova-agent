@@ -152,4 +152,71 @@ describe('Tier 2 forward 快照', () => {
     expect(result.incompleteMessageIds).toEqual(['a_old'])
     expect(readWorkspace('a.txt')).toBe('base')
   })
+
+  it('同一消息第二个 forward 文件缺失时整消息不应用，工作区保持 base', () => {
+    writeWorkspace('a.txt', 'base')
+    writeWorkspace('b.txt', 'base')
+    const manifest: CheckpointManifest = {
+      sessionId,
+      messageId: 'm_gap_file',
+      workspaceRoot,
+      modifiedFiles: ['a.txt', 'b.txt'],
+      createdFiles: [],
+      deletedFiles: [],
+      status: 'active',
+      createdAt: Date.now(),
+      forwardCaptured: true
+    }
+    writeManifest(checkpointRoot, manifest)
+    const forwardDir = getForwardDir(checkpointRoot, sessionId, 'm_gap_file')
+    fs.mkdirSync(forwardDir, { recursive: true })
+    // 只写第一个文件的 forward 快照，制造半条消息缺口
+    fs.writeFileSync(path.join(forwardDir, 'a.txt'), 'branch-a', 'utf8')
+
+    const result = applyForwardForMessageIds(
+      checkpointRoot,
+      workspaceRoot,
+      sessionId,
+      ['m_gap_file'],
+      [manifest]
+    )
+
+    expect(result.incompleteMessageIds).toEqual(['m_gap_file'])
+    expect(readWorkspace('a.txt')).toBe('base')
+    expect(readWorkspace('b.txt')).toBe('base')
+  })
+
+  it('中间消息缺 forward 时，后续消息不再跨过缺口应用', () => {
+    writeWorkspace('a.txt', 'base')
+    writeWorkspace('b.txt', 'base')
+    const gap: CheckpointManifest = {
+      sessionId,
+      messageId: 'gap_msg',
+      workspaceRoot,
+      modifiedFiles: ['a.txt'],
+      createdFiles: [],
+      deletedFiles: [],
+      status: 'active',
+      createdAt: 10
+    }
+    writeManifest(checkpointRoot, gap)
+    const later = createManifestWithSnapshots('later_msg', {
+      before: { 'b.txt': 'base' },
+      after: { 'b.txt': 'later' },
+      modifiedFiles: ['b.txt']
+    })
+    later.createdAt = 20
+
+    const result = applyForwardForMessageIds(
+      checkpointRoot,
+      workspaceRoot,
+      sessionId,
+      ['gap_msg', 'later_msg'],
+      [gap, later]
+    )
+
+    expect(result.incompleteMessageIds).toEqual(['gap_msg', 'later_msg'])
+    expect(readWorkspace('a.txt')).toBe('base')
+    expect(readWorkspace('b.txt')).toBe('base')
+  })
 })

@@ -97,7 +97,7 @@ const FileDiffPanel: React.FC<{
     try {
       await onReject?.(entry.filePath)
     } catch (err) {
-      setError('拒绝失败，文件未能恢复')
+      setError(err instanceof Error ? err.message : '拒绝失败，文件未能恢复')
     } finally {
       setRejecting(false)
     }
@@ -110,7 +110,7 @@ const FileDiffPanel: React.FC<{
       try {
         await onAccept?.(entry.filePath)
       } catch (err) {
-        setError('接受失败，未能更新审查状态')
+        setError(err instanceof Error ? err.message : '接受失败，未能更新审查状态')
       } finally {
         setAccepting(false)
       }
@@ -214,7 +214,7 @@ const FileDiffPanel: React.FC<{
       )}
 
       {error && (
-        <div className="diff-file__error">{error}</div>
+        <div className="diff-file__error" role="alert">{error}</div>
       )}
     </div>
   )
@@ -317,7 +317,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     try {
       await onAcceptAll(pendingFiles.map(d => d.filePath))
     } catch (err) {
-      setBatchError('批量接受失败')
+      setBatchError(err instanceof Error ? err.message : '批量接受失败')
     } finally {
       setBatching(false)
     }
@@ -331,10 +331,10 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     try {
       const result = await onRejectAll(pendingFiles.map(d => d.filePath))
       if (result.failed.length > 0) {
-        setBatchError(`${result.failed.length} 个文件拒绝失败：${result.failed.map(f => f.filePath).join(', ')}`)
+        setBatchError(`${result.failed.length} 个文件拒绝失败：${result.failed.map(f => `${f.filePath}：${f.error}`).join('；')}`)
       }
     } catch (err) {
-      setBatchError('批量拒绝失败')
+      setBatchError(err instanceof Error ? err.message : '批量拒绝失败')
     } finally {
       setBatching(false)
     }
@@ -462,7 +462,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
             <div className="diff-viewer__empty">没有待审阅的文件</div>
           )}
 
-          {batchError && <div className="diff-viewer__batch-error">{batchError}</div>}
+          {batchError && <div className="diff-viewer__batch-error" role="alert">{batchError}</div>}
 
           {/* 按目录分组渲染 */}
           {groupByDir ? (
