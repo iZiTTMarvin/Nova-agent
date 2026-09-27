@@ -11,10 +11,10 @@ export function formatLearningTurnContent(command: Pick<LearningCommand, 'action
   switch (action.type) {
     case 'message': return action.text
     // 停点、评估、节点等内部标识不进用户消息；模型统一经 learning_context 读取当前身份
-    case 'select_node': return '[学习选点] 用户选择了新的知识节点。请读取 learning_context 获取当前节点材料，围绕它讲解并引用有效出处。'
-    case 'hint': return '[学习提示] 用户请求提示。请读取 learning_context 中的当前停点，给出最小提示，不直接说答案，也不要替换原问题。'
-    case 'explain': return '[学习讲解] 用户请求直接讲解。请读取 learning_context 中的当前停点，讲清机制与出处；本次讲解不作为独立理解证据。'
-    case 'skip': return '[学习跳过] 用户跳过了当前问题。请读取 learning_context，简短收束并建议下一个学习点。'
+    case 'select_node': return '[学习选点] 用户选择了新的知识节点。请读取 learning_context 获取当前节点材料，用日常语言拆解其现实痛点与运行直觉，再对照代码做关键定位，并在关键处提出探究心智模型的轻量问题（通过 learning_checkpoint 提交）。'
+    case 'hint': return '[学习提示] 用户请求提示。请读取 learning_context 中的当前停点，给出启发思考的最小台阶，引导其自行推演，不直接说出答案，也不要替换原问题。'
+    case 'explain': return '[学习讲解] 用户请求直接讲解。请读取 learning_context 中的当前停点，用通俗语言讲清因果机制、设计权衡与代码出处；本次讲解不作为独立理解证据。'
+    case 'skip': return '[学习跳过] 用户跳过了当前问题。请读取 learning_context，简明收束核心机制并建议下一个学习点。'
     case 'dispute': return `[学习复核] 用户质疑了最新评估：${action.reason}\n读取 learning_context 中的原回答、原评估与冻结判据，先解释判断依据，再提交新的评估。`
     case 'resume': return '[继续学习] 读取 learning_context，继续已保存但尚未完成的评估，或继续当前主题。'
     case 'answer': return action.text

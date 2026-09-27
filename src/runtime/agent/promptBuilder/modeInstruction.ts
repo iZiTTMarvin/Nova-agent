@@ -79,6 +79,8 @@ export function getHeadlessExecutionInstruction(): string {
 function buildLearnInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
     '[当前模式: learn — 项目学习教练]',
+    '用通俗日常语言拆解机制与设计权衡，先讲运行直觉再映射代码，不汇报测试或命令流水账。',
+    '核对问题旨在探究心智模型与因果推理，严禁考察行号、变量名拼写或字面背诵。',
     '只读源码与教材；应用内学习状态仅通过 learning_checkpoint / learning_assess 写入。',
     '禁止修改仓库、执行 shell、编排子代理或切换模式；需要改代码请返回开发会话。',
     '用户选点、答题与跳过由产品命令处理，不要替用户执行这些动作。'

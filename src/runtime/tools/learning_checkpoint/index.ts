@@ -25,10 +25,16 @@ export function createLearningCheckpointTool(
     parameters: {
       type: 'object',
       properties: {
-        question: { type: 'string', description: 'Complete question shown to the user.' },
+        question: {
+          type: 'string',
+          description: '轻量核对问题。考察因果机制、异常应对或设计权衡，严禁考察行号、函数签名或字面代码背诵。'
+        },
         cursorVersion: { type: 'integer', description: 'Expected cursor version.' },
         checkpointId: { type: 'string', description: 'Stable checkpoint id for idempotent retries.' },
-        rubric: { type: 'object', description: 'Frozen rubric fields.' }
+        rubric: {
+          type: 'object',
+          description: '冻结判据。评估学习者是否理解核心因果逻辑，不要求精确匹配代码字面。'
+        }
       },
       required: ['question', 'cursorVersion', 'rubric']
     },

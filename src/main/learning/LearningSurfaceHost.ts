@@ -199,7 +199,8 @@ export function formatDevLinkTurnContent(
 ): string {
   const files = reference.filePaths.map(path => `- ${path}`).join('\n')
   return [
-    '[学习请求] 用户想学懂开发会话里的这次改动。',
+    '[学习请求] 用户想学懂开发会话里这次改动背后的核心机制与设计思想。',
+    '请从该改动解决的实际场景痛点出发，用通俗日常语言拆解因果逻辑与设计权衡，不要汇报验证或测试流水账；再对照相关代码关键位置做事实定位。',
     files ? `相关文件:\n${files}` : '相关文件: （未提供）',
     '开发结果摘录（仅供定位，不代表当前实现，请先核对当前代码）:',
     assistantExcerpt || '（无文本摘录）'
