@@ -12,6 +12,8 @@ directories:
 files:
   - out/**/*
   - package.json
+  # renderer sourcemap 只用于本地手动映射排查，不随安装包分发
+  - "!out/**/*.map"
   - "!out/headless/**"
   - "!out/main/code-graph/grammars/**"
   - "!node_modules/web-tree-sitter/debug/**"
