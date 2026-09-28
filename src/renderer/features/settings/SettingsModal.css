@@ -1671,6 +1671,20 @@
   background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-sand));
 }
 
+/* 设置面板按需加载期间的占位骨架（Suspense fallback） */
+.settings-shell__panel-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 4px;
+}
+
+.settings-shell__panel-loading-row {
+  height: 44px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text-muted) 12%, var(--bg-sand));
+}
+
 .subagent-workspace {
   overflow: hidden;
 }

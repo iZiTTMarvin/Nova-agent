@@ -3,7 +3,7 @@
  * 左侧分组导航（偏好 / 能力 / 系统）+ 右侧浮动内容板；
  * 内容板顶部承载当前板块的标题与描述，各面板不再自带页头。
  */
-import React, { useEffect, useRef, useState } from 'react'
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Dialog } from '@astryxdesign/core/Dialog'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { rulesI18n, skillsI18n, subagentsI18n } from '../skills/i18n'
@@ -21,17 +21,7 @@ import {
   InfoIcon,
   ArrowLeftIcon
 } from '../../components/Icons'
-import { GeneralSettingsPanel } from './GeneralSettingsPanel'
-import { DiagnosticsSettingsPanel } from './DiagnosticsSettingsPanel'
-import { LlmSettingsPanel } from './LlmSettingsPanel'
-import { RulesSettingsPanel } from './RulesSettingsPanel'
-import { SkillsSettingsPanel } from './SkillsSettingsPanel'
-import { SubagentsSettingsPanel } from './SubagentsSettingsPanel'
-import { PermissionsSettingsPanel } from './PermissionsSettingsPanel'
-import { StorageSettingsPanel } from './StorageSettingsPanel'
-import { WebSearchSettingsPanel } from './WebSearchSettingsPanel'
-import { MemorySettingsPanel } from './MemorySettingsPanel'
-import { CodeIndexSettingsPanel } from './CodeIndexSettingsPanel'
+// 11 个设置面板改由下方 SETTINGS_PANELS 的 lazy() 按需加载，不在此静态 import
 import './SettingsModal.css'
 
 const NAV_STORAGE_KEY = 'nova-settings-nav'
@@ -182,18 +172,25 @@ function readStoredSection(): SettingsSection {
   return 'general'
 }
 
+/**
+ * 设置面板映射表：全部走 lazy，使这些面板不进入首屏包。
+ *
+ * 面板本身只在打开对应 section 时才渲染（见下方 visited 判断），
+ * 但静态 import 会让它们的代码在启动时就被下载。改为 lazy 后，
+ * 首屏不加载，点开某个 section 时才拉对应 chunk。
+ */
 const SETTINGS_PANELS: Record<SettingsSection, React.FC> = {
-  general: GeneralSettingsPanel,
-  llm: LlmSettingsPanel,
-  subagents: SubagentsSettingsPanel,
-  memory: MemorySettingsPanel,
-  rules: RulesSettingsPanel,
-  skills: SkillsSettingsPanel,
-  codeindex: CodeIndexSettingsPanel,
-  websearch: WebSearchSettingsPanel,
-  permissions: PermissionsSettingsPanel,
-  storage: StorageSettingsPanel,
-  diagnostics: DiagnosticsSettingsPanel
+  general: lazy(() => import('./GeneralSettingsPanel').then(m => ({ default: m.GeneralSettingsPanel }))),
+  llm: lazy(() => import('./LlmSettingsPanel').then(m => ({ default: m.LlmSettingsPanel }))),
+  subagents: lazy(() => import('./SubagentsSettingsPanel').then(m => ({ default: m.SubagentsSettingsPanel }))),
+  memory: lazy(() => import('./MemorySettingsPanel').then(m => ({ default: m.MemorySettingsPanel }))),
+  rules: lazy(() => import('./RulesSettingsPanel').then(m => ({ default: m.RulesSettingsPanel }))),
+  skills: lazy(() => import('./SkillsSettingsPanel').then(m => ({ default: m.SkillsSettingsPanel }))),
+  codeindex: lazy(() => import('./CodeIndexSettingsPanel').then(m => ({ default: m.CodeIndexSettingsPanel }))),
+  websearch: lazy(() => import('./WebSearchSettingsPanel').then(m => ({ default: m.WebSearchSettingsPanel }))),
+  permissions: lazy(() => import('./PermissionsSettingsPanel').then(m => ({ default: m.PermissionsSettingsPanel }))),
+  storage: lazy(() => import('./StorageSettingsPanel').then(m => ({ default: m.StorageSettingsPanel }))),
+  diagnostics: lazy(() => import('./DiagnosticsSettingsPanel').then(m => ({ default: m.DiagnosticsSettingsPanel })))
 }
 
 export const SettingsModal: React.FC = () => {
@@ -345,7 +342,17 @@ const SettingsModalSession: React.FC<{ onClose: () => void }> = ({ onClose }) =>
                   role="tabpanel"
                   aria-label={findNavMeta(id).label}
                 >
-                  <Panel />
+                  <Suspense
+                    fallback={
+                      <div className="settings-shell__panel-loading" aria-hidden>
+                        <div className="settings-shell__panel-loading-row" />
+                        <div className="settings-shell__panel-loading-row" />
+                        <div className="settings-shell__panel-loading-row" />
+                      </div>
+                    }
+                  >
+                    <Panel />
+                  </Suspense>
                 </div>
               )
             })}

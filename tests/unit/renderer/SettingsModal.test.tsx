@@ -6,7 +6,7 @@ import { SettingsModal } from '../../../src/renderer/features/settings/SettingsM
 import { useSettingsStore, resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
 import { GET_APP_UPDATE_STATE } from '../../../src/shared/ipc/channels'
 import { createNovaSkillMock } from './_novaSkillMock'
-import { renderDom, act } from './renderDom'
+import { renderDom, act, waitFor } from './renderDom'
 
 describe('SettingsModal 设置导航与视觉样式', () => {
   beforeEach(() => {
@@ -238,9 +238,9 @@ describe('SettingsModal 设置导航与视觉样式', () => {
     )!
     await act(async () => {
       skillsButton.click()
-      await Promise.resolve()
-      await Promise.resolve()
     })
+    // 面板按需加载：等它真正挂载后再断言，避免断言落在加载完成之前
+    await waitFor(() => vi.mocked(window.nova.skill.list).mock.calls.length > 0)
 
     expect(window.nova.skill.list).toHaveBeenCalled()
     expect(window.nova.skill.reload).not.toHaveBeenCalled()
