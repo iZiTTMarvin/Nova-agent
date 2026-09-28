@@ -5,11 +5,21 @@
  * 数据经 get-session-diffs 会话级聚合；逐文件 accept/reject 用 messageIdByFile
  * 路由到既有消息级 IPC，组件自管状态，不依赖绑定当前会话的 chat diffSlice。
  */
-import React, { useCallback, useState } from 'react'
+import React, { lazy, Suspense, useCallback, useState } from 'react'
 import type { SessionMessageDiffsState } from '../../../shared/diff/types'
 import type { SubagentActivityProjection, SubagentFileChange } from '../../../shared/subagents'
-import { DiffViewer } from '../diff/DiffViewer'
 import './SubagentActivityRow.css'
+
+/**
+ * DiffViewer 走 lazy：SubagentDiffCard 在首屏静态链路上，静态 import
+ * 会把 pierre + shiki 整条高亮链路拖进首屏包。
+ */
+const DiffViewer = lazy(() =>
+  import('../diff/DiffViewer').then((m) => ({ default: m.DiffViewer }))
+)
+const DiffPoolContextBridge = lazy(() =>
+  import('../diff/DiffPoolContextBridge').then((m) => ({ default: m.DiffPoolContextBridge }))
+)
 
 /** 默认展示的文件行数，超出折叠到 Show N more */
 const PREVIEW_FILE_COUNT = 5
@@ -144,15 +154,19 @@ export const SubagentDiffCard: React.FC<{ projection: SubagentActivityProjection
       {reviewing &&
         (diffState ? (
           <div className="subagent-diff-card__viewer">
-            <DiffViewer
-              diffs={diffState.diffs}
-              reviews={diffState.reviews}
-              sessionId={projection.childSessionId}
-              skippedFiles={diffState.skippedFiles}
-              isLoading={loadingDiff}
-              onAcceptFile={(filePath) => applyReview(filePath, 'accept-file')}
-              onRejectFile={(filePath) => applyReview(filePath, 'reject-file')}
-            />
+            <Suspense fallback={null}>
+              <DiffPoolContextBridge>
+                <DiffViewer
+                  diffs={diffState.diffs}
+                  reviews={diffState.reviews}
+                  sessionId={projection.childSessionId}
+                  skippedFiles={diffState.skippedFiles}
+                  isLoading={loadingDiff}
+                  onAcceptFile={(filePath) => applyReview(filePath, 'accept-file')}
+                  onRejectFile={(filePath) => applyReview(filePath, 'reject-file')}
+                />
+              </DiffPoolContextBridge>
+            </Suspense>
           </div>
         ) : (
           <div className="subagent-diff-card__error">差异加载失败</div>

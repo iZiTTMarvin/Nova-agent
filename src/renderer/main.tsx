@@ -1,7 +1,5 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { WorkerPoolContextProvider } from '@pierre/diffs/react'
-import DiffWorkerUrl from '@pierre/diffs/worker/worker.js?worker&url'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { installRendererStallDetector } from '../shared/diagnostics/stallDetector'
@@ -19,19 +17,13 @@ installRendererStallDetector()
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <WorkerPoolContextProvider
-        poolOptions={{
-          poolSize: 2,
-          workerFactory: () => new Worker(DiffWorkerUrl, { type: 'module' })
-        }}
-        highlighterOptions={{
-          theme: { light: 'pierre-light', dark: 'pierre-dark' },
-          lineDiffType: 'word-alt',
-          preferredHighlighter: 'shiki-wasm'
-        }}
-      >
-        <App />
-      </WorkerPoolContextProvider>
+      <App />
     </ErrorBoundary>
   </React.StrictMode>
 )
+
+// diff 运行时（@pierre/diffs + shiki + worker 池）不在首屏加载，
+// 由真正渲染 diff 时按需引入，见 features/diff/DiffPoolContextBridge.tsx。
+// 这里不做空闲预热：预热会在应用空闲期拉取约 1.2MB 依赖，
+// 与「启动期不付这笔成本」的目标相抵，且其收益未实测，故不保留。
+

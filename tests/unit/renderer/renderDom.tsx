@@ -76,3 +76,22 @@ export function renderDom(element: React.ReactNode): DomRenderResult {
 }
 
 export { act }
+
+/**
+ * 等待条件成立，期间反复 flush 微任务与 React 更新。
+ *
+ * 懒加载组件（React.lazy）在测试里要经过真实的动态 import 解析，
+ * 固定次数的 await Promise.resolve() 不足以等它落地。用它代替手写微任务计数，
+ * 断言强度不变但不再依赖加载时序的快慢。
+ */
+export async function waitFor(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now()
+  while (!predicate()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`waitFor 超时（${timeoutMs}ms）：条件始终不成立`)
+    }
+    await act(async () => {
+      await Promise.resolve()
+    })
+  }
+}

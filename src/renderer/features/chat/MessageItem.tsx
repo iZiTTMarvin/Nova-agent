@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -13,7 +13,6 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { Thumbnail } from '@astryxdesign/core/Thumbnail'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
-import { DiffViewer } from '../diff/DiffViewer'
 import { isActiveThinkingBlock } from './renderingPolicy'
 import { MarkdownRenderer } from './MarkdownRenderer'
 import { ToolCallGroup } from './ToolCallGroup'
@@ -32,6 +31,19 @@ import type { ExtendedMessage, MessageDiffCache, RendererMessageBlock } from '..
 import type { TerminalErrorAction } from '../../../shared/session/terminalErrorBlocks'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageRenderMode } from './messageRenderTier'
+
+/**
+ * DiffViewer 走 lazy：它是 pierre + shiki 依赖链进入首屏的入口，
+ * 而 MessageItem 本身在首屏静态链路上（ChatPanel → MessageItem）。
+ * 静态 import 会把整条高亮链路拖进首屏包，必须靠动态边界切断。
+ * DiffPoolContextBridge 提供 worker 池 context，挂载时才创建池。
+ */
+const DiffViewer = lazy(() =>
+  import('../diff/DiffViewer').then((m) => ({ default: m.DiffViewer }))
+)
+const DiffPoolContextBridge = lazy(() =>
+  import('../diff/DiffPoolContextBridge').then((m) => ({ default: m.DiffPoolContextBridge }))
+)
 
 export interface MessageItemProps {
   msg: ExtendedMessage
@@ -554,35 +566,44 @@ function MessageItemInner({
           </div>
         )}
 
-        {/* diff 区域：loading 时优先展示骨架 */}
+        {/* diff 区域：loading 时优先展示骨架。Suspense 只包 diff 自身，懒加载期间
+            下面的正文与工具块照常交互，不会被闪成空白。 */}
         {isAssistant && currentSessionId && isDiffLoading && (
-          <DiffViewer
-            diffs={[]}
-            reviews={{}}
-            sessionId={currentSessionId}
-            messageId={msg.id}
-            isLoading={true}
-            loadingPlaceholders={diffPlaceholders}
-            tier1Stale={tier1DiffStale}
-          />
+          <Suspense fallback={null}>
+            <DiffPoolContextBridge>
+              <DiffViewer
+                diffs={[]}
+                reviews={{}}
+                sessionId={currentSessionId}
+                messageId={msg.id}
+                isLoading={true}
+                loadingPlaceholders={diffPlaceholders}
+                tier1Stale={tier1DiffStale}
+              />
+            </DiffPoolContextBridge>
+          </Suspense>
         )}
 
         {/* diff 最终数据 */}
         {isAssistant && currentSessionId && !isDiffLoading && diffCache && (
           diffCache.diffs.length > 0 || (diffCache.skippedFiles && diffCache.skippedFiles.length > 0)
         ) && (
-          <DiffViewer
-            diffs={diffCache.diffs}
-            reviews={diffCache.reviews}
-            skippedFiles={diffCache.skippedFiles}
-            sessionId={currentSessionId}
-            messageId={msg.id}
-            tier1Stale={tier1DiffStale}
-            onRejectFile={tier1DiffStale ? undefined : (filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
-            onAcceptFile={tier1DiffStale ? undefined : (filePath) => onAcceptFile(currentSessionId, msg.id, filePath)}
-            {...(onAcceptAllFiles && !tier1DiffStale ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
-            {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
-          />
+          <Suspense fallback={null}>
+            <DiffPoolContextBridge>
+              <DiffViewer
+                diffs={diffCache.diffs}
+                reviews={diffCache.reviews}
+                skippedFiles={diffCache.skippedFiles}
+                sessionId={currentSessionId}
+                messageId={msg.id}
+                tier1Stale={tier1DiffStale}
+                onRejectFile={tier1DiffStale ? undefined : (filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
+                onAcceptFile={tier1DiffStale ? undefined : (filePath) => onAcceptFile(currentSessionId, msg.id, filePath)}
+                {...(onAcceptAllFiles && !tier1DiffStale ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
+                {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
+              />
+            </DiffPoolContextBridge>
+          </Suspense>
         )}
     </>
   )

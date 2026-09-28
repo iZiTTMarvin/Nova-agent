@@ -16,7 +16,7 @@ import {
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
 import type { RunSnapshot } from '../../../src/shared/run/types'
 import { useRunStore } from '../../../src/renderer/stores/useRunStore'
-import { renderDom, act } from './renderDom'
+import { renderDom, act, waitFor } from './renderDom'
 
 const mockInvoke = vi.fn()
 const mockOn = vi.fn(() => () => {})
@@ -323,6 +323,8 @@ describe('SubagentActivityRow', () => {
       review!.click()
     })
     await flushAsync()
+    // DiffViewer 按需加载：等它真正挂载后再断言
+    await waitFor(() => renderer.container.querySelector('.diff-viewer') !== null)
 
     expect(renderer.container.querySelector('.diff-viewer')).not.toBeNull()
     // 会话级聚合视图逐文件路由消息各异，文件头仍可按自身 hunk 折叠，但不提供审查按钮

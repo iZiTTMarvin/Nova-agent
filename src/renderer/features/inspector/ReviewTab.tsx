@@ -1,7 +1,7 @@
 /**
  * Inspector 审阅 Tab：展示目标消息的文件 diff，支持逐文件保留/回退。
  */
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import {
   ChevronIcon,
@@ -11,10 +11,20 @@ import {
 } from '../../components/Icons'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useChatStore } from '../../stores/useChatStore'
-import { countEntryChanges, HunkView } from '../diff/diffLines'
+// 增删行统计的唯一实现在 shared/diff/compute；这里直接引用来源，
+// 不再经由 diffLines —— 后者会连带把 pierre 高亮链路拖进首屏包。
+import { countEntryChanges } from '../../../shared/diff/compute'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageDiffCache } from '../../stores/types'
 import './InspectorPanel.css'
+
+/** HunkView 依赖 pierre + shiki，走 lazy 使其不进入首屏包 */
+const HunkView = lazy(() =>
+  import('../diff/diffLines').then((m) => ({ default: m.HunkView }))
+)
+const DiffPoolContextBridge = lazy(() =>
+  import('../diff/DiffPoolContextBridge').then((m) => ({ default: m.DiffPoolContextBridge }))
+)
 
 function splitPath(filePath: string): { dir: string; base: string } {
   const normalized = filePath.replace(/\\/g, '/')
@@ -249,17 +259,23 @@ const ReviewContent: React.FC<{
       )}
 
       <div className="inspector-review__body" ref={bodyScrollRef}>
-        {currentEntry.hunks.map((hunk, idx) => (
-          <HunkView
-            key={idx}
-            hunk={hunk}
-            filePath={currentEntry.filePath}
-            status={currentEntry.status}
-            syntaxHighlight={syntaxMode === 'syntax'}
-            wrap={wrap}
-            scrollRef={bodyScrollRef}
-          />
-        ))}
+        {currentEntry.hunks.length > 0 && (
+          <Suspense fallback={null}>
+            <DiffPoolContextBridge>
+              {currentEntry.hunks.map((hunk, idx) => (
+                <HunkView
+                  key={idx}
+                  hunk={hunk}
+                  filePath={currentEntry.filePath}
+                  status={currentEntry.status}
+                  syntaxHighlight={syntaxMode === 'syntax'}
+                  wrap={wrap}
+                  scrollRef={bodyScrollRef}
+                />
+              ))}
+            </DiffPoolContextBridge>
+          </Suspense>
+        )}
       </div>
 
       <div className="inspector-review__footer">
