@@ -43,6 +43,8 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
+      - name: First-screen bundle budget
+        run: npx vitest run tests/perf/firstScreenBudget.test.ts
       - name: Electron smoke
         if: github.event_name == 'pull_request'
         run: npm --prefix tests/e2e run test:smoke
