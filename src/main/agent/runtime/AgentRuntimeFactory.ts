@@ -69,6 +69,7 @@ import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { RunCoordinator } from '../../../runtime/run/RunCoordinator'
 import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getMemoryRetrievalService } from '../../services/MemoryServiceHost'
+import { isMemoryExcludedMode } from '../../services/MemorySessionExclusion'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { createAskQuestionHandler, type PendingAskQuestionEntry } from '../interaction/askQuestionWaiters'
 import { resolveToDataUrl } from './imageResolve'
@@ -232,8 +233,9 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const skillsTokenEstimate = estimateTokens(skillContext)
 
   // 记忆层为固定 policy 文本：记忆数据变化不改变稳定 system prefix（缓存前缀契约）；
-  // 动态记忆通过 memory_search 工具结果进入追加式历史。
-  const memoryContext = novaSettings.memoryEnabled ? MEMORY_POLICY_PROMPT : null
+  // 动态记忆通过 memory_search 工具结果进入追加式历史。learn 会话不进入通用记忆体系。
+  const memoryContext =
+    novaSettings.memoryEnabled && !isMemoryExcludedMode(session.mode) ? MEMORY_POLICY_PROMPT : null
 
   const eventBus = new EventBus()
   const permissionManager = new PermissionManager()
@@ -267,7 +269,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getToolAvailability: () => toolAvailability,
     // 构建产物 out/main/codeModeWorker.js；缺失时 run_code 回退进程内沙箱
     codeModeWorkerPath: join(__dirname, 'codeModeWorker.js'),
-    memoryEnabled: novaSettings.memoryEnabled,
+    memoryEnabled: novaSettings.memoryEnabled && !isMemoryExcludedMode(session.mode),
     codeIndexEnabled: session.codeIndexEnabled === true,
     getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null),
     getBrowserPort: () => getBrowserSessionHost(),

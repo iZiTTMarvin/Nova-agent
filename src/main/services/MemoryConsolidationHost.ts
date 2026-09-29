@@ -2,7 +2,8 @@
  * MemoryConsolidationHost — working buffer drain 与 episodic 落盘调度
  *
  * 防竞态铁律：所有触发点先同步 drainWorkingBuffer 拿快照，再 setImmediate/同步写盘。
- * 落盘门控：memoryCaptureEnabled && memoryEpisodicSummaryEnabled（且 memoryEnabled）。
+ * 落盘门控：memoryCaptureEnabled && memoryEpisodicSummaryEnabled（且 memoryEnabled）；
+ * learn 会话整体排除（MemorySessionExclusion）。
  */
 import { computeWorkspaceHash } from '../../runtime/memory/MemoryPaths'
 import { consolidateObservations } from '../../runtime/memory/MemoryConsolidator'
@@ -13,6 +14,7 @@ import {
 } from '../../runtime/memory/ObservationCapture'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 import { getMemoryService } from './MemoryServiceHost'
+import { isMemoryExcludedSession } from './MemorySessionExclusion'
 
 /**
  * episodic 落盘开关：开启记忆即启用。
@@ -42,6 +44,9 @@ export function persistObservationsSnapshot(
  * 开关关时仅 drain 丢弃，不写盘。
  */
 export function drainAndSchedulePersist(sessionId: string, workspaceRoot: string): void {
+  if (isMemoryExcludedSession(sessionId)) {
+    return
+  }
   const capture = getObservationCaptureForSession(sessionId)
   const snapshot = capture.drainWorkingBuffer(sessionId)
   if (snapshot.length === 0) {
@@ -63,6 +68,9 @@ export function drainAndSchedulePersist(sessionId: string, workspaceRoot: string
 
 /** 应用退出路径：同步 drain + 同步写盘（setImmediate 不保证执行） */
 export function drainAndPersistSync(sessionId: string, workspaceRoot: string): void {
+  if (isMemoryExcludedSession(sessionId)) {
+    return
+  }
   const capture = getObservationCaptureForSession(sessionId)
   const snapshot = capture.drainWorkingBuffer(sessionId)
   if (snapshot.length === 0 || !isEpisodicPersistEnabled()) {
@@ -83,6 +91,9 @@ export function drainSessionBufferOnly(sessionId: string): void {
 
 /** buffer 超限：同步 drain 后 fire-and-forget 落盘 */
 export function handleBufferOverflow(sessionId: string, workspaceRoot: string): void {
+  if (isMemoryExcludedSession(sessionId)) {
+    return
+  }
   const capture = getObservationCaptureForSession(sessionId)
   const snapshot = capture.drainWorkingBuffer(sessionId)
   if (snapshot.length === 0) {
@@ -116,6 +127,9 @@ export function ensureObservationCaptureForSession(
   sessionId: string,
   workspaceRoot: string
 ): void {
+  if (isMemoryExcludedSession(sessionId)) {
+    return
+  }
   const capture = getObservationCaptureForSession(sessionId)
   capture.setOnBufferOverflow(() => {
     handleBufferOverflow(sessionId, workspaceRoot)

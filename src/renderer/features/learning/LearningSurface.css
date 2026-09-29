@@ -70,10 +70,6 @@
   user-select: none;
   background: var(--surface-canvas);
   border-bottom: 1px solid var(--border-subtle);
-  -webkit-app-region: drag;
-}
-.learning-surface__bar > * {
-  -webkit-app-region: no-drag;
 }
 .learning-surface__heading {
   flex: 1;
@@ -801,9 +797,15 @@
   .learning-material {
     position: absolute;
     inset: 0 0 0 auto;
-    z-index: 4;
+    /* 小屏抽屉覆盖在内容之上，需压过悬浮状态小窗（z-index 30），否则关闭按钮被挡 */
+    z-index: 40;
     width: min(380px, 100%);
     box-shadow: var(--shadow-popup);
+  }
+  .learning-surface[data-has-material="true"] .floating-status-widget {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-fast) ease-out;
   }
 }
 @container (max-width: 760px) {

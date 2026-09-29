@@ -6,6 +6,7 @@
  * 避免额外模型请求、重复判断和主会话 prompt cache 无法复用的问题。
  *
  * runMemoryExtract / scheduleMemoryExtract 继续保留给显式调用、测试与评测。
+ * learn 会话整体排除（MemorySessionExclusion），不参与计数与落盘。
  */
 import { app } from 'electron'
 import type { ChatMessage } from '../../runtime/model/types'
@@ -32,6 +33,7 @@ import {
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 import { getMemoryService, getMemoryCandidateProcessor } from './MemoryServiceHost'
 import { drainAndPersistSync, drainAndSchedulePersist } from './MemoryConsolidationHost'
+import { isMemoryExcludedSession } from './MemorySessionExclusion'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import { buildConversationContext } from '../../runtime/sessions'
 
@@ -53,7 +55,7 @@ export function resetExtractTurnCountersForTests(): void {
  * 结构化长期记忆由当前主 Agent 在工作过程中按需调用 memory_manage，不再后台二次判断。
  */
 export function onUserTurnCompleteForExtract(sessionId: string, workspaceRoot: string): void {
-  if (!isMemoryExtractEnabled()) {
+  if (!isMemoryExtractEnabled() || isMemoryExcludedSession(sessionId)) {
     return
   }
 
@@ -70,7 +72,7 @@ export function onUserTurnCompleteForExtract(sessionId: string, workspaceRoot: s
 /** 会话退出：同步固化剩余 observation；禁止退出时额外启动 LLM。 */
 export function extractOnSessionLeave(sessionId: string, workspaceRoot: string): void {
   userTurnsSinceExtract.delete(sessionId)
-  if (!isMemoryExtractEnabled()) {
+  if (!isMemoryExtractEnabled() || isMemoryExcludedSession(sessionId)) {
     return
   }
   drainAndPersistSync(sessionId, workspaceRoot)
@@ -109,7 +111,7 @@ export async function runMemoryExtract(
   workspaceRoot: string,
   sessionStore: SessionStore
 ): Promise<void> {
-  if (!isMemoryExtractEnabled()) {
+  if (!isMemoryExtractEnabled() || isMemoryExcludedSession(sessionId)) {
     return
   }
 

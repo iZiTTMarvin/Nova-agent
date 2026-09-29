@@ -7,6 +7,7 @@ import { calculateContextBreakdown } from '../../../src/runtime/agent'
 import { SessionStore } from '../../../src/runtime/sessions'
 import { resetSessionIndexHostForTests } from '../../../src/runtime/sessions/SessionIndexHost'
 import { DEFAULT_NOVA_SETTINGS } from '../../../src/runtime/settings/novaSettings'
+import { MEMORY_POLICY_PROMPT } from '../../../src/runtime/memory/memoryConfig'
 import { createReadState } from '../../../src/runtime/tools/editTool'
 import { MockModelClient } from '../../../src/test-support/builders/MockModelClient'
 import { writeManifest, readManifest } from '../../../src/runtime/checkpoints/manifest'
@@ -187,5 +188,37 @@ describe('AgentRuntimeFactory.frozenPrompt 与上下文容量估算', () => {
     expect(outcome).toEqual({ status: 'completed' })
     expect(client.getCalls()).toHaveLength(2)
     prepared.agentLoop.dispose()
+  })
+
+  it('learn 会话在 memoryEnabled 时也不装配 memory 工具与记忆层文本', () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-factory-learn-mem-'))
+    roots.push(sessionsDir)
+    const workspace = resolve(sessionsDir, 'workspace')
+    const store = new SessionStore(sessionsDir)
+    const session = store.create(workspace, 'learn')
+    const prepared = prepareAgentRuntime({
+      session,
+      sessionStore: store,
+      sessionId: session.id,
+      projectPath: workspace,
+      sessionsDir,
+      novaSettings: { ...DEFAULT_NOVA_SETTINGS, memoryEnabled: true },
+      modelClient: new MockModelClient(),
+      getImageStore: () => ({} as never),
+      readState: createReadState(),
+      pendingAskQuestions: new Map(),
+      runCoordinator: {
+        inbox: { enqueue: vi.fn() },
+        getSnapshot: () => null
+      } as never
+    })
+    try {
+      // prompt 工具清单按模式过滤，注册面须直接查 ToolRegistry
+      expect(prepared.toolRegistry.getTool('memory_search')).toBeUndefined()
+      expect(prepared.toolRegistry.getTool('memory_manage')).toBeUndefined()
+      expect(prepared.frozenPrompt).not.toContain(MEMORY_POLICY_PROMPT)
+    } finally {
+      prepared.agentLoop.dispose()
+    }
   })
 })

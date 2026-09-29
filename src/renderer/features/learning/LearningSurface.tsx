@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ScrollIcon, SpinnerIcon } from '../../components/Icons'
-import { FloatingStatusWidget } from '../../components/FloatingStatusWidget'
+import { FloatingStatusWidget } from './FloatingStatusWidget'
 import { useLearningStore } from './useLearningStore'
 import { KnowledgeNavTree } from './KnowledgeNavTree'
 import { LearningConversation } from './LearningConversation'
@@ -13,6 +13,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { selectSessionIsRunning, useRunStore } from '../../stores/useRunStore'
 import { isTerminalRunStatus } from '../../../shared/run/types'
+import { getDistanceFromBottom, scrollContainerToBottom } from '../chat/autoScroll'
 import './LearningSurface.css'
 
 export function LearningSurface({ sessionId }: { sessionId: string }): React.ReactElement {
@@ -118,7 +119,16 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
       ? `${nodeCount} 主题`
       : undefined
 
-  return <div className="learning-surface" ref={rootRef}>
+  // 核对点卡片或评估反馈出现时，若在底部附近则自动平滑跟随
+  useEffect(() => {
+    const el = readingRef.current
+    if (!el) return
+    if (getDistanceFromBottom(el) <= 120) {
+      scrollContainerToBottom(el, 'smooth')
+    }
+  }, [projection?.checkpoint?.checkpointId, projection?.latestAssessment?.assessmentId])
+
+  return <div className="learning-surface" ref={rootRef} data-has-material={Boolean(material)}>
     <header className="learning-surface__bar">
       <div className="learning-surface__heading">
         <span className="learning-surface__title">{selected?.title ?? '项目学习'}</span>

@@ -50,6 +50,7 @@ import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { ensureObservationCaptureForSession } from '../../services/MemoryConsolidationHost'
 import { onUserTurnCompleteForExtract } from '../../services/MemoryExtractHost'
+import { isMemoryExcludedMode } from '../../services/MemorySessionExclusion'
 import {
   getRunCoordinator,
   getRunExecutionRegistry
@@ -722,7 +723,8 @@ export async function sendAgentMessage(
   })
 
   // 工具轨迹采集（memoryEnabled 一键统控；巩固落盘由会话生命周期 / LLM 提炼触发）
-  if (novaSettings.memoryEnabled && capturedWorkspaceRoot) {
+  // 学习会话不进入通用记忆体系，杜绝尝试作答与教练出题核对污染主开发记忆
+  if (novaSettings.memoryEnabled && capturedWorkspaceRoot && !isMemoryExcludedMode(capturedMode)) {
     ensureObservationCaptureForSession(params.sessionId, capturedWorkspaceRoot)
     subscribeObservationCapture(eventBus, params.sessionId)
   }

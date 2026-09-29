@@ -76,8 +76,9 @@ export interface BuiltinToolRegistrationDeps {
   /** run_code 的沙箱 Code Runtime 构建产物路径；缺省仅用于测试的进程内执行 */
   codeModeWorkerPath?: string
   /**
-   * 是否注册 memory_search / memory_manage。由装配方按本轮设置快照决定（与 memoryContext /
-   * prefetch 接线同源）；每轮装配重新注册，开关变化下一轮即生效。
+   * 是否注册 memory_search / memory_manage。由装配方按本轮设置快照与会话模式决定
+   * （learn 会话不进入通用记忆；与 memoryContext 接线同源）；每轮装配重新注册，
+   * 开关变化下一轮即生效。
    */
   memoryEnabled: boolean
   /** 会话创建时的功能快照；会话存续期间不得重读设置。 */

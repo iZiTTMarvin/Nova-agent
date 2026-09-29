@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { launchNova, packagedExecutablePath } from '../fixtures/nova'
-import { BROWSER_CLOSE, BROWSER_OPEN, CODEINDEX_GET_STATUS, WORKSPACE_SET_PERMISSION_MODE } from '../../../src/shared/ipc/channels'
+import { BROWSER_CLOSE, BROWSER_OPEN, CODEINDEX_GET_STATUS, LEARNING_GET_SURFACE, WORKSPACE_SET_PERMISSION_MODE } from '../../../src/shared/ipc/channels'
 
 function hasCodeContextTool(tools: unknown): boolean {
   if (!Array.isArray(tools)) return false
@@ -148,3 +148,28 @@ test('Windows unpacked release 的内置网页不带应用桥，关掉后页面�
     })
   }
 })
+
+test('Windows unpacked release 能进入学习模式并冷启动学习数据库 Worker', async ({}, testInfo) => {
+  test.skip(process.platform !== 'win32', 'packaged release gate runs on Windows')
+
+  const nova = await launchNova(testInfo, { executablePath: packagedExecutablePath() })
+
+  try {
+    const state = await nova.createSession('learn')
+    const sessionId = state.currentSessionId
+    expect(sessionId).toBeTruthy()
+    if (!sessionId) throw new Error('learn session id missing')
+
+    await expect(nova.page.locator('.learning-surface')).toBeVisible()
+
+    // 触发主进程确保 learningDbWorker 启动并返回投影
+    const surface = await nova.invoke(LEARNING_GET_SURFACE, { sessionId })
+    expect(surface.sessionId).toBe(sessionId)
+    expect(surface.workspaceRoot).toBeTruthy()
+    expect(Array.isArray(surface.tree?.nodes)).toBe(true)
+    expect(nova.pageErrors).toEqual([])
+  } finally {
+    await nova.cleanup()
+  }
+})
+
