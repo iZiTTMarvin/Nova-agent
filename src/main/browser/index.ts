@@ -1,18 +1,20 @@
-import { screen, session, type BrowserWindow } from 'electron'
+import { screen, session, webContents, type BrowserWindow } from 'electron'
 import { processRegistry } from '../../runtime/process'
 import type { BrowserGuestMountSnapshot, BrowserSurfaceSnapshot } from '../../shared/browser'
 import { getMainWindow } from '../mainWindowRef'
 import { getSessionStore } from '../services/SessionStoreHost'
 import { createElectronBrowserDriver } from './electronDriver'
 import { lookupElectronGuest } from './guestContents'
-import { createBrowserPartitionSlotPool } from './partitionSlots'
+import { BROWSER_USER_PARTITION, createBrowserPartitionSlotPool } from './partitionSlots'
 import { createPreviewGrantStore } from './previewGrants'
 import { createRegistryPreviewQuery } from './previewProcess'
 import {
   guestDownloadMessage,
   guestPermissionMessage,
   createPartitionHostResolver,
-  installBrowserPartitionPolicy
+  installBrowserPartitionPolicy,
+  installUserBrowserPartitionPolicy,
+  type PartitionPolicySink
 } from './networkPolicy'
 import { getBrowserSessionHost, setBrowserSessionHost } from './hostRef'
 import { createBrowserSessionHost, type BrowserSessionHost } from './sessionHost'
@@ -80,9 +82,41 @@ function sendGuestMount(snapshot: BrowserGuestMountSnapshot): void {
 export function initBrowserSessionHost(): BrowserSessionHost {
   const existing = getBrowserSessionHost()
   if (existing) return existing
+  const policySink = (partition: string): PartitionPolicySink => ({
+    grantsFor: (webContentsId) => {
+      const host = getBrowserSessionHost()
+      if (!host) return []
+      if (webContentsId !== undefined) {
+        const bound = host.grantsForGuest(webContentsId)
+        if (bound.length > 0) return bound
+      }
+      return host.grantsForPartition(partition)
+    },
+    onPermissionDenied: (input) => {
+      getBrowserSessionHost()?.noteGuestHandoff(input.webContentsId, {
+        kind: 'permission',
+        sourceUrl: input.requestingUrl,
+        targetUrl: null,
+        message: guestPermissionMessage(input.permission, input.requestingUrl)
+      })
+    },
+    onDownloadDenied: (input) => {
+      getBrowserSessionHost()?.noteGuestHandoff(input.webContentsId, {
+        kind: 'download',
+        sourceUrl: input.url,
+        targetUrl: null,
+        message: guestDownloadMessage(input.filename, input.url)
+      })
+    }
+  })
   const host = createBrowserSessionHost({
     resolveWorkspaceKey: (sessionId) => getSessionStore().loadMetadata(sessionId)?.workspaceRoot ?? null,
     lookupGuest: lookupElectronGuest,
+    isGuestOfPartition: (webContentsId, partition) => {
+      const guest = webContents.fromId(webContentsId)
+      if (!guest || guest.isDestroyed()) return false
+      return guest.session === session.fromPartition(partition)
+    },
     control: createElectronBrowserDriver(),
     allocatePartition: (browserId) => {
       const got = slotPool.acquire(browserId)
@@ -95,33 +129,13 @@ export function initBrowserSessionHost(): BrowserSessionHost {
     onSnapshot: sendSnapshot,
     onGuestMount: sendGuestMount,
     installPartitionPolicy: (partition) => {
-      installBrowserPartitionPolicy(partition, session.fromPartition(partition), {
-        grantsFor: (webContentsId) => {
-          const host = getBrowserSessionHost()
-          if (!host) return []
-          if (webContentsId !== undefined) {
-            const bound = host.grantsForGuest(webContentsId)
-            if (bound.length > 0) return bound
-          }
-          return host.grantsForPartition(partition)
-        },
-        onPermissionDenied: (input) => {
-          getBrowserSessionHost()?.noteGuestHandoff(input.webContentsId, {
-            kind: 'permission',
-            sourceUrl: input.requestingUrl,
-            targetUrl: null,
-            message: guestPermissionMessage(input.permission, input.requestingUrl)
-          })
-        },
-        onDownloadDenied: (input) => {
-          getBrowserSessionHost()?.noteGuestHandoff(input.webContentsId, {
-            kind: 'download',
-            sourceUrl: input.url,
-            targetUrl: null,
-            message: guestDownloadMessage(input.filename, input.url)
-          })
-        }
-      }, { resolveHost: partitionHostResolver })
+      const ses = session.fromPartition(partition)
+      // 用户 partition 放行私网（只拦云元数据），AI 槽保持受限地址确认
+      if (partition === BROWSER_USER_PARTITION) {
+        installUserBrowserPartitionPolicy(partition, ses, policySink(partition))
+        return
+      }
+      installBrowserPartitionPolicy(partition, ses, policySink(partition), { resolveHost: partitionHostResolver })
     },
     previewGrants: createPreviewGrantStore(
       createRegistryPreviewQuery((sessionId) => processRegistry.listRunning(sessionId)),

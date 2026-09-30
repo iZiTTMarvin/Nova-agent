@@ -1,5 +1,6 @@
 import {
   BROWSER_MAX_LIVE_PAGES,
+  BROWSER_MAX_USER_PAGES,
   type BrowserErrorCode,
   type BrowserPageIdentity,
   type ObservationIdentity
@@ -47,9 +48,10 @@ function allocateId(used: Set<string>, factory: () => string, label: string): st
 }
 
 export interface BrowserIdentityLedger {
+  /** sessionId 为 null 时发放用户作用域页面（workspaceKey 忽略并记为 null）。 */
   issuePage(binding: {
-    sessionId: string
-    workspaceKey: string
+    sessionId: string | null
+    workspaceKey?: string | null
   }): BrowserIdentityResult<BrowserPageIdentity>
   retire(browserId: string): BrowserIdentityResult<BrowserPageIdentity>
   bumpGeneration(browserId: string): BrowserIdentityResult<BrowserPageIdentity>
@@ -57,9 +59,9 @@ export interface BrowserIdentityLedger {
   issueObservation(browserId: string): BrowserIdentityResult<ObservationIdentity>
   matchObservation(
     identity: ObservationIdentity,
-    sessionId: string
+    sessionId: string | null
   ): BrowserIdentityResult<ObservationIdentity>
-  inspect(browserId: string, sessionId: string): BrowserIdentityResult<BrowserPageIdentity>
+  inspect(browserId: string, sessionId: string | null): BrowserIdentityResult<BrowserPageIdentity>
 }
 
 /**
@@ -75,7 +77,7 @@ export function createBrowserIdentityLedger(
   const usedObservationIds = new Set<string>()
   const pages = new Map<string, PageRecord>()
 
-  function lookup(browserId: string, sessionId?: string): BrowserIdentityResult<PageRecord> {
+  function lookup(browserId: string, sessionId?: string | null): BrowserIdentityResult<PageRecord> {
     const record = pages.get(browserId)
     if (!record) return { ok: false, code: 'not_owner' }
     if (sessionId !== undefined && record.identity.sessionId !== sessionId) {
@@ -91,17 +93,24 @@ export function createBrowserIdentityLedger(
 
   return {
     issuePage(binding) {
-      if (typeof binding.sessionId !== 'string' || binding.sessionId.length === 0) {
-        return { ok: false, code: 'not_owner' }
+      const userScope = binding.sessionId === null
+      if (!userScope) {
+        if (typeof binding.sessionId !== 'string' || binding.sessionId.length === 0) {
+          return { ok: false, code: 'not_owner' }
+        }
+        if (typeof binding.workspaceKey !== 'string' || binding.workspaceKey.length === 0) {
+          return { ok: false, code: 'not_owner' }
+        }
       }
-      if (typeof binding.workspaceKey !== 'string' || binding.workspaceKey.length === 0) {
-        return { ok: false, code: 'not_owner' }
-      }
-      let live = 0
+      // 两类作用域分开计数：AI 页共享会话名额，用户页有独立上限
+      let liveSession = 0
+      let liveUser = 0
       for (const record of pages.values()) {
-        if (!record.retired) live += 1
+        if (record.retired) continue
+        if (record.identity.sessionId === null) liveUser += 1
+        else liveSession += 1
       }
-      if (live >= BROWSER_MAX_LIVE_PAGES) {
+      if (userScope ? liveUser >= BROWSER_MAX_USER_PAGES : liveSession >= BROWSER_MAX_LIVE_PAGES) {
         return { ok: false, code: 'resource_limit' }
       }
       const browserId = allocateId(usedBrowserIds, createBrowserId, 'browserId')
@@ -109,8 +118,8 @@ export function createBrowserIdentityLedger(
         browserId,
         generation: 1,
         documentEpoch: 1,
-        sessionId: binding.sessionId,
-        workspaceKey: binding.workspaceKey
+        sessionId: userScope ? null : binding.sessionId,
+        workspaceKey: userScope ? null : (binding.workspaceKey ?? null)
       })
       pages.set(browserId, { identity, currentObservationId: null, retired: false })
       return { ok: true, value: identity }

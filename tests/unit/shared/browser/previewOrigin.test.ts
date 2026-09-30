@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyPreviewHostname,
   decideBrowserNetworkRequest,
+  decideUserBrowserNetworkRequest,
   previewOriginsMatch,
   type PreviewHostResolver
 } from '../../../../src/shared/browser'
@@ -205,5 +206,21 @@ describe('预览 origin 归一化', () => {
       grantedOrigins: granted,
       resolveHost
     })).toBe('deny')
+  })
+})
+
+describe('用户 partition 请求决策', () => {
+  it('私网、本机与普通域名放行；云元数据与未知协议拒绝', () => {
+    expect(decideUserBrowserNetworkRequest('http://192.168.1.1/admin')).toBe('allow')
+    expect(decideUserBrowserNetworkRequest('https://nas.local:5001/')).toBe('allow')
+    expect(decideUserBrowserNetworkRequest('http://localhost:3000/dev')).toBe('allow')
+    expect(decideUserBrowserNetworkRequest('https://example.com/')).toBe('allow')
+    expect(decideUserBrowserNetworkRequest('data:text/plain,ok')).toBe('allow')
+    expect(decideUserBrowserNetworkRequest('blob:https://example.com/uuid')).toBe('allow')
+    expect(decideUserBrowserNetworkRequest('http://169.254.169.254/latest/meta-data')).toBe('deny')
+    expect(decideUserBrowserNetworkRequest('http://metadata.google.internal/')).toBe('deny')
+    expect(decideUserBrowserNetworkRequest('file:///C:/Windows')).toBe('deny')
+    expect(decideUserBrowserNetworkRequest('')).toBe('deny')
+    expect(decideUserBrowserNetworkRequest('not a url')).toBe('deny')
   })
 })

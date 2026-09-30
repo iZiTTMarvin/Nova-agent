@@ -6,6 +6,7 @@ import {
   BROWSER_MAX_LIVE_PAGES,
   BROWSER_PAGE_CAP_MESSAGE,
   BROWSER_PENDING_MAX,
+  BROWSER_USER_PAGE_CAP_MESSAGE,
   browserNotApplied,
   canonicalizePreviewTarget,
   createBrowserIdentityLedger,
@@ -45,6 +46,7 @@ import {
 } from '../../shared/browser'
 import type { BrowserCommandContext, BrowserPort } from '../../runtime/browser'
 import type { BrowserControlFence, BrowserPageControl } from './controlPort'
+import { BROWSER_USER_PARTITION } from './partitionSlots'
 import { createPreviewGrantStore, type PreviewGrantStore } from './previewGrants'
 import { routeGuestPopup } from './webviewPolicy'
 import type { BrowserGuestContents } from './guestContents'
@@ -58,6 +60,8 @@ const CONTROL_UNAVAILABLE = browserNotApplied('unsupported', '页面观察与操
 export interface BrowserSessionHostDeps {
   readonly resolveWorkspaceKey: (sessionId: string) => string | null
   readonly lookupGuest: (webContentsId: number) => BrowserGuestContents | undefined
+  /** 校验上报的 guest 确实属于某 partition；用户页配对绑定的安全前提。 */
+  readonly isGuestOfPartition: (webContentsId: number, partition: string) => boolean
   readonly delay?: (ms: number) => Promise<void>
   readonly onSnapshot?: (snapshot: BrowserSurfaceSnapshot) => void
   readonly onGuestMount?: (snapshot: BrowserGuestMountSnapshot) => void
@@ -70,6 +74,8 @@ export interface BrowserSessionHostDeps {
   readonly previewGrants?: PreviewGrantStore
   readonly readDisplayScale?: () => number | null
   readonly installPartitionPolicy?: (partition: string) => void
+  /** 用户页共享的持久 partition；测试可注入替身。 */
+  readonly userPartition?: string
 }
 
 export interface BrowserBindingInspection {
@@ -82,7 +88,7 @@ export interface BrowserBindingInspection {
 }
 
 interface BrowserAttachParams {
-  readonly sessionId: string
+  readonly sessionId: string | null
   readonly browserId: string
   readonly webContentsId: number
 }
@@ -90,8 +96,10 @@ interface BrowserAttachParams {
 export interface BrowserSessionHost extends BrowserPort {
   attach(params: BrowserAttachParams): Promise<BrowserAttachResult>
   attachPartition(partition: string, webContentsId: number): Promise<BrowserAttachResult>
-  hide(browserId: string, sessionId: string): Promise<BrowserNavigateResult>
-  restore(browserId: string, sessionId: string): Promise<BrowserNavigateResult>
+  /** 用户页 guest 配对：界面按它创建的 webview 指认归属，主进程校验 partition。 */
+  attachUserGuest(browserId: string, webContentsId: number): Promise<BrowserAttachResult>
+  hide(browserId: string, sessionId: string | null): Promise<BrowserNavigateResult>
+  restore(browserId: string, sessionId: string | null): Promise<BrowserNavigateResult>
   noteRendererReloading(): void
   handlePopup(url: string, webContentsId?: number): void
   grantsForGuest(webContentsId: number | undefined): readonly string[]
@@ -117,7 +125,8 @@ interface SerialJob {
 }
 
 interface PageRecord {
-  sessionId: string
+  /** null = 用户作用域页面。 */
+  sessionId: string | null
   url: string
   title: string
   loading: boolean
@@ -163,6 +172,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   const ledger = deps.identity ?? createBrowserIdentityLedger()
   const delay = deps.delay ?? defaultDelay
   const previewGrants = deps.previewGrants ?? createPreviewGrantStore({ findRunning: () => null })
+  const userPartition = deps.userPartition ?? BROWSER_USER_PARTITION
   const pages = new Map<string, PageRecord>()
   const pendingOpens = new Set<PendingOpen>()
   let sequence = 0
@@ -248,7 +258,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       browserId: string
       generation: number
       documentEpoch: number
-      sessionId: string
+      sessionId: string | null
     },
     record: PageRecord
   ): BrowserPageProjection {
@@ -270,7 +280,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
 
   function lookupPage(
     browserId: string,
-    sessionId: string
+    sessionId: string | null
   ): { record: PageRecord; page: BrowserPageProjection } | ReturnType<typeof browserNotApplied> {
     const identity = ledger.inspect(browserId, sessionId)
     if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
@@ -537,7 +547,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     browserId: string,
     record: PageRecord,
     guest: BrowserGuestContents,
-    sessionId: string
+    sessionId: string | null
   ): void {
     unbindGuest(record)
     record.guest = guest
@@ -678,6 +688,8 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const record = pages.get(browserId)
     if (!record) return []
     if (record.halted || record.lifecycle === 'closing' || record.lifecycle === 'crashed') return []
+    // 用户页不经受限 origin 授权，永远没有可放行的私网授权
+    if (record.sessionId === null) return []
     const workspaceKey = deps.resolveWorkspaceKey(record.sessionId)
     if (workspaceKey === null) return []
     const guestUrl = record.guest ? safeGuestUrl(record.guest) : ''
@@ -732,58 +744,75 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   }
 
   async function open(command: BrowserOpenCommand, context: BrowserCommandContext): Promise<BrowserOpenResult> {
-    const workspaceKey = deps.resolveWorkspaceKey(context.sessionId)
-    if (workspaceKey === null) {
+    const userScope = context.sessionId === null
+    if (userScope && context.authority) {
+      return browserNotApplied('invalid_request', 'AI 命令不能打开用户作用域页面')
+    }
+    const workspaceKey = userScope ? null : deps.resolveWorkspaceKey(context.sessionId)
+    if (!userScope && workspaceKey === null) {
       return browserNotApplied('not_owner', '当前会话没有可绑定的工作区')
     }
     const url = parseBrowserHttpUrl(command.url)
     if (url === null) {
       return browserNotApplied('invalid_request', '只允许不含用户信息的 http 或 https 地址')
     }
-    // 域名地址确认可能等待解析：登记进撤销生命周期，提交前复核运行、会话与工作区资格
-    const pending: PendingOpen = {
+    // 域名地址确认可能等待解析：登记进撤销生命周期，提交前复核运行、会话与工作区资格。
+    // 用户作用域跳过确认：手输地址即用户意图，放行私网与解析慢的域名。
+    const pending: PendingOpen | null = userScope ? null : {
       sessionId: context.sessionId,
       runId: context.authority?.runId?.trim() ?? null,
       revoked: null
     }
-    pendingOpens.add(pending)
-    const confirmed = await previewGrants.confirm({
-      workspaceKey,
-      sessionId: context.sessionId,
-      url
-    })
-    pendingOpens.delete(pending)
+    if (pending) pendingOpens.add(pending)
+    const confirmed = userScope
+      ? ({ ok: true as const, restricted: false as const })
+      : await previewGrants.confirm({
+        workspaceKey: workspaceKey as string,
+        sessionId: context.sessionId as string,
+        url
+      })
+    if (pending) pendingOpens.delete(pending)
     if (context.abortSignal?.aborted) return browserNotApplied('cancelled', '命令已取消')
-    if (pending.revoked) return pending.revoked
-    if (deps.resolveWorkspaceKey(context.sessionId) === null) {
+    if (pending?.revoked) return pending.revoked
+    if (!userScope && deps.resolveWorkspaceKey(context.sessionId) === null) {
       return browserNotApplied('not_owner', '当前会话没有可绑定的工作区')
     }
     if (!confirmed.ok) return browserNotApplied(confirmed.code, confirmed.detail)
-    const issued = ledger.issuePage({ sessionId: context.sessionId, workspaceKey })
+    const issued = ledger.issuePage(userScope
+      ? { sessionId: null }
+      : { sessionId: context.sessionId as string, workspaceKey: workspaceKey as string })
     if (!issued.ok) {
       if (issued.code === 'resource_limit') {
-        return browserNotApplied(issued.code, BROWSER_PAGE_CAP_MESSAGE)
+        return browserNotApplied(
+          issued.code,
+          userScope ? BROWSER_USER_PAGE_CAP_MESSAGE : BROWSER_PAGE_CAP_MESSAGE
+        )
       }
       return browserNotApplied(issued.code, '无法打开新的浏览器页面')
     }
-    const allocated = deps.allocatePartition
-      ? deps.allocatePartition(issued.value.browserId)
-      : { partition: uniquePartition(issued.value.browserId) }
+    // 用户页共用持久 profile；AI 页从隔离槽分配
+    const allocated = userScope
+      ? { partition: userPartition }
+      : deps.allocatePartition
+        ? deps.allocatePartition(issued.value.browserId)
+        : { partition: uniquePartition(issued.value.browserId) }
     if ('error' in allocated) {
       ledger.retire(issued.value.browserId)
       return browserNotApplied(allocated.error, '没有可复用的隔离资料槽')
     }
     deps.installPartitionPolicy?.(allocated.partition)
     const record: PageRecord = {
-      sessionId: context.sessionId,
+      sessionId: userScope ? null : context.sessionId,
       url,
       title: '',
       loading: true,
       lifecycle: 'opening',
-      // 人工打开只表示尚无人取得控制；明确接管只来自 claim 或用户主动导航
-      control: context.authority?.runId
-        ? { holder: 'agent', runId: context.authority.runId }
-        : { holder: 'none' },
+      // 用户作用域页面生而为用户持有；会话页面由 authority 决定，人工打开表示尚无人取得控制
+      control: userScope
+        ? { holder: 'user' }
+        : context.authority?.runId
+          ? { holder: 'agent', runId: context.authority.runId }
+          : { holder: 'none' },
       faviconUrl: null,
       loadError: null,
       partition: allocated.partition,
@@ -796,10 +825,10 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       halted: false,
       layoutViewport: null,
       notice: null,
-      navigationTargetOrigin: confirmed.restricted ? confirmed.grant.origin : null
+      navigationTargetOrigin: !userScope && confirmed.restricted ? confirmed.grant.origin : null
     }
     pages.set(issued.value.browserId, record)
-    if (confirmed.restricted) previewGrants.activate(issued.value.browserId, confirmed.grant)
+    if (!userScope && confirmed.restricted) previewGrants.activate(issued.value.browserId, confirmed.grant)
     emit()
     const attached = new Promise<BrowserAttachResult>((resolve) => {
       record.attachWaiters.push(resolve)
@@ -906,9 +935,22 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
   async function attachPartition(partition: string, webContentsId: number): Promise<BrowserAttachResult> {
     for (const [browserId, record] of pages) {
       if (record.partition !== partition || record.lifecycle === 'closing') continue
+      // 用户页共享 partition，无法按 partition 唯一定位，只能走配对上报
+      if (record.partition === userPartition) continue
       return attach({ sessionId: record.sessionId, browserId, webContentsId })
     }
     return browserNotApplied('not_owner', '隔离资料槽没有所属页面')
+  }
+
+  async function attachUserGuest(browserId: string, webContentsId: number): Promise<BrowserAttachResult> {
+    const record = pages.get(browserId)
+    if (!record || record.sessionId !== null) {
+      return browserNotApplied('not_owner', '没有这个用户页面')
+    }
+    if (!deps.isGuestOfPartition(webContentsId, record.partition)) {
+      return browserNotApplied('unavailable', '页面进程与该页面的资料不匹配')
+    }
+    return attach({ sessionId: null, browserId, webContentsId })
   }
 
   function findOwnerByGuestId(webContentsId: number): string | undefined {
@@ -920,7 +962,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
 
   function finishAttach(
     browserId: string,
-    sessionId: string,
+    sessionId: string | null,
     record: PageRecord
   ): BrowserAttachResult {
     const rejected = rejectStaleAttach(record)
@@ -990,7 +1032,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
    */
   async function waitForHistoryNavigation(
     browserId: string,
-    sessionId: string,
+    sessionId: string | null,
     guest: BrowserGuestContents,
     from: { generation: number; documentEpoch: number },
     signal: AbortSignal
@@ -1089,8 +1131,9 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
           }
         }
         if (action.kind === 'url') {
-          const workspaceKey = deps.resolveWorkspaceKey(context.sessionId)
-          if (workspaceKey === null) {
+          const userScope = context.sessionId === null
+          const workspaceKey = userScope ? null : deps.resolveWorkspaceKey(context.sessionId as string)
+          if (!userScope && workspaceKey === null) {
             return browserNotApplied('not_owner', '当前会话没有可绑定的工作区')
           }
           // 等待域名确认前固定身份；等待后写入授权与导航前复核
@@ -1098,11 +1141,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
           if (!beforeConfirm.ok) {
             return browserNotApplied(beforeConfirm.code, '页面不属于当前会话或已关闭')
           }
-          const confirmed = await previewGrants.confirm({
-            workspaceKey,
-            sessionId: context.sessionId,
-            url: action.url
-          })
+          // 用户作用域跳过域名确认：与打开同一信任档
+          const confirmed = userScope
+            ? ({ ok: true as const, restricted: false as const })
+            : await previewGrants.confirm({
+              workspaceKey: workspaceKey as string,
+              sessionId: context.sessionId as string,
+              url: action.url
+            })
           if (!confirmed.ok) return browserNotApplied(confirmed.code, confirmed.detail)
           // 复核顺序：先看身份（区分接管与页面失效），再看命令自身的取消信号
           const afterConfirm = ledger.inspect(command.browserId, context.sessionId)
@@ -1113,7 +1159,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
             return browserNotApplied('taken_over', '页面控制已变化，导航没有执行')
           }
           if (signal.aborted) return browserNotApplied('cancelled', '命令已取消')
-          if (confirmed.restricted) previewGrants.activate(command.browserId, confirmed.grant)
+          if (!userScope && confirmed.restricted) previewGrants.activate(command.browserId, confirmed.grant)
           found.record.navigationTargetOrigin = canonicalizePreviewTarget(action.url)?.origin ?? null
           found.record.loading = true
           if (!deps.control) found.record.url = action.url
@@ -1226,7 +1272,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
 
   async function setVisible(
     browserId: string,
-    sessionId: string,
+    sessionId: string | null,
     visible: boolean
   ): Promise<BrowserNavigateResult> {
     const found = lookupPage(browserId, sessionId)
@@ -1279,12 +1325,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       return Promise.resolve(browserNotApplied('not_owner', '不能读取其它会话的页面'))
     }
     emit()
-    return Promise.resolve({ status: 'applied', snapshot: snapshotForSession(context.sessionId) })
+    // null = 宿主界面读取全量（含用户页，界面自行过滤展示）；AI 工具必须携带会话
+    const snapshot = context.sessionId === null ? surfaceSnapshot(() => true) : snapshotForSession(context.sessionId)
+    return Promise.resolve({ status: 'applied', snapshot })
   }
 
   function navigationFence(
     browserId: string,
-    sessionId: string,
+    sessionId: string | null,
     generation: number,
     signal?: AbortSignal
   ): BrowserControlFence {
@@ -1308,7 +1356,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
 
   function actionFence(
     browserId: string,
-    sessionId: string,
+    sessionId: string | null,
     start: { generation: number; documentEpoch: number },
     observationId: string | null,
     signal?: AbortSignal
@@ -1543,6 +1591,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     release,
     attach,
     attachPartition,
+    attachUserGuest,
     hide: (browserId, sessionId) => setVisible(browserId, sessionId, false),
     restore: (browserId, sessionId) => setVisible(browserId, sessionId, true),
     noteRendererReloading,

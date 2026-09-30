@@ -1,15 +1,21 @@
 /**
- * 右侧 Inspector 面板，宽度可拖拽。开发会话为「审阅 / 文件」；学习会话为「大纲 / 文件」，
- * 开合与页签读写学习那组状态，开发面板行为不变。
+ * 右侧 Inspector 面板，宽度可拖拽。开发会话为「审阅 / 文件 / 浏览」；学习会话为「大纲 / 文件 / 浏览」，
+ * 开合与页签读写学习那组状态，开发面板行为不变。浏览器页签承载内置浏览器（用户页与 AI 页）。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CloseIcon } from '../../components/Icons'
-import { useLayoutStore, INSPECTOR_WIDTH_MIN, INSPECTOR_WIDTH_MAX } from '../../stores/useLayoutStore'
+import {
+  useLayoutStore,
+  INSPECTOR_WIDTH_MIN,
+  INSPECTOR_WIDTH_MAX,
+  BROWSER_PANE_WIDTH_MIN
+} from '../../stores/useLayoutStore'
 import type { InspectorTab as InspectorTabId } from '../../stores/useLayoutStore'
 import { ReviewTab } from './ReviewTab'
 import { FilesTab } from './FilesTab'
 import { PlanInspectorView } from './PlanInspectorView'
 import { LearningOutlinePane } from '../learning/outline/LearningOutlinePane'
+import { BrowserPanel } from '../browser/BrowserPanel'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import './InspectorPanel.css'
 
@@ -46,6 +52,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
   const [visitedReview, setVisitedReview] = useState(false)
   const [visitedFiles, setVisitedFiles] = useState(false)
   const [visitedOutline, setVisitedOutline] = useState(false)
+  const [visitedBrowser, setVisitedBrowser] = useState(false)
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
   const dragStartWidth = useRef(0)
@@ -64,10 +71,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     onDragSessionChangeRef.current?.(active)
   }, [])
 
+  // 浏览器页签需要更宽的舞台；其余页签维持原有边界
+  const activeTab = isLearn ? learnTab : inspectorTab
+  const widthMin = activeTab === 'browser' ? BROWSER_PANE_WIDTH_MIN : INSPECTOR_WIDTH_MIN
+
   const widthFromClientX = useCallback((clientX: number) => {
     const delta = dragStartX.current - clientX
-    return Math.min(INSPECTOR_WIDTH_MAX, Math.max(INSPECTOR_WIDTH_MIN, dragStartWidth.current + delta))
-  }, [])
+    return Math.min(INSPECTOR_WIDTH_MAX, Math.max(widthMin, dragStartWidth.current + delta))
+  }, [widthMin])
 
   /** 拖拽期间直接写外壳 DOM 宽度：过渡已关闭，不触发 store / localStorage / 重渲染 */
   const applyShellWidth = useCallback((clientX: number) => {
@@ -140,10 +151,12 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     if (isLearn) {
       if (learnTab === 'outline') setVisitedOutline(true)
       if (learnTab === 'files') setVisitedFiles(true)
+      if (learnTab === 'browser') setVisitedBrowser(true)
       return
     }
     if (inspectorTab === 'review') setVisitedReview(true)
     if (inspectorTab === 'files') setVisitedFiles(true)
+    if (inspectorTab === 'browser') setVisitedBrowser(true)
   }, [inspectorOpen, inspectorTab, isLearn, learnTab])
 
   useEffect(() => {
@@ -168,7 +181,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [inspectorOpen, closeInspector])
 
-  const width = inspectorOpen ? inspectorWidth : 0
+  // 浏览器页签激活时渲染宽度不低于舞台下限；不回写 store，切回其它页签恢复原宽
+  const effectiveWidth = activeTab === 'browser'
+    ? Math.max(inspectorWidth, BROWSER_PANE_WIDTH_MIN)
+    : inspectorWidth
+  const width = inspectorOpen ? effectiveWidth : 0
   const showContent = mounted && inspectorOpen
 
   const switchTab = (tab: InspectorTabId) => {
@@ -198,13 +215,13 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
           />
           <div
             className="inspector-panel__inner"
-            style={{ width: inspectorWidth }}
+            style={{ width: effectiveWidth }}
           >
             {isLearn ? (
               <>
                 <header className="inspector-panel__header">
                   <div className="inspector-panel__tabs" role="tablist">
-                    {(['outline', 'files'] as const).map(tab => (
+                    {(['outline', 'files', 'browser'] as const).map(tab => (
                       <button
                         key={tab}
                         type="button"
@@ -213,7 +230,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
                         className={`inspector-panel__tab${learnTab === tab ? ' inspector-panel__tab--active' : ''}`}
                         onClick={() => setLearnInspectorTab(tab)}
                       >
-                        {tab === 'outline' ? '大纲' : '文件'}
+                        {tab === 'outline' ? '大纲' : tab === 'files' ? '文件' : '浏览'}
                       </button>
                     ))}
                   </div>
@@ -235,6 +252,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
                   {visitedFiles && (
                     <div className="inspector-panel__pane" hidden={learnTab !== 'files'} role="tabpanel">
                       <FilesTab />
+                    </div>
+                  )}
+                  {visitedBrowser && (
+                    <div className="inspector-panel__pane inspector-panel__pane--browser" hidden={learnTab !== 'browser'} role="tabpanel" aria-label="浏览器">
+                      <BrowserPanel />
                     </div>
                   )}
                 </div>
@@ -263,6 +285,15 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
                     >
                       文件
                     </button>
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={inspectorTab === 'browser'}
+                      className={`inspector-panel__tab${inspectorTab === 'browser' ? ' inspector-panel__tab--active' : ''}`}
+                      onClick={() => switchTab('browser')}
+                    >
+                      浏览
+                    </button>
                   </div>
                   <button
                     type="button"
@@ -290,6 +321,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
                       role="tabpanel"
                     >
                       <FilesTab />
+                    </div>
+                  )}
+                  {visitedBrowser && (
+                    <div
+                      className="inspector-panel__pane inspector-panel__pane--browser"
+                      hidden={inspectorTab !== 'browser'}
+                      role="tabpanel"
+                      aria-label="浏览器"
+                    >
+                      <BrowserPanel />
                     </div>
                   )}
                 </div>

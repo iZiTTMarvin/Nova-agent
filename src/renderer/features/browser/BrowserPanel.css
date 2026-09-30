@@ -1,40 +1,12 @@
 .browser-panel {
   position: relative;
-  flex-shrink: 0;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--surface-sidebar);
-  border-left: 1px solid var(--border-subtle);
   box-sizing: border-box;
-}
-
-.browser-panel--expanded {
-  flex: 1;
-  flex-shrink: 1;
-  border-left: none;
-}
-
-.browser-panel--dragging {
-  transition: none;
-}
-
-.browser-panel__resize {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 5px;
-  z-index: 2;
-  cursor: col-resize;
-  background: transparent;
-}
-
-.browser-panel__resize:hover,
-.browser-panel--dragging .browser-panel__resize {
-  background-color: var(--color-brand-dim);
-  opacity: 0.45;
 }
 
 .browser-panel__chrome {

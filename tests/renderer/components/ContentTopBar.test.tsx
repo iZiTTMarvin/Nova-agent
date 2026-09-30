@@ -68,7 +68,7 @@ describe('ContentTopBar 布局开关', () => {
     renderer.unmount()
   })
 
-  it('点击「在 Nova 中打开」展开浏览器表面，不打开 Inspector', () => {
+  it('点击「在 Nova 中打开」切到浏览器页签并展开面板，再点收起', () => {
     const renderer = renderDom(<ContentTopBar />)
     const btn = renderer.container.querySelector<HTMLButtonElement>(
       '[aria-label="在 Nova 中打开"]'
@@ -78,10 +78,15 @@ describe('ContentTopBar 布局开关', () => {
       btn?.click()
     })
     expect(useLayoutStore.getState()).toMatchObject({
-      browserSurfaceOpen: true,
-      inspectorOpen: false,
+      inspectorOpen: true,
+      inspectorTab: 'browser',
       inspectorWidth: 420
     })
+    // 浏览器是面板页签：再次点击收起面板而不是停留在打开状态
+    act(() => {
+      btn?.click()
+    })
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
     renderer.unmount()
   })
 

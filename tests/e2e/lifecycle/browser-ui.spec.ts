@@ -55,9 +55,11 @@ test('可从地址栏打开、后退前进刷新停止并关闭，聊天仍可�
     const composer = nova.page.getByLabel('消息输入')
     await expect(composer).toBeVisible()
 
+    // 浏览器是右侧面板页签：最后一页关闭后留在原处显示空态，聊天区始终可见
     await nova.page.getByRole('button', { name: '关闭页面' }).click()
     await expect(guest).toHaveCount(0)
-    await expect(nova.page.getByTestId('browser-panel')).toHaveCount(0)
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
+    await expect(nova.page.getByText('在地址栏输入网址开始浏览')).toBeVisible()
     await composer.click()
     await expect(composer).toBeFocused()
   } finally {
@@ -101,40 +103,123 @@ test('切会话只展示当前会话页面，连续 reload 后仍能挂上', asy
   }
 })
 
-test('两页并开可切换可单独关，地址栏跟焦点，封顶如实提示', async ({ nova }) => {
+test('会话页与用户页同列显示，用户上限如实提示，可单独关', async ({ nova }) => {
   const fixture = await startBrowseFixture()
   try {
     const workspace = await nova.getWorkspace()
     const sessionId = workspace.currentSessionId
     expect(sessionId).toBeTruthy()
 
+    // AI 侧会话页面走隔离槽（上限 2）
     const first = await nova.invoke(BROWSER_OPEN, {
       sessionId: sessionId!,
       url: `${fixture.origin}/`
     })
     expect(first.status).toBe('applied')
-    const second = await nova.invoke(BROWSER_OPEN, {
-      sessionId: sessionId!,
-      url: `${fixture.origin}/two`
-    })
-    expect(second.status).toBe('applied')
 
-    const tabs = nova.page.getByTestId('browser-tab')
-    await expect(tabs).toHaveCount(2)
+    // 地址栏新页签是用户页面（持久用户 profile，不绑会话）
+    await nova.page.getByTestId('browser-new-tab').click()
     const address = nova.page.getByTestId('browser-address')
-    await tabs.nth(1).click()
+    await address.fill(`${fixture.origin}/two`)
+    await address.press('Enter')
+    await address.blur()
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(2)
+
+    // 用户页上限 4：再补 3 个用户页后到达上限
+    for (let index = 0; index < 3; index++) {
+      const opened = await nova.invoke(BROWSER_OPEN, {
+        sessionId: null,
+        url: `${fixture.origin}/two?tab=${index}`
+      })
+      expect(opened.status).toBe('applied')
+    }
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(5)
+
+    await nova.page.getByRole('button', { name: '最多同时打开四个页面' }).click()
+    await expect(nova.page.getByTestId('browser-surface-error')).toHaveText('最多同时打开四个页面')
+
+    await nova.page.getByTestId('browser-tab').first().getByTestId('browser-tab-close').click()
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(4)
+    await expect(nova.page.locator('webview[data-browser-id]')).toHaveCount(4)
     await expect.poll(async () => address.inputValue()).toContain('/two')
+  } finally {
+    await fixture.close()
+  }
+})
 
-    await tabs.first().click()
-    await expect.poll(async () => address.inputValue()).not.toContain('/two')
+test('用户页跨会话存活，AI 页随会话隔离，用户页没有接管按钮', async ({ nova }) => {
+  const fixture = await startBrowseFixture()
+  try {
+    const workspace = await nova.getWorkspace()
+    const sessionA = workspace.currentSessionId
+    expect(sessionA).toBeTruthy()
 
-    await nova.page.getByRole('button', { name: '最多同时两个页面' }).click()
-    await expect(nova.page.getByTestId('browser-surface-error')).toHaveText('最多同时两个页面')
+    const opened = await nova.invoke(BROWSER_OPEN, {
+      sessionId: sessionA!,
+      url: `${fixture.origin}/`
+    })
+    expect(opened.status).toBe('applied')
 
-    await tabs.first().getByTestId('browser-tab-close').click()
-    await expect(tabs).toHaveCount(1)
-    await expect(nova.page.locator('webview[data-browser-id]')).toHaveCount(1)
-    await expect.poll(async () => address.inputValue()).toContain('/two')
+    // 地址栏直接输入新网址：聚焦的是 AI 会话页，导航留在会话作用域
+    const address = nova.page.getByTestId('browser-address')
+    await expect.poll(async () => address.inputValue()).toContain(fixture.origin)
+    await expect(nova.page.getByTestId('browser-takeover')).toBeVisible()
+
+    // 新页签 = 用户页；接管按钮对用户页不出现
+    await nova.page.getByTestId('browser-new-tab').click()
+    await address.fill(`${fixture.origin}/two`)
+    await address.press('Enter')
+    await address.blur()
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(2)
+    await expect(nova.page.getByTestId('browser-takeover')).toHaveCount(0)
+
+    const next = await nova.createSession()
+    expect(next.currentSessionId).not.toBe(sessionA)
+    // 换会话后：AI 会话页隐藏，用户页仍可见
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(1)
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('two')
+    const userGuest = nova.page.locator('webview[data-browser-id][partition="persist:nova-browser-user"]')
+    await expect(userGuest).toBeVisible()
+
+    await nova.selectSession(sessionA!)
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(2)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('面板页签切走再切回，webview 隐藏后恢复且与舞台对齐', async ({ nova }) => {
+  const fixture = await startBrowseFixture()
+  try {
+    const workspace = await nova.getWorkspace()
+    const opened = await nova.invoke(BROWSER_OPEN, {
+      sessionId: workspace.currentSessionId!,
+      url: `${fixture.origin}/`
+    })
+    expect(opened.status).toBe('applied')
+    const guest = nova.page.locator('webview[data-browser-id]')
+    await expect(guest).toBeVisible()
+
+    await nova.page.getByRole('tab', { name: '文件' }).click()
+    await expect(guest).toBeHidden()
+    await nova.page.getByRole('tab', { name: '浏览' }).click()
+    await expect(guest).toBeVisible()
+
+    // 页签切换不重挂 webview，且舞台对齐（历史坑：晚挂载后 0×0）
+    await expect.poll(async () => {
+      const slot = await nova.page.getByTestId('browser-guest-slot').boundingBox()
+      const webview = await guest.boundingBox()
+      if (!slot || !webview) return false
+      return Math.abs(slot.width - webview.width) < 4 && Math.abs(slot.height - webview.height) < 4
+    }).toBe(true)
+
+    // Ctrl+Alt+B 收起面板再展开，页面不丢
+    await nova.page.keyboard.press('Control+Alt+B')
+    await expect(nova.page.getByTestId('browser-panel')).toHaveCount(0)
+    await nova.page.keyboard.press('Control+Alt+B')
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
+    await expect(guest).toBeVisible()
+    expect(nova.pageErrors).toEqual([])
   } finally {
     await fixture.close()
   }

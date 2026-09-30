@@ -1,12 +1,13 @@
 /**
- * 布局 UI 状态的唯一 Owner（Sidebar / Inspector / 浏览器表面的开合与宽度）。
- * 不持久化 inspectorOpen / reviewTarget / browserSurfaceOpen，避免重启后误开。
+ * 布局 UI 状态的唯一 Owner（Sidebar / Inspector 面板的开合、页签与宽度）。
+ * 不持久化 inspectorOpen / reviewTarget，避免重启后误开；浏览器页签也不持久化。
  */
 import { create } from 'zustand'
 
-export type InspectorTab = 'review' | 'files'
+/** 开发面板页签；browser = 内置浏览器（用户页与 AI 页共用同一面板）。 */
+export type InspectorTab = 'review' | 'files' | 'browser'
 /** 学习会话的面板页签：大纲取代审阅（审阅对学习会话没有意义）。 */
-export type LearnInspectorTab = 'outline' | 'files'
+export type LearnInspectorTab = 'outline' | 'files' | 'browser'
 export type InspectorSurface = 'standard' | 'plan'
 
 export type ReviewTarget = {
@@ -37,10 +38,9 @@ export const LEARN_INSPECTOR_AUTO_OPEN_MIN_WIDTH = 1280
 export const SIDEBAR_WIDTH_MIN = 200
 export const SIDEBAR_WIDTH_MAX = 400
 export const INSPECTOR_WIDTH_MIN = 320
-export const INSPECTOR_WIDTH_MAX = 640
-export const BROWSER_WIDTH_MIN = 360
-export const BROWSER_WIDTH_MAX = 720
-export const BROWSER_SPLIT_MIN_PX = 880
+export const INSPECTOR_WIDTH_MAX = 720
+/** 浏览器页签激活时面板的最小宽度（地址栏与舞台的可用下限）。 */
+export const BROWSER_PANE_WIDTH_MIN = 360
 
 const DEFAULTS = {
   sidebarCollapsed: false,
@@ -53,8 +53,6 @@ const DEFAULTS = {
   inspectorSurface: 'standard' as InspectorSurface,
   planTarget: null as PlanTarget | null,
   planReturnState: null as PlanReturnState | null,
-  browserSurfaceOpen: false,
-  browserWidth: 480,
   learnInspectorOpen: false,
   learnInspectorTab: 'outline' as LearnInspectorTab
 }
@@ -87,13 +85,12 @@ function clamp(n: number, min: number, max: number): number {
 
 function loadPersistedLayout(): Pick<
   typeof DEFAULTS,
-  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab' | 'browserWidth' | 'learnInspectorOpen' | 'learnInspectorTab'
+  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab' | 'learnInspectorOpen' | 'learnInspectorTab'
 > {
   const collapsedRaw = readStored('sidebarCollapsed')
   const sidebarWidthRaw = readStored('sidebarWidth')
   const sortModeRaw = readStored('sidebarSortMode')
   const inspectorWidthRaw = readStored('inspectorWidth')
-  const browserWidthRaw = readStored('browserWidth')
   const tabRaw = readStored('inspectorTab')
 
   let sidebarCollapsed = DEFAULTS.sidebarCollapsed
@@ -120,12 +117,6 @@ function loadPersistedLayout(): Pick<
   let inspectorTab: InspectorTab = DEFAULTS.inspectorTab
   if (tabRaw === 'review' || tabRaw === 'files') inspectorTab = tabRaw
 
-  let browserWidth = DEFAULTS.browserWidth
-  if (browserWidthRaw !== null) {
-    const n = Number(browserWidthRaw)
-    if (Number.isFinite(n)) browserWidth = clamp(n, BROWSER_WIDTH_MIN, BROWSER_WIDTH_MAX)
-  }
-
   // 学习面板与开发面板是两个表面各自的状态；学习面板的开合要记住，开发面板照旧不记
   const learnOpenRaw = readStored('learnInspectorOpen')
   const learnInspectorOpen = learnOpenRaw === 'true' ? true : learnOpenRaw === 'false' ? false
@@ -133,7 +124,7 @@ function loadPersistedLayout(): Pick<
   const learnTabRaw = readStored('learnInspectorTab')
   const learnInspectorTab: LearnInspectorTab = learnTabRaw === 'files' ? 'files' : 'outline'
 
-  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab, browserWidth, learnInspectorOpen, learnInspectorTab }
+  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab, learnInspectorOpen, learnInspectorTab }
 }
 
 export interface LayoutStoreState {
@@ -147,8 +138,6 @@ export interface LayoutStoreState {
   inspectorSurface: InspectorSurface
   planTarget: PlanTarget | null
   planReturnState: PlanReturnState | null
-  browserSurfaceOpen: boolean
-  browserWidth: number
   learnInspectorOpen: boolean
   learnInspectorTab: LearnInspectorTab
 
@@ -163,9 +152,8 @@ export interface LayoutStoreState {
   setInspectorWidth: (w: number) => void
   setInspectorTab: (tab: InspectorTab) => void
   selectReviewFile: (filePath: string) => void
-  openBrowserSurface: () => void
-  closeBrowserSurface: () => void
-  setBrowserWidth: (w: number) => void
+  openBrowserPane: (isLearnSurface: boolean) => void
+  toggleBrowserPane: (isLearnSurface: boolean) => void
   toggleLearnInspector: () => void
   setLearnInspectorTab: (tab: LearnInspectorTab) => void
   openOutline: () => void
@@ -279,18 +267,34 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     set({ reviewTarget: { ...reviewTarget, filePath } })
   },
 
-  openBrowserSurface: () => {
-    set({ browserSurfaceOpen: true })
+  /** 打开右侧面板并切到浏览器页签；作用域由调用方按当前表面传入。 */
+  openBrowserPane: (isLearnSurface) => {
+    if (isLearnSurface) {
+      set({ learnInspectorOpen: true, learnInspectorTab: 'browser' })
+      return
+    }
+    set({
+      inspectorOpen: true,
+      inspectorTab: 'browser',
+      // 计划表面没有页签条，先回标准表面浏览器才可见
+      inspectorSurface: 'standard',
+      planTarget: null,
+      planReturnState: null
+    })
   },
 
-  closeBrowserSurface: () => {
-    set({ browserSurfaceOpen: false })
-  },
-
-  setBrowserWidth: (w) => {
-    const browserWidth = clamp(w, BROWSER_WIDTH_MIN, BROWSER_WIDTH_MAX)
-    writeStored('browserWidth', String(browserWidth))
-    set({ browserWidth })
+  /** 浏览器页签是否已激活：激活时再触发就收起面板（顶栏按钮与快捷键共用）。 */
+  toggleBrowserPane: (isLearnSurface) => {
+    const state = get()
+    const active = isLearnSurface
+      ? state.learnInspectorOpen && state.learnInspectorTab === 'browser'
+      : state.inspectorOpen && state.inspectorTab === 'browser'
+    if (active) {
+      if (isLearnSurface) set({ learnInspectorOpen: false })
+      else set({ inspectorOpen: false })
+      return
+    }
+    get().openBrowserPane(isLearnSurface)
   },
 
   toggleLearnInspector: () => {
@@ -300,7 +304,7 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   },
 
   setLearnInspectorTab: (learnInspectorTab) => {
-    writeStored('learnInspectorTab', learnInspectorTab)
+    if (learnInspectorTab !== 'browser') writeStored('learnInspectorTab', learnInspectorTab)
     set({ learnInspectorTab })
   },
 
@@ -321,6 +325,13 @@ export function selectInspectorOpenForSurface(state: LayoutStoreState, isLearnSu
   return isLearnSurface ? state.learnInspectorOpen : state.inspectorOpen
 }
 
+/** 浏览器页签是否为当前表面的激活页签（guest 层据此决定 webview 可见性）。 */
+export function selectBrowserPaneActive(state: LayoutStoreState, isLearnSurface: boolean): boolean {
+  return isLearnSurface
+    ? state.learnInspectorOpen && state.learnInspectorTab === 'browser'
+    : state.inspectorOpen && state.inspectorTab === 'browser'
+}
+
 /** 测试用：清空持久化后恢复默认布局态 */
 export function resetLayoutStoreForTests(): void {
   if (canUseLocalStorage()) {
@@ -331,7 +342,6 @@ export function resetLayoutStoreForTests(): void {
         'sidebarSortMode',
         'inspectorWidth',
         'inspectorTab',
-        'browserWidth',
         'learnInspectorOpen',
         'learnInspectorTab'
       ]) {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 're
 import { composeBrowserNavigationUrl } from '../browser/addressInput'
 import { useBrowserStore } from '../browser/useBrowserStore'
 import { useLayoutStore } from '../../stores/useLayoutStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import './MarkdownLink.css'
 
 export function MarkdownLink(props: {
@@ -38,7 +39,9 @@ export function MarkdownLink(props: {
 
   const openInNova = (): void => {
     setMenu(null)
-    useLayoutStore.getState().openBrowserSurface()
+    const workspace = useWorkspaceStore.getState()
+    const isLearnSurface = workspace.currentMode === 'learn' && workspace.currentSessionId !== null
+    useLayoutStore.getState().openBrowserPane(isLearnSurface)
     void useBrowserStore.getState().openUrl(href)
   }
 

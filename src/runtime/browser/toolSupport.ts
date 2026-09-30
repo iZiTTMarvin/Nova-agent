@@ -28,7 +28,7 @@ export function requireBrowserPort(getPort: () => BrowserPort | null): BrowserPo
 
 export function resolveBrowserCommandContext(
   context: ToolContext
-): { readonly ok: true; readonly value: BrowserCommandContext } | { readonly ok: false; readonly result: ToolResult } {
+): { readonly ok: true; readonly value: BrowserCommandContext & { readonly sessionId: string } } | { readonly ok: false; readonly result: ToolResult } {
   const sessionId = context.sessionId?.trim()
   if (!sessionId) {
     return {

@@ -164,6 +164,27 @@ export interface BrowserNetworkRequest {
 }
 
 /**
+ * 用户持久 partition 的请求决策：用户手输与页面跳转按普通浏览器放行私网与本机地址，
+ * 只保留云元数据拦截（防页面借用户机器偷取云凭据）。不做域名解析。
+ */
+export function decideUserBrowserNetworkRequest(targetUrl: string): 'allow' | 'deny' {
+  const target = targetUrl.trim()
+  if (target.length === 0) return 'deny'
+  let protocol: string
+  let hostname: string
+  try {
+    const parsed = new URL(target)
+    protocol = parsed.protocol
+    hostname = parsed.hostname
+  } catch {
+    return 'deny'
+  }
+  if (protocol === 'data:' || protocol === 'blob:') return 'allow'
+  if (!NETWORK_PROTOCOLS.has(protocol)) return 'deny'
+  return classifyPreviewHostname(hostname) === 'metadata' ? 'deny' : 'allow'
+}
+
+/**
  * 受限地址只放行「已确认 origin 自己的页面」访问同一主机和端口（含对应 HMR）。
  * 另一个端口、另一种 loopback 写法，或公网页面，都不能借用这份授权。
  */

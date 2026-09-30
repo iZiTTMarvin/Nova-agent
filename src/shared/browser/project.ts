@@ -24,7 +24,8 @@ export interface BrowserPageProjectInput {
   readonly browserId: string
   readonly generation: number
   readonly documentEpoch: number
-  readonly sessionId: string
+  /** null = 用户作用域页面。 */
+  readonly sessionId: string | null
   readonly url: string
   readonly title: string
   readonly loading: boolean

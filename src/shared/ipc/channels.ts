@@ -170,6 +170,8 @@ export const BROWSER_CLOSE = 'browser:close' as const
 export const BROWSER_GET_SNAPSHOT = 'browser:get-snapshot' as const
 export const BROWSER_CLAIM = 'browser:claim' as const
 export const BROWSER_RELEASE = 'browser:release' as const
+/** 用户页 guest 配对上报（多个用户页共享同一 partition，需要界面指认归属） */
+export const BROWSER_ATTACH = 'browser:attach' as const
 /** 页面观察、操作与截图。脚本只在主进程的隔离世界执行。 */
 export const BROWSER_OBSERVE = 'browser:observe' as const
 export const BROWSER_ACT = 'browser:act' as const

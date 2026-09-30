@@ -3,9 +3,15 @@
  * 逻辑身份与控制世代不可复用；互斥动作必须是判别联合。
  */
 
+/** 会话（AI 工具）作用域页面在全局共享的上限。 */
 export const BROWSER_MAX_LIVE_PAGES = 2 as const
 
 export const BROWSER_PAGE_CAP_MESSAGE = '最多同时两个页面'
+
+/** 用户作用域页面上限；与 AI 页分开计数。 */
+export const BROWSER_MAX_USER_PAGES = 4 as const
+
+export const BROWSER_USER_PAGE_CAP_MESSAGE = '最多同时打开四个页面'
 
 /** 每页待执行（尚未开始）命令上限；超限返回 busy。 */
 export const BROWSER_PENDING_MAX = 4 as const
@@ -86,12 +92,16 @@ export interface ObservationIdentity {
   readonly observationId: string
 }
 
+/**
+ * sessionId 为 null 表示用户作用域页面：不绑定会话与工作区，
+ * 不出现在任何会话的 AI 快照里，AI 工具无法访问。
+ */
 export interface BrowserPageIdentity {
   readonly browserId: string
   readonly generation: number
   readonly documentEpoch: number
-  readonly sessionId: string
-  readonly workspaceKey: string
+  readonly sessionId: string | null
+  readonly workspaceKey: string | null
 }
 
 export interface BrowserCapabilityDescriptor {
@@ -146,7 +156,8 @@ export interface BrowserPageProjection {
   readonly browserId: string
   readonly generation: number
   readonly documentEpoch: number
-  readonly sessionId: string
+  /** null = 用户作用域页面，不属于任何会话。 */
+  readonly sessionId: string | null
   readonly url: string
   readonly title: string
   readonly loading: boolean
@@ -309,7 +320,8 @@ export interface BrowserCloseCommand {
 }
 
 export interface BrowserListCommand {
-  readonly sessionId: string
+  /** null = 读取全量快照，仅供宿主界面；AI 工具面必须携带会话。 */
+  readonly sessionId: string | null
 }
 
 export interface BrowserClaimCommand {
@@ -368,23 +380,34 @@ export type BrowserClaimResult =
   | BrowserUnknownOutcome
 
 export interface BrowserOpenIpcParams {
-  readonly sessionId: string
+  /** null = 用户作用域打开（不绑会话）。 */
+  readonly sessionId: string | null
   readonly url: string
 }
 
 export interface BrowserNavigateIpcParams {
-  readonly sessionId: string
+  readonly sessionId: string | null
   readonly browserId: string
   readonly action: BrowserNavigateAction
 }
 
 export interface BrowserCloseIpcParams {
-  readonly sessionId: string
+  readonly sessionId: string | null
   readonly browserId: string
 }
 
 export interface BrowserSnapshotIpcParams {
-  readonly sessionId: string
+  readonly sessionId: string | null
+}
+
+/**
+ * 用户页 guest 配对上报：多个用户页共享同一持久 partition，
+ * 主进程无法只按 partition 区分，由界面按它创建的 webview 上报配对；
+ * 主进程仍校验 guest 类型与 partition 归属后才会绑定。
+ */
+export interface BrowserAttachIpcParams {
+  readonly browserId: string
+  readonly webContentsId: number
 }
 
 export interface BrowserClaimIpcParams {
@@ -416,7 +439,8 @@ export type BrowserAttachResult =
 export interface BrowserGuestMount {
   readonly browserId: string
   readonly generation: number
-  readonly sessionId: string
+  /** null = 用户作用域页面。 */
+  readonly sessionId: string | null
   readonly src: string
   readonly partition: string
   readonly visible: boolean

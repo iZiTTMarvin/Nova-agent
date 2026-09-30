@@ -8,6 +8,12 @@ export const BROWSER_PARTITION_SLOT_NAMES = [
   'persist:nova-browser-slot-1'
 ] as const
 
+/**
+ * 用户页共享的持久 profile：登录态跨页签、跨重启保留，永不因关页清理。
+ * 多页共用同一 partition，guest 归属只能由界面配对上报，主进程校验 partition。
+ */
+export const BROWSER_USER_PARTITION = 'persist:nova-browser-user'
+
 export type BrowserPartitionSlotState = 'idle' | 'busy' | 'unusable'
 
 export interface BrowserPartitionSlot {

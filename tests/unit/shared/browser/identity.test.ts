@@ -109,3 +109,57 @@ describe('browser 逻辑身份不可复用', () => {
     })
   })
 })
+
+describe('browser 用户作用域页面', () => {
+  it('sessionId=null 发放用户页：不记 workspaceKey，AI 会话身份不可见', () => {
+    const ledger = createBrowserIdentityLedger()
+    const page = ledger.issuePage({ sessionId: null })
+    expect(page.ok).toBe(true)
+    if (!page.ok) return
+    expect(page.value.sessionId).toBeNull()
+    expect(page.value.workspaceKey).toBeNull()
+
+    // 任何 AI 会话都看不到用户页；只有 null 作用域能检查
+    expect(ledger.inspect(page.value.browserId, 'sess_1')).toEqual({ ok: false, code: 'not_owner' })
+    expect(ledger.inspect(page.value.browserId, null).ok).toBe(true)
+  })
+
+  it('用户页与 AI 页分开计数：AI 2 页满后仍可发用户页，用户页第 5 个被拒', () => {
+    const ledger = createBrowserIdentityLedger()
+    for (let i = 0; i < 2; i++) {
+      expect(ledger.issuePage({ sessionId: 'sess_1', workspaceKey: 'ws_a' }).ok).toBe(true)
+    }
+    expect(ledger.issuePage({ sessionId: 'sess_1', workspaceKey: 'ws_a' })).toEqual({
+      ok: false,
+      code: 'resource_limit'
+    })
+    const userIds: string[] = []
+    for (let i = 0; i < 4; i++) {
+      const issued = ledger.issuePage({ sessionId: null })
+      expect(issued.ok).toBe(true)
+      if (!issued.ok) return
+      userIds.push(issued.value.browserId)
+    }
+    expect(ledger.issuePage({ sessionId: null })).toEqual({ ok: false, code: 'resource_limit' })
+    // 退役一个用户页后又能发
+    expect(ledger.retire(userIds[0]!).ok).toBe(true)
+    expect(ledger.issuePage({ sessionId: null }).ok).toBe(true)
+  })
+
+  it('会话作用域仍要求非空 sessionId 与 workspaceKey', () => {
+    const ledger = createBrowserIdentityLedger()
+    expect(ledger.issuePage({ sessionId: '', workspaceKey: 'ws_a' })).toEqual({
+      ok: false,
+      code: 'not_owner'
+    })
+    expect(ledger.issuePage({ sessionId: 'sess_1', workspaceKey: '' })).toEqual({
+      ok: false,
+      code: 'not_owner'
+    })
+    // 用户作用域忽略传入的 workspaceKey
+    const page = ledger.issuePage({ sessionId: null, workspaceKey: 'ws_a' })
+    expect(page.ok).toBe(true)
+    if (!page.ok) return
+    expect(page.value.workspaceKey).toBeNull()
+  })
+})

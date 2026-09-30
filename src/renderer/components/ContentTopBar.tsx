@@ -10,7 +10,7 @@ import {
 } from './Icons'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayoutStore'
+import { selectBrowserPaneActive, selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayoutStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
@@ -132,9 +132,22 @@ export const ContentTopBar: React.FC = () => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const isLearnSurface = useWorkspaceStore(state => state.currentMode === 'learn' && state.currentSessionId !== null)
   const inspectorOpen = useLayoutStore(state => selectInspectorOpenForSurface(state, isLearnSurface))
-  const browserSurfaceOpen = useLayoutStore(state => state.browserSurfaceOpen)
+  const browserPaneActive = useLayoutStore(state => selectBrowserPaneActive(state, isLearnSurface))
   // 学习会话的面板是「大纲 | 文件」，与开发面板状态分开
   const inspectorLabel = isLearnSurface ? '大纲与文件' : '审查与文件面板'
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || !event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 'b') return
+      event.preventDefault()
+      const workspace = useWorkspaceStore.getState()
+      const learn = workspace.currentMode === 'learn' && workspace.currentSessionId !== null
+      useLayoutStore.getState().toggleBrowserPane(learn)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <div className="content-topbar">
@@ -160,9 +173,9 @@ export const ContentTopBar: React.FC = () => {
           icon={<GlobeIcon size={16} />}
           variant="ghost"
           size="sm"
-          className={`content-topbar__btn${browserSurfaceOpen ? ' content-topbar__btn--active' : ''}`}
-          onClick={() => useLayoutStore.getState().openBrowserSurface()}
-          tooltip="在 Nova 中打开"
+          className={`content-topbar__btn${browserPaneActive ? ' content-topbar__btn--active' : ''}`}
+          onClick={() => useLayoutStore.getState().toggleBrowserPane(isLearnSurface)}
+          tooltip="在 Nova 中打开（Ctrl+Alt+B）"
         />
         <IconButton
           label={inspectorLabel}

@@ -3,6 +3,7 @@ import {
   type BrowserAction,
   type BrowserActCommand,
   type BrowserActIpcParams,
+  type BrowserAttachIpcParams,
   type BrowserCaptureIpcParams,
   type BrowserClaimIpcParams,
   type BrowserCloseIpcParams,
@@ -219,15 +220,34 @@ function parseSessionBrowserId(
   return { ok: true, value: Object.freeze({ sessionId, browserId }) }
 }
 
+/** 界面命令的会话标识：非空字符串=会话作用域；显式 null=用户作用域；其余非法。 */
+function readSessionScopeId(record: Record<string, unknown>): string | null | undefined {
+  const value = record.sessionId
+  if (value === null) return null
+  if (typeof value === 'string' && value.length > 0) return value
+  return undefined
+}
+
+function readSessionScopeOrFailed(
+  record: Record<string, unknown>,
+  label: string
+): { ok: true; sessionId: string | null } | { ok: false; detail: string } {
+  const sessionId = readSessionScopeId(record)
+  if (sessionId === undefined) {
+    return { ok: false, detail: `${label}需要非空 sessionId 或 null（用户作用域）` }
+  }
+  return { ok: true, sessionId }
+}
+
 export function parseBrowserOpenIpcParams(input: unknown): BrowserParseResult<BrowserOpenIpcParams> {
   if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'url'])) {
     return failed('打开命令必须且只能包含 sessionId 与 url')
   }
-  const sessionId = readNonEmptyString(input, 'sessionId')
-  if (sessionId === null) return failed('打开命令需要非空 sessionId')
+  const scope = readSessionScopeOrFailed(input, '打开命令')
+  if (!scope.ok) return failed(scope.detail)
   const url = parseBrowserHttpUrl(input.url)
   if (url === null) return failed('只允许不含用户信息的 http 或 https 地址')
-  return { ok: true, value: Object.freeze({ sessionId, url }) }
+  return { ok: true, value: Object.freeze({ sessionId: scope.sessionId, url }) }
 }
 
 export function parseBrowserNavigateIpcParams(
@@ -236,21 +256,27 @@ export function parseBrowserNavigateIpcParams(
   if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'browserId', 'action'])) {
     return failed('导航命令必须且只能包含 sessionId、browserId 与 action')
   }
-  const sessionId = readNonEmptyString(input, 'sessionId')
+  const scope = readSessionScopeOrFailed(input, '导航命令')
+  if (!scope.ok) return failed(scope.detail)
   const browserId = readNonEmptyString(input, 'browserId')
-  if (sessionId === null || browserId === null) {
-    return failed('导航命令需要非空 sessionId 与 browserId')
-  }
+  if (browserId === null) return failed('导航命令需要非空 browserId')
   const action = parseBrowserNavigateAction(input.action)
   if (!action.ok) return action
   return {
     ok: true,
-    value: Object.freeze({ sessionId, browserId, action: action.value })
+    value: Object.freeze({ sessionId: scope.sessionId, browserId, action: action.value })
   }
 }
 
 export function parseBrowserCloseIpcParams(input: unknown): BrowserParseResult<BrowserCloseIpcParams> {
-  return parseSessionBrowserId(input, '关闭命令')
+  if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'browserId'])) {
+    return failed('关闭命令必须且只能包含 sessionId 与 browserId')
+  }
+  const scope = readSessionScopeOrFailed(input, '关闭命令')
+  if (!scope.ok) return failed(scope.detail)
+  const browserId = readNonEmptyString(input, 'browserId')
+  if (browserId === null) return failed('关闭命令需要非空 browserId')
+  return { ok: true, value: Object.freeze({ sessionId: scope.sessionId, browserId }) }
 }
 
 export function parseBrowserClaimIpcParams(input: unknown): BrowserParseResult<BrowserClaimIpcParams> {
@@ -263,9 +289,23 @@ export function parseBrowserSnapshotIpcParams(
   if (!isRecord(input) || !hasExactKeys(input, ['sessionId'])) {
     return failed('快照命令必须且只能包含 sessionId')
   }
-  const sessionId = readNonEmptyString(input, 'sessionId')
-  if (sessionId === null) return failed('快照命令需要非空 sessionId')
-  return { ok: true, value: Object.freeze({ sessionId }) }
+  const scope = readSessionScopeOrFailed(input, '快照命令')
+  if (!scope.ok) return failed(scope.detail)
+  return { ok: true, value: Object.freeze({ sessionId: scope.sessionId }) }
+}
+
+export function parseBrowserAttachIpcParams(
+  input: unknown
+): BrowserParseResult<BrowserAttachIpcParams> {
+  if (!isRecord(input) || !hasExactKeys(input, ['browserId', 'webContentsId'])) {
+    return failed('配对上报必须且只能包含 browserId 与 webContentsId')
+  }
+  const browserId = readNonEmptyString(input, 'browserId')
+  const webContentsId = readIntegerInRange(input, 'webContentsId', 1, Number.MAX_SAFE_INTEGER)
+  if (browserId === null || webContentsId === null) {
+    return failed('配对上报需要非空 browserId 与正整数 webContentsId')
+  }
+  return { ok: true, value: Object.freeze({ browserId, webContentsId }) }
 }
 
 export function parseBrowserObserveIpcParams(

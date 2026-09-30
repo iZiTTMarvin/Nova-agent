@@ -161,6 +161,8 @@ function createHarness(
   extras?: {
     previewGrants?: PreviewGrantStore
     readDisplayScale?: () => number | null
+    userPartition?: string
+    guestPartitions?: Map<number, string>
   }
 ): {
   host: BrowserSessionHost
@@ -171,19 +173,23 @@ function createHarness(
   const clock = createClock()
   const snapshots: BrowserSurfaceSnapshot[] = []
   const mounts: BrowserGuestMountSnapshot[] = []
+  const userPartition = extras?.userPartition ?? 'persist:nova-browser-user'
   const host = createBrowserSessionHost({
     resolveWorkspaceKey: (sessionId) => (sessionId.startsWith('sess') ? 'ws_a' : null),
     lookupGuest: (id) => guests.get(id),
+    isGuestOfPartition: (id, partition) =>
+      extras?.guestPartitions?.get(id) === partition,
     delay: clock.delay,
     control,
     previewGrants: extras?.previewGrants,
     readDisplayScale: extras?.readDisplayScale,
+    userPartition,
     onSnapshot: (snapshot) => {
       snapshots.push(snapshot)
     },
     onGuestMount: (snapshot) => {
       mounts.push(snapshot)
-    }
+    },
   })
   return { host, snapshots, mounts, clock }
 }
@@ -1302,6 +1308,166 @@ describe('BrowserSessionHost 生命周期', () => {
     await expect(opening).resolves.toMatchObject({ status: 'not_applied', code: 'cancelled' })
     expect(grants.inspect()).toEqual([])
     expect(harness.host.livePageCount()).toBe(0)
+  })
+})
+
+
+function latestOpeningBrowserId(harness: ReturnType<typeof createHarness>): string {
+  const pages = harness.snapshots.at(-1)?.pages ?? []
+  const page = [...pages].reverse().find((item) => item.lifecycle === 'opening') ?? pages.at(-1)
+  if (!page) throw new Error('没有待挂载页面')
+  return page.browserId
+}
+
+describe('BrowserSessionHost 用户作用域页面', () => {
+  it('无会话可打开用户页：跳过工作区与域名确认，生而为用户持有', async () => {
+    const guest = new FakeGuest({ id: 51, url: '' })
+    guest.loading = true
+    // 域名确认一律拒绝的 store 也拦不住用户手输
+    const denying: PreviewGrantStore = {
+      confirm: async () => ({ ok: false, code: 'invalid_request', detail: '拒绝一切' }),
+      activate: () => {},
+      release: () => {},
+      grantedOrigins: () => [],
+      inspect: () => []
+    }
+    const harness = createHarness(new Map([[51, guest]]), undefined, {
+      previewGrants: denying,
+      guestPartitions: new Map([[51, 'persist:nova-browser-user']])
+    })
+    const opening = harness.host.open({ url: 'https://example.com/private-lan' }, { sessionId: null })
+    await Promise.resolve()
+    const browserId = latestOpeningBrowserId(harness)
+    const attached = await harness.host.attachUserGuest(browserId, 51)
+    expect(attached.status).toBe('applied')
+    const opened = await opening
+    expect(opened).toMatchObject({
+      status: 'applied',
+      page: { browserId, sessionId: null, control: { holder: 'user' } }
+    })
+    const mount = harness.mounts.at(-1)!.guests[0]!
+    expect(mount.partition).toBe('persist:nova-browser-user')
+    expect(mount.sessionId).toBeNull()
+  })
+
+  it('attachUserGuest 校验 partition 归属，配错拒绝绑定', async () => {
+    const guest = new FakeGuest({ id: 52, url: '' })
+    const harness = createHarness(new Map([[52, guest]]), undefined, {
+      guestPartitions: new Map([[52, 'persist:nova-browser-slot-0']])
+    })
+    const opening = harness.host.open({ url: 'https://example.com' }, { sessionId: null })
+    await Promise.resolve()
+    const browserId = latestOpeningBrowserId(harness)
+    const rejected = await harness.host.attachUserGuest(browserId, 52)
+    expect(rejected).toMatchObject({ status: 'not_applied', code: 'unavailable' })
+    expect(harness.host.inspectBinding(browserId)?.webContentsId).toBeNull()
+    void opening
+  })
+
+  it('会话页面不能走用户配对上报；AI 会话快照看不到用户页', async () => {
+    const guest = new FakeGuest({ id: 53, url: '' })
+    guest.loading = true
+    const harness = createHarness(new Map([[53, guest]]))
+    const browserId = await openReady(harness, 53)
+    expect(await harness.host.attachUserGuest(browserId, 53)).toMatchObject({
+      status: 'not_applied',
+      code: 'not_owner'
+    })
+    // 全量快照含用户页（界面用），AI 会话快照只含会话页
+    const userOpening = harness.host.open({ url: 'https://example.net' }, { sessionId: null })
+    await Promise.resolve()
+    const userBrowserId = latestOpeningBrowserId(harness)
+    void userBrowserId
+    const full = await harness.host.listPages({ sessionId: null }, { sessionId: null })
+    expect(full.status).toBe('applied')
+    if (full.status !== 'applied') return
+    expect(full.snapshot.pages.some((page) => page.sessionId === null)).toBe(true)
+    const sessionList = await harness.host.listPages({ sessionId: 'sess_1' }, { sessionId: 'sess_1' })
+    expect(sessionList.status).toBe('applied')
+    if (sessionList.status !== 'applied') return
+    expect(sessionList.snapshot.pages.some((page) => page.sessionId === null)).toBe(false)
+    void userOpening
+  })
+
+  it('用户页上限独立于 AI 页；到 4 个后拒绝并提示用户上限', async () => {
+    const guests = new Map<number, FakeGuest>()
+    const partitions = new Map<number, string>()
+    for (let i = 0; i < 5; i++) {
+      const guest = new FakeGuest({ id: 60 + i, url: '' })
+      guests.set(60 + i, guest)
+      partitions.set(60 + i, 'persist:nova-browser-user')
+    }
+    const harness = createHarness(guests, undefined, { guestPartitions: partitions })
+    for (let i = 0; i < 4; i++) {
+      const opening = harness.host.open({ url: 'https://example.com/tab' + i }, { sessionId: null })
+      await Promise.resolve()
+      const browserId = latestOpeningBrowserId(harness)
+      await harness.host.attachUserGuest(browserId, 60 + i)
+      expect(await opening).toMatchObject({ status: 'applied' })
+    }
+    const overflow = await harness.host.open({ url: 'https://example.com/tab5' }, { sessionId: null })
+    expect(overflow).toMatchObject({
+      status: 'not_applied',
+      code: 'resource_limit',
+      detail: '最多同时打开四个页面'
+    })
+  })
+
+  it('revokeSession 不触碰用户页，AI 命令带 authority 不能打开用户页', async () => {
+    const guest = new FakeGuest({ id: 70, url: '' })
+    guest.loading = true
+    const harness = createHarness(new Map([[70, guest]]), undefined, {
+      guestPartitions: new Map([[70, 'persist:nova-browser-user']])
+    })
+    const opening = harness.host.open({ url: 'https://example.com' }, { sessionId: null })
+    await Promise.resolve()
+    const browserId = latestOpeningBrowserId(harness)
+    await harness.host.attachUserGuest(browserId, 70)
+    await opening
+
+    harness.host.revokeSession('sess_1')
+    expect(harness.host.inspectBinding(browserId)?.webContentsId).toBe(70)
+    expect(latestLifecycle(harness.snapshots, browserId)).toBe('ready')
+
+    const aiOpen = await harness.host.open({ url: 'https://example.com' }, {
+      sessionId: null,
+      authority: { sessionId: 'sess_1', runId: 'run_1', resourceOwnerRunId: 'run_1', toolCallId: 'tc_1' }
+    })
+    expect(aiOpen).toMatchObject({ status: 'not_applied', code: 'invalid_request' })
+  })
+
+  it('用户页导航不走域名确认', async () => {
+    const guest = new FakeGuest({ id: 71, url: 'https://example.com' })
+    const denying: PreviewGrantStore = {
+      confirm: async () => ({ ok: false, code: 'invalid_request', detail: '拒绝一切' }),
+      activate: () => {},
+      release: () => {},
+      grantedOrigins: () => [],
+      inspect: () => []
+    }
+    const harness = createHarness(new Map([[71, guest]]), undefined, {
+      previewGrants: denying,
+      guestPartitions: new Map([[71, 'persist:nova-browser-user']])
+    })
+    const opening = harness.host.open({ url: 'https://example.com' }, { sessionId: null })
+    await Promise.resolve()
+    const browserId = latestOpeningBrowserId(harness)
+    await harness.host.attachUserGuest(browserId, 71)
+    await opening
+
+    const navigated = await harness.host.navigate(
+      { browserId, action: { kind: 'url', url: 'https://internal.local/admin' } },
+      { sessionId: null }
+    )
+    expect(navigated).toMatchObject({ status: 'applied', page: { url: 'https://internal.local/admin' } })
+
+    const closing = harness.host.close({ browserId }, { sessionId: null })
+    await Promise.resolve()
+    await Promise.resolve()
+    harness.clock.flush(1000)
+    await Promise.resolve()
+    guest.destroy()
+    await expect(closing).resolves.toEqual({ status: 'applied', browserId })
   })
 })
 

@@ -1,5 +1,5 @@
 /**
- * 人工浏览 chrome：标签条、地址栏、导航与加载失败态。
+ * 浏览器页签内容：标签条、地址栏、导航与加载失败态；由右侧面板承载宽度与开合。
  * 接管按钮把控制交还用户并撤销当前世代。
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
@@ -12,15 +12,8 @@ import {
   RefreshIcon,
   StopIcon
 } from '../../components/Icons'
-import {
-  BROWSER_WIDTH_MAX,
-  BROWSER_WIDTH_MIN,
-  useLayoutStore
-} from '../../stores/useLayoutStore'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
-import { useAgentStore } from '../../stores/useAgentStore'
-import { selectSessionIsRunning, useRunStore } from '../../stores/useRunStore'
-import { BROWSER_MAX_LIVE_PAGES } from '../../../shared/browser'
+import { BROWSER_MAX_USER_PAGES, BROWSER_USER_PAGE_CAP_MESSAGE } from '../../../shared/browser'
 import type { BrowserPageProjection } from '../../../shared/browser'
 import { shouldCommitAddressKey } from './addressInput'
 import { pagesForSession, pickFocusedPage } from './sessionFilter'
@@ -28,31 +21,20 @@ import { BrowserTabFavicon } from './BrowserTabFavicon'
 import { useBrowserStore } from './useBrowserStore'
 import './BrowserPanel.css'
 
-export function BrowserPanel(props: {
-  mode: 'split' | 'expanded'
-}): ReactNode {
-  const { mode } = props
+export function BrowserPanel(): ReactNode {
   const sessionId = useWorkspaceStore((state) => state.currentSessionId)
   const snapshot = useBrowserStore((state) => state.snapshot)
   const focusedBrowserId = useBrowserStore((state) => state.focusedBrowserId)
   const lastError = useBrowserStore((state) => state.lastError)
   const composeNewPage = useBrowserStore((state) => state.composeNewPage)
-  const browserWidth = useLayoutStore((state) => state.browserWidth)
   const pages = pagesForSession(snapshot, sessionId)
   const page = pickFocusedPage(pages, focusedBrowserId, snapshot?.activeBrowserId ?? null)
-  const running = useRunStore((state) => selectSessionIsRunning(state, sessionId))
 
   const [draft, setDraft] = useState(page?.url ?? '')
   const [focused, setFocused] = useState(false)
   const composingRef = useRef(false)
   const justEndedRef = useRef(false)
   const addressRef = useRef<HTMLInputElement>(null)
-  const asideRef = useRef<HTMLElement>(null)
-  const [dragging, setDragging] = useState(false)
-  const dragStartX = useRef(0)
-  const dragStartWidth = useRef(0)
-  const latestClientX = useRef(0)
-  const rafId = useRef<number | null>(null)
 
   useEffect(() => {
     if (!focused) setDraft(page?.url ?? '')
@@ -74,75 +56,15 @@ export function BrowserPanel(props: {
   const loading = Boolean(page?.loading && !failed && !loadError)
   const canNavigate = Boolean(page && !failed && page.lifecycle !== 'closing')
 
-  const widthFromClientX = useCallback((clientX: number) => {
-    const delta = dragStartX.current - clientX
-    return Math.min(BROWSER_WIDTH_MAX, Math.max(BROWSER_WIDTH_MIN, dragStartWidth.current + delta))
-  }, [])
-
-  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    dragStartX.current = e.clientX
-    latestClientX.current = e.clientX
-    dragStartWidth.current = useLayoutStore.getState().browserWidth
-    setDragging(true)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-  }, [])
-
-  useEffect(() => {
-    if (!dragging) return
-    const onMove = (e: MouseEvent): void => {
-      latestClientX.current = e.clientX
-      if (rafId.current === null) {
-        rafId.current = requestAnimationFrame(() => {
-          rafId.current = null
-          const el = asideRef.current
-          if (el) el.style.width = `${widthFromClientX(latestClientX.current)}px`
-        })
-      }
-    }
-    const onUp = (): void => {
-      if (rafId.current !== null) {
-        cancelAnimationFrame(rafId.current)
-        rafId.current = null
-      }
-      useLayoutStore.getState().setBrowserWidth(widthFromClientX(latestClientX.current))
-      setDragging(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      if (rafId.current !== null) cancelAnimationFrame(rafId.current)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-  }, [dragging, widthFromClientX])
-
   const displayUrl = focused ? draft : (page?.url || draft)
-  const width = mode === 'split' ? browserWidth : undefined
-  const atPageCap = pages.length >= BROWSER_MAX_LIVE_PAGES
+  // 新页签是用户页面，上限按用户作用域计
+  const userPageCount = pages.filter((item) => item.sessionId === null).length
+  const atPageCap = userPageCount >= BROWSER_MAX_USER_PAGES
+  // 用户页生而为用户持有，不存在接管/交还
+  const showControlButtons = page !== null && page.sessionId !== null
 
   return (
-    <aside
-      ref={asideRef}
-      className={`browser-panel${mode === 'expanded' ? ' browser-panel--expanded' : ''}${dragging ? ' browser-panel--dragging' : ''}`}
-      style={width !== undefined ? { width } : undefined}
-      data-testid="browser-panel"
-      aria-label="内置浏览器"
-    >
-      {mode === 'split' && (
-        <div
-          className="browser-panel__resize"
-          onMouseDown={onResizeMouseDown}
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="调整浏览器宽度"
-        />
-      )}
+    <div className="browser-panel" data-testid="browser-panel" aria-label="内置浏览器">
       <div className="browser-panel__tabs" role="tablist" aria-label="打开的页面">
         {pages.map((item) => (
           <BrowserPageTab
@@ -153,7 +75,7 @@ export function BrowserPanel(props: {
         ))}
         <span data-testid="browser-new-tab">
           <IconButton
-            label={atPageCap ? '最多同时两个页面' : '新建页面'}
+            label={atPageCap ? BROWSER_USER_PAGE_CAP_MESSAGE : '新建页面'}
             icon={<PlusIcon size={14} />}
             variant="ghost"
             size="sm"
@@ -169,26 +91,6 @@ export function BrowserPanel(props: {
         </span>
       </div>
       <header className="browser-panel__chrome">
-        {mode === 'expanded' && (
-          <>
-            <IconButton
-              label="返回对话"
-              icon={<ArrowLeftIcon size={14} />}
-              variant="ghost"
-              size="sm"
-              onClick={() => useLayoutStore.getState().closeBrowserSurface()}
-            />
-            {running && (
-              <IconButton
-                label="停止当前任务"
-                icon={<StopIcon size={14} />}
-                variant="ghost"
-                size="sm"
-                onClick={() => void useAgentStore.getState().cancelExecution()}
-              />
-            )}
-          </>
-        )}
         <IconButton
           label="后退"
           icon={<ArrowLeftIcon size={14} />}
@@ -257,33 +159,35 @@ export function BrowserPanel(props: {
             commitAddress()
           }}
         />
-        <span data-testid="browser-takeover">
-          {page?.control.holder === 'user' ? (
-            <IconButton
-              label="交还 AI 控制"
-              icon={<HandIcon size={14} />}
-              variant="ghost"
-              size="sm"
-              isDisabled={!page || page.lifecycle === 'closing'}
-              tooltip="交还后 AI 需重新观察页面才能继续操作"
-              onClick={() => void useBrowserStore.getState().releaseFocused()}
-            />
-          ) : (
-            <IconButton
-              label="接管页面"
-              icon={<HandIcon size={14} />}
-              variant="ghost"
-              size="sm"
-              isDisabled={!page || page.lifecycle === 'closing'}
-              tooltip={
-                page?.control.holder === 'agent'
-                  ? '停止 AI 操作并接管页面'
-                  : '接管页面'
-              }
-              onClick={() => void useBrowserStore.getState().claimFocused()}
-            />
-          )}
-        </span>
+        {showControlButtons && (
+          <span data-testid="browser-takeover">
+            {page?.control.holder === 'user' ? (
+              <IconButton
+                label="交还 AI 控制"
+                icon={<HandIcon size={14} />}
+                variant="ghost"
+                size="sm"
+                isDisabled={!page || page.lifecycle === 'closing'}
+                tooltip="交还后 AI 需重新观察页面才能继续操作"
+                onClick={() => void useBrowserStore.getState().releaseFocused()}
+              />
+            ) : (
+              <IconButton
+                label="接管页面"
+                icon={<HandIcon size={14} />}
+                variant="ghost"
+                size="sm"
+                isDisabled={!page || page.lifecycle === 'closing'}
+                tooltip={
+                  page?.control.holder === 'agent'
+                    ? '停止 AI 操作并接管页面'
+                    : '接管页面'
+                }
+                onClick={() => void useBrowserStore.getState().claimFocused()}
+              />
+            )}
+          </span>
+        )}
         <IconButton
           label="关闭页面"
           icon={<CloseIcon size={14} />}
@@ -335,7 +239,7 @@ export function BrowserPanel(props: {
           <div className="browser-panel__empty">在地址栏输入网址开始浏览</div>
         )}
       </div>
-    </aside>
+    </div>
   )
 }
 

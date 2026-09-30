@@ -44,8 +44,6 @@ describe('useLayoutStore', () => {
     expect(s.reviewTarget).toBeNull()
     expect(s.inspectorSurface).toBe('standard')
     expect(s.planTarget).toBeNull()
-    expect(s.browserSurfaceOpen).toBe(false)
-    expect(s.browserWidth).toBe(480)
   })
 
   it('计划视图复用 Inspector 并在关闭后恢复此前 surface', () => {
@@ -139,12 +137,7 @@ describe('useLayoutStore', () => {
     useLayoutStore.getState().setInspectorWidth(100)
     expect(useLayoutStore.getState().inspectorWidth).toBe(320)
     useLayoutStore.getState().setInspectorWidth(999)
-    expect(useLayoutStore.getState().inspectorWidth).toBe(640)
-
-    useLayoutStore.getState().setBrowserWidth(100)
-    expect(useLayoutStore.getState().browserWidth).toBe(360)
-    useLayoutStore.getState().setBrowserWidth(999)
-    expect(useLayoutStore.getState().browserWidth).toBe(720)
+    expect(useLayoutStore.getState().inspectorWidth).toBe(720)
   })
 
   it('selectReviewFile：有 target 时更新 filePath；null 时 no-op', () => {
@@ -173,7 +166,6 @@ describe('useLayoutStore', () => {
     expect(localStorage.getItem('nova.layout.inspectorTab')).toBe('files')
     expect(localStorage.getItem('nova.layout.inspectorOpen')).toBeNull()
     expect(localStorage.getItem('nova.layout.reviewTarget')).toBeNull()
-    expect(localStorage.getItem('nova.layout.browserSurfaceOpen')).toBeNull()
 
     // 模拟重启：仅恢复可持久化字段；open / reviewTarget 回到默认
     useLayoutStore.setState({
@@ -194,18 +186,44 @@ describe('useLayoutStore', () => {
     expect(s.reviewTarget).toBeNull()
   })
 
-  it('浏览器表面开合不影响 Inspector 默认宽度，且不持久化开合', () => {
+  it('浏览器页签：打开切页签不持久化，计划表面先回标准，再点收起面板', () => {
     expect(useLayoutStore.getState().inspectorWidth).toBe(420)
-    useLayoutStore.getState().openBrowserSurface()
+    useLayoutStore.getState().openBrowserPane(false)
     expect(useLayoutStore.getState()).toMatchObject({
-      browserSurfaceOpen: true,
-      inspectorWidth: 420,
-      inspectorOpen: false
+      inspectorOpen: true,
+      inspectorTab: 'browser',
+      inspectorWidth: 420
     })
-    useLayoutStore.getState().setBrowserWidth(500)
-    expect(localStorage.getItem('nova.layout.browserWidth')).toBe('500')
-    useLayoutStore.getState().closeBrowserSurface()
-    expect(useLayoutStore.getState().browserSurfaceOpen).toBe(false)
-    expect(useLayoutStore.getState().inspectorWidth).toBe(420)
+    // browser 页签不写持久化：重启不自动回到浏览器
+    expect(localStorage.getItem('nova.layout.inspectorTab')).toBeNull()
+
+    // 计划表面没有页签条，打开浏览器先回标准表面
+    useLayoutStore.getState().setInspectorTab('files')
+    useLayoutStore.getState().openPlan({ sessionId: 's1', messageId: 'm1', toolCallId: 'p1' })
+    useLayoutStore.getState().openBrowserPane(false)
+    expect(useLayoutStore.getState()).toMatchObject({
+      inspectorOpen: true,
+      inspectorTab: 'browser',
+      inspectorSurface: 'standard',
+      planTarget: null
+    })
+
+    useLayoutStore.getState().toggleBrowserPane(false)
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    useLayoutStore.getState().toggleBrowserPane(false)
+    expect(useLayoutStore.getState()).toMatchObject({
+      inspectorOpen: true,
+      inspectorTab: 'browser'
+    })
+
+    // 学习表面读写自己那组状态
+    useLayoutStore.getState().openBrowserPane(true)
+    expect(useLayoutStore.getState()).toMatchObject({
+      learnInspectorOpen: true,
+      learnInspectorTab: 'browser',
+      inspectorTab: 'browser'
+    })
+    useLayoutStore.getState().toggleBrowserPane(true)
+    expect(useLayoutStore.getState().learnInspectorOpen).toBe(false)
   })
 })

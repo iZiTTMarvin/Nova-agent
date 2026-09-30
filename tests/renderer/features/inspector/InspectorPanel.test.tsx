@@ -25,6 +25,10 @@ vi.mock('../../../../src/renderer/features/inspector/PlanInspectorView', () => (
   PlanInspectorView: () => <div data-testid="plan-inspector" />
 }))
 
+vi.mock('../../../../src/renderer/features/browser/BrowserPanel', () => ({
+  BrowserPanel: () => <div data-testid="browser-panel" />
+}))
+
 /** 受控 rAF：队列手动 flush，用于断言“每帧最多写一次宽度” */
 function installControllableRaf() {
   const queue = new Map<number, FrameRequestCallback>()
@@ -136,7 +140,7 @@ describe('InspectorPanel', () => {
     renderer.unmount()
   })
 
-  it('拖拽达到边界时宽度仍被 clamp 在最小/最大值内', () => {
+  it('拖拽达到边界时宽度仍被 clamp 在最小/最大值内，浏览器页签下限更宽', () => {
     installControllableRaf()
     const renderer = renderDom(<InspectorPanel />)
     act(() => {
@@ -152,7 +156,7 @@ describe('InspectorPanel', () => {
       window.dispatchEvent(new MouseEvent('mouseup'))
     })
     const finalWidth = useLayoutStore.getState().inspectorWidth
-    expect(finalWidth).toBe(640)
+    expect(finalWidth).toBe(720)
 
     act(() => {
       handle!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 800 }))
@@ -162,6 +166,19 @@ describe('InspectorPanel', () => {
       window.dispatchEvent(new MouseEvent('mouseup'))
     })
     expect(useLayoutStore.getState().inspectorWidth).toBe(320)
+
+    // 浏览器页签激活时拖拽下限抬到 360
+    act(() => {
+      useLayoutStore.getState().openBrowserPane(false)
+    })
+    act(() => {
+      handle!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 800 }))
+    })
+    act(() => {
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 2000 }))
+      window.dispatchEvent(new MouseEvent('mouseup'))
+    })
+    expect(useLayoutStore.getState().inspectorWidth).toBe(360)
     renderer.unmount()
   })
 

@@ -29,6 +29,3 @@
   flex-direction: column;
 }
 
-.app-workspace__main[hidden] {
-  display: none;
-}

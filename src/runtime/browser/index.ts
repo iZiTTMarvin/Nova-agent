@@ -19,7 +19,8 @@ import type {
 } from '../../shared/browser'
 
 export interface BrowserCommandContext {
-  readonly sessionId: string
+  /** null = 用户作用域（界面手动浏览）；AI 工具面构造的 context 必须携带会话。 */
+  readonly sessionId: string | null
   readonly authority?: BrowserAuthority
   readonly abortSignal?: AbortSignal
 }

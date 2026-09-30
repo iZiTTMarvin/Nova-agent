@@ -4,12 +4,13 @@ import type {
   BrowserSurfaceSnapshot
 } from '../../../shared/browser'
 
+/** 界面可见页面 = 当前会话的页面 + 用户作用域页面（不随会话切换消失）。 */
 export function pagesForSession(
   snapshot: BrowserSurfaceSnapshot | null,
   sessionId: string | null
 ): BrowserPageProjection[] {
-  if (!snapshot || !sessionId) return []
-  return snapshot.pages.filter((page) => page.sessionId === sessionId)
+  if (!snapshot) return []
+  return snapshot.pages.filter((page) => page.sessionId === null || page.sessionId === sessionId)
 }
 
 export function pickFocusedPage(
@@ -34,8 +35,9 @@ export function guestShownInSession(
   sessionId: string | null,
   focusedBrowserId: string | null
 ): BrowserGuestMount | null {
-  if (!sessionId || !focusedBrowserId) return null
+  if (!focusedBrowserId) return null
   return guests.find((guest) =>
-    guest.sessionId === sessionId && guest.browserId === focusedBrowserId
+    (guest.sessionId === null || guest.sessionId === sessionId)
+    && guest.browserId === focusedBrowserId
   ) ?? null
 }

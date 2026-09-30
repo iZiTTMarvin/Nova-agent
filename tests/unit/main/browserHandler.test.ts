@@ -5,6 +5,7 @@ import type { BrowserPort } from '../../../src/runtime/browser'
 import { BROWSER_ENGINE_CAPABILITIES } from '../../../src/shared/browser'
 import {
   BROWSER_ACT,
+  BROWSER_ATTACH,
   BROWSER_CAPTURE,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
@@ -100,6 +101,7 @@ describe('browserHandler 入参校验与转发', () => {
     expect([...mocks.handlers.keys()].sort()).toEqual([
       BROWSER_CLAIM,
       BROWSER_ACT,
+      BROWSER_ATTACH,
       BROWSER_CAPTURE,
       BROWSER_CLOSE,
       BROWSER_GET_SNAPSHOT,

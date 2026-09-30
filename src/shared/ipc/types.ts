@@ -94,11 +94,12 @@ import type { LearningCommandReceipt } from '../learning/command'
 import type {
   ActionOutcome,
   BrowserActIpcParams,
-  BrowserAttachResult,
   BrowserCaptureIpcParams,
   BrowserCaptureResult,
   BrowserObserveIpcParams,
   BrowserObserveResult,
+  BrowserAttachIpcParams,
+  BrowserAttachResult,
   BrowserClaimIpcParams,
   BrowserClaimResult,
   BrowserCloseIpcParams,
@@ -114,6 +115,9 @@ import type {
 } from '../browser'
 import {
   APP_UPDATE_STATE_CHANGED,
+  BROWSER_ACT,
+  BROWSER_ATTACH,
+  BROWSER_CAPTURE,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
   BROWSER_GET_SNAPSHOT,
@@ -122,8 +126,6 @@ import {
   BROWSER_OBSERVE,
   BROWSER_OPEN,
   BROWSER_RELEASE,
-  BROWSER_ACT,
-  BROWSER_CAPTURE,
   BROWSER_SNAPSHOT,
   CHECK_APP_UPDATE,
   DOWNLOAD_APP_UPDATE,
@@ -705,6 +707,10 @@ export interface IpcCommands {
   [BROWSER_RELEASE]: {
     params: BrowserClaimIpcParams
     result: BrowserClaimResult
+  }
+  [BROWSER_ATTACH]: {
+    params: BrowserAttachIpcParams
+    result: BrowserAttachResult
   }
   [BROWSER_OBSERVE]: {
     params: BrowserObserveIpcParams

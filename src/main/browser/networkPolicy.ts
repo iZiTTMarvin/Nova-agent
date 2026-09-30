@@ -7,6 +7,7 @@ import { lookup } from 'node:dns/promises'
 import {
   canonicalizePreviewTarget,
   decideBrowserNetworkRequest,
+  decideUserBrowserNetworkRequest,
   normalizePreviewHostname,
   previewHostnameNeedsResolution,
   type BrowserNetworkRequest,
@@ -265,6 +266,43 @@ export function installBrowserPartitionPolicy(
       return
     }
     void resolveAndDecide(details, sink, resolveHost, callback)
+  })
+  ses.setPermissionCheckHandler(() => false)
+  ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(false)
+    const requestingUrl = details.requestingUrl ?? ''
+    sink.onPermissionDenied({
+      webContentsId: webContents?.id,
+      permission,
+      requestingUrl
+    })
+  })
+  ses.on('will-download', (event, item, webContents) => {
+    event.preventDefault()
+    const url = item.getURL()
+    const filename = item.getFilename()
+    item.cancel()
+    sink.onDownloadDenied({
+      webContentsId: webContents?.id,
+      filename,
+      url
+    })
+  })
+}
+
+/**
+ * 用户持久 partition 的策略：请求只拦云元数据，权限与下载默认拒绝并提示，
+ * 与 AI 槽策略共享「每个 partition 单一 Owner」约束。
+ */
+export function installUserBrowserPartitionPolicy(
+  partition: string,
+  ses: PartitionPolicySession,
+  sink: PartitionPolicySink
+): void {
+  if (installed.has(partition)) return
+  installed.add(partition)
+  ses.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+    callback({ cancel: decideUserBrowserNetworkRequest(details.url) === 'deny' })
   })
   ses.setPermissionCheckHandler(() => false)
   ses.setPermissionRequestHandler((webContents, permission, callback, details) => {
