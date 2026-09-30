@@ -1,11 +1,16 @@
 .skill-card {
-  padding: 12px 14px;
-  border: 1px solid var(--border-warm);
-  border-radius: var(--radius-md);
-  background: var(--bg-input);
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
   display: flex;
   flex-direction: column;
   gap: 6px;
+  transition: background-color var(--transition-fast);
+}
+
+.skill-card:hover {
+  background: color-mix(in srgb, var(--text-primary) 3%, var(--bg-card));
 }
 
 .skill-card__main {
@@ -15,36 +20,27 @@
   flex-wrap: wrap;
 }
 
+/* 技能名是主标题，不再用品牌蓝 + 下划线伪装成链接 */
 .skill-card__name {
   font-weight: 600;
   font-size: 0.92rem;
-  color: var(--color-brand);
+  color: var(--text-primary);
   text-align: left;
 }
 
-.skill-card__name:hover {
-  text-decoration: underline;
-}
-
 .skill-card__badge {
-  font-size: 0.7rem;
-  padding: 2px 8px;
+  font-size: 0.68rem;
+  padding: 1px 8px;
   border-radius: 999px;
   font-weight: 500;
-  border: 1px solid var(--border-warm);
+  line-height: 1.6;
   color: var(--text-secondary);
-  background: var(--bg-card);
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
-.skill-card__badge--builtin {
-  border-color: rgba(201, 100, 66, 0.35);
-  color: var(--color-brand);
-  background: var(--color-brand-dim);
-}
-
+.skill-card__badge--builtin,
 .skill-card__badge--third_party_claude {
-  border-color: var(--border-brand);
-  color: #2563eb;
+  color: var(--color-brand);
   background: var(--surface-brand);
 }
 
@@ -59,9 +55,9 @@
 }
 
 .skill-card__desc {
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   color: var(--text-muted);
-  line-height: 1.45;
+  line-height: 1.55;
   margin: 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -80,12 +76,12 @@
 
 .skill-card__diagnostic {
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--color-warning);
   line-height: 1.4;
 }
 
 .skill-card__actions {
   display: flex;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 6px;
+  margin-top: 6px;
 }

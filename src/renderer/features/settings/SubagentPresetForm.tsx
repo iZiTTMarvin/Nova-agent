@@ -1,7 +1,6 @@
 import React, { useMemo } from 'react'
 import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
-import { Selector } from '@astryxdesign/core/Selector'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
@@ -17,7 +16,7 @@ import type {
   SubagentPresetLocation,
   SubagentToolOption
 } from '../../../shared/settings/types'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
+import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
 
 export interface SubagentPresetDraft {
   preset: SubAgentSpec
@@ -156,7 +155,7 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
             label="保存范围"
             description={draft.location === 'project' ? '仅对当前工作区生效；同 ID 会覆盖全局配置。' : '所有工作区均可使用。'}
             end={
-              <Selector
+              <SettingsSelect
                 label="保存范围"
                 isLabelHidden
                 value={draft.location}
@@ -182,7 +181,7 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
             ? `派遣时采用默认模型${registry ? `（当前：${getActiveModelDisplayName(registry) ?? '不可用'}）` : ''}`
             : '该配置始终使用选中的模型。'}
           end={
-            <Selector
+            <SettingsSelect
               label="使用模型"
               isLabelHidden
               value={modelValue(draft.preset)}
@@ -229,7 +228,7 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
               ? '该模型尚未声明可选强度，只能使用自动。'
               : '仅展示模型注册表明确声明的选项。'}
           end={
-            <Selector
+            <SettingsSelect
               label="思考强度"
               isLabelHidden
               value={knownEfforts.includes(currentEffort) ? currentEffort : 'auto'}

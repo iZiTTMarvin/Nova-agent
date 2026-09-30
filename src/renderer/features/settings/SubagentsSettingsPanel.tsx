@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
-import { Selector } from '@astryxdesign/core/Selector'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { TextInput } from '@astryxdesign/core/TextInput'
@@ -26,6 +25,7 @@ import {
   type SubagentFieldErrors,
   type SubagentPresetDraft
 } from './SubagentPresetForm'
+import { SettingsSelect } from './settingsKit'
 
 interface AbilityTemplate {
   id: string
@@ -442,17 +442,6 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel subagents-settings">
-      <div className="settings-panel__toolbar">
-        {route.kind !== 'list' && (
-          <Button label="返回子代理列表" variant="ghost" size="sm" onClick={() => setRoute({ kind: 'list' })} isDisabled={saving}>
-            返回列表
-          </Button>
-        )}
-        <Button label="创建子代理" variant="primary" size="sm" onClick={beginCreate} isDisabled={saving}>
-          创建子代理
-        </Button>
-      </div>
-
       {diagnostics.length > 0 && (
         <div className="subagent-diagnostics" role="alert">
           <strong>部分配置无法读取</strong>
@@ -467,6 +456,15 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
       <div className="settings-split subagent-workspace">
         <aside className="settings-split__list subagent-list" aria-label="子代理列表">
+          <div className="settings-split__header">
+            <span className="settings-split__header-title">
+              全部子代理
+              {!loading && <span className="settings-split__count">{items.length}</span>}
+            </span>
+            <Button label="创建子代理" variant="secondary" size="sm" onClick={beginCreate} isDisabled={saving}>
+              + 新建
+            </Button>
+          </div>
           {loading && (
             <div className="subagent-list__skeleton" aria-busy="true" aria-label="加载子代理">
               <div className="subagent-list__skeleton-row" />
@@ -481,29 +479,38 @@ export const SubagentsSettingsPanel: React.FC = () => {
               <Button label="创建第一个子代理" variant="secondary" size="sm" onClick={beginCreate}>开始创建</Button>
             </div>
           )}
-          {items.map(item => (
-            <div key={item.id} className={`subagent-list__row${selected?.id === item.id ? ' subagent-list__row--active' : ''}`}>
-              <button
-                type="button"
-                aria-label={item.name}
-                className="settings-split__item subagent-list__card"
-                onClick={() => setRoute({ kind: 'detail', id: item.id })}
-              >
-                <span className="settings-split__item-title">{item.name}</span>
-                <span className="settings-split__item-meta">
-                  {item.builtin ? '内置' : item.origin === 'project' ? '项目' : '全局'}
-                  {!item.enabled && ' · 已禁用'}
-                </span>
-              </button>
-              {!item.builtin && (
-                <Switch
-                  label={`${item.enabled ? '禁用' : '启用'} ${item.name}`}
-                  isLabelHidden
-                  value={item.enabled}
-                  onChange={enabled => void toggleEnabled(item, enabled)}
-                  isDisabled={saving || actionId === item.id}
-                />
-              )}
+          {[
+            { key: 'custom', title: '自定义', group: items.filter(item => !item.builtin) },
+            { key: 'builtin', title: '内置', group: items.filter(item => item.builtin) }
+          ].map(({ key, title, group }) => group.length > 0 && (
+            <div key={key} className="subagent-list__group">
+              <div className="settings-split__group-title">{title}</div>
+              {group.map(item => (
+                <div key={item.id} className={`subagent-list__row${selected?.id === item.id ? ' subagent-list__row--active' : ''}`}>
+                  <button
+                    type="button"
+                    aria-label={item.name}
+                    aria-current={selected?.id === item.id ? 'true' : undefined}
+                    className="settings-split__item subagent-list__card"
+                    onClick={() => setRoute({ kind: 'detail', id: item.id })}
+                  >
+                    <span className="settings-split__item-title">{item.name}</span>
+                    <span className="settings-split__item-meta">
+                      {item.builtin ? '内置' : item.origin === 'project' ? '项目' : '全局'}
+                      {!item.enabled && ' · 已禁用'}
+                    </span>
+                  </button>
+                  {!item.builtin && (
+                    <Switch
+                      label={`${item.enabled ? '禁用' : '启用'} ${item.name}`}
+                      isLabelHidden
+                      value={item.enabled}
+                      onChange={enabled => void toggleEnabled(item, enabled)}
+                      isDisabled={saving || actionId === item.id}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
           ))}
         </aside>
@@ -523,6 +530,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                 <h3>确定用途与身份</h3>
                 <p>模板只生成安全初始值，下一步仍可逐项调整。</p>
               </header>
+              <div className="subagent-wizard__fields">
               <TextInput
                 label="显示名称"
                 value={draft.preset.name}
@@ -559,7 +567,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                 width="100%"
               />
               <FieldError message={fieldErrors.description} />
-              <Selector
+              <SettingsSelect
                 label="能力模板"
                 value={template.id}
                 options={templates.map(candidate => ({ value: candidate.id, label: candidate.name }))}
@@ -568,6 +576,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                 width="100%"
               />
               <p className="settings-help">{template.description}</p>
+              </div>
               <footer className="subagent-actions">
                 <Button label="取消创建" variant="secondary" onClick={() => setRoute({ kind: 'list' })}>取消</Button>
                 <Button label="下一步" variant="primary" onClick={continueCreate}>下一步</Button>
@@ -617,15 +626,27 @@ export const SubagentsSettingsPanel: React.FC = () => {
               </header>
               <div className="subagent-detail-scroll">
                 <section className="subagent-capability-summary">
-                  <h4>模型策略</h4>
-                  <p>{selected.model ? '使用固定模型绑定' : '派遣时跟随默认模型'}</p>
-                  <h4>工具与权限</h4>
-                  <div className="subagent-chip-list">{selected.allowedTools.map(tool => <code key={tool}>{tool}</code>)}</div>
-                  <p>{selected.allowedTools.some(name => ['edit', 'write', 'bash', 'shell_session'].includes(name)) ? '最高可请求工作区写入权限' : '只读权限上限'}</p>
+                  <dl className="subagent-facts">
+                    <div className="subagent-fact">
+                      <dt>模型策略</dt>
+                      <dd>{selected.model ? '使用固定模型绑定' : '派遣时跟随默认模型'}</dd>
+                    </div>
+                    <div className="subagent-fact">
+                      <dt>工具与权限</dt>
+                      <dd>
+                        <div className="subagent-chip-list">{selected.allowedTools.map(tool => <code key={tool}>{tool}</code>)}</div>
+                        <span className="subagent-fact__note">
+                          {selected.allowedTools.some(name => ['edit', 'write', 'bash', 'shell_session'].includes(name)) ? '最高可请求工作区写入权限' : '只读权限上限'}
+                        </span>
+                      </dd>
+                    </div>
+                    <div className="subagent-fact">
+                      <dt>运行限制</dt>
+                      <dd>{selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}{selected.contextWindow ? ` · 上下文 ${selected.contextWindow} tokens` : ''}</dd>
+                    </div>
+                  </dl>
                   <h4>System prompt</h4>
                   <pre>{selected.prompt}</pre>
-                  <h4>运行限制</h4>
-                  <p>{selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}{selected.contextWindow ? ` · 上下文 ${selected.contextWindow} tokens` : ''}</p>
                 </section>
               </div>
             </div>

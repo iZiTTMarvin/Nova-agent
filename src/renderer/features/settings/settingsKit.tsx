@@ -2,12 +2,20 @@
  * 设置页原语 —— 页面 = 命名分组列表；分组 = 行列表（rows）或裸块（bare）；
  * 行 = 左侧 label/描述 + 右侧限宽控件。行组无边到边、hairline 分隔。
  */
-import type { ReactNode } from 'react'
-import { Divider } from '@astryxdesign/core/Divider'
+import type { ComponentProps, ReactNode } from 'react'
 import { Heading } from '@astryxdesign/core/Heading'
 import { Item } from '@astryxdesign/core/Item'
+import { Selector } from '@astryxdesign/core/Selector'
 import { Text } from '@astryxdesign/core/Text'
 import './settingsKit.css'
+
+/**
+ * 设置页统一下拉：Selector 默认把选中项叠在触发器上展开，会盖住触发器和相邻行；
+ * 固定为在触发器下方展开，所有设置面板必须经此入口使用下拉。
+ */
+export function SettingsSelect(props: ComponentProps<typeof Selector>) {
+  return <Selector placement="below" {...props} />
+}
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ')
@@ -43,7 +51,6 @@ export function SettingsSection(props: {
           {props.action != null && <div className="settings-section__action">{props.action}</div>}
         </div>
       )}
-      {hasHeader && <Divider />}
       <div className={props.variant === 'bare' ? 'settings-section__body' : 'settings-rows'}>
         {props.children}
       </div>

@@ -107,14 +107,17 @@ export const RulesSettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel">
-      <div className="settings-panel__toolbar">
-        <Button label={rulesI18n.create} variant="primary" size="sm" onClick={handleCreate}>
-          {rulesI18n.create}
-        </Button>
-      </div>
-
       <div className="settings-split">
         <aside className="settings-split__list">
+          <div className="settings-split__header">
+            <span className="settings-split__header-title">
+              规则文件
+              {!loading && <span className="settings-split__count">{rules.length}</span>}
+            </span>
+            <Button label={rulesI18n.create} variant="secondary" size="sm" onClick={handleCreate}>
+              {rulesI18n.create}
+            </Button>
+          </div>
           {loading && <p className="settings-panel__muted">加载中…</p>}
           {!loading && rules.length === 0 && (
             <p className="settings-panel__muted">{rulesI18n.empty}</p>
@@ -140,6 +143,12 @@ export const RulesSettingsPanel: React.FC = () => {
         <div className="settings-split__editor">
           {selected ? (
             <>
+              <div className="settings-editor__head">
+                <span className="settings-editor__path" title={selected.absolutePath}>{selected.relativePath}</span>
+                <span className="settings-split__count">
+                  {selected.scope === 'workspace' ? rulesI18n.scopeWorkspace : rulesI18n.scopeGlobal}
+                </span>
+              </div>
               <TextArea
                 label="规则文件内容"
                 isLabelHidden

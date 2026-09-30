@@ -5,7 +5,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  gap: 32px;
+  gap: 28px;
 }
 
 .settings-section {
@@ -29,6 +29,13 @@
   min-width: 0;
 }
 
+.settings-section__title-stack h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
 .settings-section__action {
   display: flex;
   align-items: center;
@@ -36,10 +43,14 @@
   flex-shrink: 0;
 }
 
+/* 行组渲染为一张圆角描边卡片，行间以 hairline 分隔 */
 .settings-rows {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   container: settings-rows / inline-size;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
 }
 
 .settings-rows > * + * {
@@ -53,20 +64,20 @@
 
 /* 只对首尾行还外圆角：不用 overflow 裁剪，避免切掉焦点环 */
 .settings-rows > *:first-child {
-  border-start-start-radius: var(--radius-md);
-  border-start-end-radius: var(--radius-md);
+  border-start-start-radius: var(--radius-lg);
+  border-start-end-radius: var(--radius-lg);
 }
 
 .settings-rows > *:last-child {
-  border-end-start-radius: var(--radius-md);
-  border-end-end-radius: var(--radius-md);
+  border-end-start-radius: var(--radius-lg);
+  border-end-end-radius: var(--radius-lg);
 }
 
 .settings-rows > .settings-field {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 12px;
-  padding-block: 12px;
+  padding: 14px 16px;
 }
 
 .settings-rows > .settings-field.settings-actions {

@@ -10,9 +10,8 @@
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
-import { Selector } from '@astryxdesign/core/Selector'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
+import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
 import type {
   PermissionBehavior,
   PermissionRuleDto,
@@ -110,7 +109,7 @@ export const PermissionsSettingsPanel: React.FC = () => {
           >
             <SettingsField>
               <div className="perm-rule-form">
-                <Selector
+                <SettingsSelect
                   label="工具"
                   isLabelHidden
                   options={[
@@ -124,7 +123,7 @@ export const PermissionsSettingsPanel: React.FC = () => {
                   width={120}
                   isDisabled={adding}
                 />
-                <Selector
+                <SettingsSelect
                   label="行为"
                   isLabelHidden
                   options={[
@@ -136,7 +135,7 @@ export const PermissionsSettingsPanel: React.FC = () => {
                   width={100}
                   isDisabled={adding}
                 />
-                <Selector
+                <SettingsSelect
                   label="范围"
                   isLabelHidden
                   options={[

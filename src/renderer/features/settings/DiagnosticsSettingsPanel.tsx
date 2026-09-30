@@ -48,7 +48,7 @@ export const DiagnosticsSettingsPanel: React.FC = () => {
             </Button>
           }
         />
-        {resultText ? <div className="settings-hint">{resultText}</div> : null}
+        {resultText ? <div className="settings-status">{resultText}</div> : null}
       </SettingsSection>
     </SettingsPage>
   )

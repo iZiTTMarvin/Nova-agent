@@ -4,14 +4,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
-import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
+import { Switch } from '@astryxdesign/core/Switch'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useSkillsStore } from '../skills/store'
 import { SkillCard } from '../skills/SkillCard'
 import { CreateSkillDialog } from '../skills/CreateSkillDialog'
 import { SkillImportBar } from '../skills/SkillImportBar'
 import { skillsI18n } from '../skills/i18n'
-import { SettingsPage, SettingsSection } from './settingsKit'
+import { SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { SkillCatalogDiagnostic } from '../../../shared/skills/types'
 
@@ -137,13 +137,18 @@ export const SkillsSettingsPanel: React.FC = () => {
 
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsSection title="第三方技能" variant="bare">
-            <CheckboxInput
+          <SettingsSection title="第三方技能">
+            <SettingsRow
               label={skillsI18n.loadThirdParty}
               description={skillsI18n.loadThirdPartyHint}
-              value={settings?.loadThirdPartySkills ?? true}
-              onChange={checked => void handleThirdPartyToggle(checked)}
-              width="100%"
+              end={
+                <Switch
+                  label={skillsI18n.loadThirdParty}
+                  isLabelHidden
+                  value={settings?.loadThirdPartySkills ?? true}
+                  onChange={checked => void handleThirdPartyToggle(checked)}
+                />
+              }
             />
           </SettingsSection>
 

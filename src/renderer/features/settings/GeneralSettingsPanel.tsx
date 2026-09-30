@@ -8,7 +8,6 @@ import React, { useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
-import { Selector } from '@astryxdesign/core/Selector'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -19,7 +18,7 @@ import {
   GET_APP_UPDATE_STATE,
   INSTALL_APP_UPDATE,
 } from '../../../shared/ipc/channels'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
+import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
 import type { AppUpdateSnapshot } from '../../../shared/update'
@@ -91,6 +90,7 @@ export const GeneralSettingsPanel: React.FC = () => {
   const theme = useSettingsStore(state => state.theme)
   const setTheme = useSettingsStore(state => state.setTheme)
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
+  const [shellDraft, setShellDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
@@ -123,6 +123,7 @@ export const GeneralSettingsPanel: React.FC = () => {
     try {
       const s = await window.api.invoke('settings:get')
       setSettings(s)
+      setShellDraft(s.defaultShell)
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载设置失败')
@@ -161,6 +162,14 @@ export const GeneralSettingsPanel: React.FC = () => {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Shell 是自由文本：本地草稿，失焦或回车才落盘，避免每敲一个字符就写一次 settings.json
+  const commitShell = (): void => {
+    if (!settings) return
+    const next = shellDraft.trim()
+    if (next === settings.defaultShell) return
+    void update('defaultShell', next)
   }
 
   const selectDefaultPermissionMode = (value: NovaSettingsDto['defaultPermissionMode']): void => {
@@ -204,7 +213,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               label="默认运行模式"
               description="新建会话时使用的默认行为模式。"
               end={
-                <Selector
+                <SettingsSelect
                   label="默认运行模式"
                   isLabelHidden
                   options={MODE_OPTIONS}
@@ -219,7 +228,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               label="默认权限模式"
               description="新建会话使用；已有会话保留自己的权限模式。"
               end={
-                <Selector
+                <SettingsSelect
                   label="默认权限模式"
                   isLabelHidden
                   options={PERMISSION_OPTIONS}
@@ -268,18 +277,26 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
           </SettingsSection>
 
-          <SettingsSection title="Shell">
-            <SettingsField>
-              <TextInput
-                label="默认 Shell（bash 工具）"
-                description="为空时使用系统默认 shell。"
-                value={settings.defaultShell}
-                onChange={value => void update('defaultShell', value)}
-                placeholder="留空使用系统默认（如 cmd / bash / zsh）"
-                isDisabled={saving}
-                width="100%"
-              />
-            </SettingsField>
+          <SettingsSection title="终端">
+            <SettingsRow
+              label="默认 Shell"
+              description="bash 工具使用的 shell，留空时使用系统默认。修改后按回车或移开焦点保存。"
+              end={
+                <TextInput
+                  label="默认 Shell"
+                  isLabelHidden
+                  value={shellDraft}
+                  onChange={value => setShellDraft(value)}
+                  onBlur={() => commitShell()}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') commitShell()
+                  }}
+                  placeholder="系统默认（cmd / bash / zsh）"
+                  isDisabled={saving}
+                  width={260}
+                />
+              }
+            />
             <SettingsRow
               label="持久终端会话"
               description="开启后，长时间运行的命令超时不再被强制终止，而是转为可继续交互的终端会话；关闭后退回超时即终止的行为。"
@@ -324,48 +341,6 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
           </SettingsSection>
 
-          <SettingsSection title="编辑器">
-            <SettingsRow
-              label="编辑器字号（px）"
-              description="范围 8~32。"
-              end={
-                <NumberInput
-                  label="编辑器字号（px）"
-                  isLabelHidden
-                  value={settings.editorFontSize}
-                  onChange={value => void update('editorFontSize', value)}
-                  min={8}
-                  max={32}
-                  isDisabled={saving}
-                  width={110}
-                />
-              }
-            />
-            <SettingsField>
-              <TextInput
-                label="编辑器字体家族"
-                description="CSS font-family 值，多个用逗号分隔。"
-                value={settings.editorFontFamily}
-                onChange={value => void update('editorFontFamily', value)}
-                isDisabled={saving}
-                width="100%"
-              />
-            </SettingsField>
-            <SettingsRow
-              label="Diff 自动展开"
-              description="默认展开文件变更审查区域。"
-              end={
-                <Switch
-                  label="Diff 自动展开"
-                  isLabelHidden
-                  value={settings.diffAutoExpand}
-                  onChange={checked => void update('diffAutoExpand', checked)}
-                  isDisabled={saving}
-                />
-              }
-            />
-          </SettingsSection>
-
           <SettingsSection title="应用更新">
             <SettingsRow
               label="应用版本"
@@ -402,10 +377,16 @@ export const GeneralSettingsPanel: React.FC = () => {
             )}
           </SettingsSection>
 
-          {error && <div className="settings-status settings-status--gap settings-status--error">{error}</div>}
-          {saved && <div className="settings-status settings-status--gap settings-status--ok">已保存</div>}
         </SettingsPage>
       </div>
+      {(error || saved) && (
+        <div
+          className={`settings-toast ${error ? 'settings-toast--error' : 'settings-toast--ok'}`}
+          role={error ? 'alert' : 'status'}
+        >
+          {error ?? '已保存'}
+        </div>
+      )}
       <FullAccessConfirmDialog
         isOpen={confirmFullAccess}
         isSubmitting={saving}

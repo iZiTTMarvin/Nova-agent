@@ -6,10 +6,9 @@ import { Button } from '@astryxdesign/core/Button'
 import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
-import { Selector } from '@astryxdesign/core/Selector'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore, getDefaultLlmRegistry } from '../../stores/useSettingsStore'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
+import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
 import {
   type LlmRegistry,
   type ProviderConfig,
@@ -293,8 +292,8 @@ export const LlmSettingsPanel: React.FC = () => {
     <div className="settings-panel">
       <div className="settings-split">
         {/* 左侧：服务商列表 */}
-        <div className="settings-split__list llm-provider-list">
-          <div className="llm-provider-list__section-title">预设服务商</div>
+        <div className="settings-split__list">
+          <div className="settings-split__group-title">预设服务商</div>
           {PRESET_PROVIDER_IDS.map(presetId => {
             const meta = PRESET_PROVIDERS[presetId]
             const configured = isPresetConfigured(presetId)
@@ -322,7 +321,7 @@ export const LlmSettingsPanel: React.FC = () => {
             )
           })}
 
-          <div className="llm-provider-list__section-title">自定义</div>
+          <div className="settings-split__group-title">自定义</div>
           {customProviders.length === 0 && (
             <p className="llm-provider-list__empty-hint">暂无自定义服务商</p>
           )}
@@ -438,7 +437,7 @@ export const LlmSettingsPanel: React.FC = () => {
                   label="工具调用方式"
                   description="auto 按模型能力自动选择。"
                   end={
-                    <Selector
+                    <SettingsSelect
                       label="工具调用方式"
                       isLabelHidden
                       options={[
@@ -646,7 +645,7 @@ const ModelEntryRow: React.FC<{
           />
           <span className="settings-help">如 128000；留空时按模型 ID 猜测。</span>
 
-          <Selector
+          <SettingsSelect
             label="思考强度"
             options={supportedEfforts.map(value => ({
               value,
@@ -669,7 +668,7 @@ const ModelEntryRow: React.FC<{
               : '控制推理深度；自动由服务商决定。'}
           </span>
 
-          <Selector
+          <SettingsSelect
             label="支持图片"
             options={[
               { value: 'auto', label: '自动（留空）' },
