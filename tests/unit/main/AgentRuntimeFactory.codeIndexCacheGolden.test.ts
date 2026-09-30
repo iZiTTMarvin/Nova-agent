@@ -111,12 +111,18 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
     }
   })
 
-  it('保持改动前的工具面和首条 system message 字节基线', async () => {
+  // 三种开发模式的最终请求字节基线；bash 描述锚定为常量、系统消息行尾统一 LF，
+  // 任何一种模式哈希变化都视为回归，应查装配参数而不是更新期望值
+  it.each([
+    ['default', { toolsHash: '77714e1c6431aad1', systemContentHash: '4140071b7b12bddc' }],
+    ['plan', { toolsHash: '19edee2325f8c00c', systemContentHash: '1ad3f96f6f6e1f14' }],
+    ['compose', { toolsHash: 'bb001897be12b1a9', systemContentHash: '37596dc2f604a3cb' }]
+  ] as const)('保持改动前的工具面和首条 system message 字节基线（%s）', async (mode, expected) => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-code-graph-cache-golden-'))
     roots.push(sessionsDir)
     const workspaceRoot = '/nova-code-graph-cache-golden'
     const store = new SessionStore(sessionsDir)
-    const session = store.create(workspaceRoot)
+    const session = store.create(workspaceRoot, mode)
     let wireBody: Record<string, unknown> | null = null
     const modelClient = createCapturingClient(body => {
       wireBody = body
@@ -154,11 +160,7 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
       expect({
         toolsHash: snapshot.toolsHash,
         systemContentHash: snapshot.messages[0]?.content
-      }).toEqual({
-        // bash 描述锚定为常量、系统消息行尾统一 LF；工具清单变化后重置哈希
-        toolsHash: '77714e1c6431aad1',
-        systemContentHash: '4140071b7b12bddc'
-      })
+      }).toEqual(expected)
     } finally {
       prepared.agentLoop.dispose()
     }

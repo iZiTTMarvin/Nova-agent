@@ -42,6 +42,7 @@ import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestio
 import type { PlanReviewResolution } from '../../shared/planReview'
 import type { ExecutionIdentity, ToolContext } from '../tools/types'
 import { isReadablePlanInWorkspace } from '../plans'
+import { isDevelopmentMode } from '../../shared/session/mode'
 import { isToolDirectlyPresented } from '../code-mode'
 
 import { TurnDispatcher } from './turn'
@@ -652,15 +653,18 @@ export class AgentLoop {
   }
 
   private getCurrentModeInstruction(): string {
+    if (this.modeInstructionProvider) return this.modeInstructionProvider()
+    // 非开发模式的指令由宿主 Binding 注入；这里只拦截绕过 Binding 直接构造 AgentLoop 的装配错误
+    const mode = this.ctx.mode
+    if (!isDevelopmentMode(mode)) {
+      throw new Error(`会话模式 ${mode} 需要宿主注入每轮指令`)
+    }
     const hasReadableActivePlan =
       !!this.ctx.workingDir &&
       isReadablePlanInWorkspace(this.ctx.workingDir, this.activePlanPath)
-    return (
-      this.modeInstructionProvider?.() ??
-      getModeInstruction(this.ctx.mode, {
-        ...(hasReadableActivePlan ? { activePlanPath: this.activePlanPath } : {})
-      })
-    )
+    return getModeInstruction(mode, {
+      ...(hasReadableActivePlan ? { activePlanPath: this.activePlanPath } : {})
+    })
   }
 
   /**

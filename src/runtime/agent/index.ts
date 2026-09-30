@@ -1,11 +1,11 @@
 export { AgentLoop } from './AgentLoop'
 export { EventBus } from './EventBus'
-export type { AgentEvent, AgentEventCallback, AgentState, AgentLoopConfig } from './types'
+export type { AgentEvent, AgentEventCallback, AgentState, AgentLoopConfig, SystemPromptLayers } from './types'
 
 // 主进程公共契约：以下符号被 main/ipc 消费，收敛走 barrel 以与 agent 内部布局解耦。
 // 渲染进程不消费本 barrel（含运行时值会破坏 renderer bundle tree-shaking）。
 export { renderModeToolInventory, renderToolInventory } from './promptBuilder/toolPromptRenderer'
-export { buildStableSystemPrompt, normalizeFrozenSystemPrompt, getStableSystemPrompt } from './promptBuilder/modePrompt'
+export { buildStableSystemPrompt, buildDomainAgentRole, normalizeFrozenSystemPrompt, getStableSystemPrompt } from './promptBuilder/modePrompt'
 export { getHeadlessExecutionInstruction } from './promptBuilder/modeInstruction'
 export type { RecoveryState } from './recovery/RecoveryStateMachine'
 export {

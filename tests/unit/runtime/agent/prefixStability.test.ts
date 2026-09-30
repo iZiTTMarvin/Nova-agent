@@ -6,7 +6,7 @@ import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { MockModelClient } from '../../../../src/test-support/builders/MockModelClient'
 import { renderBaseRules, renderMinimalEngineeringPolicy } from '../../../../src/runtime/agent/promptRenderer'
 import { buildStableSystemPrompt } from '../../../../src/runtime/agent/promptBuilder/modePrompt'
-import type { Mode } from '../../../../src/shared/session/types'
+import type { DevelopmentMode } from '../../../../src/shared/session/mode'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
@@ -31,7 +31,7 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
   })
 
   it('getModeInstruction 为每种模式返回非空文本', () => {
-    const modes: Mode[] = ['plan', 'default', 'compose']
+    const modes: DevelopmentMode[] = ['plan', 'default', 'compose']
     for (const mode of modes) {
       const instruction = getModeInstruction(mode)
       expect(instruction).toBeTruthy()
@@ -160,5 +160,21 @@ describe('前缀稳定性 (缓存 Harness C2)', () => {
     const systemMsg = lastChat?.messages?.find(m => m.role === 'system')
     const systemText = extractTextFromContent(systemMsg?.content ?? '')
     expect(systemText).not.toContain('[当前模式: plan')
+  })
+
+  it('非开发模式且未注入 provider 时本轮失败，模型未收到请求', async () => {
+    const client = new MockModelClient()
+    const loop = new AgentLoop(client, new EventBus(), {
+      permissionManager: new PermissionManager()
+    })
+    loop.setMode('learn')
+
+    const outcome = await loop.sendMessage('讲讲这个项目', agentRoute())
+
+    expect(outcome.status).toBe('failed')
+    if (outcome.status === 'failed') {
+      expect(outcome.error.message).toContain('需要宿主注入每轮指令')
+    }
+    expect(client.getCalls()).toHaveLength(0)
   })
 })

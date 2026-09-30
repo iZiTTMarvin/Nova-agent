@@ -42,6 +42,11 @@ export function buildStableSystemPrompt(options: BuildStableSystemPromptOptions)
   return parts.join('\n')
 }
 
+/** 专用 Agent 的角色层：领域身份加工作区说明，不含开发模式介绍。 */
+export function buildDomainAgentRole(identity: string, workingDir: string): string {
+  return [identity.trim(), '', renderWorkingDirectoryHint(workingDir)].join('\n')
+}
+
 /** 兼容旧 API：返回默认 native 方言 prompt（无工具、无工作区）。 */
 export function getStableSystemPrompt(): string {
   return buildStableSystemPrompt(STABLE_SYSTEM_PROMPT)

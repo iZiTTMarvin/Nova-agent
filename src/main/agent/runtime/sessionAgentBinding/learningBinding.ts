@@ -1,19 +1,23 @@
-import type { SessionAgentBinding } from './types'
 import type { AgentLoop } from '../../../../runtime/agent'
-import { getModeInstruction } from '../../../../runtime/agent/promptBuilder/modeInstruction'
-import { createLearnToolAuthorizationPolicy } from '../../../../runtime/learning/policy/createLearnToolAuthorizationPolicy'
-import { getLearnCoachRoleMaterial } from '../../../../runtime/learning/teaching/coachRoleMaterial'
+import { buildDomainAgentRole } from '../../../../runtime/agent'
+import type { SessionAgentBinding } from './types'
+import { projectLearningPreset } from '../../../../runtime/learning/preset/projectLearningPreset'
 import { registerLearningTools } from '../registerLearningTools'
 import { getLearningProgressOrNull } from '../../../learning/LearningDbHost'
 
 export const learningSessionAgentBinding: SessionAgentBinding = {
   mode: 'learn',
-  extendAgentRole() {
-    return getLearnCoachRoleMaterial()
+  buildPromptProfile(ctx) {
+    return {
+      agentRole: buildDomainAgentRole(projectLearningPreset.roleMaterial, ctx.projectPath),
+      baseRules: projectLearningPreset.baseRules,
+      taskPolicy: '',
+      skillContext: '',
+      modeInstruction: projectLearningPreset.renderTurnInstruction
+    }
   },
-  applyToAgentLoop(loop: AgentLoop, _ctx) {
-    loop.setModeInstructionProvider(() => getModeInstruction('learn'))
-    const policy = createLearnToolAuthorizationPolicy()
+  applyToAgentLoop(loop: AgentLoop) {
+    const policy = projectLearningPreset.createToolAuthorizationPolicy()
     loop.setToolAuthorizationPolicy(policy)
     return policy
   },

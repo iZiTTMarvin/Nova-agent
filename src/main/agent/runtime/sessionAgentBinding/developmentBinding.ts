@@ -1,5 +1,11 @@
 import type { DevelopmentMode } from '../../../../shared/session/mode'
-import type { SessionAgentBinding } from './types'
+import type { SessionAgentBinding, SessionPromptContext, SessionPromptProfile } from './types'
+import {
+  buildSkillContextForMode,
+  buildStableSystemPrompt,
+  renderBaseRules,
+  renderMinimalEngineeringPolicy
+} from '../../../../runtime/agent'
 import {
   createComposeModeInstructionProvider,
   createComposeStageToolPolicy
@@ -8,13 +14,22 @@ import {
 function createBinding(mode: DevelopmentMode): SessionAgentBinding {
   return {
     mode,
+    buildPromptProfile(ctx: SessionPromptContext): SessionPromptProfile {
+      return {
+        agentRole: buildStableSystemPrompt({ workingDir: ctx.projectPath }),
+        baseRules: renderBaseRules(),
+        taskPolicy: renderMinimalEngineeringPolicy(),
+        skillContext: buildSkillContextForMode(mode, ctx.listSkillsForContext),
+        modeInstruction:
+          mode === 'compose'
+            ? createComposeModeInstructionProvider(ctx.sessionStore, ctx.sessionId)
+            : null
+      }
+    },
     applyToAgentLoop(loop, ctx) {
       if (mode !== 'compose') {
         return null
       }
-      loop.setModeInstructionProvider(
-        createComposeModeInstructionProvider(ctx.sessionStore, ctx.sessionId)
-      )
       const policy = createComposeStageToolPolicy(ctx.sessionStore, ctx.sessionId)
       loop.setToolAuthorizationPolicy(policy)
       return policy

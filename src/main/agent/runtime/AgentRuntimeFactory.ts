@@ -8,14 +8,10 @@ import {
   AgentLoop,
   EventBus,
   renderModeToolInventory,
-  buildStableSystemPrompt,
-  buildSkillContextForMode,
   estimateTokens,
   discoverProjectRules,
   projectEffectiveToolDefinitions,
   applyLedgerToolVisibility,
-  renderBaseRules,
-  renderMinimalEngineeringPolicy,
   getSubAgentSpec,
   listSubAgents,
   createAssistantCompletionPolicy
@@ -223,14 +219,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   const skillRegistry = ensureSkillRegistryForWorkspace(projectPath)
 
   const projectRules = discoverProjectRules(projectPath)?.text ?? ''
-  /** 行为契约层：模板化 base rules，与模式指令（挂 user 尾部）分离以保缓存前缀稳定 */
-  const baseRules = renderBaseRules()
-  const skillContext = buildSkillContextForMode(
-    session.mode,
-    (profile) => skillRegistry.listForContext(profile)
-  )
-  /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
-  const skillsTokenEstimate = estimateTokens(skillContext)
 
   // 记忆层为固定 policy 文本：记忆数据变化不改变稳定 system prefix（缓存前缀契约）；
   // 动态记忆通过 memory_search 工具结果进入追加式历史。learn 会话不进入通用记忆体系。
@@ -298,6 +286,15 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     sessionId,
     projectPath
   })
+
+  const promptProfile = sessionBinding.buildPromptProfile({
+    sessionStore,
+    sessionId,
+    projectPath,
+    listSkillsForContext: profile => skillRegistry.listForContext(profile)
+  })
+  /** 技能正文独立 token 估算(传入 AgentLoop,作为"技能"分项桶) */
+  const skillsTokenEstimate = estimateTokens(promptProfile.skillContext)
 
   toolAvailability.bindRegisteredToolNames(
     toolRegistry.getToolDefinitions().map(def => def.name)
@@ -375,27 +372,14 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     renderModeToolInventory(session.mode, definitions, { dialect: toolDialect }) + sdkSection
   const toolSummary = toolSummaryRenderer(effectiveToolDefinitions)
 
-  const frozenPrompt = buildStableSystemPrompt({
-    workingDir: projectPath
-  })
-  const learnRoleAppend = sessionBinding.extendAgentRole?.({
-    sessionStore,
-    sessionId,
-    projectPath
-  })
-  const agentRole =
-    learnRoleAppend && learnRoleAppend.trim()
-      ? `${frozenPrompt}\n\n${learnRoleAppend.trim()}`
-      : frozenPrompt
-
   const agentLoop = new AgentLoop(modelPool, eventBus, {
     systemPromptLayers: {
-      agentRole,
-      baseRules,
+      agentRole: promptProfile.agentRole,
+      baseRules: promptProfile.baseRules,
       projectRules,
       memoryContext,
-      skillContext,
-      taskPolicy: renderMinimalEngineeringPolicy(),
+      skillContext: promptProfile.skillContext,
+      taskPolicy: promptProfile.taskPolicy,
       toolSummary
     },
     toolSummaryRenderer,
@@ -426,6 +410,8 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   // 部署开关随设置生效：关闭时 bash 到前台等待边界退回强制终止语义
   setPersistentShellEnabled(novaSettings.persistentShellSessions)
   agentLoop.setMode(session.mode)
+  // 每轮指令来源由 Binding 的类型契约保证；provider 在每轮开始时才被调用
+  agentLoop.setModeInstructionProvider(promptProfile.modeInstruction)
   const toolAuthorizationPolicy = sessionBinding.applyToAgentLoop(agentLoop, {
     sessionStore,
     sessionId,
