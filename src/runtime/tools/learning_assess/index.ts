@@ -23,15 +23,29 @@ export function createLearningAssessTool(deps: LearningAssessToolDeps = {}): Too
     parameters: {
       type: 'object',
       properties: {
-        attemptId: { type: 'string' },
-        checkpointId: { type: 'string' },
-        verdict: { type: 'string' },
-        summary: { type: 'string' },
-        userQuote: { type: 'string' },
-        factReferences: { type: 'array' },
-        cursorVersion: { type: 'integer' }
+        attemptId: { type: 'string', description: '回答尝试 ID' },
+        checkpointId: { type: 'string', description: '核对点 ID' },
+        verdict: {
+          type: 'string',
+          enum: ['understanding_observed', 'needs_clarification', 'inconclusive'],
+          description: '定性评估结果：understanding_observed（观察到理解）、needs_clarification（需要进一步澄清纠偏）、inconclusive（证据不足/未实质作答）'
+        },
+        summary: { type: 'string', description: '评估结论的一句话摘要' },
+        factReferences: {
+          type: 'array',
+          description: '引用的项目事实依据；没有大纲时不要填',
+          items: {
+            type: 'object',
+            properties: {
+              receiptId: { type: 'string', description: '源码片段凭证 ID' },
+              claim: { type: 'string', description: '对应的项目事实主张' }
+            },
+            required: ['receiptId', 'claim']
+          }
+        },
+        cursorVersion: { type: 'integer', description: '当前学习游标版本' }
       },
-      required: ['attemptId', 'checkpointId', 'verdict', 'summary', 'userQuote', 'cursorVersion']
+      required: ['attemptId', 'checkpointId', 'verdict', 'summary', 'cursorVersion']
     },
     async execute(args, context) {
       if (context.mode !== 'learn') {
@@ -53,7 +67,6 @@ export function createLearningAssessTool(deps: LearningAssessToolDeps = {}): Too
           checkpointId: args.checkpointId,
           verdict: args.verdict,
           summary: args.summary,
-          userQuote: args.userQuote,
           factReferences: args.factReferences ?? []
         })
       } catch (error) {

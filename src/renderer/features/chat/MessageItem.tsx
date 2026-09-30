@@ -22,7 +22,8 @@ import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
 import { useChatStore } from '../../stores/useChatStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
-import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon } from '../../components/Icons'
+import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon, BookIcon } from '../../components/Icons'
+import { extractChangedFilePaths } from '../../../shared/learning/devChangeFiles'
 import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
@@ -91,6 +92,8 @@ export interface MessageItemProps {
   /** 按需加载 diff 的回调，MessageItem 挂载时调用 */
   onLoadDiffs?: (sessionId: string, messageId: string) => void
   pendingPlanReview?: PendingPlanReview | null
+  /** 开发回复确实改过代码时提供「学懂这次改动」入口；缺省表示当前会话不提供 */
+  onLearnChange?: (messageId: string) => void
 }
 
 type ThinkingParseSource = Pick<ExtendedMessage, 'id'> & {
@@ -234,7 +237,8 @@ function MessageItemInner({
   isDiffLoading,
   diffPlaceholders,
   onLoadDiffs,
-  pendingPlanReview
+  pendingPlanReview,
+  onLearnChange
 }: MessageItemProps) {
   // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
   // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
@@ -419,6 +423,16 @@ function MessageItemInner({
           }
         />
         {copyButton}
+        {onLearnChange && !msg.isError && !msg.interrupted && extractChangedFilePaths(msg.blocks).length > 0 && (
+          <IconButton
+            label="学懂这次改动"
+            icon={<BookIcon size={13} />}
+            variant="ghost"
+            size="sm"
+            onClick={() => onLearnChange(msg.id)}
+            tooltip="学懂这次改动"
+          />
+        )}
       </div>
     ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
       /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
@@ -725,7 +739,8 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.isDiffLoading === next.isDiffLoading &&
     prev.diffPlaceholders === next.diffPlaceholders &&
     prev.onLoadDiffs === next.onLoadDiffs &&
-    prev.pendingPlanReview === next.pendingPlanReview
+    prev.pendingPlanReview === next.pendingPlanReview &&
+    prev.onLearnChange === next.onLearnChange
   )
 }
 

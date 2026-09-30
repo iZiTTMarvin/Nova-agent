@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { SESSION_PLACEHOLDER_TITLE } from '../../../shared/session/title'
-import { listSidebarRootSessions, resolveSidebarActiveSessionId } from '../subagents/sidebarSessions'
+import { listBreadcrumbSessions, resolveSidebarActiveSessionId } from '../subagents/sidebarSessions'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { FolderIcon, ChevronIcon, CheckIcon } from '../../components/Icons'
 
 /** 工作区路径取末段作为展示名（与侧边栏项目分组同名规则） */
@@ -21,6 +22,7 @@ export const SessionBreadcrumb: React.FC = () => {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const selectSession = useChatStore(state => state.selectSession)
+  const currentMode = useWorkspaceStore(state => state.currentMode)
   const [open, setOpen] = useState(false)
 
   useEffect(() => {
@@ -46,9 +48,7 @@ export const SessionBreadcrumb: React.FC = () => {
   const displaySession = sessions.find(s => s.id === displaySessionId)
   if (!currentProject || !displaySession) return null
 
-  const projectSessions = listSidebarRootSessions(sessions).filter(
-    s => s.workspaceRoot === currentProject
-  )
+  const projectSessions = listBreadcrumbSessions(sessions, currentProject, currentMode === 'learn' ? 'learn' : 'dev')
 
   return (
     <div className="chat-session-breadcrumb">

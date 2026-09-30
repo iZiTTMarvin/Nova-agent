@@ -13,6 +13,8 @@ export interface UserDeliveryFacts {
   modeInstruction: string
   /** 缺省表示旧会话或未变换输入；不得用当前技能正文补写历史。 */
   skillInput?: { assistantPrelude: string; userContent: string }
+  /** 本轮实际任务文本与落盘原文不同时记录；重建必须用它，否则前后请求不一致并打断前缀缓存。 */
+  deliveredInput?: string
 }
 
 /** 工具结果的当前投递表示：提交时为 original 全文，首次投影归档后改写为 archive；全文仍由 result 拥有。 */

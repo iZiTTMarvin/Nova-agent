@@ -30,12 +30,28 @@ export interface AbortResult {
 
 export class RunExecutionRegistry {
   private readonly handles = new Map<string, RunExecutionHandle>()
+  private readonly listeners = new Set<() => void>()
   private readonly graceMs: number
   /** 已失效的 generation（grace 超时或显式 invalidate），副作用入口必须拒绝 */
   private readonly invalidated = new Map<string, Set<number>>()
 
   constructor(options: RunExecutionRegistryOptions = {}) {
     this.graceMs = options.graceMs ?? 5_000
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  private notifyChanged(): void {
+    for (const listener of this.listeners) {
+      try {
+        listener()
+      } catch (error) {
+        console.error('[RunExecutionRegistry] listener 抛错:', error)
+      }
+    }
   }
 
   /** 同一 runId 只保留最新 generation，避免旧执行覆盖新执行。 */
@@ -52,6 +68,7 @@ export class RunExecutionRegistry {
           this.unregister(handle.runId, handle.generation)
         }
       )
+      this.notifyChanged()
     }
   }
 
@@ -69,6 +86,7 @@ export class RunExecutionRegistry {
       return false
     }
     this.handles.delete(runId)
+    this.notifyChanged()
     return true
   }
 

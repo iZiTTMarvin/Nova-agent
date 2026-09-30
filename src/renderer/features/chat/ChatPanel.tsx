@@ -68,6 +68,7 @@ import { createComposerSkillTrigger, skillComposerToken } from '../skills/compos
 import { createComposerFileTrigger } from './composerFileTrigger'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import { WelcomeHero } from './WelcomeHero'
+import './composerShell.css'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
 import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
@@ -602,32 +603,18 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     setInputVal(nextValue)
   }
 
-  // 「学懂这次改动」入口：开发会话里已有可绑定的结果消息时才出现（§2.4）
-  const canOfferLearningEntry =
-    !isComposeSession &&
-    !isGenerating &&
-    messages.some(message => message.role === 'assistant' && !message.isError && !message.interrupted)
-
-  // 「学懂这次改动」：把最近一次开发结果带进本项目学习会话（不原地改变开发会话模式）
-  const handleLearnThisChange = async () => {
-    if (!currentSessionId || !currentProject) return
-    const lastAssistant = [...messages]
-      .reverse()
-      .find(message => message.role === 'assistant' && !message.isError && !message.interrupted)
-    if (!lastAssistant) return
+  // 「学懂这次改动」：绑定到确实改过代码的那条回复；改动文件由主进程从该消息推导
+  const handleLearnChange = useCallback(async (messageId: string) => {
+    const devSessionId = useWorkspaceStore.getState().currentSessionId
+    if (!devSessionId) return
     await switchToLearningSurface()
     const learnSessionId = useWorkspaceStore.getState().currentSessionId
-    if (!learnSessionId) return
+    if (!learnSessionId || learnSessionId === devSessionId) return
     await useLearningStore.getState().sendCommand({
       sessionId: learnSessionId,
-      action: { type: 'message', text: '学懂这次改动' },
-      devReference: {
-        devSessionId: currentSessionId,
-        devMessageId: lastAssistant.id,
-        filePaths: []
-      }
+      action: { type: 'explain_change', devSessionId, devMessageId: messageId }
     })
-  }
+  }, [])
 
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
@@ -970,6 +957,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           loadingDiffPlaceholders={loadingDiffPlaceholders}
           onLoadDiffs={loadMessageDiffs}
           pendingPlanReview={pendingPlanReview}
+          {...(!isComposeSession ? { onLearnChange: handleLearnChange } : {})}
         />
 
         {interruptionNotice && (
@@ -1001,15 +989,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
           {!isEmptyState && currentSessionId && (
             <div className="chat-session-export">
-              {canOfferLearningEntry && (
-                <button
-                  type="button"
-                  className="chat-learn-change"
-                  onClick={() => void handleLearnThisChange()}
-                >
-                  学懂这次改动
-                </button>
-              )}
               <DropdownMenu
                 button={{ label: '导出会话', variant: 'ghost', size: 'sm', icon: <CopyIcon size={14} /> }}
                 placement="above"

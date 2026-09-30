@@ -11,7 +11,6 @@ export interface PublishedNodeBody {
   readonly materialStatus: KnowledgeNodeMaterialStatus
   readonly navDimension: LearningNavDimensionId | null
   readonly parentNodeId: string | null
-  readonly unreadNote?: string
 }
 
 export function serializeNodeBody(body: PublishedNodeBody): string {
@@ -31,8 +30,7 @@ export function parsePublishedNodeBody(bodyJson: string): PublishedNodeBody {
     claims: parseKnowledgeClaims(raw.claims ?? []),
     materialStatus: (raw.materialStatus as KnowledgeNodeMaterialStatus) ?? 'unverified',
     navDimension,
-    parentNodeId: typeof raw.parentNodeId === 'string' ? raw.parentNodeId : null,
-    unreadNote: typeof raw.unreadNote === 'string' ? raw.unreadNote : undefined
+    parentNodeId: typeof raw.parentNodeId === 'string' ? raw.parentNodeId : null
   }
 }
 

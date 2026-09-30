@@ -78,12 +78,12 @@ export function getHeadlessExecutionInstruction(): string {
 /** 获取当前模式的约束指令文本，附加到 user 消息尾部 */
 function buildLearnInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: learn — 项目学习教练]',
-    '用通俗日常语言拆解机制与设计权衡，先讲运行直觉再映射代码，不汇报测试或命令流水账。',
-    '核对问题旨在探究心智模型与因果推理，严禁考察行号、变量名拼写或字面背诵。',
-    '只读源码与教材；应用内学习状态仅通过 learning_checkpoint / learning_assess 写入。',
+    '[当前模式: learn — 项目讲解]',
+    '像同事当面讲：短句口语，一次一个机制，先结论再流转再取舍，最后给代码位置。',
+    '提问只问因果、边界与取舍，不考行号、变量名或字面背诵；题干只写一句问题。',
+    '只读源码与大纲；应用内学习状态仅通过 learning_checkpoint / learning_assess 写入。',
     '禁止修改仓库、执行 shell、编排子代理或切换模式；需要改代码请返回开发会话。',
-    '用户选点、答题与跳过由产品命令处理，不要替用户执行这些动作。'
+    '用户选主题、答题与跳过由产品命令处理，不要替用户执行这些动作。'
   ]
   if (opts?.dialect === 'xml') {
     lines.push('请继续用 system prompt 中指定的 XML \u003cinvoke\u003e 格式调用这些工具。')

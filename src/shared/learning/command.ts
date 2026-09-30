@@ -15,6 +15,8 @@ export type LearningAction =
   | { type: 'skip'; checkpointId: string }
   | { type: 'dispute'; assessmentId: string; reason: string }
   | { type: 'resume' }
+  /** 从开发会话的一条助手回复发起；改动文件由主进程从该消息的写入记录推导。 */
+  | { type: 'explain_change'; devSessionId: string; devMessageId: string }
 
 export interface LearningCommand {
   readonly commandId: string
@@ -95,14 +97,25 @@ export function parseLearningAction(raw: unknown): LearningAction {
         type,
         checkpointId: readBoundedString(value.checkpointId, 'checkpointId', LEARNING_MAX_NODE_ID_LENGTH)
       }
-    case 'dispute':
+    case 'dispute': {
+      // 理由可以不填：界面允许直接表达「我觉得我答对了」
+      if (typeof value.reason !== 'string') throw new Error('learning: reason 必须是字符串')
+      const reason = value.reason.trim()
+      if (reason.length > LEARNING_MAX_TEXT_LENGTH) throw new Error('learning: reason 长度无效')
       return {
         type: 'dispute',
         assessmentId: readBoundedString(value.assessmentId, 'assessmentId', LEARNING_MAX_NODE_ID_LENGTH),
-        reason: readBoundedString(value.reason, 'reason', LEARNING_MAX_TEXT_LENGTH)
+        reason
       }
+    }
     case 'resume':
       return { type: 'resume' }
+    case 'explain_change':
+      return {
+        type: 'explain_change',
+        devSessionId: readBoundedString(value.devSessionId, 'devSessionId', LEARNING_MAX_COMMAND_ID_LENGTH),
+        devMessageId: readBoundedString(value.devMessageId, 'devMessageId', LEARNING_MAX_COMMAND_ID_LENGTH)
+      }
     default:
       throw new Error(`learning: 未知 action 类型 ${String(type)}`)
   }

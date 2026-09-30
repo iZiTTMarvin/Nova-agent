@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls node_modules/@astryxdesign/core/dist 2>/dev/null | head -30; find node_modules/@astryxdesign/core -name \"*.d.ts\" -path \"*Banner*\" 2>/dev/null | head)",
+      "Bash(cd \"D:/visual_ProgrammingSoftware/A_Projects/nova-agent/tests/e2e\" && npx playwright test learning --grep-invert 视觉留证 --reporter=line 2>&1)"
+    ]
+  }
+}

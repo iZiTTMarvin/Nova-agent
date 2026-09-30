@@ -46,7 +46,7 @@ describe('learning surface projection', () => {
     return surface.cursorVersion
   }
 
-  it('投影含游标、停点、评估与可解释计数', async () => {
+  it('投影含游标、当前问题与该题最新评估', async () => {
     const { harness, workspace } = await openHarness()
 
     await harness.progress.saveCheckpoint({
@@ -68,12 +68,8 @@ describe('learning surface projection', () => {
     let surface = await harness.progress.getSurface(workspace, 'sess-surface')
     expect(surface.cursorVersion).toBe(1)
     expect(surface.clearGeneration).toBe(0)
-    expect(surface.checkpoint?.state).toBe('awaiting_answer')
-    expect(surface.latestAssessment).toBeNull()
-    expect(surface.summary).toEqual({
-      independentCount: 0,
-      needsClarificationCount: 0
-    })
+    expect(surface.currentCheckpointId).toBe('ckpt-surface')
+    expect(surface.questions).toEqual([expect.objectContaining({ checkpointId: 'ckpt-surface', state: 'awaiting_answer', assessment: null })])
 
     // 回答 → attempt 进入 outbox；评估后计数与最新评估可读
     const answerText = '应该是加载时重新查了数据库'
@@ -99,16 +95,12 @@ describe('learning surface projection', () => {
         checkpointId: 'ckpt-surface',
         verdict: 'understanding_observed',
         summary: '能独立指出数据来源',
-        userQuote: answerText,
         factReferences: []
       })
     })
 
     surface = await harness.progress.getSurface(workspace, 'sess-surface')
-    expect(surface.checkpoint?.state).toBe('answered')
-    expect(surface.latestAssessment?.verdict).toBe('understanding_observed')
-    expect(surface.latestAssessment?.disputed).toBe(false)
-    expect(surface.summary.independentCount).toBe(1)
+    expect(surface.questions[0]).toMatchObject({ state: 'answered', assessment: { verdict: 'understanding_observed', disputed: false } })
 
     await harness.close()
   })
@@ -151,14 +143,12 @@ describe('learning surface projection', () => {
         checkpointId: 'ckpt-dispute',
         verdict: 'needs_clarification',
         summary: '还可以再确认代价',
-        userQuote: answerText,
         factReferences: []
       })
     })
     const assessed = await harness.progress.getSurface(workspace, 'sess-dispute')
-    const assessmentId = assessed.latestAssessment?.assessmentId
+    const assessmentId = assessed.questions[0]?.assessment?.assessmentId
     expect(assessmentId).toBeTruthy()
-    expect(assessed.summary.needsClarificationCount).toBe(1)
 
     await harness.progress.applyCommand(
       command('sess-dispute', await cursorOf(harness, workspace, 'sess-dispute'), {
@@ -169,9 +159,7 @@ describe('learning surface projection', () => {
     )
 
     const disputed = await harness.progress.getSurface(workspace, 'sess-dispute')
-    expect(disputed.latestAssessment?.assessmentId).toBe(assessmentId)
-    expect(disputed.latestAssessment?.verdict).toBe('needs_clarification')
-    expect(disputed.latestAssessment?.disputed).toBe(true)
+    expect(disputed.questions[0]?.assessment).toMatchObject({ assessmentId, verdict: 'needs_clarification', disputed: true })
 
     // 质疑不存在的评估：stale 拒绝
     const receipt = await harness.progress.applyCommand(
@@ -208,15 +196,14 @@ describe('learning surface projection', () => {
       command('sess-help', 1, { type: 'hint', checkpointId: 'ckpt-help' })
     )
     let surface = await harness.progress.getSurface(workspace, 'sess-help')
-    expect(surface.checkpoint?.state).toBe('awaiting_answer')
+    expect(surface.questions[0]?.state).toBe('awaiting_answer')
 
     // 直接讲解：记为 skipped 的明确原因，同时记入帮助事件
     await harness.progress.applyCommand(
       command('sess-help', surface.cursorVersion, { type: 'explain', checkpointId: 'ckpt-help' })
     )
     surface = await harness.progress.getSurface(workspace, 'sess-help')
-    expect(surface.checkpoint?.state).toBe('skipped')
-    expect(surface.checkpoint?.question).toContain('为什么这样写')
+    expect(surface.questions[0]).toMatchObject({ state: 'skipped', question: expect.stringContaining('为什么这样写') })
 
     await harness.close()
   })
@@ -267,6 +254,8 @@ describe('learning surface projection', () => {
       nodeSources: []
     })
 
+    // 生产入口 applyLearningCommand 会先 getCursor 建立会话游标再落命令；worker 层冷 apply 需要先有游标
+    await cursorOf(harness, workspace, sessionId)
     await harness.progress.applyCommand(command(sessionId, 0, { type: 'select_node', nodeId: 'node-a' }))
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
@@ -291,7 +280,8 @@ describe('learning surface projection', () => {
       })
     )
     let surface = await harness.progress.getSurface(workspace, sessionId)
-    expect(surface.checkpoint).toBeNull()
+    expect(surface.currentCheckpointId).toBeNull()
+    expect(surface.questions.find(q => q.checkpointId === 'ckpt-a')?.state).toBe('superseded')
 
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
@@ -308,8 +298,10 @@ describe('learning surface projection', () => {
       })
     })
     surface = await harness.progress.getSurface(workspace, sessionId)
-    expect(surface.checkpoint?.checkpointId).toBe('ckpt-b')
-    expect(surface.checkpoint?.state).toBe('awaiting_answer')
+    expect(surface.currentCheckpointId).toBe('ckpt-b')
+    expect(surface.questions.map(q => [q.checkpointId, q.state])).toEqual([['ckpt-a', 'superseded'], ['ckpt-b', 'awaiting_answer']])
+    // 两次选主题各对应一条主题分隔线，顺序与命令一致
+    expect(surface.topicStartMessageIds).toHaveLength(2)
 
     await harness.close()
   })
@@ -399,14 +391,13 @@ describe('learning surface projection', () => {
           checkpointId: 'ckpt-review',
           verdict,
           summary: verdict === 'understanding_observed' ? '复核后确认理解' : '还需澄清',
-          userQuote: answerText,
           factReferences: []
         })
       })
 
     await assess('needs_clarification')
     const assessed = await harness.progress.getSurface(workspace, sessionId)
-    const assessmentId = assessed.latestAssessment?.assessmentId
+    const assessmentId = assessed.questions[0]?.assessment?.assessmentId
 
     await harness.progress.applyCommand(
       command(sessionId, await cursorOf(harness, workspace, sessionId), {
@@ -419,10 +410,8 @@ describe('learning surface projection', () => {
     // 复核产生新评估，保留原评估为被替代记录
     await assess('understanding_observed')
     const reviewed = await harness.progress.getSurface(workspace, sessionId)
-    expect(reviewed.latestAssessment?.assessmentId).not.toBe(assessmentId)
-    expect(reviewed.latestAssessment?.verdict).toBe('understanding_observed')
-    expect(reviewed.latestAssessment?.disputed).toBe(false)
-    expect(reviewed.summary.independentCount).toBe(1)
+    expect(reviewed.questions[0]?.assessment?.assessmentId).not.toBe(assessmentId)
+    expect(reviewed.questions[0]?.assessment).toMatchObject({ verdict: 'understanding_observed', disputed: false })
 
     // 最新评估未被质疑时，同一回答不能重复评估
     await expect(assess('needs_clarification')).rejects.toThrow(/复核/)
@@ -500,14 +489,14 @@ describe('learning surface projection', () => {
     })
 
     // 待复核计数与界面共用同一份树投影
-    const view = await harness.surface.loadView(workspace)
+    const view = await harness.reader.getTreeProjection(workspace).then(tree => ({ tree }))
     expect(view.tree.nodes).toHaveLength(1)
     expect(view.tree.nodes[0]!.materialStatus).toBe('stale')
     expect(view.tree.nodes.filter(node => node.materialStatus === 'stale')).toHaveLength(1)
 
     const surface = await harness.progress.getSurface(workspace, 'sess-stale')
     expect(surface.cursorVersion).toBe(0)
-    expect(surface.summary.independentCount).toBe(0)
+    expect(surface.questions).toEqual([])
 
     await harness.close()
   })

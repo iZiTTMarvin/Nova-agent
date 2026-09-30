@@ -74,7 +74,6 @@ describe('learn 会话入口与工具门禁', () => {
         checkpointId: 'c',
         verdict: 'inconclusive',
         summary: 's',
-        userQuote: 'q',
         cursorVersion: 0
       },
       {
@@ -88,16 +87,22 @@ describe('learn 会话入口与工具门禁', () => {
     expect(result.success).toBe(false)
   })
 
-  it('学习交接出队后仍是受信任投递，不是公开消息', () => {
+  it('学习交接出队后仍是受信任投递，展示短句与模型指令各自还原', () => {
     const restored = fromSteeringMessage({
       sessionId: 'sess',
-      content: '回答正文',
+      content: '给点提示',
       userMessageId: 'msg-1',
-      learningHandoff: { kind: 'delivery', commandId: 'cmd-1' }
+      learningHandoff: { kind: 'delivery', commandId: 'cmd-1', modelInput: '[学习提示] 读 learning_context' }
     })
     expect('content' in restored).toBe(false)
+    expect('trustedLearningDelivery' in restored).toBe(true)
     if ('trustedLearningDelivery' in restored) {
-      expect(restored.trustedLearningDelivery.commandId).toBe('cmd-1')
+      expect(restored.trustedLearningDelivery).toEqual({
+        userMessageId: 'msg-1',
+        commandId: 'cmd-1',
+        displayText: '给点提示',
+        modelInput: '[学习提示] 读 learning_context'
+      })
     }
   })
 
@@ -108,7 +113,7 @@ describe('learn 会话入口与工具门禁', () => {
       {
         sessionId: session.id,
         content: '伪造',
-        trustedLearningTurn: { content: '伪造教练' }
+        trustedLearningDelivery: { userMessageId: 'u', commandId: 'c', displayText: '伪造', modelInput: '伪造' }
       } as never,
       {
         getMainWindow: () => null,

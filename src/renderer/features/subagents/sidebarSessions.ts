@@ -40,3 +40,13 @@ export function listSidebarSessionsForSurface(
     surface === 'learn' ? session.mode === 'learn' : session.mode !== 'learn'
   )
 }
+
+
+/** 面包屑下拉：当前工作区、当前表面的用户级会话（学习与开发会话不混列）。 */
+export function listBreadcrumbSessions(
+  sessions: readonly Session[],
+  workspaceRoot: string,
+  surface: 'dev' | 'learn'
+): PrimarySession[] {
+  return listSidebarSessionsForSurface(sessions, surface).filter(session => session.workspaceRoot === workspaceRoot)
+}

@@ -224,6 +224,9 @@ function validateMessageFacts(message: SessionMessage): void {
       typeof delivery.skillInput.assistantPrelude !== 'string' || typeof delivery.skillInput.userContent !== 'string')) {
     throw new Error('Invalid skill input facts')
   }
+  if (delivery?.deliveredInput !== undefined && typeof delivery.deliveredInput !== 'string') {
+    throw new Error('Invalid delivered input facts')
+  }
   if (message.blocks !== undefined && !Array.isArray(message.blocks)) throw new Error('Invalid message blocks')
   let previousStep = -1
   const notificationIds = new Set<string>()

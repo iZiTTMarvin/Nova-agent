@@ -1,55 +1,72 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ScrollIcon, SpinnerIcon } from '../../components/Icons'
-import { FloatingStatusWidget } from './FloatingStatusWidget'
-import { useLearningStore } from './useLearningStore'
-import { KnowledgeNavTree } from './KnowledgeNavTree'
-import { LearningConversation } from './LearningConversation'
-import { LearningComposer } from './LearningComposer'
-import { LearningCheckpointCard } from './LearningCheckpointCard'
-import { LearningAssessmentCard } from './LearningAssessmentCard'
-import { LearningMaterialPanel } from './LearningMaterialPanel'
-import { switchToDevSurface } from './learningSurfaceSwitch'
+/**
+ * 学习主区：对话滚动区 + 悬浮输入区，版式与开发模式同一套（chat-panel / chat-messages /
+ * chat-panel__composer-area）。会话切换、投影刷新与草稿清理的生命周期受 E2E 保护，保持原语义。
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Banner } from '@astryxdesign/core/Banner'
+import { Button } from '@astryxdesign/core/Button'
+import { IconButton } from '@astryxdesign/core/IconButton'
+import { ChevronIcon } from '../../components/Icons'
 import { useChatStore } from '../../stores/useChatStore'
-import { useSettingsStore } from '../../stores/useSettingsStore'
 import { selectSessionIsRunning, useRunStore } from '../../stores/useRunStore'
 import { isTerminalRunStatus } from '../../../shared/run/types'
-import { getDistanceFromBottom, scrollContainerToBottom } from '../chat/autoScroll'
+import {
+  AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
+  getDistanceFromBottom,
+  scrollContainerToBottom
+} from '../chat/autoScroll'
+import { useLearningStore } from './useLearningStore'
+import { LearningConversation } from './LearningConversation'
+import { LearningComposer } from './LearningComposer'
+import { LearningEmptyState } from './LearningEmptyState'
+import { firstOutlineTopic } from './outline/outlineOrder'
+import {
+  LEARNING_CONVERSATION_LABEL,
+  LEARNING_MESSAGES_LABEL,
+  LEARNING_SCROLL_TO_BOTTOM,
+  LEARNING_READ_FAILURE_TITLE,
+  LEARNING_RETRY_LABEL,
+  learningCommandRejectionCopy
+} from './learningCopy'
+import '../chat/composerShell.css'
+import '../chat/ChatPanel.css'
 import './LearningSurface.css'
 
 export function LearningSurface({ sessionId }: { sessionId: string }): React.ReactElement {
-  const rootRef = useRef<HTMLDivElement>(null)
-  const readingRef = useRef<HTMLDivElement>(null)
-  const [buildConfirm, setBuildConfirm] = useState(false)
-  const [buildError, setBuildError] = useState<string | null>(null)
-  const projection = useLearningStore(state => state.sessionId === sessionId ? state.projection : null)
+  const projection = useLearningStore(state => (state.sessionId === sessionId ? state.projection : null))
   const status = useLearningStore(state => state.status)
-  const error = useLearningStore(state => state.error)
-  const material = useLearningStore(state => state.sessionId === sessionId ? state.material : null)
   const commandPending = useLearningStore(state => state.sessionId === sessionId && state.commandPending)
+  const commandError = useLearningStore(state => (state.sessionId === sessionId ? state.commandError : null))
   const refresh = useLearningStore(state => state.refresh)
-  const openNodeMaterial = useLearningStore(state => state.openNodeMaterial)
-  const closeMaterial = useLearningStore(state => state.closeMaterial)
   const sendCommand = useLearningStore(state => state.sendCommand)
   const clearForSession = useLearningStore(state => state.clearForSession)
   const currentGeneratingMessageId = useChatStore(state => state.currentGeneratingMessageId)
   const sessions = useChatStore(state => state.sessions)
   // 仅在 chat store 当前聚焦会话与本表面 sessionId 匹配时才渲染消息，杜绝跨会话切面水合间隙展示脏数据
-  const messages = useChatStore(state => state.currentSessionId === sessionId ? state.messages : [])
-  const requestComposerPrefill = useSettingsStore(state => state.requestComposerPrefill)
+  const messages = useChatStore(state => (state.currentSessionId === sessionId ? state.messages : []))
   const isGenerating = useRunStore(state => selectSessionIsRunning(state, sessionId))
+
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  const composerAreaRef = useRef<HTMLDivElement | null>(null)
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+  const userScrolledUpRef = useRef(false)
 
   useEffect(() => {
     const unsubChanged = window.api.on('learning:surface-changed', data => {
       const current = useLearningStore.getState().projection
-      if (data.sessionId === sessionId || data.workspaceRoot === current?.workspaceRoot) void refresh(sessionId)
+      if (
+        data.sessionId === sessionId ||
+        (data.sessionId === null && data.workspaceRoot === current?.workspaceRoot)
+      ) {
+        void refresh(sessionId)
+      }
     })
     const unsubSnapshot = window.api.on('run:snapshot', data => {
       if (data.snapshot.sessionId === sessionId && isTerminalRunStatus(data.snapshot.status)) void refresh(sessionId)
     })
     clearForSession(sessionId)
     void refresh(sessionId)
-    setBuildError(null)
-    setBuildConfirm(false)
     return () => {
       unsubChanged()
       unsubSnapshot()
@@ -61,140 +78,175 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     if (sessions.length > 0) useLearningStore.getState().pruneDrafts(sessions.map(session => session.id))
   }, [sessions])
 
-  const handleSelectNode = useCallback((nodeId: string) => {
-    void sendCommand({ sessionId, action: { type: 'select_node', nodeId } })
-    void openNodeMaterial(sessionId, nodeId)
-  }, [openNodeMaterial, sendCommand, sessionId])
+  const hasMessages = messages.length > 0
 
-  const handleEditInDev = useCallback((nodeId: string, nodeTitle: string, filePath: string | null) => {
-    const location = filePath ? `\n源码出处：${filePath}` : ''
-    requestComposerPrefill(`围绕「${nodeTitle}」改动实现${location}\n学习节点：${nodeId}\n我的改动意图：`)
-    void switchToDevSurface()
-  }, [requestComposerPrefill])
+  const handleScroll = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const isUp = getDistanceFromBottom(el) > AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+    userScrolledUpRef.current = isUp
+    setShowScrollToBottom(isUp)
+  }, [])
 
-  const build = async () => {
-    setBuildConfirm(false)
-    setBuildError(null)
-    try {
-      await window.api.invoke('learning:build', { sessionId })
-    } catch (failure) {
-      if (useLearningStore.getState().sessionId === sessionId) setBuildError(failure instanceof Error ? failure.message : String(failure))
-    } finally {
-      void refresh(sessionId)
+  // 内容高度增量推进时（流式文字、题目行出现）：未上滚则自动贴底跟随
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      if (userScrolledUpRef.current) return
+      const el = scrollContainerRef.current
+      if (el) scrollContainerToBottom(el)
+    })
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [hasMessages])
+
+  // 悬浮输入区高度同步到滚动区 paddingBottom，消息流滚到底时刚好避让输入框
+  useEffect(() => {
+    const composerEl = composerAreaRef.current
+    if (!composerEl || typeof ResizeObserver === 'undefined') return
+    let rafId: number | null = null
+    const update = (entries: ResizeObserverEntry[]) => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      rafId = requestAnimationFrame(() => {
+        for (const entry of entries) {
+          const height = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height)
+          if (height > 0 && scrollContainerRef.current) {
+            scrollContainerRef.current.style.paddingBottom = `${height + 16}px`
+          }
+        }
+      })
     }
-  }
+    const observer = new ResizeObserver(update)
+    observer.observe(composerEl)
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId)
+      observer.disconnect()
+    }
+  }, [])
 
-  const busy = isGenerating || commandPending
-  const summary = projection?.summary
-  const selected = projection?.tree.nodes.find(node => node.nodeId === projection.selectedNodeId)
-  const nodeCount = projection?.tree.nodes.length ?? 0
-  const isBuilding = projection?.build.status === 'running'
+  // 出题或收题时若用户在底部附近，平滑跟随一次
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    if (getDistanceFromBottom(el) <= 120) scrollContainerToBottom(el, 'smooth')
+  }, [projection?.currentCheckpointId, projection?.questions.length])
 
-  const capsuleContent = (
-    <span className="learning-status-capsule">
-      {isBuilding ? (
-        <SpinnerIcon size={13} className="learning-status-capsule__spin" />
-      ) : (
-        <ScrollIcon size={14} className="learning-status-capsule__icon" />
-      )}
-      <span className="learning-status-capsule__label">项目知识</span>
-      <span className="learning-status-capsule__meta">
-        {isBuilding
-          ? '整理中…'
-          : nodeCount > 0
-            ? `${nodeCount} 个主题`
-            : '待整理'}
-      </span>
-      {isBuilding ? (
-        <span className="learning-status-capsule__dot learning-status-capsule__dot--pulse" />
-      ) : nodeCount > 0 ? (
-        <span className="learning-status-capsule__dot learning-status-capsule__dot--ready" />
-      ) : null}
-    </span>
+  const handleScrollToBottomClick = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    userScrolledUpRef.current = false
+    setShowScrollToBottom(false)
+    scrollContainerToBottom(el, 'smooth')
+  }, [])
+
+  const handleSelectTopic = useCallback(
+    (nodeId: string) => {
+      void sendCommand({ sessionId, action: { type: 'select_node', nodeId } })
+    },
+    [sendCommand, sessionId]
   )
 
-  const statusBadge = projection?.tree.knowledgeRevision
-    ? `R${projection.tree.knowledgeRevision}`
-    : nodeCount > 0
-      ? `${nodeCount} 主题`
-      : undefined
+  const handleSuggestionMessage = useCallback(
+    (text: string) => {
+      void sendCommand({ sessionId, action: { type: 'message', text } })
+    },
+    [sendCommand, sessionId]
+  )
 
-  // 核对点卡片或评估反馈出现时，若在底部附近则自动平滑跟随
-  useEffect(() => {
-    const el = readingRef.current
-    if (!el) return
-    if (getDistanceFromBottom(el) <= 120) {
-      scrollContainerToBottom(el, 'smooth')
-    }
-  }, [projection?.checkpoint?.checkpointId, projection?.latestAssessment?.assessmentId])
+  const busy = isGenerating || commandPending
+  const isEmptyState = !hasMessages
+  const firstTopic = useMemo(
+    () => (projection && projection.tree.nodes.length > 0 ? firstOutlineTopic(projection.tree) : null),
+    [projection]
+  )
 
-  return <div className="learning-surface" ref={rootRef} data-has-material={Boolean(material)}>
-    <header className="learning-surface__bar">
-      <div className="learning-surface__heading">
-        <span className="learning-surface__title">{selected?.title ?? '项目学习'}</span>
-        {summary && (summary.independentCount > 0 || summary.needsClarificationCount > 0 || summary.pendingReviewNodeCount > 0) &&
-          <span className="learning-surface__summary">理解记录 {summary.independentCount} · 待澄清 {summary.needsClarificationCount} · 待复核 {summary.pendingReviewNodeCount}</span>}
-      </div>
-    </header>
-    {status === 'error' && <div className="learning-surface__error" role="alert">学习状态加载失败：{error}
-      <button type="button" onClick={() => void refresh(sessionId)}>重试</button></div>}
-    <div className="learning-surface__body">
-      <main className="learning-surface__main">
-        <FloatingStatusWidget
-          capsule={capsuleContent}
-          title="项目知识"
-          badge={statusBadge}
-          cardAriaLabel="项目知识面板"
-          capsuleAriaLabel="展开项目知识面板"
+  const composer = (
+    <LearningComposer
+      sessionId={sessionId}
+      projection={projection}
+      isGenerating={isGenerating}
+      disabled={busy}
+    />
+  )
+
+  return (
+    <div className="learning-surface chat-panel relative flex flex-col h-full" role="region" aria-label={LEARNING_CONVERSATION_LABEL}>
+      {!isEmptyState && (
+        <div
+          className="chat-messages flex-1 overflow-y-auto"
+          ref={scrollContainerRef}
+          onScroll={handleScroll}
+          style={{ overflowAnchor: 'none', paddingBottom: '156px' }}
         >
-          <div className="learning-surface__status-body">
-            {projection ? (
-              <KnowledgeNavTree
-                tree={projection.tree}
-                selectedNodeId={projection.selectedNodeId}
-                nodeProgress={projection.nodeProgress}
-                disabled={busy}
-                onSelectNode={handleSelectNode}
-              />
-            ) : (
-              <p role="status" className="learning-surface__status-loading">正在读取学习记录…</p>
-            )}
-            <div className="learning-build">
-              {isBuilding ? (
-                <>
-                  <p role="status">正在整理项目知识…</p>
-                  <button type="button" onClick={() => void window.api.invoke('learning:cancel-build', { sessionId })}>取消整理</button>
-                </>
-              ) : (
-                <button type="button" disabled={busy} onClick={() => setBuildConfirm(value => !value)}>
-                  {projection?.tree.knowledgeRevision ? '重新整理教材' : '整理项目知识'}
-                </button>
-              )}
-              {buildConfirm && (
-                <div className="learning-build__confirm">
-                  <p>将选取少量项目源码发送给当前模型，最多调用两次，可能产生费用。不会修改代码，可随时取消。</p>
-                  <button type="button" onClick={() => void build()}>开始整理</button>
-                  <button type="button" onClick={() => setBuildConfirm(false)}>暂不整理</button>
-                </div>
-              )}
-              {(buildError || projection?.build.status === 'failed') && (
-                <p role="alert">{buildError ?? (projection?.build.status === 'failed' ? projection.build.message : '')}</p>
-              )}
-              {projection?.build.status === 'cancelled' && <p role="status">整理已停止，已保存的教材不受影响。</p>}
-            </div>
+          <div className="chat-messages__flow-inner" ref={contentRef} role="region" aria-label={LEARNING_MESSAGES_LABEL}>
+            <LearningConversation
+              messages={messages}
+              isGenerating={isGenerating}
+              currentGeneratingMessageId={currentGeneratingMessageId}
+              sessionId={sessionId}
+              projection={projection}
+            />
           </div>
-        </FloatingStatusWidget>
-        <div className="learning-surface__reading" ref={readingRef}>
-          <LearningConversation messages={messages} isGenerating={isGenerating}
-            currentGeneratingMessageId={currentGeneratingMessageId} sessionId={sessionId}
-            scrollContainerRef={readingRef} />
-          {projection?.checkpoint && <LearningCheckpointCard sessionId={sessionId} checkpoint={projection.checkpoint} disabled={busy} />}
-          {projection?.latestAssessment && <LearningAssessmentCard sessionId={sessionId} assessment={projection.latestAssessment} disabled={busy} />}
         </div>
-        <LearningComposer sessionId={sessionId} projection={projection} isGenerating={isGenerating} disabled={busy || !projection} />
-      </main>
-      {material && <LearningMaterialPanel key={`${sessionId}:${material.nodeId}`} sessionId={sessionId} state={material}
-        onClose={closeMaterial} onEditInDev={handleEditInDev} />}
+      )}
+      <div
+        ref={composerAreaRef}
+        className={`chat-panel__composer-area ${isEmptyState ? 'chat-panel__composer-area--empty' : ''}`}
+      >
+        <div className="chat-panel__composer-inner">
+          {!isEmptyState && showScrollToBottom && (
+            <IconButton
+              label={LEARNING_SCROLL_TO_BOTTOM}
+              tooltip={LEARNING_SCROLL_TO_BOTTOM}
+              icon={<ChevronIcon size={14} direction="down" />}
+              variant="ghost"
+              size="sm"
+              className="chat-scroll-to-bottom"
+              onClick={handleScrollToBottomClick}
+            />
+          )}
+          {(status === 'error' || commandError) && (
+            <div className="learning-banners w-full pointer-events-auto">
+              {status === 'error' && (
+                <Banner
+                  status="error"
+                  title={LEARNING_READ_FAILURE_TITLE}
+                  endContent={
+                    <Button
+                      label={LEARNING_RETRY_LABEL}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void refresh(sessionId)}
+                    />
+                  }
+                />
+              )}
+              {commandError && (
+                <Banner
+                  status={commandError.code === 'unavailable' ? 'error' : 'warning'}
+                  title={learningCommandRejectionCopy(commandError)}
+                />
+              )}
+            </div>
+          )}
+          <div className="w-full flex flex-col items-center pointer-events-none">
+            {isEmptyState ? (
+              <LearningEmptyState
+                workspaceRoot={projection?.workspaceRoot ?? null}
+                firstTopic={firstTopic}
+                disabled={busy}
+                onSelectTopic={handleSelectTopic}
+                onSendMessage={handleSuggestionMessage}
+              >
+                {composer}
+              </LearningEmptyState>
+            ) : (
+              composer
+            )}
+          </div>
+        </div>
+      </div>
     </div>
-  </div>
+  )
 }

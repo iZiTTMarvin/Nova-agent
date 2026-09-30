@@ -1,5 +1,6 @@
 /**
- * 右侧 Inspector 面板：审阅 / 文件 Tab，宽度可拖拽。
+ * 右侧 Inspector 面板，宽度可拖拽。开发会话为「审阅 / 文件」；学习会话为「大纲 / 文件」，
+ * 开合与页签读写学习那组状态，开发面板行为不变。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CloseIcon } from '../../components/Icons'
@@ -8,6 +9,8 @@ import type { InspectorTab as InspectorTabId } from '../../stores/useLayoutStore
 import { ReviewTab } from './ReviewTab'
 import { FilesTab } from './FilesTab'
 import { PlanInspectorView } from './PlanInspectorView'
+import { LearningOutlinePane } from '../learning/outline/LearningOutlinePane'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import './InspectorPanel.css'
 
 /**
@@ -23,17 +26,26 @@ export interface InspectorPanelProps {
 }
 
 export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionChange }) => {
-  const inspectorOpen = useLayoutStore(s => s.inspectorOpen)
+  const learnSessionId = useWorkspaceStore(s => s.currentMode === 'learn' ? s.currentSessionId : null)
+  const isLearn = learnSessionId !== null
+  const devOpen = useLayoutStore(s => s.inspectorOpen)
+  const learnOpen = useLayoutStore(s => s.learnInspectorOpen)
+  const inspectorOpen = isLearn ? learnOpen : devOpen
   const inspectorTab = useLayoutStore(s => s.inspectorTab)
+  const learnTab = useLayoutStore(s => s.learnInspectorTab)
+  const setLearnInspectorTab = useLayoutStore(s => s.setLearnInspectorTab)
+  const closeLearnInspector = useLayoutStore(s => s.closeLearnInspector)
   const inspectorWidth = useLayoutStore(s => s.inspectorWidth)
   const inspectorSurface = useLayoutStore(s => s.inspectorSurface)
   const setInspectorTab = useLayoutStore(s => s.setInspectorTab)
-  const closeInspector = useLayoutStore(s => s.closeInspector)
+  const closeDevInspector = useLayoutStore(s => s.closeInspector)
+  const closeInspector = isLearn ? closeLearnInspector : closeDevInspector
   const setInspectorWidth = useLayoutStore(s => s.setInspectorWidth)
 
   const [mounted, setMounted] = useState(false)
   const [visitedReview, setVisitedReview] = useState(false)
   const [visitedFiles, setVisitedFiles] = useState(false)
+  const [visitedOutline, setVisitedOutline] = useState(false)
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
   const dragStartWidth = useRef(0)
@@ -125,9 +137,14 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
 
   useEffect(() => {
     if (!inspectorOpen) return
+    if (isLearn) {
+      if (learnTab === 'outline') setVisitedOutline(true)
+      if (learnTab === 'files') setVisitedFiles(true)
+      return
+    }
     if (inspectorTab === 'review') setVisitedReview(true)
     if (inspectorTab === 'files') setVisitedFiles(true)
-  }, [inspectorOpen, inspectorTab])
+  }, [inspectorOpen, inspectorTab, isLearn, learnTab])
 
   useEffect(() => {
     if (!inspectorOpen) return
@@ -183,7 +200,46 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
             className="inspector-panel__inner"
             style={{ width: inspectorWidth }}
           >
-            {inspectorSurface === 'plan' ? (
+            {isLearn ? (
+              <>
+                <header className="inspector-panel__header">
+                  <div className="inspector-panel__tabs" role="tablist">
+                    {(['outline', 'files'] as const).map(tab => (
+                      <button
+                        key={tab}
+                        type="button"
+                        role="tab"
+                        aria-selected={learnTab === tab}
+                        className={`inspector-panel__tab${learnTab === tab ? ' inspector-panel__tab--active' : ''}`}
+                        onClick={() => setLearnInspectorTab(tab)}
+                      >
+                        {tab === 'outline' ? '大纲' : '文件'}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="inspector-icon-btn"
+                    aria-label="关闭面板"
+                    onClick={() => closeInspector()}
+                  >
+                    <CloseIcon size={14} />
+                  </button>
+                </header>
+                <div className="inspector-panel__body">
+                  {visitedOutline && (
+                    <div className="inspector-panel__pane" hidden={learnTab !== 'outline'} role="tabpanel" aria-label="大纲">
+                      <LearningOutlinePane sessionId={learnSessionId} />
+                    </div>
+                  )}
+                  {visitedFiles && (
+                    <div className="inspector-panel__pane" hidden={learnTab !== 'files'} role="tabpanel">
+                      <FilesTab />
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : inspectorSurface === 'plan' ? (
               <PlanInspectorView />
             ) : (
               <>

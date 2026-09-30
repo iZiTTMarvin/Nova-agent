@@ -250,13 +250,13 @@ function executeApplyCommand(
     | undefined
 
   if (!projectRow) {
-    return invalidReceipt('会话游标不存在')
+    return invalidReceipt('学习记录还没准备好，请再试一次')
   }
   if (projectRow.clear_generation !== projectRow.cursor_clear) {
-    return staleReceipt('clearGeneration 不一致')
+    return staleReceipt('内容已更新，请再试一次')
   }
   if (command.expectedClearGeneration !== projectRow.clear_generation) {
-    return staleReceipt('clearGeneration 已变化')
+    return staleReceipt('内容已更新，请再试一次')
   }
 
   const existing = db
@@ -264,13 +264,13 @@ function executeApplyCommand(
     .get(command.commandId) as { payload_hash: string; receipt_json: string } | undefined
   if (existing) {
     if (existing.payload_hash !== payloadHash) {
-      return invalidReceipt('相同 commandId 载荷不一致')
+      return invalidReceipt('这次操作和之前的记录冲突，请再试一次')
     }
     return JSON.parse(existing.receipt_json) as LearningCommandReceipt
   }
 
   if (command.expectedCursorVersion !== projectRow.cursor_version) {
-    return staleReceipt('cursorVersion 已变化')
+    return staleReceipt('内容已更新，请再试一次')
   }
 
   const changed = applyCommandMutation(db, command, projectRow.project_id, now)
@@ -340,7 +340,7 @@ function applyCommandMutation(
       )
       .run(now, action.checkpointId, command.sessionId)
     if (claimed.changes === 0) {
-      return mutation(staleReceipt('停点不可回答'))
+      return mutation(staleReceipt('这道题已经不能回答了'))
     }
     const attemptId = randomUUID()
     const userMessageId = randomUUID()
@@ -378,7 +378,7 @@ function applyCommandMutation(
       .prepare(`SELECT state FROM checkpoints WHERE checkpoint_id = ? AND session_id = ?`)
       .get(action.checkpointId, command.sessionId) as { state: string } | undefined
     if (!checkpoint || checkpoint.state !== 'awaiting_answer') {
-      return mutation(staleReceipt('停点已不再等待回答'))
+      return mutation(staleReceipt('这道题已经不在等你回答了'))
     }
     recordHelpEvent(db, action.checkpointId, command.sessionId, projectId, action.type, now)
     // §9.3：跳过与直接讲解都记为 skipped 的明确原因，同时记入帮助事件；提示不消费问题
@@ -411,7 +411,7 @@ function applyCommandMutation(
       )
       .get(action.assessmentId, command.sessionId) as { observation_id: string; checkpoint_id: string } | undefined
     if (!assessment) {
-      return mutation(staleReceipt('评估不存在'))
+      return mutation(staleReceipt('找不到这次判断'))
     }
     db.prepare(
       `INSERT INTO learning_observations (
@@ -440,7 +440,7 @@ function applyCommandMutation(
     })
   }
 
-  if (action.type === 'select_node' || action.type === 'message') {
+  if (action.type === 'select_node' || action.type === 'message' || action.type === 'explain_change') {
     const nextVersion = command.expectedCursorVersion + 1
     if (action.type === 'select_node') {
       const member = db.prepare(
@@ -448,7 +448,7 @@ function applyCommandMutation(
          JOIN projects p ON p.project_id = vm.project_id AND p.current_knowledge_revision = vm.knowledge_revision
          WHERE vm.project_id = ? AND vm.node_id = ?`
       ).get(projectId, action.nodeId) as { knowledge_revision: string } | undefined
-      if (!member) return mutation(invalidReceipt('节点尚无已发布教材'))
+      if (!member) return mutation(invalidReceipt('这个主题还没有内容'))
       db.prepare(`UPDATE checkpoints SET state = 'superseded', updated_at = ?
         WHERE session_id = ? AND state IN ('awaiting_answer', 'answer_pending')`).run(now, command.sessionId)
       db.prepare(`UPDATE outbox SET status = 'cancelled' WHERE session_id = ? AND status = 'pending'`).run(command.sessionId)
@@ -470,7 +470,7 @@ function applyCommandMutation(
     })
   }
 
-  return mutation(invalidReceipt('本批次未实现该 action'))
+  return mutation(invalidReceipt('这个操作暂不支持'))
 }
 
 function executeClearPersonal(
@@ -758,16 +758,13 @@ function executeSubmitAssessment(
   if (!attempt) {
     throw new Error('attempt 不存在')
   }
-  const answerText = attempt.answer_excerpt.trim()
-  if (submission.userQuote.trim() !== answerText) {
-    throw new Error('用户原话与原始回答不匹配')
-  }
+  // 原回答由 attempt 绑定、服务端持有；模型不复述原话，避免改写导致提交失败
   for (const ref of submission.factReferences) {
     const receipt = db
       .prepare(`SELECT receipt_id FROM source_receipts WHERE receipt_id = ? AND project_id = ?`)
       .get(ref.receiptId, projectId)
     if (!receipt) {
-      throw new Error(`无效出处 ${ref.receiptId}`)
+      throw new Error(`无效出处 ${ref.receiptId}；没有大纲时不要填 factReferences`)
     }
   }
   const helpCount = countHelpEvents(db, submission.checkpointId)
@@ -873,7 +870,6 @@ function latestAssessmentForSession(
   checkpointId: string
   verdict: string
   summary: string
-  userQuote: string
   disputed: boolean
   createdAt: number
 } | null {
@@ -904,7 +900,6 @@ function latestAssessmentForSession(
     checkpointId: row.checkpoint_id,
     verdict: typeof payload.verdict === 'string' ? payload.verdict : 'inconclusive',
     summary: typeof payload.summary === 'string' ? payload.summary : '',
-    userQuote: typeof payload.userQuote === 'string' ? payload.userQuote : '',
     disputed,
     createdAt: row.created_at
   }
@@ -915,30 +910,16 @@ function executeGetSurface(
   op: Extract<LearningDbWorkerOp, { op: 'get_surface' }>
 ) {
   const cursor = executeGetCursor(db, op.workspaceRoot, op.sessionId)
-  let checkpoint: PersistedCheckpointView | null = null
-  const checkpointRow = db
-    .prepare(
-      `SELECT c.checkpoint_id, c.session_id, c.run_id, c.cursor_version, c.question,
-              c.rubric_json, c.created_at, c.state
-       FROM learning_cursors lc
-       INNER JOIN checkpoints c ON c.checkpoint_id = lc.current_checkpoint_id
-       WHERE lc.session_id = ?`
-    )
-    .get(op.sessionId) as Record<string, unknown> | undefined
-  if (checkpointRow) {
-    checkpoint = {
-      checkpointId: checkpointRow.checkpoint_id as string,
-      sessionId: checkpointRow.session_id as string,
-      runId: checkpointRow.run_id as string,
-      cursorVersion: checkpointRow.cursor_version as number,
-      question: checkpointRow.question as string,
-      rubricJson: (checkpointRow.rubric_json as string | null) ?? null,
-      createdAt: checkpointRow.created_at as number,
-      state: checkpointRow.state as string
-    }
-  }
-  const latestAssessment = latestAssessmentForSession(db, op.sessionId)
-
+  const current = db
+    .prepare(`SELECT current_checkpoint_id FROM learning_cursors WHERE session_id = ?`)
+    .get(op.sessionId) as { current_checkpoint_id: string | null } | undefined
+  const questions = executeListSessionQuestions(db, op.sessionId)
+  const topicStartMessageIds = (db.prepare(
+    `SELECT user_message_id FROM outbox
+     WHERE session_id = ? AND json_extract(payload_json, '$.kind') = 'deliver_command'
+       AND json_extract(payload_json, '$.action.type') = 'select_node'
+     ORDER BY created_at ASC, rowid ASC`
+  ).all(op.sessionId) as { user_message_id: string }[]).map(row => row.user_message_id)
   const evidence = db.prepare(`
     WITH ranked AS (
       SELECT o.*, ROW_NUMBER() OVER (PARTITION BY o.checkpoint_id ORDER BY o.created_at DESC, o.rowid DESC) AS position
@@ -955,8 +936,6 @@ function executeGetSurface(
   `).all(deriveProjectId(op.workspaceRoot), deriveProjectId(op.workspaceRoot)) as {
     node_id: string | null; state: string; count: number
   }[]
-  const independentCount = evidence.filter(row => row.state === 'understanding_observed').reduce((sum, row) => sum + row.count, 0)
-  const needsClarificationCount = evidence.filter(row => row.state === 'needs_clarification').reduce((sum, row) => sum + row.count, 0)
   const nodeStates = new Map<string, import('../../../shared/learning/surface').LearningNodeProgressView['state']>()
   const rank = { explained: 0, understanding_observed: 1, needs_clarification: 2, pending_review: 3 }
   for (const row of evidence) {
@@ -972,14 +951,55 @@ function executeGetSurface(
     cursorVersion: cursor.cursorVersion,
     clearGeneration: cursor.clearGeneration,
     selectedNodeId: cursor.selectedNodeId,
-    checkpoint,
-    latestAssessment,
-    nodeProgress,
-    summary: {
-      independentCount,
-      needsClarificationCount
-    }
+    currentCheckpointId: current?.current_checkpoint_id ?? null,
+    questions,
+    topicStartMessageIds,
+    nodeProgress
   }
+}
+
+const QUESTION_STATES = new Set(['awaiting_answer', 'answer_pending', 'answered', 'skipped', 'superseded'])
+
+/** 会话内全部核对问题及各自最新评估；「被质疑」只看最新评估是否已有 dispute 记录。 */
+function executeListSessionQuestions(
+  db: BetterSqlite3.Database,
+  sessionId: string
+): import('../../../shared/learning/surface').LearningQuestionView[] {
+  const rows = db.prepare(`
+    WITH ranked AS (
+      SELECT o.observation_id, o.checkpoint_id, o.payload_json,
+        ROW_NUMBER() OVER (PARTITION BY o.checkpoint_id ORDER BY o.created_at DESC, o.rowid DESC) AS position
+      FROM learning_observations o WHERE o.session_id = ? AND o.kind = 'assessment'
+    )
+    SELECT c.checkpoint_id, c.question, c.state, c.created_at,
+      r.observation_id AS assessment_id,
+      json_extract(r.payload_json, '$.verdict') AS verdict,
+      json_extract(r.payload_json, '$.summary') AS summary,
+      EXISTS (SELECT 1 FROM learning_observations d
+        WHERE d.session_id = c.session_id AND d.kind = 'dispute'
+          AND json_extract(d.payload_json, '$.assessmentId') = r.observation_id) AS disputed
+    FROM checkpoints c
+    LEFT JOIN ranked r ON r.checkpoint_id = c.checkpoint_id AND r.position = 1
+    WHERE c.session_id = ?
+    ORDER BY c.created_at ASC, c.rowid ASC
+  `).all(sessionId, sessionId) as {
+    checkpoint_id: string; question: string; state: string; created_at: number
+    assessment_id: string | null; verdict: string | null; summary: string | null; disputed: number
+  }[]
+  return rows.map(row => {
+    if (!QUESTION_STATES.has(row.state)) throw new Error(`学习停点状态非法: ${row.state}`)
+    const verdict = row.verdict === 'understanding_observed' || row.verdict === 'needs_clarification'
+      ? row.verdict : 'inconclusive'
+    return {
+      checkpointId: row.checkpoint_id,
+      question: row.question,
+      state: row.state as import('../../../shared/learning/surface').LearningCheckpointUiState,
+      createdAt: row.created_at,
+      assessment: row.assessment_id
+        ? { assessmentId: row.assessment_id, verdict, summary: row.summary ?? '', disputed: row.disputed === 1 }
+        : null
+    }
+  })
 }
 
 function executeGetPendingOutbox(

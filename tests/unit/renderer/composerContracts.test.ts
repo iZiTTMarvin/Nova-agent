@@ -15,6 +15,11 @@ const chatPanelCss = readFileSync(
   new URL('../../../src/renderer/features/chat/ChatPanel.css', import.meta.url),
   'utf8'
 )
+// 输入区外壳与输入框规则住在 composerShell.css，由开发与学习两个表面共用
+const composerShellCss = readFileSync(
+  new URL('../../../src/renderer/features/chat/composerShell.css', import.meta.url),
+  'utf8'
+)
 
 describe('Composer：ChatComposerInput 权威', () => {
   it('ChatPanel 使用 ChatComposerInput，不再 import TextArea', () => {
@@ -43,7 +48,8 @@ describe('Composer：ChatComposerInput 权威', () => {
 
   it('删除 textarea 尺寸 fork', () => {
     expect(chatPanelCss).not.toContain('chat-composer__textarea')
-    expect(chatPanelCss).toContain('chat-composer__input')
+    expect(composerShellCss).not.toContain('chat-composer__textarea')
+    expect(composerShellCss).toContain('chat-composer__input')
   })
 })
 

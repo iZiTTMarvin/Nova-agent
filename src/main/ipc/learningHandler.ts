@@ -16,6 +16,9 @@ import {
 } from '../../shared/ipc/channels'
 import type { ModelClient } from '../../runtime/model/ModelClient'
 import { ImageStore } from '../../runtime/storage/ImageStore'
+import { getSessionStore } from '../services/SessionStoreHost'
+import { resolveSessionModelConfig } from '../services/sessionModelConfig'
+import { createModelClient } from '../services/createModelClient'
 import {
   loadLearningNodeMaterial,
   loadLearningSource,
@@ -31,13 +34,18 @@ export function registerLearningHandler(
   getModelClient: () => ModelClient | null,
   getImageStore: () => ImageStore
 ): void {
-  setLearningSurfaceBroadcaster((sessionId: string, workspaceRoot: string) => {
+  setLearningSurfaceBroadcaster((sessionId: string | null, workspaceRoot: string) => {
     const window = getMainWindow()
     if (!window || window.isDestroyed() || window.webContents.isDestroyed()) return
     window.webContents.send(LEARNING_SURFACE_CHANGED, { sessionId, workspaceRoot })
   })
 
-  handle(LEARNING_BUILD, async (_event, params: { sessionId: string }) => startLearningBuild(params.sessionId, getModelClient()))
+  handle(LEARNING_BUILD, async (_event, params: { sessionId: string }) => {
+    const session = getSessionStore().loadMetadata(params.sessionId)
+    const sessionConfig = session ? resolveSessionModelConfig(session) : null
+    const model = sessionConfig ? createModelClient(sessionConfig) : getModelClient()
+    return startLearningBuild(params.sessionId, model)
+  })
   handle(LEARNING_CANCEL_BUILD, async (_event, params: { sessionId: string }) => stopLearningBuild(params.sessionId))
   handle(LEARNING_GET_SOURCE, async (_event, params: { sessionId: string; nodeId: string; receiptId: string }) =>
     loadLearningSource(params.sessionId, params.nodeId, params.receiptId))
@@ -50,13 +58,9 @@ export function registerLearningHandler(
     return loadLearningNodeMaterial(params.sessionId, params.nodeId)
   })
 
-  handle(LEARNING_COMMAND, async (_event, params: { sessionId: string; command: unknown; devReference?: unknown }) => {
+  handle(LEARNING_COMMAND, async (_event, params: { sessionId: string; command: unknown }) => {
     return submitLearningSurfaceCommand(
-      {
-        sessionId: params.sessionId,
-        command: params.command,
-        ...(params.devReference !== undefined ? { devReference: params.devReference } : {})
-      },
+      { sessionId: params.sessionId, command: params.command },
       { getMainWindow, getModelClient, getImageStore }
     )
   })

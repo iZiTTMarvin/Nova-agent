@@ -702,7 +702,7 @@ export class AgentLoop {
   async sendMessage(
     content: string | ContentBlock[],
     route: AgentTurnRoute,
-    options?: { userMessageId?: string }
+    options?: { userMessageId?: string; recordDeliveredInput?: boolean }
   ): Promise<AgentTurnOutcome> {
     if (this.state === 'running') {
       const busy = '当前正在执行中，请先取消'
@@ -749,7 +749,7 @@ export class AgentLoop {
         })
       }
 
-      outcome = await this.runTurn(content, route, messageId, options?.userMessageId)
+      outcome = await this.runTurn(content, route, messageId, options?.userMessageId, options?.recordDeliveredInput === true)
     } catch (err) {
       if (this.cancelled) {
         // 取消引发的执行中断（abort 拒绝等）按取消收尾，不伪装成失败
@@ -775,7 +775,8 @@ export class AgentLoop {
     content: string | ContentBlock[],
     route: AgentTurnRoute,
     messageId: string,
-    userMessageId?: string
+    userMessageId?: string,
+    recordDeliveredInput = false
   ): Promise<AgentTurnOutcome> {
     let userText = typeof content === 'string'
       ? content
@@ -817,7 +818,9 @@ export class AgentLoop {
       userMessageId: userMessageId ?? '', sessionPrefix, modeInstruction,
       ...(dispatched.assistantPrelude !== undefined ? {
         skillInput: { assistantPrelude: dispatched.assistantPrelude, userContent: dispatched.userText }
-      } : {})
+      } : {}),
+      // 调用方声明任务文本不同于落盘原文时，把本轮实际输入记入事实，重建时逐字复现
+      ...(recordDeliveredInput && typeof content === 'string' ? { deliveredInput: content } : {})
     }
     if (userMessageId) {
       this.eventBus.emit({ type: 'user_delivery', messageId, facts })

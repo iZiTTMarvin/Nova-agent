@@ -189,7 +189,6 @@ export interface IpcCommands {
     params: {
       sessionId: string
       command: unknown
-      devReference?: unknown
     }
     result: LearningCommandReceipt
   }
@@ -842,7 +841,8 @@ export interface IpcEvents {
     childSessionId: string
   }
   'learning:surface-changed': {
-    sessionId: string
+    /** null 表示整个项目的学习状态变化（例如大纲生成），同项目的学习会话都应刷新 */
+    sessionId: string | null
     workspaceRoot: string
   }
   'agent:todos-updated': {

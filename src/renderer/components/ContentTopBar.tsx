@@ -10,7 +10,8 @@ import {
 } from './Icons'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { useLayoutStore } from '../stores/useLayoutStore'
+import { selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayoutStore'
+import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
 import './ContentTopBar.css'
@@ -129,8 +130,11 @@ const SessionMoreMenu: React.FC = () => {
  */
 export const ContentTopBar: React.FC = () => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
-  const inspectorOpen = useLayoutStore(state => state.inspectorOpen)
+  const isLearnSurface = useWorkspaceStore(state => state.currentMode === 'learn' && state.currentSessionId !== null)
+  const inspectorOpen = useLayoutStore(state => selectInspectorOpenForSurface(state, isLearnSurface))
   const browserSurfaceOpen = useLayoutStore(state => state.browserSurfaceOpen)
+  // 学习会话的面板是「大纲 | 文件」，与开发面板状态分开
+  const inspectorLabel = isLearnSurface ? '大纲与文件' : '审查与文件面板'
 
   return (
     <div className="content-topbar">
@@ -161,13 +165,17 @@ export const ContentTopBar: React.FC = () => {
           tooltip="在 Nova 中打开"
         />
         <IconButton
-          label="审查与文件面板"
+          label={inspectorLabel}
           icon={<PanelRightIcon size={16} />}
           variant="ghost"
           size="sm"
           className={`content-topbar__btn${inspectorOpen ? ' content-topbar__btn--active' : ''}`}
-          onClick={() => useLayoutStore.getState().toggleInspector()}
-          tooltip="审查与文件面板"
+          onClick={() => {
+            const layout = useLayoutStore.getState()
+            if (isLearnSurface) layout.toggleLearnInspector()
+            else layout.toggleInspector()
+          }}
+          tooltip={inspectorLabel}
         />
         <SessionMoreMenu />
         <WindowControls />

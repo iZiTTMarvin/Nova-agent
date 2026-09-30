@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  listBreadcrumbSessions,
   listPinnedSessions,
   listSidebarRootSessions,
   listSidebarSessionsForSurface,
@@ -75,6 +76,15 @@ describe('listSidebarSessionsForSurface', () => {
   it('开发面不显示 learn 会话，学习面只显示 learn 会话', () => {
     expect(listSidebarSessionsForSurface([parent, learnSession, child], 'dev').map(s => s.id)).toEqual(['parent'])
     expect(listSidebarSessionsForSurface([parent, learnSession, child], 'learn').map(s => s.id)).toEqual(['learn'])
+  })
+})
+
+describe('listBreadcrumbSessions', () => {
+  it('只列当前工作区、当前表面的会话', () => {
+    const otherProject: Session = { ...learnSession, id: 'learn-other', workspaceRoot: 'D:/other' }
+    const all = [parent, learnSession, otherProject, child]
+    expect(listBreadcrumbSessions(all, 'D:/workspace', 'learn').map(s => s.id)).toEqual(['learn'])
+    expect(listBreadcrumbSessions(all, 'D:/workspace', 'dev').map(s => s.id)).toEqual(['parent'])
   })
 })
 

@@ -1,62 +1,57 @@
+/**
+ * 工作区只读取证：枚举可读文件、统计引用、按策略排序并切出候选片段。
+ * 只产出按优先级排好的候选；装入多少由构建方按 token 预算决定。
+ */
 import { createHash, randomUUID } from 'node:crypto'
 import { open, readdir } from 'node:fs/promises'
 import { join, resolve, sep } from 'node:path'
 import {
+  LEARNING_DISCOVERY_MAX_ENTRIES,
   LEARNING_EVIDENCE_PER_FILE_MAX_BYTES,
-  LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS,
-  LEARNING_EVIDENCE_TOTAL_MAX_BYTES,
-  LEARNING_DISCOVERY_MAX_ENTRIES
+  LEARNING_IMPORT_SCAN_BYTES,
+  LEARNING_SKELETON_MAX_CANDIDATE_FRAGMENTS
 } from '../../../../shared/learning/buildLimits'
 import {
   canonicalizeExistingPath,
   createCanonicalPathCache,
   isPathWithinRoot,
-  lexicalNormalize,
   toWorkspaceRelativePath
 } from '../../../permissions/pathAccess'
 import { isPathSkipped, loadIgnoreMatcher } from '../../../workspace'
-import type { EvidenceFragment, EvidencePackage, LearningCodeIndexQueryPort } from './evidenceTypes'
+import type { EvidenceFragment, EvidencePackage } from './evidenceTypes'
 import { LEARNING_EVIDENCE_STRATEGY_VERSION } from './evidenceTypes'
+import {
+  buildProjectLayout,
+  evidenceFileKind,
+  extractRelativeImports,
+  isCodePath,
+  isExcludedEvidencePath,
+  packageEntryPaths,
+  rankEvidenceCandidates,
+  resolveRelativeImport,
+  selectFragmentWindow,
+  sliceLines
+} from './evidenceStrategy'
 import { isSensitiveRelativePath } from './sensitivePaths'
-import { deriveProjectId } from '../../storage/workerCommand'
-import { normalizeWorkspaceForProject } from '../../storage/workerCommand'
+import { deriveProjectId, normalizeWorkspaceForProject } from '../../storage/workerCommand'
 
 const TEXT_EXTENSIONS = new Set([
-  '.ts',
-  '.tsx',
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs',
-  '.json',
-  '.md',
-  '.html',
-  '.css',
-  '.yaml',
-  '.yml'
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.md', '.html', '.css', '.yaml', '.yml'
 ])
-
-const ENTRY_PRIORITY = ['package.json', 'README.md', 'readme.md', 'README.MD']
-const MAX_FRAGMENT_BYTES = Math.min(LEARNING_EVIDENCE_PER_FILE_MAX_BYTES, Math.floor(LEARNING_EVIDENCE_TOTAL_MAX_BYTES / LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS))
 
 function hashText(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
 }
 
-/** 只读取上限内的前缀；指纹覆盖已读字节，不把未读尾部算进文件 hash。 */
-async function readCappedText(
-  absPath: string,
-  maxBytes: number
-): Promise<{ text: string } | null> {
+/** 只读取上限内的前缀；二进制文件返回 null。 */
+async function readCappedText(absPath: string, maxBytes: number): Promise<{ text: string } | null> {
   const handle = await open(absPath, 'r')
   try {
     const stat = await handle.stat()
     if (!stat.isFile()) return null
     const toRead = Math.min(stat.size, maxBytes)
     const buf = Buffer.alloc(toRead)
-    if (toRead > 0) {
-      await handle.read(buf, 0, toRead, 0)
-    }
+    if (toRead > 0) await handle.read(buf, 0, toRead, 0)
     if (isBinaryBuffer(buf)) return null
     let text = buf.toString('utf8')
     if (stat.size > maxBytes) text = text.replace(/\uFFFD$/, '')
@@ -110,7 +105,7 @@ async function listReadableFiles(workspaceRoot: string, signal?: AbortSignal): P
       if (isSensitiveRelativePath(rel)) continue
       const ext = name.includes('.') ? `.${name.split('.').pop()!.toLowerCase()}` : ''
       if (!TEXT_EXTENSIONS.has(ext)) continue
-      found.push(rel)
+      found.push(rel.replace(/\\/g, '/'))
     }
   }
 
@@ -118,38 +113,7 @@ async function listReadableFiles(workspaceRoot: string, signal?: AbortSignal): P
   return found
 }
 
-const FLOW_ENTRY_PATTERN = /(?:^|\/)(index|main|app|save)\.(tsx?|jsx?|mjs|cjs)$/i
-
-function prioritizePaths(paths: readonly string[]): string[] {
-  const set = new Set(paths)
-  const ordered: string[] = []
-  for (const entry of ENTRY_PRIORITY) {
-    if (set.has(entry)) ordered.push(entry)
-  }
-  const rest = [...paths].filter(p => !ordered.includes(p))
-  const flowLike = rest.filter(p => FLOW_ENTRY_PATTERN.test(p.replace(/\\/g, '/'))).sort()
-  const other = rest.filter(p => !FLOW_ENTRY_PATTERN.test(p.replace(/\\/g, '/'))).sort()
-  return [...ordered, ...flowLike, ...other]
-}
-
-function sliceFragmentLines(
-  content: string,
-  startLine: number,
-  endLine: number
-): { text: string; startLine: number; endLine: number } {
-  const lines = content.split(/\r?\n/)
-  const start = Math.max(1, startLine)
-  const end = Math.min(lines.length, endLine)
-  if (start > lines.length) {
-    return { text: '', startLine: start, endLine: start }
-  }
-  const text = lines.slice(start - 1, end).join('\n')
-  return { text, startLine: start, endLine: end }
-}
-
 export class WorkspaceEvidencePort {
-  constructor(private readonly codeIndex: LearningCodeIndexQueryPort | null = null) {}
-
   async collectSkeletonEvidence(params: {
     workspaceRoot: string
     focusRelativePaths?: readonly string[]
@@ -162,122 +126,133 @@ export class WorkspaceEvidencePort {
     if (!rootCanon.ok) {
       throw new Error('工作区路径无效')
     }
-
-    let candidates = prioritizePaths(await listReadableFiles(normalizedRoot, params.signal))
-    if (params.focusRelativePaths?.length) {
-      const focus = params.focusRelativePaths.map(p => p.replace(/\\/g, '/'))
-      const focusSet = new Set(focus)
-      const prioritized = candidates.filter(p => focusSet.has(p))
-      const rest = candidates.filter(p => !focusSet.has(p))
-      candidates = [...prioritized, ...rest]
-    }
-
-    if (this.codeIndex?.findRelevantPaths) {
+    const readWithin = async (relPath: string, maxBytes: number): Promise<string | null> => {
+      const absPath = join(rootCanon.path, relPath.split('/').join(sep))
+      const target = canonicalizeExistingPath(absPath, cache)
+      if (!target.ok || !isPathWithinRoot(rootCanon.path, target.path)) return null
       try {
-        const hinted = await this.codeIndex.findRelevantPaths(['save', 'entry', 'main'])
-        const hintSet = new Set(hinted.map(p => p.replace(/\\/g, '/')))
-        const hintedFirst = candidates.filter(p => hintSet.has(p))
-        const rest = candidates.filter(p => !hintSet.has(p))
-        if (hintedFirst.length > 0) candidates = [...hintedFirst, ...rest]
+        return (await readCappedText(target.path, maxBytes))?.text ?? null
       } catch {
-        // 索引不可用时继续文件枚举
+        return null
       }
     }
+
+    const files = await listReadableFiles(normalizedRoot, params.signal)
+    const known = new Set(files)
+
+    // 引用次数：只扫描代码文件开头，统计「被项目内其他文件引用」的次数
+    const referenceCounts = new Map<string, number>()
+    for (const path of files) {
+      params.signal?.throwIfAborted()
+      if (!isCodePath(path) || isExcludedEvidencePath(path)) continue
+      const head = await readWithin(path, LEARNING_IMPORT_SCAN_BYTES)
+      if (!head) continue
+      for (const specifier of new Set(extractRelativeImports(head))) {
+        const target = resolveRelativeImport(path, specifier, known)
+        if (target && target !== path) referenceCounts.set(target, (referenceCounts.get(target) ?? 0) + 1)
+      }
+    }
+    const packageJson = known.has('package.json') ? await readWithin('package.json', LEARNING_EVIDENCE_PER_FILE_MAX_BYTES) : null
+    const entryPaths = new Set(packageJson ? packageEntryPaths(packageJson, known) : [])
+
+    const ranked = rankEvidenceCandidates({ paths: files, entryPaths, referenceCounts })
+    const focus = new Set((params.focusRelativePaths ?? []).map(p => p.replace(/\\/g, '/')).filter(p => known.has(p)))
 
     const fragments: EvidenceFragment[] = []
-    const perFileBytes = new Map<string, number>()
     const collectedAt = Date.now()
-
-    for (const relPath of candidates) {
+    const taken = new Set<string>()
+    /** 读取并切片；没有可用正文时返回 false，调用方继续尝试同组下一个。 */
+    const tryTake = async (relPath: string): Promise<boolean> => {
       params.signal?.throwIfAborted()
-      if (fragments.length >= LEARNING_SKELETON_MAX_EVIDENCE_FRAGMENTS) break
-      const absPath = join(rootCanon.path, relPath.split('/').join(sep))
-      const targetCanon = canonicalizeExistingPath(absPath, cache)
-      if (!targetCanon.ok || !isPathWithinRoot(rootCanon.path, targetCanon.path)) continue
-
-      const used = perFileBytes.get(relPath) ?? 0
-      if (used >= LEARNING_EVIDENCE_PER_FILE_MAX_BYTES) continue
-
-      let capped: { text: string } | null
-      try {
-        capped = await readCappedText(
-          targetCanon.path,
-          MAX_FRAGMENT_BYTES
-        )
-      } catch {
-        continue
-      }
-      if (!capped) continue
-
-      perFileBytes.set(relPath, used + Buffer.byteLength(capped.text, 'utf8'))
-      const content = capped.text
-      const contentHash = hashText(content)
-      const lineCount = content.split(/\r?\n/).length
-      const endLine = Math.max(1, lineCount)
-      const { text, startLine, endLine: end } = sliceFragmentLines(content, 1, endLine)
-
+      if (taken.has(relPath)) return false
+      taken.add(relPath)
+      const content = await readWithin(relPath, LEARNING_EVIDENCE_PER_FILE_MAX_BYTES)
+      if (!content?.trim()) return false
+      const window = selectFragmentWindow(evidenceFileKind(relPath), content)
+      if (!window?.text.trim()) return false
       fragments.push({
         sourceId: randomUUID(),
         relativePath: relPath,
-        startLine,
-        endLine: end,
-        snippetText: text,
-        contentHash,
-        snippetHash: hashText(text),
-        symbolLabel: null,
+        startLine: window.startLine,
+        endLine: window.endLine,
+        snippetText: window.text,
+        contentHash: hashText(content),
+        snippetHash: hashText(window.text),
+        symbolLabel: window.symbolLabel,
         collectedAt
       })
+      return true
     }
+    const full = () => fragments.length >= LEARNING_SKELETON_MAX_CANDIDATE_FRAGMENTS
 
-    const readSet = new Set(fragments.map(f => f.relativePath))
-    const unreadPaths = candidates.filter(p => !readSet.has(p))
-
-    const fingerprint = hashText(
-      JSON.stringify(
-        fragments.map(f => ({
-          id: f.sourceId,
-          path: f.relativePath,
-          contentHash: f.contentHash,
-          snippetHash: f.snippetHash
-        }))
-      )
-    )
+    for (const path of [...focus, ...ranked.head]) {
+      if (full()) break
+      await tryTake(path)
+    }
+    // 每轮每个目录取一个可用片段；桶文件等无正文的文件不占该目录这一轮的名额
+    const queues = ranked.groups.map(group => [...group])
+    while (!full() && queues.some(queue => queue.length > 0)) {
+      for (const queue of queues) {
+        if (full()) break
+        while (queue.length > 0 && !(await tryTake(queue.shift()!))) { /* 同组继续找 */ }
+      }
+    }
+    for (const path of ranked.tail) {
+      if (full()) break
+      await tryTake(path)
+    }
 
     return {
       projectId,
       workspaceRoot: normalizedRoot,
       strategyVersion: LEARNING_EVIDENCE_STRATEGY_VERSION,
       fragments,
-      unreadPaths,
-      fingerprint
+      projectLayout: buildProjectLayout(files),
+      fingerprint: fingerprintOf(fragments)
     }
   }
 }
 
-/** 发布前复查：片段仍来自当前文件字节。 */
-export async function verifyFragmentAgainstDisk(
+export function fingerprintOf(fragments: readonly EvidenceFragment[]): string {
+  return hashText(JSON.stringify(fragments.map(f => ({
+    path: f.relativePath, startLine: f.startLine, endLine: f.endLine, snippetHash: f.snippetHash
+  }))))
+}
+
+/** 只取前 count 个候选组成最终证据包；指纹随之重算。 */
+export function takeEvidencePrefix(pkg: EvidencePackage, count: number): EvidencePackage {
+  const fragments = pkg.fragments.slice(0, count)
+  return { ...pkg, fragments, fingerprint: fingerprintOf(fragments) }
+}
+
+async function readSourceSlice(
   workspaceRoot: string,
-  fragment: Pick<
-    EvidenceFragment,
-    'relativePath' | 'startLine' | 'endLine' | 'contentHash' | 'snippetHash'
-  >
-): Promise<boolean> {
+  relativePath: string,
+  startLine: number,
+  endLine: number
+): Promise<{ text: string; startLine: number } | null> {
   const cache = createCanonicalPathCache()
   const rootCanon = canonicalizeExistingPath(resolve(workspaceRoot), cache)
-  if (!rootCanon.ok) return false
-  const absPath = join(rootCanon.path, fragment.relativePath.split('/').join(sep))
-  const targetCanon = canonicalizeExistingPath(absPath, cache)
-  if (!targetCanon.ok || !isPathWithinRoot(rootCanon.path, targetCanon.path)) return false
-  let capped: { text: string } | null
+  if (!rootCanon.ok) return null
+  const target = canonicalizeExistingPath(join(rootCanon.path, relativePath.split('/').join(sep)), cache)
+  if (!target.ok || !isPathWithinRoot(rootCanon.path, target.path)) return null
+  const capped = await readCappedText(target.path, LEARNING_EVIDENCE_PER_FILE_MAX_BYTES)
+  if (!capped) return null
+  const slice = sliceLines(capped.text, startLine, endLine)
+  return { text: slice.text, startLine: slice.startLine }
+}
+
+/** 发布前复查：只比较记录行范围内的片段，文件别处的改动不算出处失效。 */
+export async function verifyFragmentAgainstDisk(
+  workspaceRoot: string,
+  fragment: Pick<EvidenceFragment, 'relativePath' | 'startLine' | 'endLine' | 'snippetHash'>
+): Promise<boolean> {
   try {
-    capped = await readCappedText(targetCanon.path, MAX_FRAGMENT_BYTES)
+    const slice = await readSourceSlice(workspaceRoot, fragment.relativePath, fragment.startLine, fragment.endLine)
+    return slice !== null && hashText(slice.text) === fragment.snippetHash
   } catch {
     return false
   }
-  if (!capped || hashText(capped.text) !== fragment.contentHash) return false
-  const content = capped.text
-  const { text } = sliceFragmentLines(content, fragment.startLine, fragment.endLine)
-  return hashText(text) === fragment.snippetHash
 }
 
 export async function readKnowledgeSource(
@@ -286,20 +261,13 @@ export async function readKnowledgeSource(
 ): Promise<import('../../../../shared/learning/surface').LearningSourceResult> {
   try {
     if (isSensitiveRelativePath(source.filePath) || (await loadIgnoreMatcher(workspaceRoot))(source.filePath, false)) {
-      return { ok: false, message: '来源已被当前项目的读取策略排除' }
+      return { ok: false, reason: 'denied', message: '这个文件不允许读取' }
     }
-    const cache = createCanonicalPathCache()
-    const root = canonicalizeExistingPath(resolve(workspaceRoot), cache)
-    const target = canonicalizeExistingPath(resolve(workspaceRoot, source.filePath), cache)
-    if (!root.ok || !target.ok || !isPathWithinRoot(root.path, target.path)) {
-      return { ok: false, message: '来源已删除、不可访问或不在授权工作区中' }
-    }
-    const content = await readCappedText(target.path, MAX_FRAGMENT_BYTES)
-    if (!content) return { ok: false, message: '来源不是可读文本' }
-    const snippet = sliceFragmentLines(content.text, source.startLine, source.endLine)
-    return { ok: true, filePath: source.filePath, startLine: snippet.startLine,
-      text: snippet.text, changed: hashText(snippet.text) !== source.snippetHash }
+    const slice = await readSourceSlice(workspaceRoot, source.filePath, source.startLine, source.endLine)
+    if (!slice) return { ok: false, reason: 'missing', message: '找不到这段代码了' }
+    return { ok: true, filePath: source.filePath, startLine: slice.startLine,
+      text: slice.text, changed: hashText(slice.text) !== source.snippetHash }
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+    return { ok: false, reason: 'missing', message: error instanceof Error ? error.message : String(error) }
   }
 }

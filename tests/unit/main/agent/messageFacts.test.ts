@@ -345,6 +345,33 @@ describe('消息事实提交往返', () => {
       uiChars: ui.blocks?.filter(b => b.type === 'tool').map(b => b.result!.length) }))
   })
 
+  it('任务文本不同于落盘原文时，重建出的用户输入与首发逐字一致', async () => {
+    const { session, bus, ctx } = setup()
+    sessionStore.appendMessageFast(session.id, { id: 'u-learn', role: 'user', content: '给点提示', timestamp: 1 })
+    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+    const client = new MockModelClient().addResponse({ events: [
+      { type: 'message_start' },
+      { type: 'text_delta', delta: '先想想数据从哪来' },
+      { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access' })
+    loop.setSessionId(session.id)
+    loop.setModeInstructionProvider(() => '学习模式指令')
+    const modelInput = '[学习提示] 读 learning_context 里的当前问题'
+    const outcome = await loop.sendMessage(modelInput, agentRoute(), { userMessageId: 'u-learn', recordDeliveredInput: true })
+    expect(outcome.status).toBe('completed')
+    loop.dispose()
+
+    const loaded = sessionStore.load(session.id)!
+    // 显示与标题只看落盘原文；指令只在投递事实里
+    expect(loaded.messages[0].content).toBe('给点提示')
+    expect(loaded.messages[1].userDelivery?.deliveredInput).toBe(modelInput)
+    const sent = client.getCalls()[0]!.messages.find(m => m.origin?.messageId === 'u-learn')?.content
+    const rebuilt = buildConversationContext(loaded, 'default').find(m => m.role === 'user')?.content
+    expect(sent).toContain(modelInput)
+    expect(rebuilt).toBe(sent)
+  })
+
   it.each(['message_end', 'error'] as const)('过期 generation 的 %s 不提交或清除草稿', type => {
     const { feed, run, session, runStore } = setup()
     feed({ type: 'message_start', messageId: 'a' })

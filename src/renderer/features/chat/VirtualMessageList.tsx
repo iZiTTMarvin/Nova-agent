@@ -54,6 +54,8 @@ export interface VirtualMessageListProps {
   loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
   onLoadDiffs: (sessionId: string, messageId: string) => void | Promise<void>
   pendingPlanReview: PendingPlanReview | null
+  /** 缺省表示当前会话不提供「学懂这次改动」 */
+  onLearnChange?: (messageId: string) => void
 }
 
 function renderMessageRow(
@@ -132,6 +134,7 @@ function renderMessageRow(
       diffPlaceholders={diffPlaceholders}
       onLoadDiffs={onLoadDiffs}
       pendingPlanReview={pendingPlanReviewForRow}
+      {...(props.onLearnChange ? { onLearnChange: props.onLearnChange } : {})}
     />
   )
 }

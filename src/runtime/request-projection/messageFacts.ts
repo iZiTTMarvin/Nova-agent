@@ -6,7 +6,7 @@ import { stripLeakedToolMarkup } from '../../shared/tool-call-text-fallback'
 /** 首发与恢复只使用当时记录的注入，不重算过去的环境。 */
 export function projectUserContent(content: ChatMessage['content'], facts?: UserDeliveryFacts): ChatMessage['content'] {
   if (!facts) return content
-  content = facts.skillInput?.userContent ?? content
+  content = facts.skillInput?.userContent ?? facts.deliveredInput ?? content
   if (typeof content === 'string') {
     const suffix = facts.modeInstruction ? `${content}\n\n${facts.modeInstruction}` : content
     return facts.sessionPrefix ? `${facts.sessionPrefix}\n\n${suffix}` : suffix

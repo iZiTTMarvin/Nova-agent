@@ -1,10 +1,17 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(
-  new URL('../../../src/renderer/features/chat/ChatPanel.css', import.meta.url),
-  'utf8'
-)
+// 输入区外壳规则抽到了 composerShell.css（开发与学习两个表面共用），契约对两个文件合并检查；
+// composerShell 在前，保证独立规则先于 ChatPanel.css 里的冻结态复合选择器被匹配
+const css =
+  readFileSync(
+    new URL('../../../src/renderer/features/chat/composerShell.css', import.meta.url),
+    'utf8'
+  ) +
+  readFileSync(
+    new URL('../../../src/renderer/features/chat/ChatPanel.css', import.meta.url),
+    'utf8'
+  )
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

@@ -1,21 +1,33 @@
-import { useEffect, useRef } from 'react'
-import type { LearningSurfaceProjection } from '../../../shared/learning/surface'
+/**
+ * 学习输入区：自由提问走 message 命令；当前题等待回答时整个输入区换成停靠问题面板，
+ * 保证同屏只有一个可编辑输入框。Enter 语义与开发输入框一致，命令未被接纳不清空草稿。
+ */
+import { useRef } from 'react'
+import { ChatComposerInput, type ChatComposerInputHandle } from '@astryxdesign/core/Chat'
+import { IconButton } from '@astryxdesign/core/IconButton'
 import { SendIcon, StopIcon } from '../../components/Icons'
-import { useLearningStore } from './useLearningStore'
+import type { LearningSurfaceProjection } from '../../../shared/learning/surface'
 import { useAgentStore } from '../../stores/useAgentStore'
+import { ModelSelector } from '../chat/ModelSelector'
+import { ReasoningEffortControl } from '../chat/ReasoningEffortControl'
+import { useLearningStore } from './useLearningStore'
+import { LearningQuestionDock } from './LearningQuestionDock'
+import {
+  LEARNING_COMPOSER_LABEL,
+  LEARNING_COMPOSER_PLACEHOLDER,
+  LEARNING_COMPOSER_PLACEHOLDER_GENERATING,
+  LEARNING_SEND_LABEL,
+  LEARNING_STOP_LABEL
+} from './learningCopy'
 
 interface LearningComposerProps {
   sessionId: string
   projection: LearningSurfaceProjection | null
-  /** 教练回合生成中：显示取消入口（§12.2 取消状态必须可辨认） */
+  /** 本会话 run 正在运行：显示停止入口并禁用输入 */
   isGenerating: boolean
   disabled: boolean
 }
 
-/**
- * 学习输入区：自由提问走 message 命令；未选点时默认灵感建议是「帮我选一个起点」，
- * 命令未接纳不清空草稿。
- */
 export function LearningComposer({
   sessionId,
   projection,
@@ -25,111 +37,83 @@ export function LearningComposer({
   const text = useLearningStore(state => state.drafts[sessionId]?.message ?? '')
   const setDraft = useLearningStore(state => state.setDraft)
   const sendCommand = useLearningStore(state => state.sendCommand)
-  const commandPending = useLearningStore(state => state.commandPending)
-  const commandError = useLearningStore(state => state.commandError)
   const cancelExecution = useAgentStore(state => state.cancelExecution)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const inputHandleRef = useRef<ChatComposerInputHandle>(null)
 
-  const hasSelection = Boolean(projection?.selectedNodeId)
-  const hasStarted = (projection?.cursorVersion ?? 0) > 0
-  const needsAssessment = projection?.checkpoint?.state === 'answer_pending'
-  const busy = disabled || commandPending
+  const currentQuestion =
+    projection?.questions.find(question => question.checkpointId === projection.currentCheckpointId) ?? null
+  if (currentQuestion?.state === 'awaiting_answer') {
+    return <LearningQuestionDock sessionId={sessionId} question={currentQuestion} />
+  }
 
-  // 输入框自适应高度伸缩（36px ~ 160px）
-  useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    const nextHeight = Math.min(Math.max(el.scrollHeight, 36), 160)
-    el.style.height = `${nextHeight}px`
-  }, [text])
-
-  const send = (value: string): void => {
+  const send = (): void => {
+    const value = text
     const trimmed = value.trim()
-    if (!trimmed || busy) return
+    if (!trimmed || disabled) return
     void sendCommand({ sessionId, action: { type: 'message', text: trimmed } }).then(receipt => {
+      // 接纳才清空；期间用户又输入了新内容则不覆盖
       if (receipt?.ok === true && useLearningStore.getState().drafts[sessionId]?.message === value) {
         setDraft(sessionId, null, '')
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto'
-        }
       }
     })
   }
 
-  const resumeAssessment = (): void => {
-    if (busy) return
-    void sendCommand({ sessionId, action: { type: 'resume' } })
+  /**
+   * Enter 由产品层拥有：发送可被拒绝且必须保留草稿，因此不走 ChatComposerInput
+   * 内置的 onSubmit（它会无条件清空编辑器）。
+   */
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey) return
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
+    if (event.currentTarget.getAttribute('aria-expanded') === 'true') {
+      event.preventDefault()
+      return
+    }
+    event.preventDefault()
+    send()
   }
 
   return (
-    <div className="learning-composer">
-      {commandError && (
-        <div className="learning-composer__error" role="alert">
-          {commandError}
-        </div>
-      )}
-      {(!hasStarted || needsAssessment) && (
-        <div className="learning-composer__quick-actions">
-          {!hasStarted && !needsAssessment && (
-            <button
-              type="button"
-              className="learning-composer__cta learning-composer__chip"
-              disabled={busy}
-              onClick={() => send('帮我选一个起点')}
-            >
-              帮我选一个起点
-            </button>
+    <div className="chat-composer-box w-full flex flex-col p-3">
+      <ChatComposerInput
+        className="chat-composer__input"
+        handleRef={inputHandleRef}
+        label={LEARNING_COMPOSER_LABEL}
+        placeholder={isGenerating ? LEARNING_COMPOSER_PLACEHOLDER_GENERATING : LEARNING_COMPOSER_PLACEHOLDER}
+        value={text}
+        isDisabled={disabled}
+        onChange={value => setDraft(sessionId, null, value)}
+        onKeyDown={handleKeyDown}
+        hasHistory={false}
+        pasteAsToken={false}
+        maxRows={14}
+      />
+      <div className="flex items-center justify-between mt-2 pt-1">
+        <div aria-hidden="true" />
+        <div className="flex items-center gap-2">
+          <ModelSelector />
+          <ReasoningEffortControl />
+          {isGenerating ? (
+            <IconButton
+              label={LEARNING_STOP_LABEL}
+              icon={<StopIcon size={14} />}
+              variant="destructive"
+              size="md"
+              onClick={() => void cancelExecution()}
+              tooltip={LEARNING_STOP_LABEL}
+            />
+          ) : (
+            <IconButton
+              label={LEARNING_SEND_LABEL}
+              icon={<SendIcon size={14} />}
+              variant="primary"
+              size="md"
+              onClick={send}
+              isDisabled={disabled || !text.trim()}
+              tooltip={LEARNING_SEND_LABEL}
+            />
           )}
-          {needsAssessment && (
-            <button
-              type="button"
-              className="learning-composer__cta learning-composer__chip learning-composer__chip--accent"
-              disabled={busy}
-              onClick={resumeAssessment}
-            >
-              继续评估上次回答
-            </button>
-          )}
         </div>
-      )}
-      <div className="learning-composer__box">
-        <textarea
-          ref={textareaRef}
-          className="learning-composer__input"
-          aria-label="学习提问输入"
-          placeholder={hasSelection ? '继续问，或者换个想搞懂的问题…' : '先问一个你想搞懂的问题…'}
-          value={text}
-          disabled={disabled}
-          readOnly={commandPending}
-          onChange={event => setDraft(sessionId, null, event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault()
-              send(text)
-            }
-          }}
-        />
-        {isGenerating ? (
-          <button
-            type="button"
-            className="learning-composer__cancel"
-            aria-label="取消本轮教练生成"
-            onClick={() => void cancelExecution()}
-          >
-            <StopIcon size={14} />取消
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="learning-composer__send"
-            aria-label="发送学习问题"
-            disabled={busy || !text.trim()}
-            onClick={() => send(text)}
-          >
-            <SendIcon size={14} />
-          </button>
-        )}
       </div>
     </div>
   )

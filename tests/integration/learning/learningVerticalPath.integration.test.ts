@@ -79,12 +79,17 @@ describe('learning vertical path integration', () => {
       expectedCursorVersion: 0,
       action: { type: 'select_node', nodeId: 'node-save' }
     }
-    const applied = await applyLearningCommand(harness.progress, workspace, command)
+    const applied = await applyLearningCommand(harness.progress, workspace, command, {
+      loadTopicTitle: async nodeId => (await harness.reader.getNodeMaterial(workspace, nodeId))?.title ?? null,
+      loadDevChange: () => ({ ok: false, message: 'unused' })
+    })
     expect(applied.receipt.ok).toBe(true)
     expect(applied.delivery).not.toBeNull()
-    // 交付消息不携带内部节点标识；模型经 learning_context 读取当前节点身份
-    expect(applied.delivery!.content).toContain('学习选点')
-    expect(applied.delivery!.content).not.toContain('node-save')
+    // 用户看到的是一句短话；指令只进模型输入；两者都不带内部节点标识
+    expect(applied.delivery!.displayText).toBe('开始学习「保存路径」')
+    expect(applied.delivery!.modelInput).toContain('learning_context')
+    expect(applied.delivery!.displayText).not.toContain('node-save')
+    expect(applied.delivery!.modelInput).not.toContain('node-save')
 
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
@@ -145,7 +150,6 @@ describe('learning vertical path integration', () => {
         checkpointId: 'ckpt-a',
         verdict: 'needs_clarification',
         summary: '方向对但不够具体',
-        userQuote: '来自 sqlite 表',
         factReferences: [],
         cursorVersion: cursor.cursorVersion
       },
@@ -176,15 +180,15 @@ describe('learning vertical path integration', () => {
       action: { type: 'answer', checkpointId: 'ckpt-b', text: '答案B', optionIds: [] }
     })
     const cursor2 = await harness.progress.getCursor(workspace, 'sess-assess-2')
-    const badQuote = await assessTool.execute(
+    const attemptId2 = JSON.parse(
+      (await harness.progress.getPendingOutbox('sess-assess-2', 'cmd-ans2'))!.payload_json
+    ).attemptId as string
+    const withoutQuote = await assessTool.execute(
       {
-        attemptId: JSON.parse(
-          (await harness.progress.getPendingOutbox('sess-assess-2', 'cmd-ans2'))!.payload_json
-        ).attemptId,
+        attemptId: attemptId2,
         checkpointId: 'ckpt-b',
         verdict: 'needs_clarification',
         summary: 'x',
-        userQuote: '伪造原话',
         factReferences: [],
         cursorVersion: cursor2.cursorVersion
       },
@@ -196,7 +200,13 @@ describe('learning vertical path integration', () => {
         mode: 'learn'
       }
     )
-    expect(badQuote.success).toBe(false)
+    // 模型不复述原话也能提交；评估绑定的是服务端保存的那次回答
+    expect(withoutQuote.success).toBe(true)
+    const context2 = await harness.progress.getLearningContext({
+      workspaceRoot: workspace, sessionId: 'sess-assess-2', page: 0
+    }) as { attempt: { attemptId: string; answer: string } | null; assessment: { checkpointId: string } | null }
+    expect(context2.attempt).toMatchObject({ attemptId: attemptId2, answer: '答案B' })
+    expect(context2.assessment?.checkpointId).toBe('ckpt-b')
 
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
@@ -230,7 +240,6 @@ describe('learning vertical path integration', () => {
         checkpointId: 'ckpt-h',
         verdict: 'understanding_observed',
         summary: '无提示掌握',
-        userQuote: '有提示的答案',
         factReferences: [],
         cursorVersion: cursorH.cursorVersion
       },

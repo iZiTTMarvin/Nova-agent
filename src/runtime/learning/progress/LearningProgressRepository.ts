@@ -1,5 +1,4 @@
 import type { LearningCommand, LearningCommandReceipt } from '../../../shared/learning/command'
-import type { LearningAssessVerdict } from '../../../shared/learning/rubric'
 import { parseLearningCommandReceipt } from '../../../shared/learning/command'
 import type { LearningDbWorkerClient } from '../storage/LearningDbWorkerClient'
 import type { LearningDbWorkerOp, PersistedCheckpointView } from '../storage/workerCommand'
@@ -97,21 +96,10 @@ export class LearningProgressRepository {
     cursorVersion: number
     clearGeneration: number
     selectedNodeId: string | null
-    checkpoint: PersistedCheckpointView | null
+    currentCheckpointId: string | null
+    questions: readonly import('../../../shared/learning/surface').LearningQuestionView[]
+    topicStartMessageIds: readonly string[]
     nodeProgress: readonly import('../../../shared/learning/surface').LearningNodeProgressView[]
-    latestAssessment: {
-      assessmentId: string
-      checkpointId: string
-      verdict: LearningAssessVerdict
-      summary: string
-      userQuote: string
-      disputed: boolean
-      createdAt: number
-    } | null
-    summary: {
-      independentCount: number
-      needsClarificationCount: number
-    }
   }> {
     return this.client.invoke({
       domain: 'progress',

@@ -5,6 +5,8 @@
 import { create } from 'zustand'
 
 export type InspectorTab = 'review' | 'files'
+/** 学习会话的面板页签：大纲取代审阅（审阅对学习会话没有意义）。 */
+export type LearnInspectorTab = 'outline' | 'files'
 export type InspectorSurface = 'standard' | 'plan'
 
 export type ReviewTarget = {
@@ -28,6 +30,9 @@ export type SidebarSortMode = 'projects' | 'sessions'
 
 const STORAGE_PREFIX = 'nova.layout.'
 
+/** 首次进入学习且没有存储值时，窗口不小于该宽度才默认展开大纲。 */
+export const LEARN_INSPECTOR_AUTO_OPEN_MIN_WIDTH = 1280
+
 /** 拖拽 clamp 与面板实现共享的宽度边界 */
 export const SIDEBAR_WIDTH_MIN = 200
 export const SIDEBAR_WIDTH_MAX = 400
@@ -49,7 +54,9 @@ const DEFAULTS = {
   planTarget: null as PlanTarget | null,
   planReturnState: null as PlanReturnState | null,
   browserSurfaceOpen: false,
-  browserWidth: 480
+  browserWidth: 480,
+  learnInspectorOpen: false,
+  learnInspectorTab: 'outline' as LearnInspectorTab
 }
 
 function canUseLocalStorage(): boolean {
@@ -80,7 +87,7 @@ function clamp(n: number, min: number, max: number): number {
 
 function loadPersistedLayout(): Pick<
   typeof DEFAULTS,
-  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab' | 'browserWidth'
+  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab' | 'browserWidth' | 'learnInspectorOpen' | 'learnInspectorTab'
 > {
   const collapsedRaw = readStored('sidebarCollapsed')
   const sidebarWidthRaw = readStored('sidebarWidth')
@@ -119,7 +126,14 @@ function loadPersistedLayout(): Pick<
     if (Number.isFinite(n)) browserWidth = clamp(n, BROWSER_WIDTH_MIN, BROWSER_WIDTH_MAX)
   }
 
-  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab, browserWidth }
+  // 学习面板与开发面板是两个表面各自的状态；学习面板的开合要记住，开发面板照旧不记
+  const learnOpenRaw = readStored('learnInspectorOpen')
+  const learnInspectorOpen = learnOpenRaw === 'true' ? true : learnOpenRaw === 'false' ? false
+    : typeof window !== 'undefined' && window.innerWidth >= LEARN_INSPECTOR_AUTO_OPEN_MIN_WIDTH
+  const learnTabRaw = readStored('learnInspectorTab')
+  const learnInspectorTab: LearnInspectorTab = learnTabRaw === 'files' ? 'files' : 'outline'
+
+  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab, browserWidth, learnInspectorOpen, learnInspectorTab }
 }
 
 export interface LayoutStoreState {
@@ -135,6 +149,8 @@ export interface LayoutStoreState {
   planReturnState: PlanReturnState | null
   browserSurfaceOpen: boolean
   browserWidth: number
+  learnInspectorOpen: boolean
+  learnInspectorTab: LearnInspectorTab
 
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
@@ -150,6 +166,10 @@ export interface LayoutStoreState {
   openBrowserSurface: () => void
   closeBrowserSurface: () => void
   setBrowserWidth: (w: number) => void
+  toggleLearnInspector: () => void
+  setLearnInspectorTab: (tab: LearnInspectorTab) => void
+  openOutline: () => void
+  closeLearnInspector: () => void
 }
 
 const persisted = loadPersistedLayout()
@@ -271,8 +291,35 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     const browserWidth = clamp(w, BROWSER_WIDTH_MIN, BROWSER_WIDTH_MAX)
     writeStored('browserWidth', String(browserWidth))
     set({ browserWidth })
+  },
+
+  toggleLearnInspector: () => {
+    const learnInspectorOpen = !get().learnInspectorOpen
+    writeStored('learnInspectorOpen', String(learnInspectorOpen))
+    set({ learnInspectorOpen })
+  },
+
+  setLearnInspectorTab: (learnInspectorTab) => {
+    writeStored('learnInspectorTab', learnInspectorTab)
+    set({ learnInspectorTab })
+  },
+
+  openOutline: () => {
+    writeStored('learnInspectorOpen', 'true')
+    writeStored('learnInspectorTab', 'outline')
+    set({ learnInspectorOpen: true, learnInspectorTab: 'outline' })
+  },
+
+  closeLearnInspector: () => {
+    writeStored('learnInspectorOpen', 'false')
+    set({ learnInspectorOpen: false })
   }
 }))
+
+/** 当前表面的面板是否打开：学习会话读学习那组状态，其余读开发那组。 */
+export function selectInspectorOpenForSurface(state: LayoutStoreState, isLearnSurface: boolean): boolean {
+  return isLearnSurface ? state.learnInspectorOpen : state.inspectorOpen
+}
 
 /** 测试用：清空持久化后恢复默认布局态 */
 export function resetLayoutStoreForTests(): void {
@@ -284,7 +331,9 @@ export function resetLayoutStoreForTests(): void {
         'sidebarSortMode',
         'inspectorWidth',
         'inspectorTab',
-        'browserWidth'
+        'browserWidth',
+        'learnInspectorOpen',
+        'learnInspectorTab'
       ]) {
         localStorage.removeItem(STORAGE_PREFIX + key)
       }

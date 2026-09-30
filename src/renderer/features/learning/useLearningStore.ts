@@ -1,14 +1,7 @@
 import { create } from 'zustand'
-import type { LearningSurfaceProjection, LearningDevLinkReference } from '../../../shared/learning/surface'
+import type { LearningSurfaceProjection } from '../../../shared/learning/surface'
 import type { LearningAction, LearningCommandReceipt } from '../../../shared/learning/command'
-import type { KnowledgeNodeMaterialView } from '../../../shared/learning/knowledgeProjection'
-
-export interface LearningMaterialState {
-  readonly nodeId: string
-  readonly status: 'loading' | 'ready' | 'error'
-  readonly material: KnowledgeNodeMaterialView | null
-  readonly error: string | null
-}
+import type { LearningCommandRejection } from './learningCopy'
 
 interface SessionDrafts {
   message: string
@@ -21,28 +14,25 @@ export interface LearningStoreState {
   error: string | null
   projection: LearningSurfaceProjection | null
   commandPending: boolean
-  commandError: string | null
-  material: LearningMaterialState | null
+  /** 最近一次被拒的命令回执；由本 store 独占写入，横幅文案由 learningCopy 映射。 */
+  commandError: LearningCommandRejection | null
   drafts: Record<string, SessionDrafts>
   setDraft: (sessionId: string, checkpointId: string | null, text: string) => void
   pruneDrafts: (sessionIds: readonly string[]) => void
   refresh: (sessionId: string) => Promise<void>
-  openNodeMaterial: (sessionId: string, nodeId: string) => Promise<void>
-  closeMaterial: () => void
-  sendCommand: (input: { sessionId: string; action: LearningAction; devReference?: LearningDevLinkReference }) => Promise<LearningCommandReceipt | null>
+  sendCommand: (input: { sessionId: string; action: LearningAction }) => Promise<LearningCommandReceipt | null>
   clearForSession: (sessionId: string | null) => void
 }
 
 export const useLearningStore = create<LearningStoreState>((set, get) => {
   let epoch = 0
   let refreshRequest = 0
-  let materialRequest = 0
   const commands = new Set<string>()
   const isCurrent = (sessionId: string, generation: number) => get().sessionId === sessionId && epoch === generation
 
   return {
     sessionId: null, status: 'idle', error: null, projection: null,
-    commandPending: false, commandError: null, material: null, drafts: {},
+    commandPending: false, commandError: null, drafts: {},
 
     setDraft(sessionId, checkpointId, text) {
       const previous = get().drafts[sessionId] ?? { message: '', answers: {} }
@@ -64,8 +54,7 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
       if (get().sessionId === sessionId) return
       epoch++
       refreshRequest++
-      materialRequest++
-      set({ sessionId, status: 'idle', error: null, projection: null, material: null,
+      set({ sessionId, status: 'idle', error: null, projection: null,
         commandPending: sessionId !== null && commands.has(sessionId), commandError: null })
     },
 
@@ -88,30 +77,7 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
       }
     },
 
-    async openNodeMaterial(sessionId, nodeId) {
-      if (get().sessionId !== sessionId) return
-      const generation = epoch
-      const request = ++materialRequest
-      set({ material: { nodeId, status: 'loading', material: null, error: null } })
-      try {
-        const result = await window.api.invoke('learning:get-node-material', { sessionId, nodeId })
-        if (!isCurrent(sessionId, generation) || request !== materialRequest) return
-        set({ material: result.ok
-          ? { nodeId, status: 'ready', material: result.material, error: null }
-          : { nodeId, status: 'error', material: null, error: result.message } })
-      } catch (error) {
-        if (isCurrent(sessionId, generation) && request === materialRequest) {
-          set({ material: { nodeId, status: 'error', material: null, error: error instanceof Error ? error.message : String(error) } })
-        }
-      }
-    },
-
-    closeMaterial() {
-      materialRequest++
-      set({ material: null })
-    },
-
-    async sendCommand({ sessionId, action, devReference }) {
+    async sendCommand({ sessionId, action }) {
       if (get().sessionId !== sessionId || commands.has(sessionId)) return null
       const generation = epoch
       commands.add(sessionId)
@@ -125,16 +91,16 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
           sessionId,
           command: { commandId: crypto.randomUUID(), sessionId,
             expectedClearGeneration: projection.clearGeneration,
-            expectedCursorVersion: projection.cursorVersion, action },
-          ...(devReference ? { devReference } : {})
+            expectedCursorVersion: projection.cursorVersion, action }
         })
         if (isCurrent(sessionId, generation)) {
-          set({ commandError: receipt.ok ? null : receipt.message })
+          set({ commandError: receipt.ok ? null : receipt })
         }
         return receipt
       } catch (error) {
         if (isCurrent(sessionId, generation)) {
-          set({ commandError: error instanceof Error ? error.message : String(error) })
+          // 传输层异常没有回执 code；按 invalid 透出原始信息，横幅直接显示 message
+          set({ commandError: { ok: false, code: 'invalid', message: error instanceof Error ? error.message : String(error) } })
         }
         return null
       } finally {

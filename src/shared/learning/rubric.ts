@@ -22,7 +22,6 @@ export interface LearningAssessSubmission {
   readonly checkpointId: string
   readonly verdict: LearningAssessVerdict
   readonly summary: string
-  readonly userQuote: string
   readonly factReferences: readonly LearningFactReference[]
 }
 
@@ -98,7 +97,6 @@ export function parseLearningAssessSubmission(raw: unknown): LearningAssessSubmi
     checkpointId: readBounded(value.checkpointId, 'checkpointId', 128),
     verdict,
     summary: readBounded(value.summary, 'summary', LEARNING_MAX_TEXT_LENGTH),
-    userQuote: readBounded(value.userQuote, 'userQuote', LEARNING_MAX_TEXT_LENGTH),
     factReferences: parseFactReferences(value.factReferences ?? [])
   }
 }

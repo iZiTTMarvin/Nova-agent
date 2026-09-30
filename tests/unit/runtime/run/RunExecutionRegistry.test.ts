@@ -2,6 +2,31 @@ import { describe, expect, it, vi } from 'vitest'
 import { RunExecutionRegistry } from '../../../../src/runtime/run'
 
 describe('RunExecutionRegistry', () => {
+  it('订阅真实句柄变化，旧 generation 和退订不产生通知', async () => {
+    const registry = new RunExecutionRegistry()
+    const states: boolean[] = []
+    const unsubscribe = registry.subscribe(() => states.push(registry.hasUnsettledHandle()))
+    let settle!: () => void
+    registry.register({
+      runId: 'run_1', generation: 2, kind: 'agent', abort: vi.fn(),
+      settled: new Promise<void>(resolve => { settle = resolve })
+    })
+    expect(registry.unregister('run_1', 1)).toBe(false)
+    registry.register({
+      runId: 'run_1', generation: 1, kind: 'agent', abort: vi.fn(), settled: Promise.resolve()
+    })
+    expect(states).toEqual([true])
+    settle()
+    await Promise.resolve()
+    expect(states).toEqual([true, false])
+    unsubscribe()
+    registry.register({
+      runId: 'run_2', generation: 1, kind: 'agent', abort: vi.fn(), settled: Promise.resolve()
+    })
+    await Promise.resolve()
+    expect(states).toEqual([true, false])
+  })
+
   it('只允许匹配 generation 的句柄注销', () => {
     const registry = new RunExecutionRegistry()
     registry.register({

@@ -98,6 +98,8 @@ export interface AgentTurnExecutorInput {
   readonly resourceOwnerGeneration?: number
   readonly runRefs?: AgentTurnRunRefs
   readonly userMessageId: string
+  /** 任务文本不同于落盘用户原文时为 true，由 AgentLoop 记入投递事实。 */
+  readonly recordDeliveredInput?: boolean
   readonly dispatch?: SubagentRunDispatch
   readonly onStarted?: (context: AgentTurnExecutionContext) => void
   readonly afterOutcome?: (
@@ -209,7 +211,8 @@ export class AgentTurnExecutor {
       }
 
       const outcome = await input.agentLoop.sendMessage(input.task, input.route, {
-        userMessageId: input.userMessageId
+        userMessageId: input.userMessageId,
+        ...(input.recordDeliveredInput ? { recordDeliveredInput: true } : {})
       })
       await input.afterOutcome?.(outcome, context)
 
