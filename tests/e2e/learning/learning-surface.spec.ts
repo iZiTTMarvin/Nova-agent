@@ -24,6 +24,52 @@ import {
 } from './learningFlow'
 
 test.describe('学习表面主路径', () => {
+  test('探索后思考与正文在回合结束前持续显示，完成后不重复', async ({ nova }) => {
+    test.setTimeout(90_000)
+    const sessionId = await createLearnSession(nova)
+    const delta = (field: 'reasoning_content' | 'content', text: string) => ({
+      choices: [{ index: 0, delta: { [field]: text }, finish_reason: null }]
+    })
+    nova.provider.enqueue(
+      { kind: 'tool', name: 'ls', arguments: { path: '.' }, callId: 'call_learn_stream' },
+      {
+        kind: 'raw',
+        events: [
+          { payload: delta('reasoning_content', '正在核对探索结果。') },
+          { payload: delta('reasoning_content', '已经找到讲解入口。'), delayMs: 5_000 },
+          { payload: delta('content', '正文首段。'), delayMs: 5_000 },
+          { payload: delta('content', '\n\n正文后段。'), delayMs: 5_000 },
+          { payload: { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }, delayMs: 5_000 }
+        ]
+      }
+    )
+
+    await sendLearningPrompt(nova, '探索当前目录后讲解入口')
+    await nova.provider.waitForRequestCount(2)
+    expect(JSON.stringify(nova.provider.requests[1]?.body)).toContain('e2e-marker.txt')
+    const flow = learningFlow(nova)
+    const cancel = nova.page.getByRole('button', { name: '中断生成' })
+
+    // 每次断言都发生在下一类内容或终态到达之前。
+    await expect(flow.getByText('正在核对探索结果。', { exact: false })).toBeVisible({ timeout: 3_000 })
+    await expect(flow.getByText('已经找到讲解入口。', { exact: false })).toHaveCount(0)
+    await expect(cancel).toBeVisible()
+    await expect(flow.getByText('已经找到讲解入口。', { exact: false })).toBeVisible()
+    await expect(flow.getByText('正文首段。', { exact: true })).toHaveCount(0)
+    await expect(flow.getByText('正文首段。', { exact: true })).toBeVisible()
+    await expect(flow.getByText('正文后段。', { exact: true })).toHaveCount(0)
+    await expect(cancel).toBeVisible()
+    await expect(flow.getByText('正文后段。', { exact: true })).toBeVisible()
+    await expect(cancel).toBeVisible()
+
+    await waitLearnTurnSettled(nova, sessionId)
+    await expect(flow.getByText('正文首段。', { exact: true })).toHaveCount(1)
+    await expect(flow.getByText('正文后段。', { exact: true })).toHaveCount(1)
+    await expect(flow.getByText('正文首段。', { exact: true })).toBeVisible()
+    await expect(flow.getByText('正文后段。', { exact: true })).toBeVisible()
+    expect(nova.pageErrors).toEqual([])
+  })
+
   test('进入学习不改动开发会话，空状态与大纲入口可辨', async ({ nova }) => {
     test.setTimeout(90_000)
     const devWorkspace = await nova.getWorkspace()

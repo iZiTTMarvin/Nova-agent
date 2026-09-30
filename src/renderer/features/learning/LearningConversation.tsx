@@ -11,6 +11,7 @@ import {
 import { TurnProcessTree } from '../chat/TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from '../chat/turnProcessModel'
 import { AssistantPendingIndicator } from '../chat/AssistantPendingIndicator'
+import { useEffectiveMessage } from '../chat/useEffectiveMessage'
 import { LearningQuestionRow } from './LearningQuestionRow'
 import {
   LEARNING_COPY_MESSAGE,
@@ -77,7 +78,7 @@ function CopyMessageButton({ message }: { message: ExtendedMessage }): React.Rea
 }
 
 function LearningAssistantMessage({
-  message,
+  message: messageProp,
   sessionId,
   isGenerating,
   currentGeneratingMessageId
@@ -87,6 +88,7 @@ function LearningAssistantMessage({
   isGenerating: boolean
   currentGeneratingMessageId: string | null
 }): React.ReactElement {
+  const message = useEffectiveMessage(messageProp)
   const hasBlocks = Boolean(message.blocks && message.blocks.length > 0)
   const turnPhase = resolveTurnPhase(message.id, currentGeneratingMessageId, isGenerating)
   const isCurrentAssistantGenerating = isGenerating && message.id === currentGeneratingMessageId
