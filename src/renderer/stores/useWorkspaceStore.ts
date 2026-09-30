@@ -68,6 +68,8 @@ export interface WorkspaceStoreState {
   prepareEditResend: (sessionId: string, messageId: string) => Promise<void>
 }
 
+let reasoningEffortRequestVersion = 0
+
 export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   currentSessionId: null,
   currentProjectPath: null,
@@ -182,12 +184,25 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   },
 
   setReasoningEffortOverride: async (effort: ReasoningEffort | null) => {
+    const version = ++reasoningEffortRequestVersion
+    const { currentSessionId: sessionId, activeModelRef } = useWorkspaceStore.getState()
     try {
-      const state = await window.api.invoke('workspace:set-reasoning-effort', { effort })
+      const state = await window.api.invoke('workspace:set-reasoning-effort', {
+        effort,
+        ...(sessionId ? { sessionId } : {})
+      })
       const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+      const current = useWorkspaceStore.getState()
+      if (
+        version !== reasoningEffortRequestVersion ||
+        current.currentSessionId !== sessionId ||
+        current.activeModelRef?.providerId !== activeModelRef?.providerId ||
+        current.activeModelRef?.modelEntryId !== activeModelRef?.modelEntryId
+      ) return
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 设置思考强度失败:', err)
+      throw err
     }
   },
 
@@ -225,6 +240,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
 
 /** 重置整个 workspace store 到默认值。供测试 setup 复用。 */
 export function resetWorkspaceStoreForTests(): void {
+  reasoningEffortRequestVersion += 1
   useWorkspaceStore.setState({
     currentSessionId: null,
     currentProjectPath: null,

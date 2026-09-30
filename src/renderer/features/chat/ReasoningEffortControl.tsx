@@ -7,7 +7,7 @@
  *
  * 选择写回会话级覆盖（选回模型默认档时清除覆盖）；覆盖不再适用于当前模型时自动清除。
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { Popover } from '@astryxdesign/core/Popover'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -41,9 +41,6 @@ export const ReasoningEffortControl: React.FC = () => {
   const setReasoningEffortOverride = useWorkspaceStore(
     state => state.setReasoningEffortOverride
   )
-  const [dragIndex, setDragIndex] = useState<number | null>(null)
-  const railRef = useRef<HTMLDivElement | null>(null)
-  const draggingRef = useRef(false)
 
   const currentRef = activeModelRef ?? llmRegistry?.activeModel ?? null
   const entry = useMemo(() => {
@@ -68,15 +65,55 @@ export const ReasoningEffortControl: React.FC = () => {
     return tiers[0] ?? null
   }, [defaultEffort, override, tiers])
 
-  const activeIndex = effectiveTier ? Math.max(0, tiers.indexOf(effectiveTier)) : 0
-  const shownIndex = dragIndex ?? activeIndex
+  if (!currentSessionId || !entry || !currentRef || tiers.length < 2 || !effectiveTier) return null
+
+  return (
+    <ReasoningEffortSlider
+      key={JSON.stringify([currentSessionId, currentRef.providerId, currentRef.modelEntryId, tiers, defaultEffort])}
+      tiers={tiers}
+      effectiveTier={effectiveTier}
+      defaultEffort={defaultEffort}
+      setReasoningEffortOverride={setReasoningEffortOverride}
+    />
+  )
+}
+
+interface ReasoningEffortSliderProps {
+  tiers: readonly ConcreteEffort[]
+  effectiveTier: ConcreteEffort
+  defaultEffort: ReasoningEffort
+  setReasoningEffortOverride: (effort: ReasoningEffort | null) => Promise<void>
+}
+
+const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
+  tiers, effectiveTier, defaultEffort, setReasoningEffortOverride
+}) => {
+  const [dragIndex, setDragIndex] = useState<number | null>(null)
+  const [pendingIndex, setPendingIndex] = useState<number | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const railRef = useRef<HTMLDivElement | null>(null)
+  const draggingRef = useRef(false)
+  const requestVersion = useRef(0)
+
+  useEffect(() => () => { requestVersion.current += 1 }, [])
+
+  const activeIndex = Math.max(0, tiers.indexOf(effectiveTier))
+  const shownIndex = dragIndex ?? pendingIndex ?? activeIndex
   const shownTier = tiers[shownIndex] ?? effectiveTier
 
   const commitTier = useCallback((tier: ConcreteEffort) => {
-    void setReasoningEffortOverride(tier === defaultEffort ? null : tier).catch(error => {
-      console.error('[ReasoningEffortControl] 切换思考强度失败:', error)
-    })
-  }, [defaultEffort, setReasoningEffortOverride])
+    const version = ++requestVersion.current
+    setPendingIndex(tiers.indexOf(tier))
+    setSaveError(null)
+    // 保存确认前保留选择，旧请求不能清掉较新的预览。
+    void setReasoningEffortOverride(tier === defaultEffort ? null : tier)
+      .catch(() => {
+        if (requestVersion.current === version) setSaveError('思考强度保存失败，请重试。')
+      })
+      .finally(() => {
+        if (requestVersion.current === version) setPendingIndex(null)
+      })
+  }, [defaultEffort, setReasoningEffortOverride, tiers])
 
   const indexFromClientX = useCallback((clientX: number): number => {
     const rail = railRef.current
@@ -107,8 +144,8 @@ export const ReasoningEffortControl: React.FC = () => {
     event.currentTarget.releasePointerCapture?.(event.pointerId)
     const tier = tiers[indexFromClientX(event.clientX)]
     setDragIndex(null)
-    if (tier && tier !== effectiveTier) commitTier(tier)
-  }, [commitTier, effectiveTier, indexFromClientX, tiers])
+    if (tier && (tier !== effectiveTier || pendingIndex !== null)) commitTier(tier)
+  }, [commitTier, effectiveTier, indexFromClientX, pendingIndex, tiers])
 
   const handlePointerCancel = useCallback(() => {
     draggingRef.current = false
@@ -118,21 +155,22 @@ export const ReasoningEffortControl: React.FC = () => {
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     const lastIndex = tiers.length - 1
     let next: number | null = null
-    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next = Math.min(lastIndex, activeIndex + 1)
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = Math.max(0, activeIndex - 1)
+    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') next = Math.min(lastIndex, shownIndex + 1)
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = Math.max(0, shownIndex - 1)
     else if (event.key === 'Home') next = 0
     else if (event.key === 'End') next = lastIndex
-    if (next === null || next === activeIndex) return
+    if (next === null || next === shownIndex) return
     event.preventDefault()
     const tier = tiers[next]
     if (tier) commitTier(tier)
-  }, [activeIndex, commitTier, tiers])
-
-  if (!currentSessionId || !entry || tiers.length < 2 || !shownTier) return null
+  }, [shownIndex, commitTier, tiers])
 
   const pct = (shownIndex / (tiers.length - 1)) * 100
+  const sliderStyle: React.CSSProperties & { '--effort-position': number } = {
+    '--effort-position': shownIndex / (tiers.length - 1)
+  }
   const shownLabel = EFFORT_LABELS[shownTier]
-  const triggerLabel = EFFORT_LABELS[effectiveTier ?? shownTier]
+  const triggerLabel = EFFORT_LABELS[tiers[pendingIndex ?? activeIndex] ?? effectiveTier]
 
   const panel = (
     <div className="effort-panel">
@@ -140,6 +178,7 @@ export const ReasoningEffortControl: React.FC = () => {
       <div
         ref={railRef}
         className="effort-slider"
+        style={sliderStyle}
         role="slider"
         tabIndex={0}
         aria-label="思考强度"
@@ -147,14 +186,16 @@ export const ReasoningEffortControl: React.FC = () => {
         aria-valuemax={tiers.length - 1}
         aria-valuenow={shownIndex}
         aria-valuetext={shownLabel}
+        aria-busy={pendingIndex !== null}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
+        onLostPointerCapture={handlePointerCancel}
         onKeyDown={handleKeyDown}
       >
         <div className="effort-slider__track" />
-        <div className="effort-slider__fill" style={{ width: `${pct}%` }} />
+        <div className="effort-slider__fill" />
         {tiers.map((tier, index) => (
           <span
             key={tier}
@@ -164,6 +205,7 @@ export const ReasoningEffortControl: React.FC = () => {
         ))}
         <div className="effort-slider__thumb" style={{ left: `${pct}%` }} />
       </div>
+      {saveError && <div className="effort-panel__error" role="alert">{saveError}</div>}
     </div>
   )
 

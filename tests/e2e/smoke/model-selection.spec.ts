@@ -1,5 +1,46 @@
 import { expect, test } from '../fixtures/nova'
 
+test('思考强度点击和拖动松手后不闪回旧档位', async ({ nova }) => {
+  await nova.invoke('save-llm-registry', {
+    version: 2,
+    providers: [{
+      id: 'effort-provider', name: 'Effort', baseUrl: nova.provider.baseUrl,
+      apiKey: 'nova-e2e-key', enabled: true,
+      models: [{ id: 'minimax', modelId: 'MiniMax-M3', displayName: 'MiniMax-M3' }]
+    }],
+    activeModel: { providerId: 'effort-provider', modelEntryId: 'minimax' }
+  })
+  await nova.page.reload()
+  await nova.page.getByRole('button', { name: '思考强度：High' }).click()
+  const slider = nova.page.getByRole('slider', { name: '思考强度' })
+  await slider.evaluate(element => {
+    const label = element.parentElement?.querySelector('.effort-panel__value')
+    if (!label) throw new Error('Missing effort label')
+    new MutationObserver(() => {
+      element.setAttribute('data-label-history', `${element.getAttribute('data-label-history') ?? ''}${label.textContent},`)
+    }).observe(label, { subtree: true, childList: true, characterData: true })
+  })
+  const box = await slider.boundingBox()
+  if (!box) throw new Error('Missing effort slider bounds')
+  for (const gesture of ['click', 'drag']) {
+    for (let index = 0; index < 6; index += 1) {
+      const target = index % 2 === 0 ? 'Max' : 'High'
+      const previousX = index % 2 === 0 ? box.x + 1 : box.x + box.width - 1
+      const targetX = index % 2 === 0 ? box.x + box.width - 1 : box.x + 1
+      await slider.evaluate(element => element.setAttribute('data-label-history', ''))
+      await nova.page.mouse.move(gesture === 'drag' ? previousX : targetX, box.y + box.height / 2)
+      await nova.page.mouse.down()
+      if (gesture === 'drag') await nova.page.mouse.move(targetX, box.y + box.height / 2, { steps: 5 })
+      await expect(slider).toHaveAttribute('aria-valuetext', target)
+      await nova.page.mouse.up()
+      await expect(slider).toHaveAttribute('aria-busy', 'false')
+      expect(await slider.getAttribute('data-label-history')).toBe(`${target},`)
+      expect((await nova.getWorkspace()).reasoningEffortOverride).toBe(target === 'Max' ? 'max' : null)
+    }
+  }
+  expect(nova.pageErrors).toEqual([])
+})
+
 test('模型与思考强度按会话持久化，新会话继承当前显示值', async ({ nova }, testInfo) => {
   const providerId = 'provider-e2e-reasoning'
   const gptRef = { providerId, modelEntryId: 'gpt' }
