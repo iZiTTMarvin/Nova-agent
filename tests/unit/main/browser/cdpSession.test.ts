@@ -60,6 +60,36 @@ const metrics: BrowserDeviceMetrics = {
 }
 
 describe('CDP 短连接', () => {
+  it('命令尚未返回时不开始空闲断开，完成后才允许释放连接', async () => {
+    const transport = new FakeTransport()
+    let complete!: (value: unknown) => void
+    let started!: () => void
+    const sent = new Promise<void>(resolve => { started = resolve })
+    transport.sendCommand = method => {
+      if (method === 'Page.enable') return Promise.resolve({})
+      return new Promise(resolve => { complete = resolve; started() })
+    }
+    const idle: Array<() => void> = []
+    const session = createCdpSession(transport, {
+      schedule: callback => { idle.push(callback); return () => undefined }
+    })
+    const pending = session.send('Runtime.evaluate', { expression: 'slow()' }, fence(), 5_000)
+    await sent
+    await Promise.resolve()
+    const inflight = session.hasInflight()
+    const idleBeforeComplete = idle.length
+    complete({ result: { value: 'done' } })
+    const result = await pending
+    expect(inflight).toBe(true)
+    expect(idleBeforeComplete).toBe(0)
+    expect(result).toMatchObject({ ok: true })
+    expect(session.hasInflight()).toBe(false)
+    expect(idle).toHaveLength(1)
+    idle[0]()
+    expect(transport.attached).toBe(false)
+    session.release()
+  })
+
   it('超过时限返回 timeout，迟到的成功值不会再变成结果', async () => {
     const transport = new FakeTransport()
     let late: ((value: unknown) => void) | null = null

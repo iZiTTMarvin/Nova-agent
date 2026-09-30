@@ -208,6 +208,25 @@ async function openReady(
 }
 
 describe('BrowserSessionHost 生命周期', () => {
+  it('按宿主分配的隔离槽绑定真实 guest，不依赖 Renderer 挂载回执', async () => {
+    const guest = new FakeGuest({ id: 42, url: '' })
+    guest.loading = true
+    const harness = createHarness(new Map([[42, guest]]))
+    const opening = harness.host.open({ url: 'https://example.com/stall' }, { sessionId: 'sess_1' })
+    await Promise.resolve()
+    const mount = harness.mounts.at(-1)!.guests[0]!
+    expect(await harness.host.attachPartition('unowned-partition', 42)).toMatchObject({
+      status: 'not_applied', code: 'not_owner'
+    })
+    expect(harness.host.inspectBinding(mount.browserId)?.webContentsId).toBeNull()
+    expect(await harness.host.attachPartition(mount.partition, 42)).toMatchObject({ status: 'applied' })
+    expect(await opening).toMatchObject({
+      status: 'applied', page: { browserId: mount.browserId, sessionId: 'sess_1', loading: true }
+    })
+    expect(harness.host.inspectBinding(mount.browserId)?.webContentsId).toBe(42)
+    expect(await harness.host.attachPartition(mount.partition, 42)).toMatchObject({ status: 'applied' })
+  })
+
   it('程序化打开、隐藏、恢复、关闭，关闭后确认 destroyed', async () => {
     const guest = new FakeGuest({ id: 2, url: 'https://example.com/app' })
     const harness = createHarness(new Map([[2, guest]]))

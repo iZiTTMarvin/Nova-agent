@@ -122,6 +122,7 @@ async function startFixture(): Promise<{ origin: string; held: () => boolean; re
         const controls = document.getElementById('controls');
         for (let index = 0; index < buttonCount; index += 1) {
           const node = document.createElement('button');
+          node.id = 'budget-button-' + index;
           node.type = 'button';
           node.textContent = 'btn-' + index;
           controls.appendChild(node);

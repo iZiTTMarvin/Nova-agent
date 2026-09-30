@@ -222,7 +222,9 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     const sessionId = currentSessionId()
     if (!sessionId) return
     const result = await window.api.invoke(BROWSER_CLOSE, { sessionId, browserId })
-    if (result.status === 'applied') {
+    if (currentSessionId() !== sessionId) return
+    // 宿主的关闭回执可能先于合帧快照到达；已退役的所属页面同样完成关闭意图。
+    if (result.status === 'applied' || (result.status === 'not_applied' && result.code === 'page_closed')) {
       const pages = pagesForSession(get().snapshot, sessionId).filter((page) => page.browserId !== browserId)
       set({
         focusedBrowserId: pages[0]?.browserId ?? null,

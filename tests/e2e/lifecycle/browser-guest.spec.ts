@@ -65,10 +65,7 @@ test('内置网页可被设置浮层挡住，reload 后仍能重新挂上', asyn
     await nova.page.reload()
     await expect(nova.page.getByLabel('消息输入')).toBeVisible()
     await expect(nova.page.locator('webview[data-browser-id]')).toBeVisible()
-    // 卸旧 webview 时 Electron 会抛 Invalid guestInstanceId，不是应用错误
-    expect(
-      nova.pageErrors.filter((error) => !error.includes('Invalid guestInstanceId'))
-    ).toEqual([])
+    expect(nova.pageErrors).toEqual([])
   } finally {
     await fixture.close()
   }

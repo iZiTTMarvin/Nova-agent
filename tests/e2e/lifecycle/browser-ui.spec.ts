@@ -90,9 +90,7 @@ test('切会话只展示当前会话页面，连续 reload 后仍能挂上', asy
     await expect(nova.page.getByLabel('消息输入')).toBeVisible()
     await nova.page.reload()
     await expect(nova.page.locator('webview[data-browser-id]')).toBeVisible()
-    expect(
-      nova.pageErrors.filter((error) => !error.includes('Invalid guestInstanceId'))
-    ).toEqual([])
+    expect(nova.pageErrors).toEqual([])
 
     await nova.invoke(BROWSER_CLOSE, {
       sessionId: sessionA!,

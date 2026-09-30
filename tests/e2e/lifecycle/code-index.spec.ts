@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import type { CodeIndexStatusDto } from '../../../src/shared/code-index'
 import { expect, launchNova, test } from '../fixtures/nova'
 import {
   CODEINDEX_GET_STATUS,
@@ -69,11 +70,14 @@ test('首次构建不阻断聊天，完成后工具可查询且 reload 恢复状
     await nova.page.evaluate((channel) => {
       const target = window as typeof window & {
         __codeIndexEvents?: number
-        api?: { on: (name: string, listener: () => void) => () => void }
+        __codeIndexReadyRevision?: number
+        api?: { on: (name: string, listener: (status: CodeIndexStatusDto) => void) => () => void }
       }
       target.__codeIndexEvents = 0
-      target.api?.on(channel, () => {
+      target.__codeIndexReadyRevision = 0
+      target.api?.on(channel, (status) => {
         target.__codeIndexEvents = (target.__codeIndexEvents ?? 0) + 1
+        if (status.status === 'ready') target.__codeIndexReadyRevision = status.revision
       })
     }, CODEINDEX_STATUS)
     await Promise.all(Array.from({ length: 40 }, (_, index) =>
@@ -87,6 +91,10 @@ test('首次构建不阻断聊天，完成后工具可查询且 reload 恢复状
       const status = await nova.invoke(CODEINDEX_GET_STATUS)
       return status.status === 'ready' && status.revision > revisionBeforeEdits
     }).toBe(true)
+    // 查询读到新版本时，500ms 合帧广播可能尚未送达 Renderer。
+    await expect.poll(() => nova.page.evaluate(() =>
+      (window as typeof window & { __codeIndexReadyRevision?: number }).__codeIndexReadyRevision ?? 0
+    )).toBeGreaterThan(revisionBeforeEdits)
     const broadcastCount = await nova.page.evaluate(() =>
       (window as typeof window & { __codeIndexEvents?: number }).__codeIndexEvents ?? 0
     )

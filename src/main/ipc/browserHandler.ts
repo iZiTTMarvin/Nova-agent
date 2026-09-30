@@ -5,7 +5,6 @@
 import { handle } from './secureIpc'
 import {
   BROWSER_ACT,
-  BROWSER_ATTACH,
   BROWSER_CAPTURE,
   BROWSER_CLAIM,
   BROWSER_CLOSE,
@@ -19,7 +18,6 @@ import {
   browserNotApplied,
   invalidBrowserRequest,
   parseBrowserActIpcParams,
-  parseBrowserAttachIpcParams,
   parseBrowserCaptureIpcParams,
   parseBrowserClaimIpcParams,
   parseBrowserCloseIpcParams,
@@ -29,11 +27,9 @@ import {
   parseBrowserSnapshotIpcParams
 } from '../../shared/browser'
 import type { BrowserCommandContext, BrowserPort } from '../../runtime/browser'
-import type { BrowserSessionHost } from '../browser'
 
 export interface BrowserHandlerDeps {
   readonly getPort: () => BrowserPort | null
-  readonly getHost?: () => BrowserSessionHost | null
 }
 
 const HOST_UNAVAILABLE = browserNotApplied('unavailable', '浏览器宿主尚未装配')
@@ -134,13 +130,5 @@ export function registerBrowserHandler(deps: BrowserHandlerDeps): void {
       { observation: parsed.value.observation },
       contextOf(parsed.value.sessionId)
     )
-  })
-
-  handle(BROWSER_ATTACH, async (_event, raw: unknown) => {
-    const parsed = parseBrowserAttachIpcParams(raw)
-    if (!parsed.ok) return invalidBrowserRequest(parsed.detail)
-    const sessionHost = deps.getHost?.() ?? null
-    if (!sessionHost) return HOST_UNAVAILABLE
-    return sessionHost.attach(parsed.value)
   })
 }

@@ -199,8 +199,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   // 浏览器宿主先于 IPC 登记装配；未挂页面时仍可 fail closed。
   const browserHost = initBrowserSessionHost()
   registerBrowserHandler({
-    getPort: () => getBrowserSessionHost() ?? browserHost,
-    getHost: () => getBrowserSessionHost() ?? browserHost
+    getPort: () => getBrowserSessionHost() ?? browserHost
   })
 
   // 图片落盘 IPC + nova-image:// 协议 handler 共用同一 ImageStore 实例。

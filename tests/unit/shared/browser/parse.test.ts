@@ -3,7 +3,6 @@ import {
   parseBrowserAction,
   parseBrowserActCommand,
   parseBrowserActToolArgs,
-  parseBrowserAttachIpcParams,
   parseBrowserCaptureToolArgs,
   parseBrowserCloseToolArgs,
   parseBrowserNavigateAction,
@@ -135,27 +134,6 @@ describe('browser 导航与打开入参', () => {
     }).ok).toBe(false)
   })
 
-  it('挂载上报只接受正整数 webContentsId', () => {
-    expect(parseBrowserAttachIpcParams({
-      sessionId: 'sess_1',
-      browserId: 'brw_1',
-      webContentsId: 2
-    })).toEqual({
-      ok: true,
-      value: { sessionId: 'sess_1', browserId: 'brw_1', webContentsId: 2 }
-    })
-    expect(parseBrowserAttachIpcParams({
-      sessionId: 'sess_1',
-      browserId: 'brw_1',
-      webContentsId: 0
-    }).ok).toBe(false)
-    expect(parseBrowserAttachIpcParams({
-      sessionId: 'sess_1',
-      browserId: 'brw_1',
-      webContentsId: 2,
-      partition: 'nova-browser'
-    }).ok).toBe(false)
-  })
 })
 
 describe('browser 工具入参（来自模型）', () => {

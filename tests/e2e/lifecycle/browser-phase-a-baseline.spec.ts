@@ -131,6 +131,7 @@ test('阶段 A 记录浏览器关/开未用/开着页面三态进程树与启动
     }
     await nova.page.getByRole('button', { name: '关闭页面' }).click()
     await expect(nova.page.getByTestId('browser-panel')).toHaveCount(0)
+    expect(nova.pageErrors).toEqual([])
 
     const openLatenciesMs: number[] = [firstOpenMs]
     for (let index = 1; index < SURFACE_OPEN_TRIALS; index += 1) {
@@ -220,6 +221,7 @@ test('阶段 A 记录浏览器关/开未用/开着页面三态进程树与启动
       type: 'budget',
       description: `B-A ${deltaBA.toFixed(2)} MiB / ${PRIVATE_BUDGET_MIB}；openP95 ${openP95.toFixed(1)} ms / ${STARTUP_DELTA_BUDGET_MS}`
     })
+    expect(nova.pageErrors).toEqual([])
   } finally {
     await fixture.close()
   }

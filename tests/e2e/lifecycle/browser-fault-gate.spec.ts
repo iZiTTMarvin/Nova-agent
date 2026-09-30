@@ -180,7 +180,7 @@ test('任务取消会结束挂起的网页命令，页面保留且聊天可继�
       sessionId,
       url: `${hung.origin}/stall`
     }) as BrowserOpenResult
-    expect(opened.status).toBe('applied')
+    expect(opened.status, JSON.stringify(opened)).toBe('applied')
     if (opened.status !== 'applied') throw new Error('打开挂起页失败')
     const browserId = opened.page.browserId
     await nova.page.locator('webview[data-browser-id]').waitFor()

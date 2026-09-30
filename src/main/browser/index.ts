@@ -142,6 +142,11 @@ export function bindWebviewPolicy(win: BrowserWindow, sessionHost: BrowserSessio
       sessionHost.handlePopup(details.url, guest.id)
       return { action: 'deny' }
     })
+    // Renderer 的 did-attach 可能早于 guest ID 初始化；绑定以主进程的真实 guest 为准。
+    const slot = slotPool.inspect().find(candidate =>
+      candidate.state === 'busy' && guest.session === session.fromPartition(candidate.partition)
+    )
+    if (slot) void sessionHost.attachPartition(slot.partition, guest.id)
   })
   win.webContents.on('did-finish-load', () => {
     sessionHost.noteRendererReloading()

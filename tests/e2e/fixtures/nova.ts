@@ -35,6 +35,7 @@ interface LaunchOptions {
   skipWorkspaceSetup?: boolean
   codeIndexEnabled?: boolean
   codeFileCount?: number
+  recordTrace?: boolean
 }
 
 /** 复用既有 profile/workspace/fake 服务的再次启动上下文（用于中断崩溃恢复类用例） */
@@ -193,11 +194,14 @@ export async function launchNova(
   await page.waitForFunction(() => Boolean((window as typeof window & { api?: unknown }).api))
 
   const context = app.context()
-  await context.tracing.start({
-    screenshots: true,
-    snapshots: true,
-    sources: true
-  })
+  const recordTrace = options.recordTrace ?? true
+  if (recordTrace) {
+    await context.tracing.start({
+      screenshots: true,
+      snapshots: true,
+      sources: true
+    })
+  }
 
   let cleaned = false
 
@@ -313,8 +317,10 @@ export async function launchNova(
           }).catch(() => undefined)
         }
 
-        const tracePath = failed ? testInfo.outputPath('trace.zip') : undefined
-        await context.tracing.stop(tracePath ? { path: tracePath } : undefined).catch(() => undefined)
+        const tracePath = failed && recordTrace ? testInfo.outputPath('trace.zip') : undefined
+        if (recordTrace) {
+          await context.tracing.stop(tracePath ? { path: tracePath } : undefined).catch(() => undefined)
+        }
         if (tracePath) {
           await testInfo.attach('playwright-trace', {
             path: tracePath,
@@ -352,9 +358,10 @@ export async function launchNova(
   return harness
 }
 
-export const test = base.extend<{ nova: NovaHarness }>({
-  nova: async ({}, use, testInfo) => {
-    const nova = await launchNova(testInfo)
+export const test = base.extend<{ nova: NovaHarness; recordTrace: boolean }>({
+  recordTrace: [true, { option: true }],
+  nova: async ({ recordTrace }, use, testInfo) => {
+    const nova = await launchNova(testInfo, { recordTrace })
     try {
       await use(nova)
     } finally {

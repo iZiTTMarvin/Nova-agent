@@ -15,7 +15,6 @@ import {
   projectGuestLoadError,
   readGuestFaviconArgs,
   readGuestLoadFailureArgs,
-  type BrowserAttachIpcParams,
   type BrowserAttachResult,
   type BrowserClaimResult,
   type BrowserCloseResult,
@@ -82,8 +81,15 @@ export interface BrowserBindingInspection {
   readonly lifecycle: BrowserLifecycleStatus
 }
 
+interface BrowserAttachParams {
+  readonly sessionId: string
+  readonly browserId: string
+  readonly webContentsId: number
+}
+
 export interface BrowserSessionHost extends BrowserPort {
-  attach(params: BrowserAttachIpcParams): Promise<BrowserAttachResult>
+  attach(params: BrowserAttachParams): Promise<BrowserAttachResult>
+  attachPartition(partition: string, webContentsId: number): Promise<BrowserAttachResult>
   hide(browserId: string, sessionId: string): Promise<BrowserNavigateResult>
   restore(browserId: string, sessionId: string): Promise<BrowserNavigateResult>
   noteRendererReloading(): void
@@ -845,7 +851,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     return { status: 'applied', page: project(latest.value, record) }
   }
 
-  async function attach(params: BrowserAttachIpcParams): Promise<BrowserAttachResult> {
+  async function attach(params: BrowserAttachParams): Promise<BrowserAttachResult> {
     const identity = ledger.inspect(params.browserId, params.sessionId)
     if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
     const record = pages.get(params.browserId)
@@ -895,6 +901,14 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
       }
       return finishAttach(params.browserId, params.sessionId, record)
     })
+  }
+
+  async function attachPartition(partition: string, webContentsId: number): Promise<BrowserAttachResult> {
+    for (const [browserId, record] of pages) {
+      if (record.partition !== partition || record.lifecycle === 'closing') continue
+      return attach({ sessionId: record.sessionId, browserId, webContentsId })
+    }
+    return browserNotApplied('not_owner', '隔离资料槽没有所属页面')
   }
 
   function findOwnerByGuestId(webContentsId: number): string | undefined {
@@ -1528,6 +1542,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     claim,
     release,
     attach,
+    attachPartition,
     hide: (browserId, sessionId) => setVisible(browserId, sessionId, false),
     restore: (browserId, sessionId) => setVisible(browserId, sessionId, true),
     noteRendererReloading,

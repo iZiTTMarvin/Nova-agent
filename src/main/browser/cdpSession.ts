@@ -226,7 +226,7 @@ export function createCdpSession(
       try {
         const ready = await ensure(fence, remaining)
         if (ready) return ready
-        return rawSend(method, params, fence, remaining())
+        return await rawSend(method, params, fence, remaining())
       } finally {
         inflight = Math.max(0, inflight - 1)
         if (inflight === 0) scheduleIdle()

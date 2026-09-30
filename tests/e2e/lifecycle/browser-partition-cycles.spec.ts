@@ -7,6 +7,9 @@ import { BROWSER_PARTITION_SLOT_NAMES } from '../../../src/main/browser/partitio
 const CYCLES = 30
 const PRIVATE_BUDGET_MIB = 10
 
+// 截图与 DOM 追踪在被测进程内分配内存，性能采样不录制追踪。
+test.use({ recordTrace: false })
+
 interface TypeBucket {
   count: number
   privateMiB: number
@@ -103,6 +106,7 @@ test('三十次打开刷新关闭后进程树不增生，并采样私有内存',
       })
       expect(closed.status).toBe('applied')
       await expect(guest).toHaveCount(0)
+      expect(nova.pageErrors).toEqual([])
       samples.push(await sampleTree(index))
     }
 

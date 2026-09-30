@@ -392,12 +392,6 @@ export interface BrowserClaimIpcParams {
   readonly browserId: string
 }
 
-export interface BrowserAttachIpcParams {
-  readonly sessionId: string
-  readonly browserId: string
-  readonly webContentsId: number
-}
-
 export interface BrowserObserveIpcParams {
   readonly sessionId: string
   readonly browserId: string

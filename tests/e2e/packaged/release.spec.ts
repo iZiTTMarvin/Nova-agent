@@ -137,10 +137,7 @@ test('Windows unpacked release 的内置网页不带应用桥，关掉后页面�
       }).length
     })
     expect(guestsLeft).toBe(0)
-    // 卸旧 webview 时 Electron 44.4.3 会抛 Invalid guestInstanceId，不是应用桥泄漏
-    expect(
-      nova.pageErrors.filter((error) => !error.includes('Invalid guestInstanceId'))
-    ).toEqual([])
+    expect(nova.pageErrors).toEqual([])
   } finally {
     await nova.cleanup()
     await new Promise<void>((resolve, reject) => {

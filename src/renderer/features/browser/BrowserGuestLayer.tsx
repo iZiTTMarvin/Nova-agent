@@ -1,18 +1,16 @@
 /**
- * 按宿主 guest 描述挂载 <webview>，did-attach 用页面所属 sessionId 上报。
+ * 按宿主 guest 描述挂载 <webview>，主进程负责绑定真实 guest。
  * 位置跟随当前会话的浏览舞台；其它会话的 guest 只隐藏不卸载。
  */
 import { useEffect, useRef, type ReactNode } from 'react'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useLayoutStore } from '../../stores/useLayoutStore'
-import { BROWSER_ATTACH } from '../../../shared/ipc/channels'
 import type { BrowserGuestMount } from '../../../shared/browser'
 import { useBrowserStore } from './useBrowserStore'
 import { guestShownInSession, pagesForSession, pickFocusedPage } from './sessionFilter'
 import './BrowserGuestLayer.css'
 
 interface WebviewGuest extends HTMLElement {
-  getWebContentsId: () => number
   getURL?: () => string
 }
 
@@ -154,25 +152,5 @@ function createGuestNode(spec: BrowserGuestMount): WebviewGuest {
   node.setAttribute('allowpopups', 'true')
   node.setAttribute('data-browser-id', spec.browserId)
   node.className = 'browser-guest is-hidden'
-  let reported = false
-
-  const report = (): void => {
-    if (reported) return
-    try {
-      const webContentsId = node.getWebContentsId()
-      if (!Number.isInteger(webContentsId) || webContentsId < 1) return
-      reported = true
-      void window.api.invoke(BROWSER_ATTACH, {
-        sessionId: spec.sessionId,
-        browserId: spec.browserId,
-        webContentsId
-      })
-    } catch {
-      reported = false
-    }
-  }
-
-  node.addEventListener('did-attach', report)
-  node.addEventListener('dom-ready', report)
   return node
 }

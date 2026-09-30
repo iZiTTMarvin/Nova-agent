@@ -3,7 +3,6 @@ import {
   type BrowserAction,
   type BrowserActCommand,
   type BrowserActIpcParams,
-  type BrowserAttachIpcParams,
   type BrowserCaptureIpcParams,
   type BrowserClaimIpcParams,
   type BrowserCloseIpcParams,
@@ -267,21 +266,6 @@ export function parseBrowserSnapshotIpcParams(
   const sessionId = readNonEmptyString(input, 'sessionId')
   if (sessionId === null) return failed('快照命令需要非空 sessionId')
   return { ok: true, value: Object.freeze({ sessionId }) }
-}
-
-export function parseBrowserAttachIpcParams(
-  input: unknown
-): BrowserParseResult<BrowserAttachIpcParams> {
-  if (!isRecord(input) || !hasExactKeys(input, ['sessionId', 'browserId', 'webContentsId'])) {
-    return failed('挂载上报必须且只能包含 sessionId、browserId 与 webContentsId')
-  }
-  const sessionId = readNonEmptyString(input, 'sessionId')
-  const browserId = readNonEmptyString(input, 'browserId')
-  const webContentsId = readIntegerInRange(input, 'webContentsId', 1, Number.MAX_SAFE_INTEGER)
-  if (sessionId === null || browserId === null || webContentsId === null) {
-    return failed('挂载上报需要非空身份与正整数 webContentsId')
-  }
-  return { ok: true, value: Object.freeze({ sessionId, browserId, webContentsId }) }
 }
 
 export function parseBrowserObserveIpcParams(
