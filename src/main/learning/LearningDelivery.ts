@@ -97,7 +97,13 @@ export async function resolveLearningDelivery(
   payloadJson: string,
   ports: LearningDeliveryPorts
 ): Promise<LearningDeliveryText> {
-  const payload = JSON.parse(payloadJson) as { kind?: unknown; text?: unknown; action?: unknown }
+  let raw: unknown
+  try {
+    raw = JSON.parse(payloadJson)
+  } catch {
+    throw new Error('学习交付意图不是合法 JSON')
+  }
+  const payload = raw as { kind?: unknown; text?: unknown; action?: unknown }
   if (payload.kind === 'deliver_command') {
     return describeAction(parseLearningAction(payload.action), ports)
   }

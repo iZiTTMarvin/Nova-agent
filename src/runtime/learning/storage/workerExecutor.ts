@@ -3,7 +3,7 @@ import type BetterSqlite3 from 'better-sqlite3'
 import type { LearningCommand, LearningCommandReceipt } from '../../../shared/learning/command'
 import { parseLearningAssessSubmission } from '../../../shared/learning/rubric'
 import type { KnowledgeEdgeKind } from '../../../shared/learning/knowledgeProjection'
-import { nodeSummaryFromBody, parsePublishedNodeBody } from '../knowledge/nodeBody'
+import { nodeSummaryFromBody, parsePublishedNodeBody, type PublishedNodeBody } from '../knowledge/nodeBody'
 import {
   deriveProjectId,
   normalizeWorkspaceForProject,
@@ -428,9 +428,11 @@ function applyCommandMutation(
       WHERE session_id = ? AND checkpoint_id <> ? AND state IN ('awaiting_answer', 'answer_pending')`
     ).run(now, command.sessionId, assessment.checkpoint_id)
     const nextVersion = command.expectedCursorVersion + 1
+    // 复核回到出题停点；停点可能没有关联主题（自由提问），此时保留当前选中的主题
     db.prepare(
       `UPDATE learning_cursors SET cursor_version = ?, updated_at = ?, current_checkpoint_id = ?,
-       selected_node_id = (SELECT node_id FROM checkpoints WHERE checkpoint_id = ?) WHERE session_id = ?`
+       selected_node_id = COALESCE((SELECT node_id FROM checkpoints WHERE checkpoint_id = ?), selected_node_id)
+       WHERE session_id = ?`
     ).run(nextVersion, now, assessment.checkpoint_id, assessment.checkpoint_id, command.sessionId)
     return mutation({
       ok: true,
@@ -539,10 +541,15 @@ function executePublishVersion(
     )
 
     for (const node of op.nodes) {
+      // node_revision 是 body 内容哈希：重新生成大纲可能产出完全相同的节点，
+      // 同键覆盖标题即可（body 按哈希本就一致），不能让整次发布撞主键失败
       db.prepare(
         `INSERT INTO node_versions (
           project_id, node_id, node_revision, title, body_json, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?)`
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_id, node_id, node_revision) DO UPDATE SET
+          title = excluded.title,
+          body_json = excluded.body_json`
       ).run(projectId, node.nodeId, node.nodeRevision, node.title, node.bodyJson, now)
     }
     for (const member of op.members) {
@@ -641,9 +648,15 @@ function executeGetTreeProjection(db: BetterSqlite3.Database, workspaceRoot: str
     body_json: string
   }[]
 
-  const nodes = memberRows.map(row => {
-    const body = parsePublishedNodeBody(row.body_json)
-    return {
+  // 单行 body 损坏只丢弃该节点，整棵大纲仍然可读；引用已丢节点的边一并过滤
+  const nodes = memberRows.flatMap(row => {
+    let body: PublishedNodeBody
+    try {
+      body = parsePublishedNodeBody(row.body_json)
+    } catch {
+      return []
+    }
+    return [{
       nodeId: row.node_id,
       nodeRevision: row.node_revision,
       title: row.title,
@@ -651,8 +664,9 @@ function executeGetTreeProjection(db: BetterSqlite3.Database, workspaceRoot: str
       materialStatus: body.materialStatus,
       navDimension: body.navDimension,
       parentNodeId: body.parentNodeId
-    }
+    }]
   })
+  const readableNodeIds = new Set(nodes.map(node => node.nodeId))
 
   const edgeRows = db
     .prepare(
@@ -665,11 +679,13 @@ function executeGetTreeProjection(db: BetterSqlite3.Database, workspaceRoot: str
     edge_kind: string
   }[]
 
-  const edges = edgeRows.map(row => ({
-    fromNodeId: row.from_node_id,
-    toNodeId: row.to_node_id,
-    edgeKind: row.edge_kind as KnowledgeEdgeKind
-  }))
+  const edges = edgeRows
+    .filter(row => readableNodeIds.has(row.from_node_id) && readableNodeIds.has(row.to_node_id))
+    .map(row => ({
+      fromNodeId: row.from_node_id,
+      toNodeId: row.to_node_id,
+      edgeKind: row.edge_kind as KnowledgeEdgeKind
+    }))
 
   return { knowledgeRevision: revision, nodes, edges }
 }

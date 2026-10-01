@@ -2,6 +2,7 @@
  * Agent turn 生命周期：SEND_MESSAGE 主链（preflight → persist → start/resume → execute → cleanup）
  */
 import { BrowserWindow, app } from 'electron'
+import { releaseCheckpointSlot } from '../../../runtime/learning/progress/checkpointBatchGate'
 import { recoverSessionTurnDrafts } from '../../../runtime/sessions'
 import { settleSubagentToolCall } from '../../../runtime/subagents/toolSettlement'
 import {
@@ -755,6 +756,8 @@ export async function sendAgentMessage(
         planReviewWaiters.cancelForRun(context.runId)
         disposeTurnStreams(context.runId, context.executionGeneration)
         writerLeaseRegistry.release(context.resourceOwnerRunId)
+        // 学习停点门禁按 run 计数，run 结束即释放，避免进程内累积
+        releaseCheckpointSlot(context.runId)
       }
     })
   } finally {
@@ -774,7 +777,15 @@ export async function sendAgentMessage(
     const progress = (await import('../../learning/LearningDbHost')).getLearningProgressOrNull()
     if (progress) {
       const { markLearningDeliveryComplete } = await import('../../learning/LearningHost')
-      await markLearningDeliveryComplete(progress, trustedDelivery.commandId)
+      // 轮次已结束：标记失败只让 outbox 留在 pending，不能把整轮已成功的回执变失败
+      try {
+        await markLearningDeliveryComplete(progress, trustedDelivery.commandId)
+      } catch (error) {
+        console.error(
+          `[AgentTurnService] 学习交付完成标记失败，留待 resume 续接 commandId=${trustedDelivery.commandId}:`,
+          error
+        )
+      }
     }
   }
   return { accepted: true }

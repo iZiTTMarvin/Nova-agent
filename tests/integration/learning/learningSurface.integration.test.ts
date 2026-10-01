@@ -174,6 +174,81 @@ describe('learning surface projection', () => {
     await harness.close()
   })
 
+  it('复核自由提问的评估不清空当前选中的主题', async () => {
+    const { harness, workspace } = await openHarness()
+    // 自由提问阶段出题：停点没有关联主题
+    await harness.progress.saveCheckpoint({
+      workspaceRoot: workspace,
+      sessionId: 'sess-keep-topic',
+      runId: 'run-keep',
+      checkpointId: 'ckpt-keep',
+      cursorVersion: await cursorOf(harness, workspace, 'sess-keep-topic'),
+      question: '不选主题也能提问吗？',
+      rubricJson: JSON.stringify({
+        targetClaim: '自由提问可用',
+        knowledgeRevision: null,
+        verificationMethod: 'open_answer',
+        criteria: '能说明提问入口'
+      })
+    })
+    await harness.progress.applyCommand(
+      command('sess-keep-topic', await cursorOf(harness, workspace, 'sess-keep-topic'), {
+        type: 'answer',
+        checkpointId: 'ckpt-keep',
+        text: '可以',
+        optionIds: []
+      })
+    )
+    const outbox = await harness.progress.getPendingOutbox('sess-keep-topic')
+    const payload = JSON.parse(outbox!.payload_json) as { attemptId: string }
+    await harness.progress.submitAssessment({
+      workspaceRoot: workspace,
+      sessionId: 'sess-keep-topic',
+      runId: 'run-keep-assess',
+      cursorVersion: await cursorOf(harness, workspace, 'sess-keep-topic'),
+      submissionJson: JSON.stringify({
+        attemptId: payload.attemptId,
+        checkpointId: 'ckpt-keep',
+        verdict: 'needs_clarification',
+        summary: '再说明入口',
+        factReferences: []
+      })
+    })
+    const assessed = await harness.progress.getSurface(workspace, 'sess-keep-topic')
+    expect(assessed.selectedNodeId).toBeNull()
+
+    // 事后选中主题，再回头复核自由提问的评估
+    await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-keep',
+      parentRevision: null,
+      inputFingerprint: 'fp',
+      expectedCurrentRevision: null,
+      nodes: [{ nodeId: 'node-keep', nodeRevision: 'nv-keep', title: '主题', bodyJson: '{"summary":"s","claims":[]}' }],
+      members: [{ nodeId: 'node-keep', nodeRevision: 'nv-keep' }]
+    })
+    const selected = await harness.progress.applyCommand(
+      command('sess-keep-topic', await cursorOf(harness, workspace, 'sess-keep-topic'), {
+        type: 'select_node',
+        nodeId: 'node-keep'
+      })
+    )
+    expect(selected.ok).toBe(true)
+
+    await harness.progress.applyCommand(
+      command('sess-keep-topic', await cursorOf(harness, workspace, 'sess-keep-topic'), {
+        type: 'dispute',
+        assessmentId: assessed.questions[0]!.assessment!.assessmentId,
+        reason: '判断过严'
+      })
+    )
+
+    const disputed = await harness.progress.getSurface(workspace, 'sess-keep-topic')
+    expect(disputed.currentCheckpointId).toBe('ckpt-keep')
+    expect(disputed.selectedNodeId).toBe('node-keep')
+    await harness.close()
+  })
+
   it('提示不消费问题，跳过与直接讲解记为 skipped', async () => {
     const { harness, workspace } = await openHarness()
     await harness.progress.saveCheckpoint({
