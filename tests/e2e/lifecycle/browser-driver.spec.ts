@@ -342,18 +342,25 @@ test('内置浏览器可以阅读、填写、在替换节点后定位、导航�
       action: { kind: 'url', url: `${fixture.origin}/next` }
     }) as { status: string }
     expect(next.status).toBe('applied')
-    const nextView = await observePage(nova, doc.sessionId, doc.browserId)
-    expect(nextView.snapshot.title).toBe('NextTitle')
+    // 手动导航立即回执，页面提交异步到达：以观察结果为准等待目标页就绪
+    await expect.poll(async () => {
+      return (await observePage(nova, doc.sessionId, doc.browserId)).snapshot.title
+    }, { timeout: 8_000 }).toBe('NextTitle')
 
     await nova.invoke(BROWSER_NAVIGATE, {
       sessionId: doc.sessionId,
       browserId: doc.browserId,
       action: { kind: 'url', url: `${fixture.origin}/scroll` }
     })
-    const beforeScroll = await observePage(nova, doc.sessionId, doc.browserId)
+    let beforeScroll: Awaited<ReturnType<typeof observePage>> | null = null
+    await expect.poll(async () => {
+      const view = await observePage(nova, doc.sessionId, doc.browserId)
+      if (view.snapshot.dom.includes('scrollpos:')) beforeScroll = view
+      return view.snapshot.dom.includes('scrollpos:')
+    }, { timeout: 8_000 }).toBe(true)
     const scrolled = await nova.invoke(BROWSER_ACT, {
       sessionId: doc.sessionId,
-      observation: beforeScroll.observation,
+      observation: beforeScroll!.observation,
       action: { kind: 'scroll', direction: 'down', amount: 'page' }
     }) as { status: string; summary?: string; detail?: string }
     expect(scrolled.status, scrolled.detail).toBe('applied')
