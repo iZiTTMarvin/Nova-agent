@@ -12,6 +12,21 @@ describe('projectLearningPreset', () => {
     expect(material.toLowerCase()).not.toContain('skill')
   })
 
+  it('讲解先说用途再讲运行顺序，例子不出知识点的场景', () => {
+    const material = projectLearningPreset.roleMaterial
+    // 教学主线：用途先行、按运行顺序铺开、直觉建立后才给术语名
+    expect(material).toContain('先说它是干什么的')
+    expect(material).toContain('一步一步发生了什么')
+    expect(material).toContain('不默认有背景知识')
+    // 例子必须取自机制自身的真实场景，拒绝无关类比
+    expect(material).toContain('不沾边的类比')
+    // 没听懂就换基础层级重讲，并直接指出理解错在哪
+    expect(material).toContain('从更基础的地方重讲')
+    expect(material).toContain('直接说错在哪')
+    // 拟人表达：连贯段落，不堆排版、不写总结式结尾
+    expect(material).toContain('不写总结式结尾')
+  })
+
   it('每轮指令等于四行固定文本', () => {
     expect(projectLearningPreset.renderTurnInstruction()).toBe(
       [
