@@ -52,7 +52,7 @@ test('拖拽 Inspector 期间聊天阅读宽度冻结，松手后恢复响应式
   await expect(page.getByText('第 1 段', { exact: false })).toBeVisible()
   await nova.waitUntilIdle()
 
-  await page.getByRole('button', { name: '审查与文件面板' }).click()
+  await page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
   const handle = page.locator('.inspector-panel__resize')
   await handle.waitFor({ state: 'visible' })
   // 开合动画走 transform，动画中 boundingBox 是中间位置；等 transform 归零再取拖拽坐标
@@ -135,7 +135,7 @@ test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不�
   await nova.sendPrompt('输出固定长文')
   await page.locator('.chat-messages__tail-status').waitFor({ state: 'visible' })
 
-  await page.getByRole('button', { name: '审查与文件面板' }).click()
+  await page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
   const handle = page.locator('.inspector-panel__resize')
   await handle.waitFor({ state: 'visible' })
   await expect(page.locator('.inspector-panel')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')

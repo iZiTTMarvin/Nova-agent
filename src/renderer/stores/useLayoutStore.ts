@@ -283,12 +283,10 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     })
   },
 
-  /** 浏览器页签是否已激活：激活时再触发就收起面板（顶栏按钮与快捷键共用）。 */
+  /** 浏览器页签已激活时，快捷键再次触发会收起面板。 */
   toggleBrowserPane: (isLearnSurface) => {
     const state = get()
-    const active = isLearnSurface
-      ? state.learnInspectorOpen && state.learnInspectorTab === 'browser'
-      : state.inspectorOpen && state.inspectorTab === 'browser'
+    const active = selectBrowserPaneActive(state, isLearnSurface)
     if (active) {
       if (isLearnSurface) set({ learnInspectorOpen: false })
       else set({ inspectorOpen: false })
@@ -329,7 +327,7 @@ export function selectInspectorOpenForSurface(state: LayoutStoreState, isLearnSu
 export function selectBrowserPaneActive(state: LayoutStoreState, isLearnSurface: boolean): boolean {
   return isLearnSurface
     ? state.learnInspectorOpen && state.learnInspectorTab === 'browser'
-    : state.inspectorOpen && state.inspectorTab === 'browser'
+    : state.inspectorOpen && state.inspectorSurface === 'standard' && state.inspectorTab === 'browser'
 }
 
 /** 测试用：清空持久化后恢复默认布局态 */

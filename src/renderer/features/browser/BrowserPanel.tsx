@@ -31,24 +31,33 @@ export function BrowserPanel(): ReactNode {
   const page = pickFocusedPage(pages, focusedBrowserId, snapshot?.activeBrowserId ?? null)
 
   const [draft, setDraft] = useState(page?.url ?? '')
-  const [focused, setFocused] = useState(false)
+  const focusedRef = useRef(false)
+  const [submitting, setSubmitting] = useState(false)
+  const submittingRef = useRef(false)
   const composingRef = useRef(false)
-  const justEndedRef = useRef(false)
   const addressRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (!focused) setDraft(page?.url ?? '')
-  }, [page?.url, page?.browserId, focused])
+    if (!focusedRef.current && !composeNewPage) setDraft(page?.url ?? '')
+  }, [page?.url, page?.browserId, composeNewPage])
 
   useEffect(() => {
     if (!composeNewPage) return
     setDraft('')
-    setFocused(true)
     addressRef.current?.focus()
   }, [composeNewPage])
 
-  const commitAddress = useCallback(() => {
-    void useBrowserStore.getState().openUrl(draft)
+  const commitAddress = useCallback(async () => {
+    if (submittingRef.current || !draft.trim()) return
+    submittingRef.current = true
+    setSubmitting(true)
+    addressRef.current?.blur()
+    try {
+      await useBrowserStore.getState().openUrl(draft)
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
+    }
   }, [draft])
 
   const failed = page?.lifecycle === 'failed' || page?.lifecycle === 'crashed'
@@ -56,7 +65,6 @@ export function BrowserPanel(): ReactNode {
   const loading = Boolean(page?.loading && !failed && !loadError)
   const canNavigate = Boolean(page && !failed && page.lifecycle !== 'closing')
 
-  const displayUrl = focused ? draft : (page?.url || draft)
   // 新页签是用户页面，上限按用户作用域计
   const userPageCount = pages.filter((item) => item.sessionId === null).length
   const atPageCap = userPageCount >= BROWSER_MAX_USER_PAGES
@@ -83,7 +91,6 @@ export function BrowserPanel(): ReactNode {
               const started = useBrowserStore.getState().beginNewPage()
               if (started) {
                 setDraft('')
-                setFocused(true)
                 addressRef.current?.focus()
               }
             }}
@@ -130,35 +137,39 @@ export function BrowserPanel(): ReactNode {
           ref={addressRef}
           className="browser-panel__address"
           data-testid="browser-address"
-          value={displayUrl}
+          value={draft}
           spellCheck={false}
           autoCapitalize="off"
           autoCorrect="off"
           placeholder="输入网址，在 Nova 中打开"
           aria-label="地址栏"
           onFocus={() => {
-            setFocused(true)
-            setDraft(composeNewPage ? draft : (page?.url || draft))
+            focusedRef.current = true
           }}
-          onBlur={() => setFocused(false)}
+          onBlur={() => { focusedRef.current = false }}
           onChange={(event) => setDraft(event.target.value)}
           onCompositionStart={() => {
             composingRef.current = true
           }}
           onCompositionEnd={() => {
             composingRef.current = false
-            justEndedRef.current = true
           }}
           onKeyDown={(event) => {
             if (!shouldCommitAddressKey(event)) return
-            if (composingRef.current || justEndedRef.current) {
-              justEndedRef.current = false
-              return
-            }
+            if (composingRef.current) return
             event.preventDefault()
-            commitAddress()
+            void commitAddress()
           }}
         />
+        <button
+          type="button"
+          className="browser-panel__go"
+          aria-label="访问网址"
+          disabled={submitting || !draft.trim()}
+          onClick={() => void commitAddress()}
+        >
+          {submitting ? '打开中' : '访问'}
+        </button>
         {showControlButtons && (
           <span data-testid="browser-takeover">
             {page?.control.holder === 'user' ? (
@@ -193,6 +204,7 @@ export function BrowserPanel(): ReactNode {
           icon={<CloseIcon size={14} />}
           variant="ghost"
           size="sm"
+          isDisabled={!page}
           onClick={() => void useBrowserStore.getState().closeFocused()}
         />
       </header>

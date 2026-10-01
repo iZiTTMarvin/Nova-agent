@@ -16,9 +16,11 @@ export function composeBrowserNavigationUrl(raw: string): string | null {
 export function shouldCommitAddressKey(event: {
   key: string
   isComposing?: boolean
-  nativeEvent?: { isComposing?: boolean }
+  keyCode?: number
+  nativeEvent?: { isComposing?: boolean; keyCode?: number }
 }): boolean {
   if (event.key !== 'Enter') return false
   if (event.isComposing || event.nativeEvent?.isComposing) return false
+  if (event.keyCode === 229 || event.nativeEvent?.keyCode === 229) return false
   return true
 }

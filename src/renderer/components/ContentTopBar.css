@@ -62,7 +62,6 @@
 }
 
 .content-topbar__btn--active {
-  background-color: var(--color-brand-dim);
   color: var(--text-primary);
 }
 

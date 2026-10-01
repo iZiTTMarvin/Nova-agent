@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   resetLayoutStoreForTests,
+  selectBrowserPaneActive,
   useLayoutStore
 } from '../../../src/renderer/stores/useLayoutStore'
 
@@ -225,5 +226,19 @@ describe('useLayoutStore', () => {
     })
     useLayoutStore.getState().toggleBrowserPane(true)
     expect(useLayoutStore.getState().learnInspectorOpen).toBe(false)
+  })
+
+  it('浏览器切至计划时隐藏网页，关闭计划或快捷键返回后恢复', () => {
+    const layout = useLayoutStore.getState()
+    layout.openBrowserPane(false)
+    const target = { sessionId: 's1', messageId: 'm1', toolCallId: 'plan' }
+    layout.openPlan(target)
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(false)
+    layout.closeInspector()
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+    layout.openPlan(target)
+    layout.toggleBrowserPane(false)
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+    expect(useLayoutStore.getState().planTarget).toBeNull()
   })
 })

@@ -5,12 +5,11 @@ import {
   RestoreIcon,
   CloseIcon,
   PanelLeftIcon,
-  PanelRightIcon,
-  GlobeIcon
+  PanelRightIcon
 } from './Icons'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { selectBrowserPaneActive, selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayoutStore'
+import { selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayoutStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
@@ -132,9 +131,7 @@ export const ContentTopBar: React.FC = () => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const isLearnSurface = useWorkspaceStore(state => state.currentMode === 'learn' && state.currentSessionId !== null)
   const inspectorOpen = useLayoutStore(state => selectInspectorOpenForSurface(state, isLearnSurface))
-  const browserPaneActive = useLayoutStore(state => selectBrowserPaneActive(state, isLearnSurface))
-  // 学习会话的面板是「大纲 | 文件」，与开发面板状态分开
-  const inspectorLabel = isLearnSurface ? '大纲与文件' : '审查与文件面板'
+  const inspectorLabel = isLearnSurface ? '大纲、文件与浏览面板' : '审阅、文件与浏览面板'
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -169,20 +166,12 @@ export const ContentTopBar: React.FC = () => {
       </div>
       <div className="content-topbar__right">
         <IconButton
-          label="在 Nova 中打开"
-          icon={<GlobeIcon size={16} />}
-          variant="ghost"
-          size="sm"
-          className={`content-topbar__btn${browserPaneActive ? ' content-topbar__btn--active' : ''}`}
-          onClick={() => useLayoutStore.getState().toggleBrowserPane(isLearnSurface)}
-          tooltip="在 Nova 中打开（Ctrl+Alt+B）"
-        />
-        <IconButton
           label={inspectorLabel}
           icon={<PanelRightIcon size={16} />}
           variant="ghost"
           size="sm"
           className={`content-topbar__btn${inspectorOpen ? ' content-topbar__btn--active' : ''}`}
+          aria-expanded={inspectorOpen}
           onClick={() => {
             const layout = useLayoutStore.getState()
             if (isLearnSurface) layout.toggleLearnInspector()

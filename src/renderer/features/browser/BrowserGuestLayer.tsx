@@ -14,15 +14,6 @@ import './BrowserGuestLayer.css'
 
 interface WebviewGuest extends HTMLElement {
   getWebContentsId?: () => number
-  getURL?: () => string
-}
-
-function readGuestUrl(node: WebviewGuest): string {
-  try {
-    return node.getURL?.() ?? ''
-  } catch {
-    return ''
-  }
 }
 
 export function BrowserGuestLayer(): ReactNode {
@@ -34,7 +25,7 @@ export function BrowserGuestLayer(): ReactNode {
   const guests = useBrowserStore((state) => state.guests)
   const focusedBrowserId = useBrowserStore((state) => state.focusedBrowserId)
   const layerRef = useRef<HTMLDivElement>(null)
-  const guestsRef = useRef<Map<string, { spec: BrowserGuestMount; node: WebviewGuest }>>(new Map())
+  const guestsRef = useRef<Map<string, WebviewGuest>>(new Map())
 
   const pages = pagesForSession(snapshot, sessionId)
   const focused = pickFocusedPage(pages, focusedBrowserId, snapshot?.activeBrowserId ?? null)
@@ -59,6 +50,7 @@ export function BrowserGuestLayer(): ReactNode {
     const layer = layerRef.current
     if (!layer) return
     let frame = 0
+    const panel = document.querySelector<HTMLElement>('.inspector-panel')
     const apply = (): void => {
       frame = 0
       const slot = document.querySelector<HTMLElement>('[data-browser-guest-slot]')
@@ -76,25 +68,40 @@ export function BrowserGuestLayer(): ReactNode {
         guest.style.width = simulated ? `${layoutWidth}px` : '100%'
         guest.style.height = simulated ? `${layoutHeight}px` : '100%'
       }
+      // transform 不触发 ResizeObserver，按真实面板动画逐帧跟随位置。
+      if (panel?.getAnimations().some((animation) => animation.playState === 'running')) {
+        frame = requestAnimationFrame(apply)
+      }
     }
     const schedule = (): void => {
       if (frame !== 0) return
       frame = requestAnimationFrame(apply)
     }
     schedule()
-    // 面板开合走 transform 动画：动画期间 slot 的 rect 随 transform 移动，
-    // ResizeObserver 只盯内容尺寸追不上，补几帧定时重测直到沉降
-    const settleTimers = [60, 140, 280, 460].map((ms) => window.setTimeout(schedule, ms))
-    const slot = document.querySelector('[data-browser-guest-slot]')
-    const ro = slot ? new ResizeObserver(schedule) : null
-    if (slot && ro) ro.observe(slot)
+    const transitionEvents = ['transitionrun', 'transitionend', 'transitioncancel'] as const
+    for (const name of transitionEvents) panel?.addEventListener(name, schedule)
+    let observedSlot: HTMLElement | null = null
+    const ro = new ResizeObserver(schedule)
+    const observeSlot = (): void => {
+      const slot = panel?.querySelector<HTMLElement>('[data-browser-guest-slot]') ?? null
+      if (slot === observedSlot) return
+      ro.disconnect()
+      observedSlot = slot
+      if (slot) ro.observe(slot)
+      schedule()
+    }
+    // 页签内容懒挂载，舞台出现或替换时重新绑定尺寸观察。
+    const mo = new MutationObserver(observeSlot)
+    if (panel) mo.observe(panel, { childList: true, subtree: true })
+    observeSlot()
     window.addEventListener('resize', schedule)
     visualViewport?.addEventListener('resize', schedule)
     visualViewport?.addEventListener('scroll', schedule)
     return () => {
       if (frame !== 0) cancelAnimationFrame(frame)
-      for (const timer of settleTimers) window.clearTimeout(timer)
-      ro?.disconnect()
+      for (const name of transitionEvents) panel?.removeEventListener(name, schedule)
+      ro.disconnect()
+      mo.disconnect()
       window.removeEventListener('resize', schedule)
       visualViewport?.removeEventListener('resize', schedule)
       visualViewport?.removeEventListener('scroll', schedule)
@@ -104,7 +111,7 @@ export function BrowserGuestLayer(): ReactNode {
   useEffect(() => {
     return () => {
       for (const mounted of guestsRef.current.values()) {
-        mounted.node.remove()
+        mounted.remove()
       }
       guestsRef.current.clear()
     }
@@ -122,7 +129,7 @@ export function BrowserGuestLayer(): ReactNode {
 
 function reconcileGuests(
   layer: HTMLDivElement,
-  mounted: Map<string, { spec: BrowserGuestMount; node: WebviewGuest }>,
+  mounted: Map<string, WebviewGuest>,
   guests: readonly BrowserGuestMount[],
   shownBrowserId: string | null,
   overlayBlocksGuest: boolean
@@ -130,7 +137,7 @@ function reconcileGuests(
   const nextIds = new Set(guests.map((guest) => guest.browserId))
   for (const [browserId, current] of mounted) {
     if (!nextIds.has(browserId)) {
-      current.node.remove()
+      current.remove()
       mounted.delete(browserId)
     }
   }
@@ -139,16 +146,10 @@ function reconcileGuests(
     const current = mounted.get(spec.browserId)
     if (!current) {
       const node = createGuestNode(spec)
-      mounted.set(spec.browserId, { spec, node })
+      mounted.set(spec.browserId, node)
       layer.appendChild(node)
-    } else {
-      if (current.spec.src !== spec.src) {
-        const live = readGuestUrl(current.node)
-        if (live !== spec.src) current.node.setAttribute('src', spec.src)
-      }
-      current.spec = spec
     }
-    const node = mounted.get(spec.browserId)!.node
+    const node = mounted.get(spec.browserId)!
     const hide = overlayBlocksGuest || shownBrowserId !== spec.browserId
     node.classList.toggle('is-hidden', hide)
   }
@@ -157,6 +158,7 @@ function reconcileGuests(
 function createGuestNode(spec: BrowserGuestMount): WebviewGuest {
   const node = document.createElement('webview') as WebviewGuest
   node.setAttribute('partition', spec.partition)
+  // 存活页面的导航由主进程负责，src 只用于首次挂载。
   node.setAttribute('src', spec.src)
   node.setAttribute('allowpopups', 'true')
   node.setAttribute('data-browser-id', spec.browserId)

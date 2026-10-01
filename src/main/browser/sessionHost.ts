@@ -49,6 +49,7 @@ import type { BrowserControlFence, BrowserPageControl } from './controlPort'
 import { BROWSER_USER_PARTITION } from './partitionSlots'
 import { createPreviewGrantStore, type PreviewGrantStore } from './previewGrants'
 import { routeGuestPopup } from './webviewPolicy'
+import { isNavigationAborted } from './navigationGuard'
 import type { BrowserGuestContents } from './guestContents'
 
 export const BROWSER_PENDING_CONVERGE_MS = 1000
@@ -101,7 +102,7 @@ export interface BrowserSessionHost extends BrowserPort {
   hide(browserId: string, sessionId: string | null): Promise<BrowserNavigateResult>
   restore(browserId: string, sessionId: string | null): Promise<BrowserNavigateResult>
   noteRendererReloading(): void
-  handlePopup(url: string, webContentsId?: number): void
+  handlePopup(url: string, webContentsId?: number): Promise<void>
   grantsForGuest(webContentsId: number | undefined): readonly string[]
   grantsForPartition(partition: string): readonly string[]
   noteGuestHandoff(
@@ -552,7 +553,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     unbindGuest(record)
     record.guest = guest
     guest.setWindowOpenHandler((details) => {
-      handlePopup(details.url, guest.id)
+      void handlePopup(details.url, guest.id)
       return { action: 'deny' }
     })
     listen(record, guest, 'will-navigate', (...args: unknown[]) => {
@@ -646,7 +647,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     emit()
   }
 
-  function handlePopup(url: string, webContentsId?: number): void {
+  async function handlePopup(url: string, webContentsId?: number): Promise<void> {
     if (webContentsId === undefined) return
     const browserId = findOwnerByGuestId(webContentsId)
     if (!browserId) return
@@ -655,6 +656,27 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     const identity = ledger.inspect(browserId, record.sessionId)
     if (!identity.ok) return
     const decision = routeGuestPopup(url)
+    // 网页可能用空白或非 HTTP 弹窗探测能力；用户页拒绝这些请求，但不打断浏览。
+    if (record.sessionId === null && !decision.targetUrl) return
+    if (record.sessionId === null && decision.targetUrl) {
+      let message: string
+      try {
+        const result = await open({ url: decision.targetUrl }, { sessionId: null })
+        if (result.status === 'applied') return
+        message = result.detail
+      } catch (error) {
+        message = error instanceof Error ? error.message : '无法打开新页面'
+      }
+      const current = ledger.inspect(browserId, null)
+      if (!current.ok || current.value.generation !== identity.value.generation
+        || current.value.documentEpoch !== identity.value.documentEpoch) return
+      record.notice = {
+        kind: 'popup', sourceUrl: record.url, targetUrl: decision.targetUrl,
+        message, generation: identity.value.generation, documentEpoch: identity.value.documentEpoch
+      }
+      emit()
+      return
+    }
     record.notice = {
       kind: 'popup',
       sourceUrl: record.url,
@@ -1164,7 +1186,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
           found.record.loading = true
           if (!deps.control) found.record.url = action.url
           emit()
-          if (deps.control) {
+          if (deps.control && context.authority) {
             const identity = ledger.inspect(command.browserId, context.sessionId)
             if (!identity.ok) return browserNotApplied(identity.code, '页面不属于当前会话或已关闭')
             const loaded = await deps.control.load(
@@ -1179,9 +1201,28 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
             found.record.url = safeGuestUrl(guest) || action.url
             found.record.navigationTargetOrigin = null
             emit()
-          } else {
+          } else if (context.authority) {
             await guest.loadURL(action.url)
             found.record.navigationTargetOrigin = null
+          } else {
+            const targetUrl = action.url
+            const generation = afterConfirm.value.generation
+            // 人工导航立即回执；加载状态与失败由 guest 事件发布，不能堵住停止与下一次导航。
+            void guest.loadURL(targetUrl).catch((error: unknown) => {
+              if (isNavigationAborted(error)) return
+              const current = ledger.inspect(command.browserId, context.sessionId)
+              if (!current.ok || current.value.generation !== generation
+                || current.value.documentEpoch !== afterConfirm.value.documentEpoch || found.record.loadError) return
+              found.record.loadError = projectGuestLoadError({
+                errorCode: -2,
+                errorDescription: error instanceof Error ? error.message : '导航失败',
+                validatedURL: targetUrl,
+                isMainFrame: true
+              })
+              found.record.loading = false
+              found.record.navigationTargetOrigin = null
+              emit()
+            })
           }
         } else if (action.kind === 'back' || action.kind === 'forward' || action.kind === 'reload') {
           const before = ledger.inspect(command.browserId, context.sessionId)

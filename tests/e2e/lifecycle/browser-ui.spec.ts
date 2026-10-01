@@ -1,6 +1,6 @@
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { expect, test } from '../fixtures/nova'
+import { expect, test, launchNova } from '../fixtures/nova'
 import { BROWSER_CLOSE, BROWSER_OPEN } from '../../../src/shared/ipc/channels'
 
 async function startBrowseFixture(): Promise<{
@@ -30,7 +30,8 @@ async function startBrowseFixture(): Promise<{
 test('可从地址栏打开、后退前进刷新停止并关闭，聊天仍可用', async ({ nova }) => {
   const fixture = await startBrowseFixture()
   try {
-    await nova.page.getByRole('button', { name: '在 Nova 中打开' }).click()
+    await nova.page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
+    await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
     const address = nova.page.getByTestId('browser-address')
     await expect(address).toBeVisible()
     await address.fill(`${fixture.origin}/`)
@@ -63,6 +64,78 @@ test('可从地址栏打开、后退前进刷新停止并关闭，聊天仍可�
     await composer.click()
     await expect(composer).toBeFocused()
   } finally {
+    await fixture.close()
+  }
+})
+
+test('无项目与会话时，裸地址在输入法结束后可回车访问，按钮可导航与新建', async ({}, testInfo) => {
+  const fixture = await startBrowseFixture()
+  const nova = await launchNova(testInfo, { skipWorkspaceSetup: true, recordTrace: true })
+  try {
+    const workspace = await nova.getWorkspace()
+    expect(workspace.currentProjectPath).toBeNull()
+    expect(workspace.currentSessionId).toBeNull()
+    const panelButton = nova.page.getByRole('button', { name: '审阅、文件与浏览面板' })
+    await panelButton.click()
+    await expect(panelButton).toHaveAttribute('aria-expanded', 'true')
+    await expect(nova.page.getByRole('button', { name: '在 Nova 中打开', exact: true })).toHaveCount(0)
+    await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
+    const address = nova.page.getByTestId('browser-address')
+    await address.focus()
+    await address.dispatchEvent('compositionstart')
+    await address.dispatchEvent('compositionend', { data: '百' })
+    await address.fill(fixture.origin.replace('http://', ''))
+    await address.press('Enter')
+    const tab = nova.page.getByTestId('browser-tab')
+    const guest = nova.page.locator('webview[data-browser-id]')
+    await expect(tab).toContainText('one')
+    await expect(guest).toBeVisible()
+    await expect(address).toHaveValue(`${fixture.origin}/`)
+
+    await address.fill(`${fixture.origin}/two`)
+    await nova.page.getByRole('button', { name: '访问网址' }).click()
+    await expect(tab).toHaveCount(1)
+    await expect(tab).toContainText('two')
+    await nova.page.getByTestId('browser-new-tab').click()
+    await address.fill(fixture.origin)
+    await nova.page.getByRole('button', { name: '访问网址' }).click()
+    await expect(tab).toHaveCount(2)
+    await expect(tab.last()).toContainText('one')
+    await expect(nova.page.getByTestId('browser-takeover')).toHaveCount(0)
+
+    for (const theme of ['light', 'dark'] as const) {
+      await nova.invoke('settings:set', { theme })
+      await nova.page.reload()
+      await expect(nova.page.locator('html')).toHaveAttribute('data-theme', theme)
+      await panelButton.click()
+      await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
+      await expect(guest.filter({ visible: true })).toBeVisible()
+      for (const width of [900, 1280]) {
+        await nova.app.evaluate(({ BrowserWindow }, nextWidth) => {
+          BrowserWindow.getAllWindows()[0].setSize(nextWidth, 800)
+        }, width)
+        await nova.page.setViewportSize({ width, height: 800 })
+        await expect.poll(() => nova.page.evaluate(() => window.innerWidth)).toBe(width)
+        await expect.poll(async () => {
+          const slot = await nova.page.getByTestId('browser-guest-slot').boundingBox()
+          const view = await guest.filter({ visible: true }).boundingBox()
+          if (!slot || !view) return false
+          return ['x', 'y', 'width', 'height'].every(key =>
+            Math.abs(slot[key as keyof typeof slot] - view[key as keyof typeof view]) < 4)
+        }).toBe(true)
+        await nova.page.screenshot({ path: testInfo.outputPath(`browser-${theme}-${width}.png`) })
+        await expect(nova.page.getByRole('button', { name: '访问网址' })).toBeVisible()
+        await expect(nova.page.getByLabel('消息输入')).toBeVisible()
+      }
+    }
+    await panelButton.click()
+    await expect(panelButton).toHaveAttribute('aria-expanded', 'false')
+    await expect(guest.filter({ visible: true })).toHaveCount(0)
+    await panelButton.click()
+    await expect(guest.filter({ visible: true })).toBeVisible()
+    expect(nova.pageErrors).toEqual([])
+  } finally {
+    await nova.cleanup()
     await fixture.close()
   }
 })

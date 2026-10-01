@@ -37,7 +37,36 @@
 }
 
 .browser-panel__address:focus {
-  border-color: var(--color-brand);
+  border-color: var(--text-secondary);
+  box-shadow: 0 0 0 1px var(--text-secondary);
+}
+
+.browser-panel__go {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.browser-panel__go:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.browser-panel__go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.browser-panel__go:focus-visible,
+.browser-panel__tab:focus-visible,
+.browser-panel__tab-close:focus-visible {
+  outline: 2px solid var(--text-secondary);
+  outline-offset: 2px;
 }
 
 .browser-panel__tabs {
@@ -77,7 +106,7 @@
 }
 
 .browser-panel__tab.is-active {
-  background: var(--color-brand-dim);
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 

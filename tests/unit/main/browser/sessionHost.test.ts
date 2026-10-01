@@ -1438,6 +1438,10 @@ describe('BrowserSessionHost 用户作用域页面', () => {
 
   it('用户页导航不走域名确认', async () => {
     const guest = new FakeGuest({ id: 71, url: 'https://example.com' })
+    guest.loadURL = async (url) => {
+      guest.url = url
+      guest.emit('did-navigate')
+    }
     const denying: PreviewGrantStore = {
       confirm: async () => ({ ok: false, code: 'invalid_request', detail: '拒绝一切' }),
       activate: () => {},
@@ -1445,7 +1449,9 @@ describe('BrowserSessionHost 用户作用域页面', () => {
       grantedOrigins: () => [],
       inspect: () => []
     }
-    const harness = createHarness(new Map([[71, guest]]), undefined, {
+    const control = immediateControl()
+    control.load = async () => ({ status: 'not_applied', code: 'timeout', detail: '页面没有在时限内就绪' })
+    const harness = createHarness(new Map([[71, guest]]), control, {
       previewGrants: denying,
       guestPartitions: new Map([[71, 'persist:nova-browser-user']])
     })

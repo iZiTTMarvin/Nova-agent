@@ -14,6 +14,17 @@ async function startPopupFixture(redirectTo?: string): Promise<{
   let redirectHits = 0
   const server = http.createServer((req, res) => {
     const url = req.url ?? '/'
+    if (url === '/held-image') return
+    if (url === '/slow-page') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end('<!doctype html><title>slow page</title><h1>Visible document</h1><img src="/held-image">')
+      return
+    }
+    if (url === '/redirect-news') {
+      res.writeHead(302, { location: '/popup' })
+      res.end()
+      return
+    }
     if (url.startsWith('/redirect-to-previous') && redirectTo) {
       redirectHits += 1
       res.writeHead(302, { location: `${redirectTo}/probe` })
@@ -44,22 +55,23 @@ async function startPopupFixture(redirectTo?: string): Promise<{
     redirectHits: () => redirectHits,
     close: () => new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()))
+      server.closeAllConnections()
     })
   }
 }
 
-async function openGuestWindow(nova: NovaHarness, url: string): Promise<void> {
-  await nova.app.evaluate(async ({ webContents }, target) => {
+async function openGuestWindow(nova: NovaHarness, url: string, sourceUrl?: string): Promise<void> {
+  await nova.app.evaluate(async ({ webContents }, { target, sourceUrl }) => {
     const guest = webContents.getAllWebContents().find((item) => {
       try {
-        return item.getType() === 'webview' && !item.isDestroyed()
+        return item.getType() === 'webview' && !item.isDestroyed() && (!sourceUrl || item.getURL() === sourceUrl)
       } catch {
         return false
       }
     })
     if (!guest) throw new Error('没有已挂载的网页 guest')
     await guest.executeJavaScript(`window.open(${JSON.stringify(target)}, "_blank")`)
-  }, url)
+  }, { target: url, sourceUrl })
 }
 
 async function probeFetch(nova: NovaHarness, url: string): Promise<string> {
@@ -110,6 +122,83 @@ test('弹窗默认拒绝并显示来源，确认后才在当前页打开', async
     if (first.status === 'applied') {
       await nova.invoke(BROWSER_CLOSE, { sessionId: sessionId!, browserId: first.page.browserId })
     }
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('用户地址栏接受网站重定向，页面显示后没有 AI 就绪超时报错', async ({ nova }) => {
+  const fixture = await startPopupFixture()
+  try {
+    await nova.invoke(BROWSER_OPEN, { sessionId: null, url: `${fixture.origin}/` })
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('host')
+    await nova.page.getByTestId('browser-address').fill(`${fixture.origin}/redirect-news`)
+    await nova.page.getByRole('button', { name: '访问网址', exact: true }).click()
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('popup')
+    await expect(nova.page.getByRole('button', { name: '访问网址', exact: true })).toBeEnabled({ timeout: 12_000 })
+    await expect(nova.page.getByTestId('browser-address')).toHaveValue(fixture.popupUrl)
+    await expect(nova.page.getByTestId('browser-surface-error')).toHaveCount(0)
+    await nova.page.getByRole('button', { name: '后退', exact: true }).click()
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('host')
+    await nova.page.getByRole('button', { name: '前进', exact: true }).click()
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('popup')
+    await expect(nova.page.getByTestId('browser-surface-error')).toHaveCount(0)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('用户网页的新窗口链接打开用户页签，保留来源并遵守四页上限', async ({ nova }) => {
+  const fixture = await startPopupFixture()
+  try {
+    const opened = await nova.invoke(BROWSER_OPEN, { sessionId: null, url: `${fixture.origin}/` })
+    expect(opened.status).toBe('applied')
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('host')
+    await openGuestWindow(nova, fixture.popupUrl, `${fixture.origin}/`)
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(2)
+    await expect(nova.page.getByTestId('browser-address')).toHaveValue(fixture.popupUrl)
+    await expect(nova.page.getByTestId('browser-guest-notice')).toHaveCount(0)
+    const snapshot = await nova.invoke(BROWSER_GET_SNAPSHOT, { sessionId: null })
+    expect(snapshot.status).toBe('applied')
+    if (snapshot.status !== 'applied') throw new Error('没有浏览器快照')
+    expect(snapshot.snapshot.pages.map(page => page.sessionId)).toEqual([null, null])
+    expect(snapshot.snapshot.pages[0]?.url).toBe(`${fixture.origin}/`)
+    expect(await nova.app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1)
+    const sessionId = (await nova.getWorkspace()).currentSessionId!
+    const aiSnapshot = await nova.invoke(BROWSER_GET_SNAPSHOT, { sessionId })
+    expect(aiSnapshot).toMatchObject({ status: 'applied', snapshot: { pages: [] } })
+    await openGuestWindow(nova, 'about:blank', `${fixture.origin}/`)
+    await nova.page.getByTestId('browser-tab').first().click()
+    await expect(nova.page.getByTestId('browser-guest-notice')).toHaveCount(0)
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(2)
+    for (let i = 0; i < 2; i++) {
+      expect(await nova.invoke(BROWSER_OPEN, { sessionId: null, url: `${fixture.origin}/probe?tab=${i}` }))
+        .toMatchObject({ status: 'applied' })
+    }
+    await openGuestWindow(nova, `${fixture.popupUrl}?overflow`, `${fixture.origin}/`)
+    await nova.page.getByTestId('browser-tab').first().click()
+    await expect(nova.page.getByTestId('browser-guest-notice')).toContainText('最多同时打开四个页面')
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(4)
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('用户页面子资源未结束时仍可停止加载和再次访问', async ({ nova }) => {
+  const fixture = await startPopupFixture()
+  try {
+    await nova.invoke(BROWSER_OPEN, { sessionId: null, url: `${fixture.origin}/` })
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('host')
+    await nova.page.getByTestId('browser-address').fill(`${fixture.origin}/slow-page`)
+    await nova.page.getByRole('button', { name: '访问网址', exact: true }).click()
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('slow page')
+    await expect(nova.page.getByRole('button', { name: '访问网址', exact: true })).toBeEnabled()
+    await nova.page.getByRole('button', { name: '停止加载', exact: true }).click()
+    await expect(nova.page.getByRole('button', { name: '刷新', exact: true })).toBeVisible()
+    await nova.page.getByTestId('browser-address').fill(fixture.popupUrl)
+    await nova.page.getByTestId('browser-address').press('Enter')
+    await expect(nova.page.getByTestId('browser-tab')).toContainText('popup')
+    await expect(nova.page.getByTestId('browser-surface-error')).toHaveCount(0)
   } finally {
     await fixture.close()
   }
@@ -176,7 +265,7 @@ test('本机预览授权不被后续页面重定向借用，后退前进仍可�
       sessionId: sessionId!, browserId,
       action: { kind: 'url', url: `${second.origin}/redirect-to-previous` }
     })
-    expect(second.redirectHits()).toBe(1)
+    await expect.poll(second.redirectHits).toBe(1)
     expect(first.probeHits()).toBe(beforeRedirect)
     await nova.invoke(BROWSER_CLOSE, { sessionId: sessionId!, browserId })
   } finally {

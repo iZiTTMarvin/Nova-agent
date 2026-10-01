@@ -153,7 +153,7 @@ export function bindWebviewPolicy(win: BrowserWindow, sessionHost: BrowserSessio
   })
   win.webContents.on('did-attach-webview', (_event, guest) => {
     guest.setWindowOpenHandler((details) => {
-      sessionHost.handlePopup(details.url, guest.id)
+      void sessionHost.handlePopup(details.url, guest.id)
       return { action: 'deny' }
     })
     // Renderer 的 did-attach 可能早于 guest ID 初始化；绑定以主进程的真实 guest 为准。

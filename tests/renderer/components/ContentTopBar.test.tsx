@@ -19,8 +19,7 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   RestoreIcon: () => null,
   CloseIcon: () => null,
   PanelLeftIcon: () => null,
-  PanelRightIcon: () => null,
-  GlobeIcon: () => null
+  PanelRightIcon: () => null
 }))
 
 // 面包屑是 chat 领域组件，顶行布局测试不依赖其数据链路
@@ -47,7 +46,7 @@ describe('ContentTopBar 布局开关', () => {
   it('渲染 inspector 布局按钮', () => {
     const renderer = renderDom(<ContentTopBar />)
     expect(
-      renderer.container.querySelector('[aria-label="审查与文件面板"]')
+      renderer.container.querySelector('[aria-label="审阅、文件与浏览面板"]')
     ).not.toBeNull()
     renderer.unmount()
   })
@@ -55,7 +54,7 @@ describe('ContentTopBar 布局开关', () => {
   it('点击 inspector 按钮调用 toggleInspector，打开时呈现 active 类', () => {
     const renderer = renderDom(<ContentTopBar />)
     const btn = renderer.container.querySelector<HTMLButtonElement>(
-      '[aria-label="审查与文件面板"]'
+      '[aria-label="审阅、文件与浏览面板"]'
     )
     expect(btn?.className).not.toContain('content-topbar__btn--active')
 
@@ -68,14 +67,14 @@ describe('ContentTopBar 布局开关', () => {
     renderer.unmount()
   })
 
-  it('点击「在 Nova 中打开」切到浏览器页签并展开面板，再点收起', () => {
+  it('浏览器共用右侧面板入口，快捷键切到浏览页再收起', () => {
     const renderer = renderDom(<ContentTopBar />)
     const btn = renderer.container.querySelector<HTMLButtonElement>(
       '[aria-label="在 Nova 中打开"]'
     )
-    expect(btn).not.toBeNull()
+    expect(btn).toBeNull()
     act(() => {
-      btn?.click()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, altKey: true }))
     })
     expect(useLayoutStore.getState()).toMatchObject({
       inspectorOpen: true,
@@ -84,7 +83,7 @@ describe('ContentTopBar 布局开关', () => {
     })
     // 浏览器是面板页签：再次点击收起面板而不是停留在打开状态
     act(() => {
-      btn?.click()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'b', ctrlKey: true, altKey: true }))
     })
     expect(useLayoutStore.getState().inspectorOpen).toBe(false)
     renderer.unmount()

@@ -149,7 +149,7 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     const sessionId = currentSessionId()
     const pages = pagesForSession(get().snapshot, sessionId)
     if (!pages.some((page) => page.browserId === browserId)) return
-    set({ focusedBrowserId: browserId, composeNewPage: false })
+    set({ focusedBrowserId: browserId, composeNewPage: false, lastError: null })
   },
 
   beginNewPage: () => {
@@ -167,28 +167,32 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
       set({ lastError: '请输入 http 或 https 地址' })
       return
     }
-    openBrowserPane()
-    const sessionId = currentSessionId()
-    const pages = pagesForSession(get().snapshot, sessionId)
-    const focused = pickFocusedPage(pages, get().focusedBrowserId, get().snapshot?.activeBrowserId ?? null)
-    const openFresh = get().composeNewPage || !focused || focused.lifecycle === 'closing'
-    if (focused && (focused.lifecycle === 'failed' || focused.lifecycle === 'crashed') && !get().composeNewPage) {
-      await get().closePage(focused.browserId)
-      await reopenPageWithScope(focused.sessionId, url, set)
-      return
+    try {
+      openBrowserPane()
+      const sessionId = currentSessionId()
+      const pages = pagesForSession(get().snapshot, sessionId)
+      const focused = pickFocusedPage(pages, get().focusedBrowserId, get().snapshot?.activeBrowserId ?? null)
+      const openFresh = get().composeNewPage || !focused || focused.lifecycle === 'closing'
+      if (focused && (focused.lifecycle === 'failed' || focused.lifecycle === 'crashed') && !get().composeNewPage) {
+        await get().closePage(focused.browserId)
+        await reopenPageWithScope(focused.sessionId, url, set)
+        return
+      }
+      if (!openFresh && focused) {
+        // 跟随聚焦页面自身的作用域导航：会话页留在会话，用户页留在用户
+        const result = await window.api.invoke(BROWSER_NAVIGATE, {
+          sessionId: focused.sessionId,
+          browserId: focused.browserId,
+          action: { kind: 'url', url }
+        })
+        if (result.status !== 'applied') set({ lastError: result.detail })
+        else set({ lastError: null })
+        return
+      }
+      await openUserPage(url, set)
+    } catch (error) {
+      set({ lastError: error instanceof Error ? error.message : '无法打开网址，请重试' })
     }
-    if (!openFresh && focused) {
-      // 跟随聚焦页面自身的作用域导航：会话页留在会话，用户页留在用户
-      const result = await window.api.invoke(BROWSER_NAVIGATE, {
-        sessionId: focused.sessionId,
-        browserId: focused.browserId,
-        action: { kind: 'url', url }
-      })
-      if (result.status !== 'applied') set({ lastError: result.detail })
-      else set({ lastError: null })
-      return
-    }
-    await openUserPage(url, set)
   },
 
   retryFocused: async () => {
@@ -211,6 +215,7 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     const pages = pagesForSession(get().snapshot, sessionId)
     const focused = pickFocusedPage(pages, get().focusedBrowserId, get().snapshot?.activeBrowserId ?? null)
     if (!focused) return
+    set({ lastError: null })
     const result = await window.api.invoke(BROWSER_NAVIGATE, {
       sessionId: focused.sessionId,
       browserId: focused.browserId,
