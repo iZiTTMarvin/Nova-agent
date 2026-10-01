@@ -189,6 +189,12 @@ describe('SessionStore', () => {
       expect(session.mode).toBe('compose')
     })
 
+    it('非法 mode 在创建入口即拒绝，不落盘', () => {
+      const store = new SessionStore(tmpDir)
+      expect(() => store.create('/project/root', 'nope' as unknown as Mode)).toThrow(/mode 非法/)
+      expect(store.list()).toHaveLength(0)
+    })
+
     it('创建后会话数据保存到磁盘', () => {
       const store = new SessionStore(tmpDir)
       const session = store.create('/project/root')

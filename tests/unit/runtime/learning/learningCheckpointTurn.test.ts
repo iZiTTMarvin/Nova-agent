@@ -188,6 +188,59 @@ describe('learning_checkpoint turn 可行性', () => {
     )
     expect(rejected.success).toBe(false)
     expect(rejected.error).toContain('不同的学习停点')
+    releaseCheckpointSlot(runId)
+  })
+
+  it('存储未接入或持久化失败不留幽灵名额，同轮换停点 id 可重试', async () => {
+    const runId = 'run-ghost'
+    releaseCheckpointSlot(runId)
+    const context = {
+      workingDir: process.cwd(),
+      readState: createReadState(),
+      sessionId: 'sess-ghost',
+      runId,
+      mode: 'learn' as const
+    }
+    const rubric = {
+      targetClaim: 'c',
+      knowledgeRevision: null,
+      verificationMethod: 'open_answer',
+      criteria: 'c'
+    }
+
+    // 存储未接入：不能先占名额再退出
+    const unready = createLearningCheckpointTool({ getProgress: () => null })
+    const noStore = await unready.execute(
+      { question: 'Q', cursorVersion: 0, checkpointId: 'a', rubric },
+      context
+    )
+    expect(noStore.success).toBe(false)
+    expect(noStore.error).toContain('学习停点存储未接入')
+
+    // 持久化失败：名额要归还，换停点 id 重试不该被「不同的学习停点」挡住
+    const failing = createLearningCheckpointTool({
+      getProgress: () =>
+        ({
+          saveCheckpoint: async () => {
+            throw new Error('存储不可用')
+          }
+        }) as unknown as LearningProgress
+    })
+    const first = await failing.execute(
+      { question: 'Q', cursorVersion: 0, checkpointId: 'b', rubric },
+      context
+    )
+    expect(first.success).toBe(false)
+    expect(first.error).toContain('停点持久化失败')
+
+    const retry = await failing.execute(
+      { question: 'Q', cursorVersion: 0, checkpointId: 'c', rubric },
+      context
+    )
+    expect(retry.success).toBe(false)
+    expect(retry.error).toContain('停点持久化失败')
+    expect(retry.error).not.toContain('不同的学习停点')
+    releaseCheckpointSlot(runId)
   })
 
   it('取消走现有 RunCoordinator 路径', async () => {

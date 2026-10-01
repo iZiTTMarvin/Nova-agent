@@ -208,4 +208,70 @@ describe('learning persistence integration', () => {
     ).rejects.toThrow(/拒绝覆盖/)
     await harness.close()
   })
+
+  it('重新生成大纲时内容相同的节点不撞主键', async () => {
+    const { harness, workspace } = await openHarness()
+    const node = {
+      nodeId: 'node-same',
+      nodeRevision: 'nv-same',
+      title: '标题',
+      bodyJson: '{"summary":"s","claims":[]}'
+    }
+    await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-first',
+      parentRevision: null,
+      inputFingerprint: 'fp-1',
+      expectedCurrentRevision: null,
+      nodes: [node],
+      members: [{ nodeId: node.nodeId, nodeRevision: node.nodeRevision }]
+    })
+    const republished = await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-second',
+      parentRevision: 'rev-first',
+      inputFingerprint: 'fp-2',
+      expectedCurrentRevision: 'rev-first',
+      nodes: [{ ...node, title: '重新生成后的标题' }],
+      members: [{ nodeId: node.nodeId, nodeRevision: node.nodeRevision }]
+    })
+    expect(republished.knowledgeRevision).toBe('rev-second')
+    const tree = await harness.reader.getTreeProjection(workspace)
+    expect(tree.nodes.map(n => n.nodeId)).toEqual([node.nodeId])
+    expect(tree.nodes[0]?.title).toBe('重新生成后的标题')
+    await harness.close()
+  })
+
+  it('单个节点 body 损坏不拖垮整棵大纲投影', async () => {
+    const { harness, dbPath, workspace } = await openHarness()
+    await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-tree',
+      parentRevision: null,
+      inputFingerprint: 'fp',
+      expectedCurrentRevision: null,
+      nodes: [
+        { nodeId: 'node-ok', nodeRevision: 'nv-ok', title: '正常', bodyJson: '{"summary":"ok","claims":[]}' },
+        { nodeId: 'node-bad', nodeRevision: 'nv-bad', title: '损坏', bodyJson: '{"summary":"bad","claims":[]}' }
+      ],
+      members: [
+        { nodeId: 'node-ok', nodeRevision: 'nv-ok' },
+        { nodeId: 'node-bad', nodeRevision: 'nv-bad' }
+      ],
+      edges: [{ fromNodeId: 'node-ok', toNodeId: 'node-bad', edgeKind: 'related' }]
+    })
+
+    const Database = (await import('better-sqlite3')).default
+    const db = new Database(dbPath)
+    db.prepare(`UPDATE node_versions SET body_json = ? WHERE node_id = ?`).run(
+      '{不是合法 JSON',
+      'node-bad'
+    )
+    db.close()
+
+    const tree = await harness.reader.getTreeProjection(workspace)
+    expect(tree.nodes.map(n => n.nodeId)).toEqual(['node-ok'])
+    expect(tree.edges).toEqual([])
+    await harness.close()
+  })
 })

@@ -57,7 +57,7 @@ import {
 } from './types'
 import { SESSION_PLACEHOLDER_TITLE } from '../../shared/session/title'
 import type { Mode, PermissionMode, RuntimeInputBlock } from '../../shared/session'
-import { assertSessionModeMutable } from '../../shared/session/mode'
+import { assertSessionModeMutable, parseStrictMode } from '../../shared/session/mode'
 import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
 import {
@@ -373,13 +373,15 @@ export class SessionStore {
       readonly reasoningEffortOverride?: ReasoningEffort
     } = {}
   ): SessionData {
+    // IPC 传入的 mode 属外部输入：落盘前严格校验，非法值不让会话带着坏 mode 不可读
+    const resolvedMode = parseStrictMode(mode)
     const now = Date.now()
     const session: SessionData = {
       schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
       kind: 'primary',
       id: `sess_${randomUUID()}`,
       workspaceRoot,
-      mode,
+      mode: resolvedMode,
       permissionMode: options.permissionMode ?? 'request_approval',
       messages: [],
       currentLeafId: null,

@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { ToolExecutor } from '../types'
-import { claimCheckpointSlot } from '../../learning/progress/checkpointBatchGate'
+import { claimCheckpointSlot, releaseCheckpointSlot } from '../../learning/progress/checkpointBatchGate'
 import {
   getDefaultLearningProgress,
   type LearningProgress
@@ -94,6 +94,12 @@ export function createLearningCheckpointTool(
           ? args.checkpointId.trim()
           : randomUUID()
 
+      const progress = getProgress()
+      if (!progress) {
+        return { success: false, output: '', error: '学习停点存储未接入' }
+      }
+
+      // 占坑放在存储就绪之后：claim 之后的失败路径才都能归还名额
       const slot = claimCheckpointSlot(runId, checkpointId)
       if (slot === 'conflict') {
         return {
@@ -101,11 +107,6 @@ export function createLearningCheckpointTool(
           output: '',
           error: '同一轮已存在不同的学习停点，不能再次创建'
         }
-      }
-
-      const progress = getProgress()
-      if (!progress) {
-        return { success: false, output: '', error: '学习停点存储未接入' }
       }
 
       try {
@@ -119,6 +120,8 @@ export function createLearningCheckpointTool(
           rubricJson
         })
       } catch (error) {
+        // 持久化失败不占本轮名额，模型换停点 id 重试不该被幽灵槽位挡住
+        releaseCheckpointSlot(runId)
         return {
           success: false,
           output: '',
