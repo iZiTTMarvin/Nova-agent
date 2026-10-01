@@ -107,7 +107,7 @@ test('阶段 A 记录浏览器关/开未用/开着页面三态进程树与启动
     const samplesA = await sampleState('A')
 
     const firstOpenStarted = Date.now()
-    await nova.page.getByRole('button', { name: '在 Nova 中打开' }).click()
+    await nova.page.keyboard.press('Control+Alt+B')
     await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
     const firstOpenMs = Date.now() - firstOpenStarted
     const samplesB = await sampleState('B')
@@ -129,18 +129,18 @@ test('阶段 A 记录浏览器关/开未用/开着页面三态进程树与启动
         browserId: opened.page.browserId
       })
     }
-    // 浏览器已是右侧面板页签：关面板用面板自身的关闭按钮（空浏览器页签不再自动收起）
-    await nova.page.getByRole('button', { name: '关闭面板' }).click()
+    // 浏览器已是右侧面板页签：面板开合统一走快捷键（顶栏不再有独立浏览入口）
+    await nova.page.keyboard.press('Control+Alt+B')
     await expect(nova.page.getByTestId('browser-panel')).toHaveCount(0)
     expect(nova.pageErrors).toEqual([])
 
     const openLatenciesMs: number[] = [firstOpenMs]
     for (let index = 1; index < SURFACE_OPEN_TRIALS; index += 1) {
       const started = Date.now()
-      await nova.page.getByRole('button', { name: '在 Nova 中打开' }).click()
+      await nova.page.keyboard.press('Control+Alt+B')
       await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
       openLatenciesMs.push(Date.now() - started)
-      await nova.page.getByRole('button', { name: '关闭面板' }).click()
+      await nova.page.keyboard.press('Control+Alt+B')
       await expect(nova.page.getByTestId('browser-panel')).toHaveCount(0)
     }
 

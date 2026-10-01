@@ -547,7 +547,7 @@ test('同选择器多匹配时唯一可见者优先，仍有歧义则拒绝', as
   }
 })
 
-test('导航进行中接管后，迟到的加载不会记成成功', async ({ nova }) => {
+test('导航进行中可接管，迟到的加载不打断接管后的浏览', async ({ nova }) => {
   const fixture = await startFixture()
   try {
     const doc = await openPage(nova, `${fixture.origin}/doc`)
@@ -557,15 +557,20 @@ test('导航进行中接管后，迟到的加载不会记成成功', async ({ no
       action: { kind: 'url', url: `${fixture.origin}/hold` }
     })
     await expect.poll(() => fixture.held(), { timeout: 8_000 }).toBe(true)
+    // 手动导航立即回执；进行中的加载仍可被接管
+    const navigated = await pending as { status: string }
+    expect(navigated.status).toBe('applied')
     const claimed = await nova.invoke(BROWSER_CLAIM, {
       sessionId: doc.sessionId,
       browserId: doc.browserId
     }) as { status: string }
     expect(claimed.status).toBe('applied')
     fixture.releaseHold()
-    const loaded = await pending as { status: string; code?: string }
-    expect(loaded.status).not.toBe('applied')
-    expect(loaded.code === 'taken_over' || loaded.code === 'cancelled' || loaded.status === 'outcome_unknown').toBe(true)
+    // 迟到的加载完成后页面状态收敛到真实地址，接管后的浏览不受影响
+    await expect.poll(async () => {
+      const observed = await observePage(nova, doc.sessionId, doc.browserId)
+      return observed.snapshot.url
+    }, { timeout: 8_000 }).toBe(`${fixture.origin}/hold`)
   } finally {
     await fixture.close()
   }

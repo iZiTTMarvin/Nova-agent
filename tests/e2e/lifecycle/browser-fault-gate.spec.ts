@@ -149,7 +149,7 @@ test('页面崩溃后聊天仍可继续，观察返回 page_crashed', async ({ n
   }
 })
 
-test('加载挂起会在时限内失败，聊天不被拖死', async ({ nova }) => {
+test('加载挂起时手动导航立即回执，聊天与后续导航不被拖死', async ({ nova }) => {
   test.setTimeout(90_000)
   const sessionId = await grantFullAccess(nova)
   const ready = await startReadyFixture()
@@ -162,9 +162,17 @@ test('加载挂起会在时限内失败，聊天不被拖死', async ({ nova }) 
       browserId,
       action: { kind: 'url', url: `${hung.origin}/stall` }
     }) as BrowserNavigateResult
+    // 挂起加载不阻塞回执：手动导航立即接受
     expect(Date.now() - started).toBeLessThan(12_000)
-    expect(notAppliedCode(navigated)).toBe('timeout')
+    expect(navigated.status).toBe('applied')
     await chatStillWorks(nova, 'NOVA_E2E_BROWSER_HANG_CHAT_OK')
+    // 挂起中的加载也不堵住下一次导航
+    const away = await nova.invoke(BROWSER_NAVIGATE, {
+      sessionId,
+      browserId,
+      action: { kind: 'url', url: `${ready.origin}/` }
+    }) as BrowserNavigateResult
+    expect(away.status).toBe('applied')
   } finally {
     await ready.close()
     await hung.close()
@@ -208,7 +216,7 @@ test('任务取消会结束挂起的网页命令，页面保留且聊天可继�
   }
 })
 
-test('关闭进行中的加载时，旧命令不会落到已关页面', async ({ nova }) => {
+test('关闭进行中的加载立即成功，页面不被迟到事件复活', async ({ nova }) => {
   test.setTimeout(90_000)
   const sessionId = await grantFullAccess(nova)
   const ready = await startReadyFixture()
@@ -224,9 +232,10 @@ test('关闭进行中的加载时，旧命令不会落到已关页面', async ({
     await delay(200)
     const closed = await nova.invoke(BROWSER_CLOSE, { sessionId, browserId })
     const navigated = await hanging
+    // 立即回执语义下导航命令先被接受；关闭不受挂起加载影响
     expect(Date.now() - started).toBeLessThan(4_000)
     expect(closed.status).toBe('applied')
-    expect(['page_closed', 'cancelled']).toContain(notAppliedCode(navigated))
+    expect(navigated.status).toBe('applied')
     const listed = await nova.invoke(BROWSER_GET_SNAPSHOT, { sessionId }) as BrowserListResult
     if (listed.status === 'applied') {
       expect(listed.snapshot.pages.some((item) => item.browserId === browserId)).toBe(false)
