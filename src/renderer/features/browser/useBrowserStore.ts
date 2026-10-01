@@ -286,11 +286,16 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
 export function startBrowserStore(): () => void {
   const pullSnapshot = (): void => {
     // null = 全量快照：界面本地过滤，无会话时也要恢复用户页
-    void window.api.invoke(BROWSER_GET_SNAPSHOT, { sessionId: null }).then((result) => {
-      if (result.status === 'applied') {
-        useBrowserStore.getState().applySnapshot(result.snapshot)
-      }
-    })
+    void window.api.invoke(BROWSER_GET_SNAPSHOT, { sessionId: null })
+      .then((result) => {
+        if (result?.status === 'applied') {
+          useBrowserStore.getState().applySnapshot(result.snapshot)
+        }
+      })
+      .catch((error: unknown) => {
+        // 引导失败不打断渲染，后续快照事件会补齐状态
+        console.error('[useBrowserStore] 启动快照拉取失败:', error)
+      })
   }
   const unsubSnapshot = window.api.on(BROWSER_SNAPSHOT, (data) => {
     useBrowserStore.getState().applySnapshot(data.snapshot)
