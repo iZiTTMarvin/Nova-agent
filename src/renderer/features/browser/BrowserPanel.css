@@ -5,7 +5,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background-color: var(--surface-sidebar);
+  background-color: transparent;
   box-sizing: border-box;
 }
 
@@ -209,8 +209,7 @@
   background: var(--surface-canvas);
 }
 
-.browser-panel__failed,
-.browser-panel__empty {
+.browser-panel__failed {
   position: absolute;
   inset: 0;
   display: flex;

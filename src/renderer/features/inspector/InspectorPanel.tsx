@@ -1,30 +1,37 @@
 /**
- * 右侧 Inspector 面板，宽度可拖拽。开发会话为「审阅 / 文件 / 浏览」；学习会话为「大纲 / 文件 / 浏览」，
- * 开合与页签读写学习那组状态，开发面板行为不变。浏览器页签承载内置浏览器（用户页与 AI 页）。
+ * 右侧 Inspector 面板，宽度可拖拽，开合带宽度过渡。顶栏是标签条：每个已打开的视图一个标签
+ * （开发会话：审阅 / 文件 / 浏览；学习会话：大纲 / 文件 / 浏览），没有标签时显示启动器。
+ * 浏览器标签承载内置浏览器（用户页与 AI 页）。
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { CloseIcon } from '../../components/Icons'
+import React, { useEffect, useRef } from 'react'
 import {
   useLayoutStore,
   INSPECTOR_WIDTH_MIN,
-  INSPECTOR_WIDTH_MAX,
-  BROWSER_PANE_WIDTH_MIN
+  BROWSER_PANE_WIDTH_MIN,
+  type InspectorViewKey
 } from '../../stores/useLayoutStore'
-import type { InspectorTab as InspectorTabId } from '../../stores/useLayoutStore'
 import { ReviewTab } from './ReviewTab'
 import { FilesTab } from './FilesTab'
 import { PlanInspectorView } from './PlanInspectorView'
 import { LearningOutlinePane } from '../learning/outline/LearningOutlinePane'
 import { BrowserPanel } from '../browser/BrowserPanel'
+import { InspectorLauncher, InspectorOpenMenu } from './InspectorLauncher'
+import { InspectorResizeHandle } from './InspectorResizeHandle'
+import { InspectorTabStrip } from './InspectorTabStrip'
+import { InspectorToggleButton } from './InspectorToggleButton'
+import { VIEW_META } from './inspectorViewMeta'
+import { useInspectorResize } from './useInspectorResize'
+import { useInspectorTabs } from './useInspectorTabs'
+import { usePanelPresence } from './usePanelPresence'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import './InspectorPanel.css'
 
 /**
- * 展开/收起统一用 transform 合成器动画（width 是布局属性，会触发每帧主线程 layout+paint）。
- * 宽度在开合瞬间一次性切换（布局只重排一次），动画帧走 GPU、不触发布局。
+ * 开合用宽度过渡：内层固定宽度并靠右，外壳只做裁剪，所以动画期间面板内容不重排，
+ * 只有相邻聊天区随宽度变化。
  * 拖拽期间：宽度只写 DOM（ref），过渡关闭、不触发 store / localStorage，松手一次性提交。
  */
-const SLIDE_TRANSITION = 'transform var(--transition-normal), opacity var(--transition-normal)'
+const SLIDE_TRANSITION = 'width var(--transition-normal), opacity var(--transition-normal)'
 
 export interface InspectorPanelProps {
   /** 拖拽会话开始/结束成对通知；连接方负责冻结/恢复相邻布局，Inspector 自身不持有外部状态 */
@@ -37,127 +44,24 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
   const devOpen = useLayoutStore(s => s.inspectorOpen)
   const learnOpen = useLayoutStore(s => s.learnInspectorOpen)
   const inspectorOpen = isLearn ? learnOpen : devOpen
-  const inspectorTab = useLayoutStore(s => s.inspectorTab)
-  const learnTab = useLayoutStore(s => s.learnInspectorTab)
-  const setLearnInspectorTab = useLayoutStore(s => s.setLearnInspectorTab)
   const closeLearnInspector = useLayoutStore(s => s.closeLearnInspector)
   const inspectorWidth = useLayoutStore(s => s.inspectorWidth)
   const inspectorSurface = useLayoutStore(s => s.inspectorSurface)
-  const setInspectorTab = useLayoutStore(s => s.setInspectorTab)
   const closeDevInspector = useLayoutStore(s => s.closeInspector)
   const closeInspector = isLearn ? closeLearnInspector : closeDevInspector
-  const setInspectorWidth = useLayoutStore(s => s.setInspectorWidth)
+  const { tabs, activeTab, activate, close } = useInspectorTabs(isLearn)
 
-  const [mounted, setMounted] = useState(false)
-  const [visitedReview, setVisitedReview] = useState(false)
-  const [visitedFiles, setVisitedFiles] = useState(false)
-  const [visitedOutline, setVisitedOutline] = useState(false)
-  const [visitedBrowser, setVisitedBrowser] = useState(false)
-  const [dragging, setDragging] = useState(false)
-  const dragStartX = useRef(0)
-  const dragStartWidth = useRef(0)
-  const latestClientX = useRef(0)
-  const rafId = useRef<number | null>(null)
   /** 拖拽期间宽度直写面板 DOM，避免每次 mousemove 触发 store 重渲染 */
   const asideRef = useRef<HTMLElement>(null)
-  /** 拖拽会话通知去重：保证开始/结束严格成对，重复清理无副作用 */
-  const dragSessionActive = useRef(false)
-  const onDragSessionChangeRef = useRef(onDragSessionChange)
-  onDragSessionChangeRef.current = onDragSessionChange
 
-  const notifyDragSession = useCallback((active: boolean) => {
-    if (active === dragSessionActive.current) return
-    dragSessionActive.current = active
-    onDragSessionChangeRef.current?.(active)
-  }, [])
-
-  // 浏览器页签需要更宽的舞台；其余页签维持原有边界
-  const activeTab = isLearn ? learnTab : inspectorTab
+  // 浏览器标签需要更宽的舞台；其余标签维持原有边界
   const widthMin = activeTab === 'browser' ? BROWSER_PANE_WIDTH_MIN : INSPECTOR_WIDTH_MIN
-
-  const widthFromClientX = useCallback((clientX: number) => {
-    const delta = dragStartX.current - clientX
-    return Math.min(INSPECTOR_WIDTH_MAX, Math.max(widthMin, dragStartWidth.current + delta))
-  }, [widthMin])
-
-  /** 拖拽期间直接写外壳 DOM 宽度：过渡已关闭，不触发 store / localStorage / 重渲染 */
-  const applyShellWidth = useCallback((clientX: number) => {
-    const el = asideRef.current
-    if (el) el.style.width = `${widthFromClientX(clientX)}px`
-  }, [widthFromClientX])
-
-  const onResizeMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault()
-      dragStartX.current = e.clientX
-      latestClientX.current = e.clientX
-      dragStartWidth.current = useLayoutStore.getState().inspectorWidth
-      notifyDragSession(true)
-      setDragging(true)
-      document.body.style.userSelect = 'none'
-      document.body.style.cursor = 'col-resize'
-    },
-    [notifyDragSession]
-  )
-
-  useEffect(() => {
-    if (!dragging) return
-
-    // 高频 mousemove 只保存最新 clientX，每帧最多写一次外壳宽度
-    const onMove = (e: MouseEvent) => {
-      latestClientX.current = e.clientX
-      if (rafId.current === null) {
-        rafId.current = requestAnimationFrame(() => {
-          rafId.current = null
-          applyShellWidth(latestClientX.current)
-        })
-      }
-    }
-    const onUp = () => {
-      // 先消费最后指针位置（含未执行的帧），再提交宽度和结束冻结
-      if (rafId.current !== null) {
-        cancelAnimationFrame(rafId.current)
-        rafId.current = null
-      }
-      applyShellWidth(latestClientX.current)
-      setInspectorWidth(widthFromClientX(latestClientX.current))
-      notifyDragSession(false)
-      setDragging(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      if (rafId.current !== null) {
-        cancelAnimationFrame(rafId.current)
-        rafId.current = null
-      }
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-      // 卸载/中断路径同样结束拖拽会话，恢复相邻布局
-      notifyDragSession(false)
-    }
-  }, [dragging, applyShellWidth, widthFromClientX, setInspectorWidth, notifyDragSession])
-
-  useEffect(() => {
-    if (inspectorOpen) setMounted(true)
-  }, [inspectorOpen])
-
-  useEffect(() => {
-    if (!inspectorOpen) return
-    if (isLearn) {
-      if (learnTab === 'outline') setVisitedOutline(true)
-      if (learnTab === 'files') setVisitedFiles(true)
-      if (learnTab === 'browser') setVisitedBrowser(true)
-      return
-    }
-    if (inspectorTab === 'review') setVisitedReview(true)
-    if (inspectorTab === 'files') setVisitedFiles(true)
-    if (inspectorTab === 'browser') setVisitedBrowser(true)
-  }, [inspectorOpen, inspectorTab, isLearn, learnTab])
+  const { dragging, onResizeMouseDown } = useInspectorResize({
+    shellRef: asideRef,
+    widthMin,
+    onDragSessionChange
+  })
+  const showContent = usePanelPresence({ open: inspectorOpen, shellRef: asideRef })
 
   useEffect(() => {
     if (!inspectorOpen) return
@@ -181,15 +85,23 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     return () => window.removeEventListener('keydown', onKeyDown, true)
   }, [inspectorOpen, closeInspector])
 
-  // 浏览器页签激活时渲染宽度不低于舞台下限；不回写 store，切回其它页签恢复原宽
+  // 浏览器标签激活时渲染宽度不低于舞台下限；不回写 store，切回其它标签恢复原宽
   const effectiveWidth = activeTab === 'browser'
     ? Math.max(inspectorWidth, BROWSER_PANE_WIDTH_MIN)
     : inspectorWidth
   const width = inspectorOpen ? effectiveWidth : 0
-  const showContent = mounted && inspectorOpen
 
-  const switchTab = (tab: InspectorTabId) => {
-    setInspectorTab(tab)
+  const renderPane = (key: InspectorViewKey): React.ReactNode => {
+    switch (key) {
+      case 'review':
+        return <ReviewTab />
+      case 'files':
+        return <FilesTab />
+      case 'browser':
+        return <BrowserPanel />
+      case 'outline':
+        return learnSessionId ? <LearningOutlinePane sessionId={learnSessionId} /> : null
+    }
   }
 
   return (
@@ -198,7 +110,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
       className={`inspector-panel${inspectorOpen ? ' inspector-panel--open' : ''}${dragging ? ' inspector-panel--dragging' : ''}`}
       style={{
         width,
-        transform: inspectorOpen ? 'translateX(0)' : 'translateX(100%)',
         transition: dragging ? 'none' : SLIDE_TRANSITION,
         opacity: inspectorOpen ? 1 : 0
       }}
@@ -206,134 +117,41 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     >
       {showContent && (
         <>
-          <div
-            className="inspector-panel__resize"
-            onMouseDown={onResizeMouseDown}
-            role="separator"
-            aria-orientation="vertical"
-            aria-label="调整面板宽度"
-          />
+          <InspectorResizeHandle onMouseDown={onResizeMouseDown} active={dragging} />
           <div
             className="inspector-panel__inner"
             style={{ width: effectiveWidth }}
           >
-            {isLearn ? (
-              <>
-                <header className="inspector-panel__header">
-                  <div className="inspector-panel__tabs" role="tablist">
-                    {(['outline', 'files', 'browser'] as const).map(tab => (
-                      <button
-                        key={tab}
-                        type="button"
-                        role="tab"
-                        aria-selected={learnTab === tab}
-                        className={`inspector-panel__tab${learnTab === tab ? ' inspector-panel__tab--active' : ''}`}
-                        onClick={() => setLearnInspectorTab(tab)}
-                      >
-                        {tab === 'outline' ? '大纲' : tab === 'files' ? '文件' : '浏览'}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    className="inspector-icon-btn"
-                    aria-label="关闭面板"
-                    onClick={() => closeInspector()}
-                  >
-                    <CloseIcon size={14} />
-                  </button>
-                </header>
-                <div className="inspector-panel__body">
-                  {visitedOutline && (
-                    <div className="inspector-panel__pane" hidden={learnTab !== 'outline'} role="tabpanel" aria-label="大纲">
-                      <LearningOutlinePane sessionId={learnSessionId} />
-                    </div>
-                  )}
-                  {visitedFiles && (
-                    <div className="inspector-panel__pane" hidden={learnTab !== 'files'} role="tabpanel">
-                      <FilesTab />
-                    </div>
-                  )}
-                  {visitedBrowser && (
-                    <div className="inspector-panel__pane inspector-panel__pane--browser" hidden={learnTab !== 'browser'} role="tabpanel" aria-label="浏览器">
-                      <BrowserPanel />
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : inspectorSurface === 'plan' ? (
+            {!isLearn && inspectorSurface === 'plan' ? (
               <PlanInspectorView />
             ) : (
               <>
                 <header className="inspector-panel__header">
-                  <div className="inspector-panel__tabs" role="tablist">
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={inspectorTab === 'review'}
-                      className={`inspector-panel__tab${inspectorTab === 'review' ? ' inspector-panel__tab--active' : ''}`}
-                      onClick={() => switchTab('review')}
-                    >
-                      审阅
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={inspectorTab === 'files'}
-                      className={`inspector-panel__tab${inspectorTab === 'files' ? ' inspector-panel__tab--active' : ''}`}
-                      onClick={() => switchTab('files')}
-                    >
-                      文件
-                    </button>
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={inspectorTab === 'browser'}
-                      className={`inspector-panel__tab${inspectorTab === 'browser' ? ' inspector-panel__tab--active' : ''}`}
-                      onClick={() => switchTab('browser')}
-                    >
-                      浏览
-                    </button>
+                  <InspectorTabStrip tabs={tabs} activeTab={activeTab} onActivate={activate} onClose={close} />
+                  <div className="inspector-panel__actions">
+                    <InspectorOpenMenu />
+                    <InspectorToggleButton className="inspector-icon-btn inspector-icon-btn--active" />
                   </div>
-                  <button
-                    type="button"
-                    className="inspector-icon-btn"
-                    aria-label="关闭面板"
-                    onClick={() => closeInspector()}
-                  >
-                    <CloseIcon size={14} />
-                  </button>
                 </header>
-                <div className="inspector-panel__body">
-                  {visitedReview && (
-                    <div
-                      className="inspector-panel__pane"
-                      hidden={inspectorTab !== 'review'}
-                      role="tabpanel"
-                    >
-                      <ReviewTab />
-                    </div>
-                  )}
-                  {visitedFiles && (
-                    <div
-                      className="inspector-panel__pane"
-                      hidden={inspectorTab !== 'files'}
-                      role="tabpanel"
-                    >
-                      <FilesTab />
-                    </div>
-                  )}
-                  {visitedBrowser && (
-                    <div
-                      className="inspector-panel__pane inspector-panel__pane--browser"
-                      hidden={inspectorTab !== 'browser'}
-                      role="tabpanel"
-                      aria-label="浏览器"
-                    >
-                      <BrowserPanel />
-                    </div>
-                  )}
-                </div>
+                {tabs.length === 0 ? (
+                  <div className="inspector-panel__home">
+                    <InspectorLauncher />
+                  </div>
+                ) : (
+                  <div className="inspector-panel__body">
+                    {tabs.map(key => (
+                      <div
+                        key={key}
+                        className={`inspector-panel__pane${key === 'browser' ? ' inspector-panel__pane--browser' : ''}`}
+                        hidden={key !== activeTab}
+                        role="tabpanel"
+                        aria-label={VIEW_META[key].name}
+                      >
+                        {renderPane(key)}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>

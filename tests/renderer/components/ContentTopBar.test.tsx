@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ContentTopBar } from '../../../src/renderer/components/ContentTopBar'
+import { ContentTopBar, GlassSessionHeader } from '../../../src/renderer/components/ContentTopBar'
 import {
   resetLayoutStoreForTests,
   useLayoutStore
@@ -43,27 +43,18 @@ describe('ContentTopBar 布局开关', () => {
     })
   })
 
-  it('渲染 inspector 布局按钮', () => {
-    const renderer = renderDom(<ContentTopBar />)
-    expect(
-      renderer.container.querySelector('[aria-label="审阅、文件与浏览面板"]')
-    ).not.toBeNull()
-    renderer.unmount()
-  })
-
-  it('点击 inspector 按钮调用 toggleInspector，打开时呈现 active 类', () => {
-    const renderer = renderDom(<ContentTopBar />)
-    const btn = renderer.container.querySelector<HTMLButtonElement>(
-      '[aria-label="审阅、文件与浏览面板"]'
-    )
-    expect(btn?.className).not.toContain('content-topbar__btn--active')
+  it('会话头在面板收起时提供展开按钮，展开后按钮让位给面板自己的顶栏', () => {
+    const renderer = renderDom(<GlassSessionHeader />)
+    const selector = '[aria-label="审阅、文件与浏览面板"]'
+    const btn = renderer.container.querySelector<HTMLButtonElement>(selector)
+    expect(btn).not.toBeNull()
 
     act(() => {
       btn?.click()
     })
 
     expect(useLayoutStore.getState().inspectorOpen).toBe(true)
-    expect(btn?.className).toContain('content-topbar__btn--active')
+    expect(renderer.container.querySelector(selector)).toBeNull()
     renderer.unmount()
   })
 
@@ -159,7 +150,7 @@ describe('ContentTopBar 删除会话错误反馈', () => {
       return false
     })
 
-    const renderer = renderDom(<ContentTopBar />)
+    const renderer = renderDom(<GlassSessionHeader />)
     act(() => {
       renderer.container
         .querySelector<HTMLButtonElement>('[aria-label="当前会话操作"]')
@@ -205,7 +196,7 @@ describe('ContentTopBar 删除会话错误反馈', () => {
       return false
     })
 
-    const renderer = renderDom(<ContentTopBar />)
+    const renderer = renderDom(<GlassSessionHeader />)
     act(() => {
       renderer.container
         .querySelector<HTMLButtonElement>('[aria-label="当前会话操作"]')

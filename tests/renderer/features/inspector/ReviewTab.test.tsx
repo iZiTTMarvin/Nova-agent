@@ -68,9 +68,9 @@ describe('ReviewTab', () => {
     resetChatStoreForTests()
   })
 
-  it('无 diff 时展示空态', () => {
+  it('无 diff 时渲染极简空壳（无散文文案）', () => {
     const renderer = renderDom(<ReviewTab />)
-    expect(renderer.container.textContent ?? '').toContain('暂无可审查的文件变更')
+    expect(renderer.container.textContent ?? '').toBe('')
     renderer.unmount()
   })
 

@@ -19,6 +19,8 @@
   --surface-sidebar: light-dark(#f8f9fa, #222325);
   --surface-hover: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.03)); /* 悬停底色，侧栏/顶栏/折叠头共用 */
   --surface-sidebar-active: light-dark(#ffffff, #2b2d2f);                      /* 激活行与卡片同档 */
+  --surface-glass: light-dark(#fdfdfe, #26272a);                               /* 聊天玻璃面：比壳亮一阶的伪玻璃底色 */
+  --glass-top-light: light-dark(rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.06)); /* 玻璃顶部受光内边缘 */
   --surface-card: light-dark(#ffffff, #2b2d2f);
   --surface-muted: light-dark(#f4f4f5, #393b3e);                               /* 次级面 / 用户气泡 */
   --surface-input: light-dark(#ffffff, #1d1e20);
@@ -37,7 +39,10 @@
   --border-strong: light-dark(rgba(0, 0, 0, 0.12), rgba(255, 255, 255, 0.16)); /* 浮层与弹窗边框 */
   --border-cream: var(--border-subtle);
   --border-warm: var(--border-subtle);
-  --border-composer: color-mix(in srgb, var(--color-warning) 28%, transparent);
+  /* composer 呼吸描边：色相由品牌紫派生，随 light-dark 翻转；lo/hi 为呼吸两档 */
+  --composer-breath-lo: color-mix(in srgb, var(--accent-purple) 26%, transparent);
+  --composer-breath-hi: color-mix(in srgb, var(--accent-purple) 55%, transparent);
+  --border-composer: var(--composer-breath-lo);
 
   /*
    * 语义着色面：一律由状态色派生，色相随主题自动翻转——硬编码砖红/旧焦点蓝做不到。

@@ -247,9 +247,6 @@ export function BrowserPanel(): ReactNode {
             onClose={() => void useBrowserStore.getState().closePage(page.browserId)}
           />
         )}
-        {!page && (
-          <div className="browser-panel__empty">在地址栏输入网址开始浏览</div>
-        )}
       </div>
     </div>
   )

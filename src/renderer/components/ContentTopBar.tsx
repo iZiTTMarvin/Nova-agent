@@ -4,8 +4,7 @@ import {
   MaximizeIcon,
   RestoreIcon,
   CloseIcon,
-  PanelLeftIcon,
-  PanelRightIcon
+  PanelLeftIcon
 } from './Icons'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -13,6 +12,7 @@ import { selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayo
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
+import { InspectorToggleButton } from '../features/inspector/InspectorToggleButton'
 import './ContentTopBar.css'
 
 /** 窗口控制按钮组：最小化 / 最大化或还原 / 关闭（Windows 风格，固定在内容区顶行右侧） */
@@ -123,15 +123,12 @@ const SessionMoreMenu: React.FC = () => {
 }
 
 /**
- * 内容区顶行（右栏自己的顶栏）：
- * 左侧贴分界线放会话路径面包屑；右侧依次是 inspector 开关、当前会话 ⋯ 菜单、窗口控制。
+ * 内容区壳顶栏（包裹带）：
+ * 仅承担窗口拖拽、侧栏折叠时的展开入口与窗口控制；会话头见 GlassSessionHeader。
  * 左右两栏各自通顶、中间由 AppShell 分界，不再有贯穿整个窗口的顶栏。
  */
 export const ContentTopBar: React.FC = () => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
-  const isLearnSurface = useWorkspaceStore(state => state.currentMode === 'learn' && state.currentSessionId !== null)
-  const inspectorOpen = useLayoutStore(state => selectInspectorOpenForSurface(state, isLearnSurface))
-  const inspectorLabel = isLearnSurface ? '大纲、文件与浏览面板' : '审阅、文件与浏览面板'
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -162,25 +159,30 @@ export const ContentTopBar: React.FC = () => {
             tooltip="展开会话导航"
           />
         )}
-        <SessionBreadcrumb />
       </div>
       <div className="content-topbar__right">
-        <IconButton
-          label={inspectorLabel}
-          icon={<PanelRightIcon size={16} />}
-          variant="ghost"
-          size="sm"
-          className={`content-topbar__btn${inspectorOpen ? ' content-topbar__btn--active' : ''}`}
-          aria-expanded={inspectorOpen}
-          onClick={() => {
-            const layout = useLayoutStore.getState()
-            if (isLearnSurface) layout.toggleLearnInspector()
-            else layout.toggleInspector()
-          }}
-          tooltip={inspectorLabel}
-        />
-        <SessionMoreMenu />
         <WindowControls />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 玻璃顶行会话头：会话路径面包屑 + 当前会话 ⋯ 菜单，只覆盖聊天主区。
+ * 面板收起时在此提供展开入口；展开后开合按钮移到面板自己的顶栏。
+ */
+export const GlassSessionHeader: React.FC = () => {
+  const isLearnSurface = useWorkspaceStore(state => state.currentMode === 'learn' && state.currentSessionId !== null)
+  const inspectorOpen = useLayoutStore(state => selectInspectorOpenForSurface(state, isLearnSurface))
+
+  return (
+    <div className="glass-header">
+      <div className="glass-header__left">
+        <SessionBreadcrumb />
+      </div>
+      <div className="glass-header__right">
+        {!inspectorOpen && <InspectorToggleButton className="content-topbar__btn" />}
+        <SessionMoreMenu />
       </div>
     </div>
   )

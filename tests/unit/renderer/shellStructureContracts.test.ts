@@ -55,17 +55,17 @@ describe('壳结构契约（AppShell + SideNav 权威）', () => {
     expect(appCss).toContain('@tailwind utilities;')
   })
 
-  it('侧栏分隔线只有一个 Owner：AppShell 不画，.sidebar-shell 独占', () => {
-    // variant="section" 会让 LayoutPanel 也画一条 borderInlineEnd，与 .sidebar-shell
-    // 自带的 border-right 同 token 叠成 2px；且折叠时它无法随之消失，留下 1px 孤线。
-    // "surface" 与 "section" 底色相同，仅少了那条分隔线。
+  it('侧栏与内容区边界由玻璃面独占：.sidebar-shell 与 AppShell 都不画线', () => {
+    // 包裹壳与玻璃面靠色阶 + 左上圆角分层；若两个 Owner 各画 1px 线会叠成 2px，
+    // 且侧栏折叠时 AppShell 那条无法随之消失，留下 1px 孤线。
     expect(appSource).toMatch(/variant="surface"/)
     expect(appSource).not.toMatch(/variant="section"/)
 
     const shellRule = sidebarCss.match(/\.sidebar-shell\s*\{([\s\S]*?)\}/)?.[1] ?? ''
-    expect(shellRule).toMatch(/border-right:\s*1px solid var\(--border-subtle\)/)
+    expect(shellRule).not.toMatch(/border-right/)
 
-    const collapsedRule = sidebarCss.match(/\.sidebar-shell--collapsed\s*\{([\s\S]*?)\}/)?.[1] ?? ''
-    expect(collapsedRule).toMatch(/border-right:\s*none/)
+    const glassRule = appCss.match(/\.app-workspace__body\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    expect(glassRule).toMatch(/var\(--surface-glass\)/)
+    expect(glassRule).toMatch(/border-radius:/)
   })
 })

@@ -10,7 +10,13 @@ import {
 import { act, renderDom } from '../../../unit/renderer/renderDom'
 
 vi.mock('../../../../src/renderer/components/Icons', () => ({
-  CloseIcon: () => null
+  CloseIcon: () => null,
+  UserCheckIcon: () => null,
+  FolderIcon: () => null,
+  GlobeIcon: () => null,
+  PlanIcon: () => null,
+  PlusIcon: () => null,
+  PanelRightIcon: () => null
 }))
 
 vi.mock('../../../../src/renderer/features/inspector/ReviewTab', () => ({
@@ -63,20 +69,107 @@ describe('InspectorPanel', () => {
     vi.unstubAllGlobals()
   })
 
-  it('打开时用 transform 合成器动画归零，关闭时滑出 100%', () => {
+  it('开合通过外壳宽度过渡：关闭为 0 且对读屏隐藏，打开为面板宽度', () => {
     const renderer = renderDom(<InspectorPanel />)
     const aside = renderer.container.querySelector<HTMLElement>('.inspector-panel')
     expect(aside).not.toBeNull()
-    // 默认关闭：滑出 + 宽度 0
-    expect(aside?.style.transform).toBe('translateX(100%)')
     expect(aside?.style.width).toBe('0px')
+    expect(aside?.getAttribute('aria-hidden')).toBe('true')
 
     act(() => {
       useLayoutStore.getState().toggleInspector()
     })
-    expect(aside?.style.transform).toBe('translateX(0)')
     const openWidth = useLayoutStore.getState().inspectorWidth
     expect(aside?.style.width).toBe(`${openWidth}px`)
+    expect(aside?.getAttribute('aria-hidden')).toBe('false')
+    renderer.unmount()
+  })
+
+  it('收起时内容保留到宽度过渡播完才卸载，过渡中途重新展开不会卸载', async () => {
+    let finish: () => void = () => {}
+    const finished = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    const original = HTMLElement.prototype.getAnimations
+    HTMLElement.prototype.getAnimations = () => [{ finished } as unknown as Animation]
+    try {
+      const renderer = renderDom(<InspectorPanel />)
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      expect(renderer.container.querySelector('.inspector-launcher')).not.toBeNull()
+
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      // 过渡尚未结束：面板已标记关闭，但内容仍在
+      expect(renderer.container.querySelector('.inspector-launcher')).not.toBeNull()
+
+      // 中途重新展开：旧的收起过渡播完也不能把内容卸掉
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      await act(async () => {
+        finish()
+        await finished
+      })
+      expect(renderer.container.querySelector('.inspector-launcher')).not.toBeNull()
+
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      await act(async () => {
+        await finished
+      })
+      expect(renderer.container.querySelector('.inspector-launcher')).toBeNull()
+      renderer.unmount()
+    } finally {
+      HTMLElement.prototype.getAnimations = original
+    }
+  })
+
+  it('顶栏标签：首页只有启动器，打开视图出现标签，× 关闭后切到邻近标签，全部关闭回启动器', () => {
+    const renderer = renderDom(<InspectorPanel />)
+    act(() => {
+      useLayoutStore.getState().toggleInspector()
+    })
+    expect(renderer.container.querySelector('[role="tab"]')).toBeNull()
+    expect(renderer.container.querySelector('.inspector-launcher')).not.toBeNull()
+
+    act(() => {
+      useLayoutStore.getState().setInspectorTab('files')
+      useLayoutStore.getState().setInspectorTab('review')
+    })
+    const tabNames = () =>
+      Array.from(renderer.container.querySelectorAll('[role="tab"]')).map(tab => tab.textContent)
+    expect(tabNames()).toEqual(['工作区文件', '审阅'])
+    expect(renderer.container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toBe('审阅')
+
+    act(() => {
+      renderer.container.querySelector<HTMLButtonElement>('[aria-label="关闭审阅"]')?.click()
+    })
+    expect(tabNames()).toEqual(['工作区文件'])
+    expect(useLayoutStore.getState().inspectorTab).toBe('files')
+
+    act(() => {
+      renderer.container.querySelector<HTMLButtonElement>('[aria-label="关闭工作区文件"]')?.click()
+    })
+    expect(renderer.container.querySelector('.inspector-launcher')).not.toBeNull()
+    expect(useLayoutStore.getState().inspectorOpen).toBe(true)
+    renderer.unmount()
+  })
+
+  it('展开态顶栏的开合按钮可收起面板', () => {
+    const renderer = renderDom(<InspectorPanel />)
+    act(() => {
+      useLayoutStore.getState().toggleInspector()
+    })
+    act(() => {
+      renderer.container
+        .querySelector<HTMLButtonElement>('[aria-label="审阅、文件与浏览面板"]')
+        ?.click()
+    })
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
     renderer.unmount()
   })
 

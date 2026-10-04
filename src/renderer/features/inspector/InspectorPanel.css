@@ -7,11 +7,10 @@
   flex-shrink: 0;
   height: 100%;
   overflow: hidden;
-  background-color: var(--surface-sidebar);
-  border-left: 1px solid var(--border-subtle);
+  /* 与聊天区同处玻璃面：底色透出玻璃；两区分隔线由 InspectorResizeHandle 独占 */
+  background-color: transparent;
   box-sizing: border-box;
-  /* transform 合成器动画专用层 + 隔离重排范围 */
-  will-change: transform;
+  /* 开合时外壳宽度变化，裁剪内层并隔离重绘范围 */
   contain: paint;
 }
 
@@ -19,72 +18,40 @@
   transition: none !important;
 }
 
-.inspector-panel__resize {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 5px;
-  z-index: 2;
-  cursor: col-resize;
-  background: transparent;
-  transition: background-color var(--transition-fast);
-}
-
-.inspector-panel__resize:hover,
-.inspector-panel--dragging .inspector-panel__resize {
-  background-color: var(--color-brand-dim);
-  opacity: 0.45;
-}
-
 .inspector-panel__inner {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  opacity: 1;
-  transition: opacity var(--transition-normal);
+  /* 固定宽度并靠右：外壳变宽时内容像从右边滑入，且面板内部不随动画重排 */
+  margin-left: auto;
 }
 
+/* 顶栏与会话头同高，使两栏顶行在分隔线两侧对齐；不画底线，视图自己的工具条才有分隔 */
 .inspector-panel__header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px 8px 14px;
-  border-bottom: 1px solid var(--border-cream);
-  background-color: var(--bg-card);
+  height: 40px;
+  padding: 0 6px 0 10px;
   flex-shrink: 0;
 }
 
-.inspector-panel__tabs {
+.inspector-panel__actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+/* 面板首页：启动器在可用空间内垂直居中，内容过高时退回顶对齐滚动 */
+.inspector-panel__home {
   flex: 1;
-  min-width: 0;
-}
-
-.inspector-panel__tab {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 0.82rem;
-  font-weight: 500;
-  padding: 5px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: color var(--transition-fast), background-color var(--transition-fast);
-}
-
-.inspector-panel__tab:hover {
-  color: var(--text-primary);
-  background-color: var(--bg-sand);
-}
-
-.inspector-panel__tab--active {
-  color: var(--text-primary);
-  background-color: var(--surface-hover);
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  padding: 0 20px 40px;
 }
 
 .inspector-panel__body {
@@ -126,6 +93,12 @@
 .inspector-icon-btn:hover:not(:disabled) {
   color: var(--text-primary);
   background-color: var(--bg-sand);
+}
+
+/* 面板开合按钮在展开态高亮 */
+.inspector-icon-btn--active {
+  color: var(--text-primary);
+  background-color: var(--surface-muted);
 }
 
 .inspector-icon-btn:disabled {

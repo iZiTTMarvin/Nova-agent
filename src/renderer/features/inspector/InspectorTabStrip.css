@@ -1,0 +1,90 @@
+/* 面板顶栏标签条：一个视图一个标签，× 在悬停或键盘聚焦时显现，位置预留避免抖动 */
+
+.inspector-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.inspector-tab {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.inspector-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.inspector-tab--active {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.inspector-tab--active:hover {
+  background: var(--surface-muted);
+}
+
+.inspector-tab__main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 0 2px 0 9px;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+}
+
+.inspector-tab__icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.inspector-tab__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-tab__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin: 0 5px 0 2px;
+  appearance: none;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.inspector-tab:hover .inspector-tab__close,
+.inspector-tab:focus-within .inspector-tab__close {
+  opacity: 1;
+}
+
+.inspector-tab__close:hover {
+  background: var(--surface-muted);
+  color: var(--text-primary);
+}

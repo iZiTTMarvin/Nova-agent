@@ -4,8 +4,8 @@
  * 不做底部分隔线，与侧栏顶行对齐，靠表面色差分层。
  */
 .content-topbar {
-  height: 44px;
-  background-color: var(--surface-canvas);
+  height: 38px;
+  background-color: var(--surface-sidebar);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -50,7 +50,7 @@
   align-items: center;
   justify-content: center;
   width: 48px;
-  height: 44px;
+  height: 38px;
   background: transparent;
   color: var(--text-muted);
   transition: all var(--transition-fast);
@@ -88,4 +88,23 @@
   line-height: 1;
   font-weight: 700;
   letter-spacing: 0.02em;
+}
+
+/* 玻璃顶行会话头：无分隔线，靠玻璃面自身承载；按钮复用壳顶栏命中规格 */
+.glass-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 40px;
+  padding: 0 6px 0 12px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.glass-header__left,
+.glass-header__right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
 }

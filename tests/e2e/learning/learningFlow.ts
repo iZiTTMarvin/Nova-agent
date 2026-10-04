@@ -159,7 +159,12 @@ export async function openOutlinePane(nova: NovaHarness): Promise<Locator> {
   if (await tab.isVisible().catch(() => false)) {
     await tab.click()
   } else {
-    await nova.page.getByRole('button', { name: '大纲、文件与浏览面板' }).click()
+    const launcherCard = nova.page.getByRole('button', { name: /打开大纲/ })
+    // 面板收起时先展开；展开后没有大纲标签就停在启动器，从卡片打开
+    if (!(await launcherCard.isVisible().catch(() => false))) {
+      await nova.page.getByRole('button', { name: '大纲、文件与浏览面板' }).click()
+    }
+    await launcherCard.click()
   }
   await expect(pane).toBeVisible()
   return pane

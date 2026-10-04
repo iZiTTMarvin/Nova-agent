@@ -6,8 +6,7 @@ import { Button } from '@astryxdesign/core/Button'
 import {
   ChevronIcon,
   CheckIcon,
-  UndoIcon,
-  InfoIcon
+  UndoIcon
 } from '../../components/Icons'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -58,13 +57,8 @@ function findDerivedMessageId(
   return null
 }
 
-const ReviewEmpty: React.FC = () => (
-  <div className="inspector-empty">
-    <InfoIcon size={28} />
-    <p className="inspector-empty__title">暂无可审查的文件变更</p>
-    <p className="inspector-empty__hint">点击卡片中的文件即可在此审查</p>
-  </div>
-)
+/** 无内容时渲染极简空壳：不写散文，视图头已承载身份 */
+const ReviewEmpty: React.FC = () => null
 
 /**
  * 精确订阅单条 messageId 的 diff 缓存与审查动作。

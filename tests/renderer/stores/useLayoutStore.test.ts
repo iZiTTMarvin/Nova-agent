@@ -228,6 +228,44 @@ describe('useLayoutStore', () => {
     expect(useLayoutStore.getState().learnInspectorOpen).toBe(false)
   })
 
+  it('视图标签：同一视图只开一个；关闭激活标签切到邻近标签；关掉浏览器标签后网页立即隐藏', () => {
+    const layout = useLayoutStore.getState()
+    layout.setInspectorTab('files')
+    layout.setInspectorTab('review')
+    layout.openBrowserPane(false)
+    layout.setInspectorTab('files')
+    expect(useLayoutStore.getState().inspectorTabs).toEqual(['files', 'review', 'browser'])
+    expect(useLayoutStore.getState().inspectorTab).toBe('files')
+
+    // 关闭非激活标签不改变激活项
+    useLayoutStore.getState().closeInspectorTab('review')
+    expect(useLayoutStore.getState()).toMatchObject({ inspectorTabs: ['files', 'browser'], inspectorTab: 'files' })
+
+    // 关闭激活标签：原位置的右邻居接任，并写入持久化
+    useLayoutStore.getState().closeInspectorTab('files')
+    expect(useLayoutStore.getState()).toMatchObject({ inspectorTabs: ['browser'], inspectorTab: 'browser' })
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+
+    // 最后一个标签关闭：回到没有标签的首页，浏览器不再算作激活
+    useLayoutStore.getState().closeInspectorTab('browser')
+    expect(useLayoutStore.getState().inspectorTabs).toEqual([])
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(false)
+  })
+
+  it('学习表面的标签与开发表面互不影响', () => {
+    useLayoutStore.getState().openOutline()
+    useLayoutStore.getState().setLearnInspectorTab('files')
+    expect(useLayoutStore.getState()).toMatchObject({
+      learnInspectorTabs: ['outline', 'files'],
+      inspectorTabs: []
+    })
+    useLayoutStore.getState().closeLearnInspectorTab('files')
+    expect(useLayoutStore.getState()).toMatchObject({
+      learnInspectorTabs: ['outline'],
+      learnInspectorTab: 'outline'
+    })
+  })
+
   it('浏览器切至计划时隐藏网页，关闭计划或快捷键返回后恢复', () => {
     const layout = useLayoutStore.getState()
     layout.openBrowserPane(false)

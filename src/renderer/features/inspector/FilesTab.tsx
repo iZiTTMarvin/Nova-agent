@@ -262,12 +262,7 @@ export const FilesTab: React.FC = () => {
   }, [currentProjectPath, reset])
 
   if (!currentProjectPath) {
-    return (
-      <div className="inspector-empty">
-        <FolderIcon size={28} />
-        <p className="inspector-empty__title">选择项目后可浏览文件</p>
-      </div>
-    )
+    return null
   }
 
   if (selectedFile) {

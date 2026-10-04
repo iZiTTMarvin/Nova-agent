@@ -347,7 +347,8 @@ function App(): React.ReactNode {
     <Theme theme={clineTheme} mode={theme}>
       {/*
         壳结构由 AppShell 拥有：sideNav=Sidebar；无贯穿顶栏（topNav 缺省），
-        左右两栏各自通顶——侧栏顶行在 Sidebar 内，内容区顶行是 ContentTopBar。
+        左右两栏各自通顶——侧栏顶行在 Sidebar 内，内容区壳顶栏是 ContentTopBar
+        （纯包裹带：拖拽 + 窗口控制），会话头在玻璃面顶行 GlassSessionHeader。
         content 为「顶行 + 对话/inspector 行」纵向堆叠（AppShell 无右侧槽）。
         height="fill" → 100dvh 内部滚动；contentPadding=0 → 对话区边到边；
         mobileNav=false → Electron 桌面端无移动断点抽屉。

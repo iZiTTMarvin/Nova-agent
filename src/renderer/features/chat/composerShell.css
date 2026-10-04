@@ -96,9 +96,32 @@
   border-radius: 16px;
   box-shadow: var(--shadow-whisper);
   pointer-events: auto;
+  /* 常态微呼吸：描边透明度往复；focus 后停呼吸转稳定描边 */
+  animation: composer-breath 3.6s ease-in-out infinite;
   transition:
     box-shadow var(--transition-fast),
     border-color var(--transition-fast);
+}
+
+.chat-composer-box:focus-within {
+  animation: none;
+  border-color: var(--composer-breath-hi);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer-box {
+    animation: none;
+  }
+}
+
+@keyframes composer-breath {
+  0%,
+  100% {
+    border-color: var(--composer-breath-lo);
+  }
+  50% {
+    border-color: var(--composer-breath-hi);
+  }
 }
 
 .chat-composer-box:hover {

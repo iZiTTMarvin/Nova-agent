@@ -9,6 +9,16 @@ export type InspectorTab = 'review' | 'files' | 'browser'
 /** 学习会话的面板页签：大纲取代审阅（审阅对学习会话没有意义）。 */
 export type LearnInspectorTab = 'outline' | 'files' | 'browser'
 export type InspectorSurface = 'standard' | 'plan'
+/** 两个表面的页签键并集，供跨表面的标签条按键渲染。 */
+export type InspectorViewKey = InspectorTab | LearnInspectorTab
+
+export function isInspectorTab(key: InspectorViewKey): key is InspectorTab {
+  return key === 'review' || key === 'files' || key === 'browser'
+}
+
+export function isLearnInspectorTab(key: InspectorViewKey): key is LearnInspectorTab {
+  return key === 'outline' || key === 'files' || key === 'browser'
+}
 
 export type ReviewTarget = {
   messageId: string
@@ -54,7 +64,10 @@ const DEFAULTS = {
   planTarget: null as PlanTarget | null,
   planReturnState: null as PlanReturnState | null,
   learnInspectorOpen: false,
-  learnInspectorTab: 'outline' as LearnInspectorTab
+  learnInspectorTab: 'outline' as LearnInspectorTab,
+  // 已打开的视图标签（每种视图至多一个）；为空即面板首页（启动器）。不进持久化，每次启动回首页
+  inspectorTabs: [] as readonly InspectorTab[],
+  learnInspectorTabs: [] as readonly LearnInspectorTab[]
 }
 
 function canUseLocalStorage(): boolean {
@@ -77,6 +90,29 @@ function writeStored(key: string, value: string): void {
   } catch {
     // quota / private mode：忽略，内存态仍可用
   }
+}
+
+/** 打开视图标签：已存在则不重复添加。 */
+function withTabOpened<T>(tabs: readonly T[], tab: T): readonly T[] {
+  return tabs.includes(tab) ? tabs : [...tabs, tab]
+}
+
+/** 关闭视图标签；关闭的是激活标签时，激活原位置的邻近标签（优先右侧，其次左侧）。 */
+function withTabClosed<T>(tabs: readonly T[], active: T, tab: T): { tabs: readonly T[]; active: T } {
+  const index = tabs.indexOf(tab)
+  if (index === -1) return { tabs, active }
+  const rest = tabs.filter(t => t !== tab)
+  if (tab !== active || rest.length === 0) return { tabs: rest, active }
+  return { tabs: rest, active: rest[Math.min(index, rest.length - 1)] }
+}
+
+/** 浏览器页签不持久化，重启不自动回到浏览器。 */
+function persistInspectorTab(tab: InspectorTab): void {
+  if (tab !== 'browser') writeStored('inspectorTab', tab)
+}
+
+function persistLearnInspectorTab(tab: LearnInspectorTab): void {
+  if (tab !== 'browser') writeStored('learnInspectorTab', tab)
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -140,6 +176,8 @@ export interface LayoutStoreState {
   planReturnState: PlanReturnState | null
   learnInspectorOpen: boolean
   learnInspectorTab: LearnInspectorTab
+  inspectorTabs: readonly InspectorTab[]
+  learnInspectorTabs: readonly LearnInspectorTab[]
 
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
@@ -156,6 +194,8 @@ export interface LayoutStoreState {
   toggleBrowserPane: (isLearnSurface: boolean) => void
   toggleLearnInspector: () => void
   setLearnInspectorTab: (tab: LearnInspectorTab) => void
+  closeInspectorTab: (tab: InspectorTab) => void
+  closeLearnInspectorTab: (tab: LearnInspectorTab) => void
   openOutline: () => void
   closeLearnInspector: () => void
 }
@@ -186,10 +226,11 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   },
 
   openReview: (target) => {
-    writeStored('inspectorTab', 'review')
+    persistInspectorTab('review')
     set({
       inspectorOpen: true,
       inspectorTab: 'review',
+      inspectorTabs: withTabOpened(get().inspectorTabs, 'review'),
       reviewTarget: target,
       inspectorSurface: 'standard',
       planTarget: null,
@@ -198,10 +239,11 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   },
 
   openFiles: () => {
-    writeStored('inspectorTab', 'files')
+    persistInspectorTab('files')
     set({
       inspectorOpen: true,
       inspectorTab: 'files',
+      inspectorTabs: withTabOpened(get().inspectorTabs, 'files'),
       inspectorSurface: 'standard',
       planTarget: null,
       planReturnState: null
@@ -246,8 +288,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       set({ inspectorOpen: false })
       return
     }
-    writeStored('inspectorTab', tab)
-    set({ inspectorOpen: true, inspectorTab: tab })
+    persistInspectorTab(tab)
+    set({ inspectorOpen: true, inspectorTab: tab, inspectorTabs: withTabOpened(state.inspectorTabs, tab) })
   },
 
   setInspectorWidth: (w) => {
@@ -256,9 +298,17 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     set({ inspectorWidth })
   },
 
+  /** 打开视图标签并激活；已打开则只切换。 */
   setInspectorTab: (tab) => {
-    writeStored('inspectorTab', tab)
-    set({ inspectorTab: tab })
+    persistInspectorTab(tab)
+    set({ inspectorTab: tab, inspectorTabs: withTabOpened(get().inspectorTabs, tab) })
+  },
+
+  closeInspectorTab: (tab) => {
+    const state = get()
+    const next = withTabClosed(state.inspectorTabs, state.inspectorTab, tab)
+    if (next.active !== state.inspectorTab) persistInspectorTab(next.active)
+    set({ inspectorTabs: next.tabs, inspectorTab: next.active })
   },
 
   selectReviewFile: (filePath) => {
@@ -270,12 +320,17 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   /** 打开右侧面板并切到浏览器页签；作用域由调用方按当前表面传入。 */
   openBrowserPane: (isLearnSurface) => {
     if (isLearnSurface) {
-      set({ learnInspectorOpen: true, learnInspectorTab: 'browser' })
+      set({
+        learnInspectorOpen: true,
+        learnInspectorTab: 'browser',
+        learnInspectorTabs: withTabOpened(get().learnInspectorTabs, 'browser')
+      })
       return
     }
     set({
       inspectorOpen: true,
       inspectorTab: 'browser',
+      inspectorTabs: withTabOpened(get().inspectorTabs, 'browser'),
       // 计划表面没有页签条，先回标准表面浏览器才可见
       inspectorSurface: 'standard',
       planTarget: null,
@@ -301,15 +356,30 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     set({ learnInspectorOpen })
   },
 
+  /** 打开学习视图标签并激活；已打开则只切换。 */
   setLearnInspectorTab: (learnInspectorTab) => {
-    if (learnInspectorTab !== 'browser') writeStored('learnInspectorTab', learnInspectorTab)
-    set({ learnInspectorTab })
+    persistLearnInspectorTab(learnInspectorTab)
+    set({
+      learnInspectorTab,
+      learnInspectorTabs: withTabOpened(get().learnInspectorTabs, learnInspectorTab)
+    })
+  },
+
+  closeLearnInspectorTab: (tab) => {
+    const state = get()
+    const next = withTabClosed(state.learnInspectorTabs, state.learnInspectorTab, tab)
+    if (next.active !== state.learnInspectorTab) persistLearnInspectorTab(next.active)
+    set({ learnInspectorTabs: next.tabs, learnInspectorTab: next.active })
   },
 
   openOutline: () => {
     writeStored('learnInspectorOpen', 'true')
-    writeStored('learnInspectorTab', 'outline')
-    set({ learnInspectorOpen: true, learnInspectorTab: 'outline' })
+    persistLearnInspectorTab('outline')
+    set({
+      learnInspectorOpen: true,
+      learnInspectorTab: 'outline',
+      learnInspectorTabs: withTabOpened(get().learnInspectorTabs, 'outline')
+    })
   },
 
   closeLearnInspector: () => {
@@ -323,11 +393,23 @@ export function selectInspectorOpenForSurface(state: LayoutStoreState, isLearnSu
   return isLearnSurface ? state.learnInspectorOpen : state.inspectorOpen
 }
 
+/**
+ * 当前表面的激活视图键；没有打开任何标签（面板首页）时为 null。
+ * inspectorTab / learnInspectorTab 只记录最近激活的页签，是否仍打开以标签列表为准；
+ * 记录的页签不在列表里时退回第一个标签，保证有标签就有一个被显示。
+ */
+export function selectActiveInspectorTab(state: LayoutStoreState, isLearnSurface: boolean): InspectorViewKey | null {
+  const tabs: readonly InspectorViewKey[] = isLearnSurface ? state.learnInspectorTabs : state.inspectorTabs
+  const active: InspectorViewKey = isLearnSurface ? state.learnInspectorTab : state.inspectorTab
+  return tabs.includes(active) ? active : (tabs[0] ?? null)
+}
+
 /** 浏览器页签是否为当前表面的激活页签（guest 层据此决定 webview 可见性）。 */
 export function selectBrowserPaneActive(state: LayoutStoreState, isLearnSurface: boolean): boolean {
+  if (selectActiveInspectorTab(state, isLearnSurface) !== 'browser') return false
   return isLearnSurface
-    ? state.learnInspectorOpen && state.learnInspectorTab === 'browser'
-    : state.inspectorOpen && state.inspectorSurface === 'standard' && state.inspectorTab === 'browser'
+    ? state.learnInspectorOpen
+    : state.inspectorOpen && state.inspectorSurface === 'standard'
 }
 
 /** 测试用：清空持久化后恢复默认布局态 */

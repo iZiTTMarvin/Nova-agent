@@ -1,4 +1,13 @@
+import type { Page } from '@playwright/test'
 import { expect, test } from '../fixtures/nova'
+
+/** 等右侧面板开合的宽度过渡播完：动画中面板位置是中间值，不能用来取拖拽坐标。 */
+async function waitForInspectorSettled(page: Page): Promise<void> {
+  await page.waitForFunction(() => {
+    const panel = document.querySelector('.inspector-panel')
+    return panel !== null && panel.getBoundingClientRect().width > 0 && panel.getAnimations().length === 0
+  })
+}
 
 test('用户发送消息后完成真实 Electron 聊天链路并恢复可输入状态', async ({ nova }) => {
   nova.provider.enqueue({
@@ -55,8 +64,8 @@ test('拖拽 Inspector 期间聊天阅读宽度冻结，松手后恢复响应式
   await page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
   const handle = page.locator('.inspector-panel__resize')
   await handle.waitFor({ state: 'visible' })
-  // 开合动画走 transform，动画中 boundingBox 是中间位置；等 transform 归零再取拖拽坐标
-  await expect(page.locator('.inspector-panel')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+  // 开合动画走宽度过渡，动画中 boundingBox 是中间位置；等过渡播完再取拖拽坐标
+  await waitForInspectorSettled(page)
   const handleBox = await handle.boundingBox()
   if (!handleBox) throw new Error('inspector resize handle not visible')
 
@@ -138,7 +147,7 @@ test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不�
   await page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
   const handle = page.locator('.inspector-panel__resize')
   await handle.waitFor({ state: 'visible' })
-  await expect(page.locator('.inspector-panel')).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)')
+  await waitForInspectorSettled(page)
   const handleBox = await handle.boundingBox()
   if (!handleBox) throw new Error('inspector resize handle not visible')
   const startX = handleBox.x + handleBox.width / 2

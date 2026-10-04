@@ -4,7 +4,8 @@
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  background-color: var(--bg-app);
+  /* 底色由玻璃面承担，聊天列自身透明 */
+  background-color: transparent;
 }
 
 /* ── 会话路径面包屑（内容区顶行，靠分界线一侧） ─────────────── */

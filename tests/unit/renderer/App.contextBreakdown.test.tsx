@@ -40,7 +40,12 @@ vi.mock('../../../src/renderer/features/settings/SettingsModal', () => ({
 }))
 
 vi.mock('../../../src/renderer/components/ContentTopBar', () => ({
-  ContentTopBar: () => null
+  ContentTopBar: () => null,
+  GlassSessionHeader: () => null
+}))
+
+vi.mock('../../../src/renderer/features/inspector/InspectorPanel', () => ({
+  InspectorPanel: () => null
 }))
 
 vi.mock('../../../src/renderer/components/Icons', () => ({

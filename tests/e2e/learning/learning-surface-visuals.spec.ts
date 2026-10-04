@@ -37,11 +37,10 @@ const TOPIC_TITLE = '应用如何启动'
 
 /** 主区场景（空状态、出题）收起右侧面板，让阅读柱占满宽度。 */
 async function collapseInspector(nova: NovaHarness): Promise<void> {
-  const tab = nova.page.getByRole('tab', { name: '大纲' })
-  if (!(await tab.isVisible().catch(() => false))) return
-  await nova.page.getByRole('button', { name: '关闭面板' }).click()
-  await expect(outlinePane(nova)).toBeHidden()
-  await expect(tab).toBeHidden()
+  const pane = outlinePane(nova)
+  if (!(await pane.isVisible().catch(() => false))) return
+  await nova.page.getByRole('button', { name: '大纲、文件与浏览面板' }).click()
+  await expect(pane).toBeHidden()
 }
 
 async function capture(

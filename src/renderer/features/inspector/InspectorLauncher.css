@@ -1,0 +1,65 @@
+/* Inspector 首页启动器：居中的一列卡片，图标块 + 标题 + 副行（快捷键或说明） */
+
+.inspector-launcher {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 300px;
+  /* auto 外边距：空间充足时居中，内容过高时不会被裁掉顶部 */
+  margin: auto;
+}
+
+.inspector-launcher__card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  appearance: none;
+  text-align: left;
+  cursor: pointer;
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 12px 14px;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.inspector-launcher__card:hover {
+  background: var(--surface-muted);
+  border-color: var(--border-strong);
+}
+
+.inspector-launcher__ico {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border-item);
+  color: var(--text-secondary);
+}
+
+.inspector-launcher__txt {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.inspector-launcher__txt b {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.inspector-launcher__txt i {
+  font-style: normal;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

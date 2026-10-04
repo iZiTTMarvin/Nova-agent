@@ -1,0 +1,54 @@
+/* Inspector 左缘分隔线：常驻 1px 结构线 + 指针附近的紫色光效 */
+
+.inspector-panel__resize {
+  --glow-y: 50%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 8px;
+  z-index: 2;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.inspector-panel__resize::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: var(--border-subtle);
+}
+
+/* 光效层：亮线沿分隔线，光晕向面板内侧晕开；用 transform 跟随指针，不触发布局 */
+.inspector-panel__resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 28px;
+  height: 260px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(calc(var(--glow-y) - 130px));
+  transition: opacity var(--transition-normal);
+  background:
+    linear-gradient(
+      to bottom,
+      transparent,
+      color-mix(in srgb, var(--accent-purple) 90%, transparent) 50%,
+      transparent
+    ) left / 2px 100% no-repeat,
+    radial-gradient(
+      ellipse 100% 50% at 0 50%,
+      color-mix(in srgb, var(--accent-purple) 30%, transparent),
+      transparent 75%
+    );
+}
+
+.inspector-panel__resize:hover::after,
+.inspector-panel__resize--active::after {
+  opacity: 1;
+}

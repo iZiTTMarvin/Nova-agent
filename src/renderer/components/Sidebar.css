@@ -7,7 +7,6 @@
   flex-shrink: 0;
   height: 100%;
   background-color: var(--surface-sidebar);
-  border-right: 1px solid var(--border-subtle);
   overflow: hidden;
   transition: none;
   will-change: transform;
@@ -16,7 +15,6 @@
 
 .sidebar-shell--collapsed {
   pointer-events: none;
-  border-right: none;
 }
 
 .sidebar-shell--resizing {
@@ -36,7 +34,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 44px;
+  height: 38px;
   padding: 0 10px 0 14px;
   flex-shrink: 0;
   -webkit-app-region: drag;
