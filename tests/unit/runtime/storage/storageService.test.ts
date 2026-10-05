@@ -32,7 +32,20 @@ function createSessionDir(sessionId: string): string {
 
 function writeSessionFile(sessionId: string, bytes: number): void {
   const dir = createSessionDir(sessionId)
-  fs.writeFileSync(path.join(dir, 'session.json'), 'x'.repeat(bytes), 'utf8')
+  const metadata: Record<string, unknown> = {
+    id: sessionId,
+    kind: 'primary',
+    workspaceRoot: '/tmp/workspace',
+    title: `Session ${sessionId}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
+  let content = JSON.stringify(metadata)
+  if (content.length < bytes) {
+    metadata.padding = 'x'.repeat(bytes)
+    content = JSON.stringify(metadata)
+  }
+  fs.writeFileSync(path.join(dir, 'session.json'), content, 'utf8')
 }
 
 function writeCheckpointBackup(
@@ -42,6 +55,7 @@ function writeCheckpointBackup(
   content: string
 ): void {
   const dir = createSessionDir(sessionId)
+  writeSessionFile(sessionId, 1)
   const filesDir = path.join(dir, messageId, 'files')
   fs.mkdirSync(filesDir, { recursive: true })
   const filePath = path.join(filesDir, relPath)
@@ -62,6 +76,7 @@ function writeCheckpointBackup(
 
 function writeArtifact(sessionId: string, content: string): void {
   const dir = createSessionDir(sessionId)
+  writeSessionFile(sessionId, 1)
   const artifactsDir = path.join(dir, 'artifacts')
   fs.mkdirSync(artifactsDir, { recursive: true })
   fs.writeFileSync(path.join(artifactsDir, 'art-001'), content, 'utf8')
@@ -95,6 +110,20 @@ describe('getStorageUsageReport', () => {
     expect(sess.artifactsBytes).toBeGreaterThanOrEqual(300)
     expect(sess.totalBytes).toBeGreaterThanOrEqual(600)
     expect(report.totalBytes).toBeGreaterThanOrEqual(600)
+  })
+
+  it('内部 child 创建暂存目录归入无对应会话数据', () => {
+    const internalDir = path.join(appDataPath, 'sessions', '.child-creates', 'partial')
+    fs.mkdirSync(internalDir, { recursive: true })
+    fs.writeFileSync(path.join(internalDir, 'session.json'), 'partial', 'utf8')
+
+    const report = getStorageUsageReport(appDataPath)
+
+    expect(report.sessions.some(session => session.sessionId === '.child-creates')).toBe(false)
+    expect(report.orphanEntries).toEqual([
+      expect.objectContaining({ relativePath: 'sessions/.child-creates', kind: 'system' })
+    ])
+    expect(report.orphanBytes).toBeGreaterThan(0)
   })
 })
 
@@ -145,6 +174,29 @@ describe('deleteSessionCompletely', () => {
     expect(result.freedBytes).toBeGreaterThan(100)
     expect(result.affectedSessions).toBe(1)
     expect(fs.existsSync(path.join(appDataPath, 'sessions', 'sess_a'))).toBe(false)
+  })
+
+  it('拒绝删除 child 创建暂存目录', () => {
+    const internalDir = path.join(appDataPath, 'sessions', '.child-creates')
+    fs.mkdirSync(internalDir, { recursive: true })
+    fs.writeFileSync(path.join(internalDir, 'partial'), 'in progress', 'utf8')
+
+    const result = deleteSessionCompletely(appDataPath, '.child-creates')
+
+    expect(result.freedBytes).toBe(0)
+    expect(result.affectedSessions).toBe(0)
+    expect(fs.existsSync(internalDir)).toBe(true)
+  })
+
+  it('拒绝通过会话 ID 越界删除目录', () => {
+    const outsideDir = path.join(appDataPath, 'outside')
+    fs.mkdirSync(outsideDir, { recursive: true })
+    fs.writeFileSync(path.join(outsideDir, 'keep.txt'), 'keep', 'utf8')
+
+    const result = deleteSessionCompletely(appDataPath, '../outside')
+
+    expect(result.freedBytes).toBe(0)
+    expect(fs.existsSync(path.join(outsideDir, 'keep.txt'))).toBe(true)
   })
 })
 

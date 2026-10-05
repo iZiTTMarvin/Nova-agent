@@ -9,8 +9,14 @@
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
+import { Dialog } from '@astryxdesign/core/Dialog'
 import { SettingsField, SettingsPage, SettingsSection } from './settingsKit'
 import type { StorageUsageReport, StorageCleanupResult, SessionStorageBreakdown } from '../../../shared/storage/types'
+import { formatSettingsDateTime } from './formatDateTime'
+
+type StorageConfirmAction =
+  | { type: 'delete-session'; row: SessionStorageBreakdown }
+  | { type: 'prune-all' }
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
@@ -26,6 +32,7 @@ export const StorageSettingsPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [actionId, setActionId] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<StorageCleanupResult | null>(null)
+  const [confirmAction, setConfirmAction] = useState<StorageConfirmAction | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -71,19 +78,24 @@ export const StorageSettingsPanel: React.FC = () => {
     )
   }
 
-  const handleDeleteSession = (sessionId: string) => {
-    if (!window.confirm(`确定彻底删除会话「${sessionId}」？\n该操作会删除该会话的所有消息、checkpoint 和命令产物，且无法恢复。`)) {
-      return
-    }
-    void runAction(
-      `delete-${sessionId}`,
-      () => window.api.invoke('storage:delete-session', { sessionId }),
-      result => setLastResult(result)
-    )
+  const handleDeleteSession = (row: SessionStorageBreakdown) => {
+    setConfirmAction({ type: 'delete-session', row })
   }
 
   const handlePruneAll = () => {
-    if (!window.confirm('确定清理所有会话的过期 checkpoint 快照？\n被清理的快照将无法用于回退或拒绝恢复。')) {
+    setConfirmAction({ type: 'prune-all' })
+  }
+
+  const handleConfirmAction = () => {
+    if (!confirmAction) return
+    const action = confirmAction
+    setConfirmAction(null)
+    if (action.type === 'delete-session') {
+      void runAction(
+        `delete-${action.row.sessionId}`,
+        () => window.api.invoke('storage:delete-session', { sessionId: action.row.sessionId }),
+        result => setLastResult(result)
+      )
       return
     }
     void runAction(
@@ -102,6 +114,7 @@ export const StorageSettingsPanel: React.FC = () => {
   }
 
   const sessionRows = report?.sessions ?? []
+  const orphanEntries = report?.orphanEntries ?? []
 
   return (
     <div className="settings-panel">
@@ -165,33 +178,93 @@ export const StorageSettingsPanel: React.FC = () => {
               </SettingsField>
             )}
             <SettingsField>
-              {sessionRows.length === 0 ? (
+              {sessionRows.length === 0 && orphanEntries.length === 0 ? (
                 <span className="settings-help">暂无可显示的会话数据。</span>
               ) : (
-                <div className="storage-table">
-                  <div className="storage-table__header">
-                    <span className="storage-table__cell">会话 ID</span>
-                    <span className="storage-table__cell storage-table__cell--right">消息历史</span>
-                    <span className="storage-table__cell storage-table__cell--right">Checkpoint</span>
-                    <span className="storage-table__cell storage-table__cell--right">产物</span>
-                    <span className="storage-table__cell storage-table__cell--right">合计</span>
-                    <span className="storage-table__cell storage-table__cell--actions">操作</span>
-                  </div>
-                  {sessionRows.map(row => (
-                    <SessionStorageRow
-                      key={row.sessionId}
-                      row={row}
-                      isBusy={actionId !== null}
-                      onPrune={() => handlePruneSession(row.sessionId)}
-                      onDelete={() => handleDeleteSession(row.sessionId)}
-                    />
-                  ))}
-                </div>
+                <>
+                  {sessionRows.length > 0 && (
+                    <div className="storage-table">
+                      <div className="storage-table__header">
+                        <span className="storage-table__cell">会话 / 工作区 / 最近更新</span>
+                        <span className="storage-table__cell storage-table__cell--right">消息历史</span>
+                        <span className="storage-table__cell storage-table__cell--right">Checkpoint</span>
+                        <span className="storage-table__cell storage-table__cell--right">产物</span>
+                        <span className="storage-table__cell storage-table__cell--right">合计</span>
+                        <span className="storage-table__cell storage-table__cell--actions">操作</span>
+                      </div>
+                      {sessionRows.map(row => (
+                        <SessionStorageRow
+                          key={row.sessionId}
+                          row={row}
+                          isBusy={actionId !== null}
+                          onPrune={() => handlePruneSession(row.sessionId)}
+                          onDelete={() => handleDeleteSession(row)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  {orphanEntries.length > 0 && (
+                    <div className="storage-orphan-list" aria-label="无对应会话的数据">
+                      <div className="storage-orphan-list__title">系统数据 / 无对应会话</div>
+                      <p className="storage-orphan-list__hint">
+                        内部协调目录和未知孤立数据不会作为普通会话展示，也不能从这里删除。
+                      </p>
+                      {orphanEntries.map(entry => (
+                        <div
+                          className={`storage-orphan-list__item storage-orphan-list__item--${entry.kind}`}
+                          key={entry.relativePath}
+                        >
+                          <span>{entry.kind === 'system' ? '系统数据' : '无对应会话'}</span>
+                          <span title={entry.relativePath}>{entry.relativePath}</span>
+                          <span>{formatBytes(entry.bytes)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
               )}
             </SettingsField>
           </SettingsSection>
         </SettingsPage>
       </div>
+      {confirmAction && (
+        <Dialog
+          isOpen
+          purpose="form"
+          width="min(480px, calc(100vw - 32px))"
+          aria-labelledby="storage-confirm-title"
+          onOpenChange={open => {
+            if (!open) setConfirmAction(null)
+          }}
+        >
+          <h3 id="storage-confirm-title">
+            {confirmAction.type === 'delete-session' ? '彻底删除会话？' : '清理所有过期 checkpoint？'}
+          </h3>
+          <p>
+            {confirmAction.type === 'delete-session'
+              ? `将删除「${confirmAction.row.title ?? confirmAction.row.sessionId}」的消息、checkpoint 和命令产物，且无法恢复。`
+              : '被清理的快照将无法用于回退或拒绝恢复。'}
+          </p>
+          <div className="storage-confirm__actions">
+            <Button
+              label="取消"
+              variant="secondary"
+              size="sm"
+              onClick={() => setConfirmAction(null)}
+            >
+              取消
+            </Button>
+            <Button
+              label={confirmAction.type === 'delete-session' ? '彻底删除' : '清理快照'}
+              variant={confirmAction.type === 'delete-session' ? 'destructive' : 'primary'}
+              size="sm"
+              onClick={handleConfirmAction}
+            >
+              {confirmAction.type === 'delete-session' ? '彻底删除' : '清理快照'}
+            </Button>
+          </div>
+        </Dialog>
+      )}
     </div>
   )
 }
@@ -206,8 +279,13 @@ interface SessionStorageRowProps {
 function SessionStorageRow({ row, isBusy, onPrune, onDelete }: SessionStorageRowProps) {
   return (
     <div className="storage-table__row">
-      <span className="storage-table__cell storage-table__cell--id" title={row.sessionId}>
-        {row.sessionId}
+      <span className="storage-table__cell storage-table__cell--session">
+        <strong>{row.title ?? '未命名会话'}</strong>
+        <span title={row.workspaceRoot ?? undefined}>{row.workspaceRoot ?? '未知工作区'}</span>
+        <span className="storage-table__cell--secondary" title={row.sessionId}>
+          ID：{row.sessionId}
+        </span>
+        <time>{row.updatedAt === null ? '更新时间未知' : formatSettingsDateTime(row.updatedAt)}</time>
       </span>
       <span className="storage-table__cell storage-table__cell--right">{formatBytes(row.historyBytes)}</span>
       <span className="storage-table__cell storage-table__cell--right">{formatBytes(row.checkpointsBytes)}</span>

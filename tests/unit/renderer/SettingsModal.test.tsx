@@ -88,6 +88,10 @@ describe('SettingsModal 设置导航与视觉样式', () => {
     const backButton = container.querySelector('.settings-shell__back')
     expect(backButton).not.toBeNull()
     expect(backButton?.textContent).toContain('返回应用')
+    expect(container.querySelector('.settings-shell__titlebar')).not.toBeNull()
+    expect(container.querySelector('.content-topbar__btn--minimize')).not.toBeNull()
+    expect(container.querySelector('.content-topbar__btn--maximize')).not.toBeNull()
+    expect(container.querySelector('.content-topbar__btn--close')).not.toBeNull()
 
     const groupTitles = [...container.querySelectorAll('.settings-nav__group-title')].map(
       el => el.textContent?.trim()
@@ -179,6 +183,37 @@ describe('SettingsModal 设置导航与视觉样式', () => {
       backButton.click()
     })
 
+    expect(useSettingsStore.getState().isConfigModalOpen).toBe(false)
+    unmount()
+  })
+
+  it('嵌套对话框先消费 Escape，第二次才关闭设置壳', async () => {
+    useSettingsStore.setState({ isConfigModalOpen: true })
+    const { container, unmount } = renderDom(<SettingsModal />)
+    const settingsDialog = container.querySelector<HTMLDialogElement>('dialog.settings-shell')!
+    const nestedDialog = document.createElement('dialog')
+    nestedDialog.open = true
+    settingsDialog.appendChild(nestedDialog)
+    // 真实按键下子 Dialog 会在冒泡到壳层前先卸载，壳层不能再靠 DOM 现状判断归属。
+    nestedDialog.addEventListener('keydown', () => nestedDialog.remove())
+
+    await act(async () => {
+      nestedDialog.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      }))
+    })
+    expect(useSettingsStore.getState().isConfigModalOpen).toBe(true)
+
+    nestedDialog.remove()
+    await act(async () => {
+      settingsDialog.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      }))
+    })
     expect(useSettingsStore.getState().isConfigModalOpen).toBe(false)
     unmount()
   })

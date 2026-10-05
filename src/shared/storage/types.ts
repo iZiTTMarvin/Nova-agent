@@ -6,9 +6,15 @@
 
 /** 单条会话的磁盘占用明细 */
 export interface SessionStorageBreakdown {
-  /** 会话 ID */
+  /** 已通过 session.json 身份校验的会话 ID */
   sessionId: string
-  /** 会话历史（session.json + messages.jsonl，当前阶段只有 session.json） */
+  /** 会话标题；旧数据缺失时为空 */
+  title: string | null
+  /** 会话所属工作区；旧数据缺失时为空 */
+  workspaceRoot: string | null
+  /** 会话最后更新时间；旧数据缺失时为空 */
+  updatedAt: number | null
+  /** 会话历史（session.json、messages.jsonl 与上下文快照） */
   historyBytes: number
   /** 文件备份（checkpoint files/ 目录） */
   checkpointsBytes: number
@@ -28,6 +34,20 @@ export interface StorageUsageReport {
   sessions: SessionStorageBreakdown[]
   /** 无法归入会话的零散数据（字节） */
   orphanBytes: number
+  /** 无法关联到会话的目录或文件，展示层不得提供会话清理操作 */
+  orphanEntries: StorageOrphanEntry[]
+}
+
+export type StorageOrphanKind = 'system' | 'orphan'
+
+/** 无法关联到会话的系统或孤立数据 */
+export interface StorageOrphanEntry {
+  /** 相对于应用数据根目录的展示路径 */
+  relativePath: string
+  /** 目录或文件占用（字节） */
+  bytes: number
+  /** 已知内部数据或未知孤立数据 */
+  kind: StorageOrphanKind
 }
 
 /** 清理操作结果 */

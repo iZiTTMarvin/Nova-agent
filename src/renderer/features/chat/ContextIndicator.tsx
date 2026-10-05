@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react'
+import React, { useId, useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { UsageStats } from './UsageStats'
@@ -44,7 +44,7 @@ const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ra
   const circumference = 2 * Math.PI * radius
   const dashOffset = circumference * (1 - Math.min(1, Math.max(0, ratio)))
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" focusable="false">
       <circle
         cx={size / 2}
         cy={size / 2}
@@ -98,6 +98,8 @@ export const ContextIndicator: React.FC = () => {
   const openTimer = useRef<number | null>(null)
   const closeTimer = useRef<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const popoverId = useId()
 
   /** 根据 composer 中心与视口剩余空间,决定 popover 向左还是向右展开,避免遮挡回到底部按钮 */
   const computeGeometry = useCallback(() => {
@@ -148,6 +150,10 @@ export const ContextIndicator: React.FC = () => {
     closeTimer.current = window.setTimeout(() => setIsOpen(false), 120)
   }, [])
 
+  const closeFromKeyboard = useCallback(() => {
+    setIsOpen(false)
+  }, [])
+
   useEffect(() => {
     return () => {
       if (openTimer.current) window.clearTimeout(openTimer.current)
@@ -184,17 +190,41 @@ export const ContextIndicator: React.FC = () => {
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
-      <div
+      <button
+        ref={triggerRef}
+        type="button"
         className="context-indicator"
         style={{ color }}
         aria-label={`上下文容量 ${percent}%`}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-controls={isOpen ? popoverId : undefined}
+        title="查看上下文容量"
+        onClick={() => {
+          if (isOpen) closeFromKeyboard()
+          else {
+            computeGeometry()
+            setIsOpen(true)
+          }
+        }}
+        onKeyDown={event => {
+          if (event.key === 'Escape' && isOpen) {
+            event.preventDefault()
+            event.stopPropagation()
+            closeFromKeyboard()
+          }
+        }}
       >
         <ContextRingIcon color={color} ratio={ratio} />
-      </div>
+      </button>
 
       <AnimatePresence>
         {isOpen && (
           <motion.div
+            id={popoverId}
+            role="dialog"
+            aria-label="上下文容量详情"
+            tabIndex={-1}
             initial={{ opacity: 0, y: 6, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 6, scale: 0.96 }}

@@ -22,10 +22,13 @@
 
 /* 技能名是主标题，不再用品牌蓝 + 下划线伪装成链接 */
 .skill-card__name {
+  min-width: 0;
+  margin: 0;
   font-weight: 600;
   font-size: 0.92rem;
   color: var(--text-primary);
   text-align: left;
+  overflow-wrap: anywhere;
 }
 
 .skill-card__badge {
@@ -63,6 +66,19 @@
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+
+.skill-card__desc--expanded {
+  display: block;
+  overflow: visible;
+}
+
+.skill-card__description-toggle {
+  align-self: flex-start;
+  min-height: 24px;
+  padding: 2px 4px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
 }
 
 .skill-card__diagnostics {

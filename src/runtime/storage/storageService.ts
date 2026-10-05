@@ -13,32 +13,43 @@
  */
 import {
   existsSync,
+  readFileSync,
   readdirSync,
   statSync,
   rmSync,
   unlinkSync,
   writeFileSync
 } from 'fs'
-import { join } from 'path'
+import { join, relative, sep } from 'path'
 import { closeSessionIndex } from '../sessions/SessionIndexHost'
 import { tmpdir } from 'os'
 import type {
   StorageUsageReport,
   StorageCleanupResult,
-  SessionStorageBreakdown
+  SessionStorageBreakdown,
+  StorageOrphanEntry,
+  StorageOrphanKind
 } from '../../shared/storage/types'
 import { readManifest } from '../checkpoints/manifest'
 import type { CheckpointManifest } from '../checkpoints/types'
-import { SESSION_BACKUP_FILE } from '../sessions/types'
+import { SESSION_BACKUP_FILE, SESSION_MESSAGES_FILE } from '../sessions/types'
 
 /** 临时 bash 日志文件名前缀 */
 const BASH_TMP_PREFIX = 'nova-bash-'
 
 /** 会话数据文件名 */
 const SESSION_DATA_FILE = 'session.json'
+const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]+$/
+const INTERNAL_STORAGE_DIRS = new Set(['.child-creates'])
 
 /** 上下文快照文件名 */
 const CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
+
+interface SessionStorageMetadata {
+  title: string | null
+  workspaceRoot: string | null
+  updatedAt: number | null
+}
 
 /** 单个路径的字节大小（文件或递归目录） */
 function getPathBytes(entryPath: string): number {
@@ -68,23 +79,37 @@ function getPathBytes(entryPath: string): number {
 export function getStorageUsageReport(appDataPath: string): StorageUsageReport {
   const sessionsDir = join(appDataPath, 'sessions')
   const sessions: SessionStorageBreakdown[] = []
+  const orphanEntries: StorageOrphanEntry[] = []
   let orphanBytes = 0
   let totalBytes = 0
 
   if (!existsSync(sessionsDir)) {
-    return { appDataPath, totalBytes: 0, sessions, orphanBytes: 0 }
+    return { appDataPath, totalBytes: 0, sessions, orphanBytes: 0, orphanEntries }
   }
 
   const entries = readdirSync(sessionsDir, { withFileTypes: true })
   for (const entry of entries) {
+    const entryPath = join(sessionsDir, entry.name)
     if (!entry.isDirectory()) {
-      orphanBytes += statSync(join(sessionsDir, entry.name)).size
+      orphanBytes += addOrphanEntry(appDataPath, entryPath, orphanEntries)
       continue
     }
 
     const sessionId = entry.name
-    const sessionDir = join(sessionsDir, sessionId)
-    const historyBytes = getPathBytes(join(sessionDir, SESSION_DATA_FILE)) +
+    const sessionDir = entryPath
+    const metadata = readSessionStorageMetadata(sessionId, sessionDir)
+    if (!metadata) {
+      orphanBytes += addOrphanEntry(
+        appDataPath,
+        sessionDir,
+        orphanEntries,
+        INTERNAL_STORAGE_DIRS.has(sessionId) ? 'system' : 'orphan'
+      )
+      continue
+    }
+    const historyBytes =
+      getPathBytes(join(sessionDir, SESSION_DATA_FILE)) +
+      getPathBytes(join(sessionDir, SESSION_MESSAGES_FILE)) +
       getPathBytes(join(sessionDir, CONTEXT_SNAPSHOT_FILE))
     const checkpointsBytes = getCheckpointFilesBytes(sessionDir)
     const artifactsBytes = getPathBytes(join(sessionDir, 'artifacts'))
@@ -92,6 +117,7 @@ export function getStorageUsageReport(appDataPath: string): StorageUsageReport {
 
     sessions.push({
       sessionId,
+      ...metadata,
       historyBytes,
       checkpointsBytes,
       artifactsBytes,
@@ -104,9 +130,8 @@ export function getStorageUsageReport(appDataPath: string): StorageUsageReport {
   try {
     const topEntries = readdirSync(appDataPath, { withFileTypes: true })
     for (const entry of topEntries) {
-      if (!entry.isDirectory()) {
-        orphanBytes += statSync(join(appDataPath, entry.name)).size
-      }
+      if (entry.name === 'sessions') continue
+      orphanBytes += addOrphanEntry(appDataPath, join(appDataPath, entry.name), orphanEntries)
     }
   } catch {
     // 忽略顶层读取失败
@@ -114,7 +139,50 @@ export function getStorageUsageReport(appDataPath: string): StorageUsageReport {
 
   totalBytes += orphanBytes
 
-  return { appDataPath, totalBytes, sessions, orphanBytes }
+  return { appDataPath, totalBytes, sessions, orphanBytes, orphanEntries }
+}
+
+function addOrphanEntry(
+  appDataPath: string,
+  entryPath: string,
+  orphanEntries: StorageOrphanEntry[],
+  kind: StorageOrphanKind = 'orphan'
+): number {
+  const bytes = getPathBytes(entryPath)
+  orphanEntries.push({
+    relativePath: relative(appDataPath, entryPath).split(sep).join('/'),
+    bytes,
+    kind
+  })
+  return bytes
+}
+
+function readSessionStorageMetadata(
+  sessionId: string,
+  sessionDir: string
+): SessionStorageMetadata | null {
+  if (!SESSION_ID_PATTERN.test(sessionId)) return null
+  try {
+    const raw: unknown = JSON.parse(readFileSync(join(sessionDir, SESSION_DATA_FILE), 'utf8'))
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+    const data = raw as Record<string, unknown>
+    if (
+      data.id !== sessionId ||
+      (data.kind !== undefined && data.kind !== 'primary' && data.kind !== 'subagent') ||
+      typeof data.workspaceRoot !== 'string' ||
+      typeof data.updatedAt !== 'number' ||
+      !Number.isFinite(data.updatedAt)
+    ) {
+      return null
+    }
+    return {
+      title: typeof data.title === 'string' && data.title.trim() ? data.title.trim() : null,
+      workspaceRoot: data.workspaceRoot || null,
+      updatedAt: data.updatedAt
+    }
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -153,6 +221,9 @@ export function pruneSessionCheckpoints(
 
   if (!existsSync(sessionDir)) {
     return { freedBytes: 0, affectedSessions: 0, details: ['会话不存在'] }
+  }
+  if (!readSessionStorageMetadata(sessionId, sessionDir)) {
+    return { freedBytes: 0, affectedSessions: 0, details: ['不是可清理的会话数据'] }
   }
 
   try {
@@ -239,6 +310,9 @@ export function deleteSessionCompletely(
   if (!existsSync(sessionDir)) {
     return { freedBytes: 0, affectedSessions: 0, details: ['会话不存在'] }
   }
+  if (!readSessionStorageMetadata(sessionId, sessionDir)) {
+    return { freedBytes: 0, affectedSessions: 0, details: ['不是可删除的会话数据'] }
+  }
 
   const freedBytes = getPathBytes(sessionDir)
   closeSessionIndex(sessionDir)
@@ -286,6 +360,7 @@ export function runStartupGc(
         if (!sessionEntry.isDirectory()) continue
         const sessionId = sessionEntry.name
         const sessionDir = join(sessionsDir, sessionId)
+        if (!readSessionStorageMetadata(sessionId, sessionDir)) continue
 
         let sessionFreed = 0
         const messageEntries = readdirSync(sessionDir, { withFileTypes: true })
@@ -358,6 +433,7 @@ function cleanupSessionMigrationBackups(sessionsDir: string): {
     for (const sessionEntry of readdirSync(sessionsDir, { withFileTypes: true })) {
       if (!sessionEntry.isDirectory()) continue
       const sessionDir = join(sessionsDir, sessionEntry.name)
+      if (!readSessionStorageMetadata(sessionEntry.name, sessionDir)) continue
 
       let backups: Array<{ name: string; mtime: number; bytes: number }>
       try {

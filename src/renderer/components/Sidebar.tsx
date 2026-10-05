@@ -551,6 +551,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
     if (!normalizedFilter) return true
     return getDisplayTitle(session).toLowerCase().includes(normalizedFilter)
   }
+  const filteredSessionCount = rootSessions.filter(filterSessionMatch).length
 
   /** 单条高密度会话行（ThreadItem） */
   const renderSessionRow = (session: PrimarySession, leadingIcon?: React.ReactNode) => {
@@ -733,7 +734,8 @@ const SidebarSessions = React.memo(function SidebarSessions({
                   ref={filterInputRef}
                   type="text"
                   className="w-full px-2.5 py-1 text-xs rounded border border-border-subtle bg-surface-canvas text-text-primary placeholder:text-text-placeholder outline-none focus:border-accent-primary"
-                  placeholder="过滤当前会话..."
+                  placeholder="搜索当前表面所有项目的会话标题…"
+                  spellCheck={false}
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
                   onKeyDown={(e) => {
@@ -1068,6 +1070,25 @@ const SidebarSessions = React.memo(function SidebarSessions({
               )}
             </div>
           )}
+          {rootSessions.length === 0 ? (
+            <div className="sidebar-filter-empty" role="status" aria-live="polite">
+              暂无会话
+            </div>
+          ) : normalizedFilter && filteredSessionCount === 0 ? (
+            <div className="sidebar-filter-empty" role="status" aria-live="polite">
+              <span>未找到包含“{filterText.trim()}”的会话</span>
+              <button
+                type="button"
+                className="sidebar-filter-empty__clear"
+                onClick={() => {
+                  setFilterText('')
+                  filterInputRef.current?.focus()
+                }}
+              >
+                清除
+              </button>
+            </div>
+          ) : null}
         </SideNavSection>
       </SideNav>
 

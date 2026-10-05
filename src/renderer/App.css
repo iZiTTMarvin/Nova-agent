@@ -18,9 +18,11 @@
 }
 
 .app-workspace__body {
+  --chat-panel-min-width: 248px;
   display: flex;
   flex: 1;
   min-height: 0;
+  min-width: 0;
   /* 玻璃面：浮于包裹壳一阶，右/下仅露一线壳色窄边使四角圆成立；边界由色阶与圆角承担 */
   margin: 0 4px 4px 0;
   background-color: var(--surface-glass);
@@ -31,11 +33,21 @@
 }
 
 .app-workspace__main {
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: var(--chat-panel-min-width);
   height: 100%;
   display: flex;
   flex-direction: column;
+}
+
+.app-workspace__body > .inspector-panel {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: calc(100% - var(--chat-panel-min-width));
+}
+
+.app-workspace__body > .inspector-panel > .inspector-panel__inner {
+  max-width: 100%;
 }
 
 .app-workspace__stage {

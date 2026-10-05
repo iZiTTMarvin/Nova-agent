@@ -688,15 +688,55 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
   const handleSlashButton = () => {
     if (skillsEntryState.disabled) return
-    // 官方 trigger 靠输入 `/` 打开同一份 Palette。空草稿才写入触发符；
-    // 已有非 slash 内容不改写，避免把「hello」变成「/hello」。
-    setInputVal(prev => {
-      if (prev.startsWith('/')) return prev
-      if (prev.trim() === '') return '/'
-      return prev
-    })
     requestAnimationFrame(() => {
-      composerInputHandleRef.current?.focus()
+      const handle = composerInputHandleRef.current
+      const editable = composerBoxRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')
+      if (!handle || !editable) return
+
+      handle.focus()
+      const currentValue = handle.getValue()
+      const selection = window.getSelection()
+      let range = selection && selection.rangeCount > 0 && editable.contains(selection.getRangeAt(0).startContainer)
+        ? selection.getRangeAt(0)
+        : null
+      if (range && !range.collapsed) {
+        range.collapse(false)
+        selection?.removeAllRanges()
+        selection?.addRange(range)
+      }
+      if (!range && selection) {
+        range = document.createRange()
+        range.selectNodeContents(editable)
+        range.collapse(false)
+        selection.removeAllRanges()
+        selection.addRange(range)
+      }
+
+      const textBeforeCursor = range?.startContainer.nodeType === Node.TEXT_NODE
+        ? (range.startContainer.textContent ?? '').slice(0, range.startOffset)
+        : currentValue
+      const hasActiveSlash = textBeforeCursor.endsWith('/') || /(?:^|\s)\/\S*$/.test(textBeforeCursor)
+      const insertion = hasActiveSlash
+        ? ''
+        : currentValue.trim() === ''
+        ? '/'
+        : /\s$/.test(textBeforeCursor)
+          ? '/'
+          : ' /'
+      // 走编辑器公开插入接口，再派发真实 input，让官方 trigger 复用键入 `/` 的菜单状态。
+      if (insertion) {
+        handle.insertText(insertion)
+        // 公开接口把光标留在文本节点之后的元素偏移上，而 trigger 只识别文本节点内的光标。
+        const caret = window.getSelection()?.rangeCount ? window.getSelection()?.getRangeAt(0) : null
+        const inserted = caret?.startContainer.nodeType === Node.ELEMENT_NODE
+          ? caret.startContainer.childNodes[caret.startOffset - 1]
+          : null
+        if (caret && inserted?.nodeType === Node.TEXT_NODE) {
+          caret.setStart(inserted, (inserted.textContent ?? '').length)
+          caret.collapse(true)
+        }
+      }
+      editable.dispatchEvent(new Event('input', { bubbles: true }))
     })
   }
 
@@ -1162,8 +1202,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 pasteAsToken={false}
                 maxRows={14}
               />
-              <div className="flex items-center justify-between mt-2 pt-1">
-                <div className="flex items-center gap-2">
+              <div className="chat-composer__footer">
+                <div className="chat-composer__footer-start">
                   <ModeSwitch
                     supportsVision={supportsVision}
                     onSelectImage={() => fileInputRef.current?.click()}
@@ -1180,7 +1220,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                   )}
                   <CodeIndexStatusChip />
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="chat-composer__footer-end">
                   <ContextIndicator />
                   <ModelSelector />
                   <ReasoningEffortControl />

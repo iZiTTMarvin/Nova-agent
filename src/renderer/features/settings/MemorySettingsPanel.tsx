@@ -7,12 +7,13 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { ClickableCard } from '@astryxdesign/core/ClickableCard'
-import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { Dialog } from '@astryxdesign/core/Dialog'
 import { IconButton } from '@astryxdesign/core/IconButton'
+import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { CloseIcon } from '../../components/Icons'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { formatSettingsDateTime } from './formatDateTime'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type {
   MemoryScopeFileEntry,
@@ -30,11 +31,7 @@ function formatBytes(bytes: number): string {
 }
 
 function formatMtime(ms: number): string {
-  try {
-    return new Date(ms).toLocaleString()
-  } catch {
-    return String(ms)
-  }
+  return formatSettingsDateTime(ms)
 }
 
 /** 已学习记忆的类型标签（产品语言） */
@@ -78,6 +75,7 @@ export const MemorySettingsPanel: React.FC = () => {
   const [baselineContent, setBaselineContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [settingSaving, setSettingSaving] = useState(false)
   const [fileEditorOpen, setFileEditorOpen] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -293,11 +291,17 @@ export const MemorySettingsPanel: React.FC = () => {
     value: NovaSettingsDto[K]
   ): Promise<void> => {
     if (!settings) return
+    setSettingSaving(true)
+    setError(null)
     try {
       const next = await window.api.invoke('settings:set', { [key]: value } as Partial<NovaSettingsDto>)
       setSettings(next)
+      setStatus('已保存')
+      window.setTimeout(() => setStatus(null), 1500)
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存设置失败')
+    } finally {
+      setSettingSaving(false)
     }
   }
 
@@ -368,16 +372,6 @@ export const MemorySettingsPanel: React.FC = () => {
         >
           重建索引
         </Button>
-        <Button
-          label="打开记忆目录"
-          variant="primary"
-          size="sm"
-          type="button"
-          onClick={() => void handleOpenDir()}
-          isDisabled={!currentProject}
-        >
-          打开记忆目录
-        </Button>
       </div>
 
       {!currentProject && (
@@ -389,27 +383,14 @@ export const MemorySettingsPanel: React.FC = () => {
       {currentProject && stats && (
         <div className="memory-settings-panel__meta" aria-label="记忆 scope 信息">
           <div className="memory-settings-panel__meta-item">
-            <span className="memory-settings-panel__meta-label">scopeId</span>
-            <code className="memory-settings-panel__meta-code">{stats.scopeId}</code>
+            <span className="memory-settings-panel__meta-label">工作区</span>
+            <span className="memory-settings-panel__meta-workspace" title={currentProject}>
+              {currentProject}
+            </span>
           </div>
-          <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--path">
-            <span className="memory-settings-panel__meta-label">目录</span>
-            <code
-              className="memory-settings-panel__meta-path"
-              title={stats.scopeDir}
-            >
-              {stats.scopeDir}
-            </code>
-            <Button
-              label="复制完整路径"
-              variant="ghost"
-              size="sm"
-              type="button"
-              className="memory-settings-panel__copy-btn"
-              onClick={handleCopyScopePath}
-            >
-              复制
-            </Button>
+          <div className="memory-settings-panel__meta-item">
+            <span className="memory-settings-panel__meta-label">作用范围</span>
+            <span>当前工作区</span>
           </div>
           <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--stats">
             <span className="memory-settings-panel__meta-label">统计</span>
@@ -418,6 +399,29 @@ export const MemorySettingsPanel: React.FC = () => {
               {' · 已学习 '}{stats.records.active}
             </span>
           </div>
+          <details className="memory-settings-panel__meta-details">
+            <summary>技术信息</summary>
+            <div className="memory-settings-panel__meta-item">
+              <span className="memory-settings-panel__meta-label">scopeId</span>
+              <code className="memory-settings-panel__meta-code">{stats.scopeId}</code>
+            </div>
+            <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--path">
+              <span className="memory-settings-panel__meta-label">目录</span>
+              <code className="memory-settings-panel__meta-path" title={stats.scopeDir}>
+                {stats.scopeDir}
+              </code>
+              <Button
+                label="复制完整路径"
+                variant="ghost"
+                size="sm"
+                type="button"
+                className="memory-settings-panel__copy-btn"
+                onClick={handleCopyScopePath}
+              >
+                复制
+              </Button>
+            </div>
+          </details>
         </div>
       )}
 
@@ -434,12 +438,13 @@ export const MemorySettingsPanel: React.FC = () => {
                   开启后，Nova 会从对话与工具轨迹中提炼记忆，并在需要时检索此前的项目约定、偏好和经验。关闭后停止学习和检索。
                 </p>
               </div>
-              <CheckboxInput
+              <Switch
                 label="启用跨会话记忆"
                 isLabelHidden
                 className="memory-settings-panel__toggle-input"
                 value={settings.memoryEnabled}
                 onChange={checked => void updateSetting('memoryEnabled', checked)}
+                isDisabled={settingSaving}
               />
             </div>
           </div>
@@ -532,6 +537,11 @@ export const MemorySettingsPanel: React.FC = () => {
       {error && (
         <div className="settings-status settings-status--error memory-settings-panel__error">{error}</div>
       )}
+      {status && !fileEditorOpen && (
+        <div className="settings-status settings-status--ok memory-settings-panel__error" role="status">
+          {status}
+        </div>
+      )}
 
       <section className="memory-settings-panel__files-section" aria-label="记忆文件">
         <div className="memory-settings-panel__files-heading">
@@ -582,7 +592,7 @@ export const MemorySettingsPanel: React.FC = () => {
               </div>
             )}
           </div>
-          {currentProject && files.length === 0 ? (
+          <div className="memory-settings-panel__file-dock-actions">
             <Button
               label="打开记忆目录"
               variant="secondary"
@@ -593,7 +603,6 @@ export const MemorySettingsPanel: React.FC = () => {
             >
               打开目录
             </Button>
-          ) : (
             <Button
               label="编辑记忆文件"
               variant="secondary"
@@ -605,7 +614,7 @@ export const MemorySettingsPanel: React.FC = () => {
             >
               编辑文件
             </Button>
-          )}
+          </div>
         </div>
       </section>
 

@@ -46,6 +46,14 @@ describe('浏览器地址栏交互', () => {
     } finally { view.unmount() }
   })
 
+  it('没有页面时在正文区域提示输入网址并访问', () => {
+    const view = renderDom(<BrowserPanel />)
+    try {
+      expect(view.container.querySelector('[data-testid="browser-empty"]')?.textContent)
+        .toBe('输入网址并点击访问')
+    } finally { view.unmount() }
+  })
+
   it('输入法确认键不导航，随后独立 Enter 可导航', async () => {
     const view = renderDom(<BrowserPanel />)
     try {

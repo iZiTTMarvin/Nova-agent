@@ -1,5 +1,5 @@
 /**
- * SkillImportBar — zip 选择 / 拖拽 / URL 导入（Task 8）
+ * SkillImportBar — zip 选择 / 拖拽 / URL 导入
  */
 import React, { useCallback, useState } from 'react'
 import type { SkillCreateLocation } from '../../../shared/skills/types'

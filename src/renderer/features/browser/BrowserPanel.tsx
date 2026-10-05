@@ -234,6 +234,11 @@ export function BrowserPanel(): ReactNode {
         </div>
       )}
       <div className="browser-panel__stage" data-browser-guest-slot data-testid="browser-guest-slot">
+        {!page && !lastError && (
+          <div className="browser-panel__empty" data-testid="browser-empty" role="status">
+            <p>输入网址并点击访问</p>
+          </div>
+        )}
         {loadError && page && !failed && (
           <BrowserLoadError
             page={page}

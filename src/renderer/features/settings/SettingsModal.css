@@ -1,17 +1,55 @@
 /* ── 设置壳层：全屏 Dialog 内的「侧栏 + 浮动内容板」 ── */
 
 .settings-shell {
+  display: flex;
+  flex-direction: column;
   background: var(--bg-sidebar);
-  /* 无框窗口的拖拽区不会自动给覆盖层让路；设置全屏期间整壳声明 no-drag，
-     否则顶部 44px 拖拽条会吞掉返回按钮等点击 */
+  /* 仅标题栏显式拖拽区可移动窗口，内容区保持可交互。 */
   -webkit-app-region: no-drag;
   animation: settings-backdrop-in 180ms ease-out both;
 }
 
+.settings-shell__titlebar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 38px;
+  flex-shrink: 0;
+  background: var(--surface-sidebar);
+  user-select: none;
+}
+
+.settings-shell__titlebar-drag-area {
+  position: absolute;
+  inset: 0;
+  -webkit-app-region: drag;
+  z-index: 0;
+}
+
+.settings-shell__titlebar-label {
+  position: relative;
+  z-index: 1;
+  padding-left: 14px;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  pointer-events: none;
+}
+
+.settings-shell__titlebar-controls {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
 .settings-shell__layout {
   display: flex;
+  flex: 1;
   width: 100%;
-  height: 100%;
+  min-height: 0;
 }
 
 .settings-shell__sidebar {
@@ -555,6 +593,53 @@
   flex-shrink: 0;
 }
 
+.rules-create-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rules-create-dialog__form h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.rules-create-dialog__scope {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rules-create-dialog__label {
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.rules-create-dialog__scope-options {
+  display: flex;
+  gap: 6px;
+}
+
+.rules-create-dialog__scope-hint {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rules-create-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
 /* ── 模型配置 ── */
 
 .llm-provider-add {
@@ -876,6 +961,38 @@
   font-size: 0.74rem;
 }
 
+.storage-table__cell--session {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  line-height: 1.35;
+}
+
+.storage-table__cell--session strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-table__cell--session > span,
+.storage-table__cell--session > time {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-table__cell--session .storage-table__cell--secondary {
+  color: var(--text-placeholder);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+}
+
 .storage-table__cell--total {
   font-weight: 600;
 }
@@ -888,6 +1005,66 @@
 
 .storage-table__action {
   flex-shrink: 0;
+}
+
+.storage-orphan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.storage-orphan-list__title {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.storage-orphan-list__hint {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.storage-orphan-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
+.storage-orphan-list__item span:first-child {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+}
+
+.storage-orphan-list__item span:nth-child(2) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.storage-orphan-list__item span:last-child {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.storage-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
 }
 
 /* ── 记忆 ── */
@@ -1045,6 +1222,33 @@
   gap: 6px;
   min-width: 0;
   max-width: 100%;
+}
+
+.memory-settings-panel__meta-workspace {
+  min-width: 0;
+  max-width: min(380px, 45vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-settings-panel__meta-details {
+  flex-basis: 100%;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-cream);
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.memory-settings-panel__meta-details summary {
+  width: fit-content;
+  cursor: pointer;
+}
+
+.memory-settings-panel__meta-details[open] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
 }
 
 .memory-settings-panel__meta-item--path {
@@ -1313,6 +1517,14 @@
 
 .memory-settings-panel__file-dock-action {
   flex-shrink: 0;
+}
+
+.memory-settings-panel__file-dock-actions {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .memory-settings-panel__file-chip-list {
@@ -1646,6 +1858,11 @@
 
   .memory-settings-panel__file-dock-action {
     align-self: flex-start;
+  }
+
+  .memory-settings-panel__file-dock-actions {
+    align-self: flex-start;
+    justify-content: flex-start;
   }
 
   .memory-file-dialog {

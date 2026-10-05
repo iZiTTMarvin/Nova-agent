@@ -1,7 +1,7 @@
 /**
  * SkillCard — 设置页技能列表项
  */
-import React from 'react'
+import React, { useState } from 'react'
 import type { SkillCatalogDiagnostic, SkillSummary } from '../../../shared/skills/types'
 import { skillSourceLabel, skillsI18n } from './i18n'
 import { Button } from '@astryxdesign/core/Button'
@@ -26,24 +26,21 @@ export const SkillCard: React.FC<SkillCardProps> = ({
   onDelete
 }) => {
   const canDelete = skill.source === 'global' || skill.source === 'project'
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false)
+  const description = skill.descriptionZh || skill.description
 
   return (
     <div className="skill-card">
       <div className="skill-card__main">
-        <Button
-          label={skill.name}
-          variant="ghost"
-          size="sm"
-          className="skill-card__name"
-          onClick={() => onUse(skill.name)}
-        />
+        <h4 className="skill-card__name">{skill.name}</h4>
         <span className={`skill-card__badge skill-card__badge--${skill.source}`}>
           {skillSourceLabel(skill.source)}
         </span>
         {skill.modelInvocable && (
           <span className="skill-card__toggle" title={skillsI18n.toggle}>
             <CheckboxInput
-              label="模型"
+              label={skillsI18n.toggle}
+              aria-label={skillsI18n.toggle}
               value={skill.enabled}
               onChange={checked => onToggle(skill.name, checked)}
               size="sm"
@@ -51,7 +48,21 @@ export const SkillCard: React.FC<SkillCardProps> = ({
           </span>
         )}
       </div>
-      <p className="skill-card__desc">{skill.descriptionZh || skill.description}</p>
+      <p className={`skill-card__desc${descriptionExpanded ? ' skill-card__desc--expanded' : ''}`}>
+        {description}
+      </p>
+      {description && (
+        <Button
+          label={descriptionExpanded ? skillsI18n.hideDescription : skillsI18n.showDescription}
+          variant="ghost"
+          size="sm"
+          className="skill-card__description-toggle"
+          aria-expanded={descriptionExpanded}
+          onClick={() => setDescriptionExpanded(value => !value)}
+        >
+          {descriptionExpanded ? skillsI18n.hideDescription : skillsI18n.showDescription}
+        </Button>
+      )}
       {diagnostics && diagnostics.length > 0 && (
         <ul className="skill-card__diagnostics">
           {diagnostics.map((d, i) => (

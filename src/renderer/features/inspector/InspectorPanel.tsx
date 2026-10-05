@@ -67,6 +67,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     if (!inspectorOpen) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      // 菜单/弹层先消费 Escape；捕获阶段会绕过它们的关闭与焦点恢复。
+      if (e.defaultPrevented) return
       // 输入类控件内的 Esc 属于编辑取消（重命名、问答面板等），不抢占
       const target = e.target as HTMLElement | null
       if (
@@ -80,10 +82,19 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
       }
       e.preventDefault()
       closeInspector()
+
+      // 面板内的按钮会随收起过渡卸载，焦点交给收起后仍可见的顶栏开关。
+      requestAnimationFrame(() => {
+        const label = isLearn ? '大纲、文件与浏览面板' : '审阅、文件与浏览面板'
+        const toggle = Array.from(
+          document.querySelectorAll<HTMLButtonElement>(`button[aria-label="${label}"]`)
+        ).find(button => !asideRef.current?.contains(button) && !button.closest('[aria-hidden="true"]'))
+        toggle?.focus()
+      })
     }
-    window.addEventListener('keydown', onKeyDown, true)
-    return () => window.removeEventListener('keydown', onKeyDown, true)
-  }, [inspectorOpen, closeInspector])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [inspectorOpen, closeInspector, isLearn])
 
   // 浏览器标签激活时渲染宽度不低于舞台下限；不回写 store，切回其它标签恢复原宽
   const effectiveWidth = activeTab === 'browser'

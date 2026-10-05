@@ -53,6 +53,16 @@ export function getToolTraceAction(toolName: string): string {
       return 'Ran'
     case 'web_search':
       return 'Searched'
+    case 'browser_open':
+      return 'Opened page'
+    case 'browser_observe':
+      return 'Read page'
+    case 'browser_act':
+      return 'Acted on page'
+    case 'browser_capture':
+      return 'Captured page'
+    case 'browser_close':
+      return 'Closed page'
     case 'task':
       return 'Task'
     case 'task_followup':
@@ -169,6 +179,75 @@ export function getToolTraceTarget(
       const query = (args.query as string) || ''
       return query ? truncateTarget(query) : 'query'
     }
+    case 'browser_open': {
+      const action = typeof args.action === 'string' ? args.action : ''
+      const url = typeof args.url === 'string' ? args.url : ''
+      const browserId = typeof args.browserId === 'string' ? args.browserId : ''
+      if (action === 'open' && url) {
+        try {
+          return `· ${truncateTarget(new URL(url).hostname || url)}`
+        } catch {
+          return `· ${truncateTarget(url)}`
+        }
+      }
+      const actionLabel: Record<string, string> = {
+        back: '后退',
+        forward: '前进',
+        reload: '刷新',
+        stop: '停止'
+      }
+      const target = actionLabel[action] || '页面'
+      return `· ${target}${browserId ? ` · ${shortBrowserId(browserId)}` : ''}`
+    }
+    case 'browser_observe': {
+      const action = typeof args.action === 'string' ? args.action : 'snapshot'
+      if (action === 'list') return '· 页面列表'
+      const focus = args.focus
+      if (focus && typeof focus === 'object') {
+        const focusRecord = focus as Record<string, unknown>
+        const role = typeof focusRecord.role === 'string' ? focusRecord.role : ''
+        const name = typeof focusRecord.name === 'string' ? focusRecord.name : ''
+        if (role && name) return `· ${truncateTarget(`${role}: ${name}`)}`
+        if (name) return `· ${truncateTarget(name)}`
+      }
+      const browserId = typeof args.browserId === 'string' ? args.browserId : ''
+      return browserId ? `· ${shortBrowserId(browserId)}` : ''
+    }
+    case 'browser_act': {
+      const action = args.action
+      if (!action || typeof action !== 'object') return ''
+      const actionRecord = action as Record<string, unknown>
+      const kind = typeof actionRecord.kind === 'string' ? actionRecord.kind : ''
+      const ref = typeof actionRecord.ref === 'string' ? actionRecord.ref : ''
+      const key = typeof actionRecord.key === 'string' ? actionRecord.key : ''
+      const direction = actionRecord.direction === 'up' ? '向上' : '向下'
+      const amount = actionRecord.amount === 'half-page' ? '半页' : '一页'
+      const summary = kind === 'click'
+        ? `点击 ${ref || '目标'}`
+        : kind === 'fill'
+          ? `填写 ${ref || '目标'}`
+          : kind === 'select'
+            ? `选择 ${ref || '目标'}`
+            : kind === 'press'
+              ? `按键 ${key || '目标'}`
+              : kind === 'scroll'
+                ? `${direction}滚动 ${amount}`
+                : kind === 'viewport'
+                  ? formatViewportTarget(actionRecord)
+                  : '页面操作'
+      return `· ${truncateTarget(summary)}`
+    }
+    case 'browser_capture': {
+      const observation = args.observation
+      const browserId = observation && typeof observation === 'object'
+        ? (observation as Record<string, unknown>).browserId
+        : undefined
+      return typeof browserId === 'string' ? `· ${shortBrowserId(browserId)}` : ''
+    }
+    case 'browser_close': {
+      const browserId = typeof args.browserId === 'string' ? args.browserId : ''
+      return browserId ? `· ${shortBrowserId(browserId)}` : ''
+    }
     case 'task': {
       const sub = (args.subagent_type as string) || ''
       const task = (args.task as string) || ''
@@ -246,9 +325,23 @@ export function getToolTraceTarget(
       if (path) return truncateTarget(compact(path))
       const command = (args.command as string) || ''
       if (command) return truncateTarget(command)
-      return toolName
+      return ''
     }
   }
+}
+
+function shortBrowserId(browserId: string): string {
+  return browserId.length > 14 ? `${browserId.slice(0, 14)}...` : browserId
+}
+
+function formatViewportTarget(action: Record<string, unknown>): string {
+  const width = typeof action.width === 'number' ? action.width : null
+  const height = typeof action.height === 'number' ? action.height : null
+  const device = typeof action.device === 'string' ? action.device : ''
+  if (width !== null && height !== null) {
+    return `视口 ${width}×${height}${device ? ` · ${device}` : ''}`
+  }
+  return '调整视口'
 }
 
 /** write/edit 预览文本（L4 按需挂载时用） */
@@ -301,6 +394,16 @@ export function getToolTraceActionChinese(toolName: string): string {
       return '已执行'
     case 'web_search':
       return '已搜索'
+    case 'browser_open':
+      return '打开网页'
+    case 'browser_observe':
+      return '读取页面'
+    case 'browser_act':
+      return '操作页面'
+    case 'browser_capture':
+      return '截取页面'
+    case 'browser_close':
+      return '关闭页面'
     case 'task':
       return '已委托'
     case 'task_followup':
@@ -482,7 +585,7 @@ export function getToolGroupTraceParts(
     default:
       return {
         action,
-        target: toolName,
+        target: '',
         suffix: count >= 2 ? `等 ${count} 次` : ''
       }
   }

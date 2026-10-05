@@ -81,6 +81,10 @@ export function registerRulesHandler(): void {
       absolutePath = buildNewWorkspaceRulePath(params.workspaceRoot, params.name)
     }
     assertRulePathAllowed(absolutePath, params.workspaceRoot)
+    // 新建不得覆盖已有规则；渲染层的重名提示只是体验层预检。
+    if (existsSync(absolutePath)) {
+      throw new Error('相同位置已存在该规则文件')
+    }
     writeRuleFile(absolutePath, content)
     const listed = listRuleFiles(params.workspaceRoot)
     const found = listed.find(e => normalize(e.absolutePath) === normalize(absolutePath))

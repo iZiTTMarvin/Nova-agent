@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react'
+import React from 'react'
+import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { useChatStore } from '../../stores/useChatStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { SESSION_PLACEHOLDER_TITLE } from '../../../shared/session/title'
 import { listBreadcrumbSessions, resolveSidebarActiveSessionId } from '../subagents/sidebarSessions'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { FolderIcon, ChevronIcon, CheckIcon } from '../../components/Icons'
+import { formatSettingsRelativeTime } from '../settings/formatDateTime'
 
 /** 工作区路径取末段作为展示名（与侧边栏项目分组同名规则） */
 function projectDisplayName(pathStr: string): string {
@@ -23,71 +25,57 @@ export const SessionBreadcrumb: React.FC = () => {
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const selectSession = useChatStore(state => state.selectSession)
   const currentMode = useWorkspaceStore(state => state.currentMode)
-  const [open, setOpen] = useState(false)
-
-  useEffect(() => {
-    if (!open) return
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target
-      if (!(target instanceof Element)) return
-      if (target.closest('.chat-session-breadcrumb')) return
-      setOpen(false)
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    window.addEventListener('mousedown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('mousedown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open])
 
   const displaySessionId = resolveSidebarActiveSessionId(sessions, currentSessionId)
   const displaySession = sessions.find(s => s.id === displaySessionId)
   if (!currentProject || !displaySession) return null
 
   const projectSessions = listBreadcrumbSessions(sessions, currentProject, currentMode === 'learn' ? 'learn' : 'dev')
+  const currentTitle = displaySession.title || SESSION_PLACEHOLDER_TITLE
+  const triggerLabel = `${projectDisplayName(currentProject)} / ${currentTitle}`
 
   return (
     <div className="chat-session-breadcrumb">
-      <button
-        type="button"
-        className="chat-session-breadcrumb__trigger"
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen(v => !v)}
+      <DropdownMenu
+        className="chat-session-breadcrumb__panel"
+        button={{
+          label: triggerLabel,
+          icon: <FolderIcon size={16} className="chat-session-breadcrumb__folder" />,
+          variant: 'ghost',
+          size: 'sm',
+          className: 'chat-session-breadcrumb__trigger',
+          endContent: <ChevronIcon size={14} direction="down" className="chat-session-breadcrumb__chevron" />,
+          children: (
+            <>
+              <span className="chat-session-breadcrumb__project">{projectDisplayName(currentProject)}</span>
+              <span className="chat-session-breadcrumb__sep" aria-hidden>/</span>
+              <span className="chat-session-breadcrumb__session" title={currentTitle}>
+                {currentTitle}
+              </span>
+            </>
+          )
+        }}
       >
-        <FolderIcon size={16} className="chat-session-breadcrumb__folder" />
-        <span className="chat-session-breadcrumb__project">{projectDisplayName(currentProject)}</span>
-        <span className="chat-session-breadcrumb__sep" aria-hidden>/</span>
-        <span className="chat-session-breadcrumb__session">
-          {displaySession.title || SESSION_PLACEHOLDER_TITLE}
-        </span>
-        <ChevronIcon size={14} direction="down" className="chat-session-breadcrumb__chevron" />
-      </button>
-      {open && (
-        <div className="chat-session-breadcrumb__panel" role="menu">
-          {projectSessions.map(s => (
-            <button
+        {projectSessions.map(s => {
+          const title = s.title || SESSION_PLACEHOLDER_TITLE
+          return (
+            <DropdownMenuItem
               key={s.id}
-              type="button"
-              role="menuitem"
               className="chat-session-breadcrumb__item"
+              label={(
+                <span className="chat-session-breadcrumb__item-label" title={title}>
+                  {title}
+                </span>
+              )}
+              description={`更新时间：${formatSettingsRelativeTime(s.updatedAt)}`}
+              endContent={s.id === displaySessionId ? <CheckIcon size={12} /> : undefined}
               onClick={() => {
-                setOpen(false)
                 void selectSession(s.id)
               }}
-            >
-              <span className="chat-session-breadcrumb__item-label">
-                {s.title || SESSION_PLACEHOLDER_TITLE}
-              </span>
-              {s.id === displaySessionId && <CheckIcon size={12} />}
-            </button>
-          ))}
-        </div>
-      )}
+            />
+          )
+        })}
+      </DropdownMenu>
     </div>
   )
 }

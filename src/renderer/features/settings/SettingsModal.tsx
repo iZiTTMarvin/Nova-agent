@@ -6,6 +6,7 @@
 import React, { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Dialog } from '@astryxdesign/core/Dialog'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { WindowControls } from '../../components/ContentTopBar'
 import { rulesI18n, skillsI18n, subagentsI18n } from '../skills/i18n'
 import {
   SettingsIcon,
@@ -206,6 +207,29 @@ const SettingsModalSession: React.FC<{ onClose: () => void }> = ({ onClose }) =>
   const [enterActive, setEnterActive] = useState(true)
   const firstSectionRef = useRef(true)
   const navRefs = useRef<Partial<Record<SettingsSection, HTMLElement | null>>>({})
+  const shellRef = useRef<HTMLDialogElement>(null)
+  const escapeOwnedByNested = useRef(false)
+
+  // 子 Dialog 的 Esc 会冒泡到壳层，但冒泡前它的关闭状态可能已提交并卸载；
+  // 因此在捕获阶段（子 Dialog 仍在 DOM 中）判定本次 Esc 的归属。
+  useEffect(() => {
+    const dialog = shellRef.current
+    if (!dialog) return
+    let resetTimer = 0
+    const claimEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      escapeOwnedByNested.current = dialog.querySelector('dialog[open]') !== null
+      window.clearTimeout(resetTimer)
+      resetTimer = window.setTimeout(() => {
+        escapeOwnedByNested.current = false
+      }, 0)
+    }
+    dialog.addEventListener('keydown', claimEscape, true)
+    return () => {
+      window.clearTimeout(resetTimer)
+      dialog.removeEventListener('keydown', claimEscape, true)
+    }
+  }, [])
 
   useEffect(() => {
     if (firstSectionRef.current) {
@@ -262,15 +286,23 @@ const SettingsModalSession: React.FC<{ onClose: () => void }> = ({ onClose }) =>
 
   return (
     <Dialog
+      ref={shellRef}
       isOpen
       variant="fullscreen"
       onOpenChange={open => {
-        if (!open) onClose()
+        if (!open && !escapeOwnedByNested.current) onClose()
       }}
       padding={0}
       className="settings-shell"
       aria-label="设置"
     >
+      <header className="settings-shell__titlebar">
+        <div className="settings-shell__titlebar-drag-area" aria-hidden="true" />
+        <span className="settings-shell__titlebar-label">设置</span>
+        <div className="settings-shell__titlebar-controls">
+          <WindowControls />
+        </div>
+      </header>
       <div className="settings-shell__layout">
         <aside className="settings-shell__sidebar">
           <button

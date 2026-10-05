@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
-import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
+import { Switch } from '@astryxdesign/core/Switch'
 import type { CodeIndexFailureCode, CodeIndexStatusDto } from '../../../shared/code-index'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import {
@@ -10,6 +10,7 @@ import {
   useCodeIndexStore
 } from '../../stores/useCodeIndexStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { formatSettingsRelativeTime } from './formatDateTime'
 
 export const CodeIndexSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -20,6 +21,7 @@ export const CodeIndexSettingsPanel: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [commandPending, setCommandPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
 
   const loadSettings = useCallback(async () => {
     try {
@@ -43,9 +45,12 @@ export const CodeIndexSettingsPanel: React.FC = () => {
     if (!settings) return
     setSaving(true)
     setError(null)
+    setSaved(false)
     try {
       const next = await window.api.invoke('settings:set', { codeIndexEnabled: enabled })
       setSettings(next)
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 1500)
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : '保存设置失败')
     } finally {
@@ -134,7 +139,7 @@ export const CodeIndexSettingsPanel: React.FC = () => {
                 对新建会话生效，不影响正在进行的会话。
               </p>
             </div>
-            <CheckboxInput
+            <Switch
               label="启用代码索引"
               isLabelHidden
               value={settings.codeIndexEnabled}
@@ -152,6 +157,12 @@ export const CodeIndexSettingsPanel: React.FC = () => {
       {snapshot?.failure && (
         <div className="settings-status settings-status--warning settings-status--gap" role="status">
           {formatFailureCategory(snapshot.failure.code)}
+        </div>
+      )}
+
+      {saved && !error && !statusError && (
+        <div className="settings-status settings-status--ok" role="status">
+          已保存
         </div>
       )}
 
@@ -213,11 +224,7 @@ function formatStatus(snapshot: CodeIndexStatusDto | null): string {
 
 function formatRelativeTime(timestamp: number | null): string {
   if (timestamp === null) return '尚未完成'
-  const elapsed = Math.max(0, Date.now() - timestamp)
-  if (elapsed < 60_000) return '刚刚'
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟前`
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} 小时前`
-  return new Date(timestamp).toLocaleDateString()
+  return formatSettingsRelativeTime(timestamp)
 }
 
 function formatBytes(bytes: number): string {

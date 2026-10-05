@@ -75,10 +75,6 @@
 
 /* 下拉浮层观感对齐侧边栏会话菜单 */
 .chat-session-breadcrumb__panel {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 30;
   min-width: 200px;
   max-width: 320px;
   max-height: 320px;
@@ -88,25 +84,10 @@
   border: 1px solid var(--border-warm);
   background: var(--bg-card);
   box-shadow: var(--shadow-popup);
-  transform-origin: top left;
-  animation: popup-scale-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .chat-session-breadcrumb__item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
+  min-width: 0;
 }
 
 .chat-session-breadcrumb__item:hover {
@@ -118,8 +99,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-
 
 /* ──────────────────────────────────────────────────────────
    消息区域
@@ -645,10 +624,18 @@
   z-index: 10;
 }
 
-.chat-msg:hover .chat-msg__actions {
+.chat-msg:hover .chat-msg__actions,
+.chat-msg:focus-within .chat-msg__actions,
+.chat-msg:has(.chat-msg__actions [aria-expanded='true']) .chat-msg__actions,
+.chat-msg:has(.chat-msg__actions [data-state='open']) .chat-msg__actions {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
+}
+
+.chat-msg__actions :is(button, a):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 /* 动作按钮（重新生成/编辑/分支翻页）几何交给 Astryx IconButton size/variant，
@@ -802,12 +789,28 @@
 }
 
 .context-indicator {
+  appearance: none;
   display: flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
   padding: 2px;
   border-radius: 50%;
+}
+
+.context-indicator:hover {
+  background: var(--surface-hover);
+}
+
+.context-indicator:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
 }
 
 .code-index-status-chip {
@@ -1173,6 +1176,89 @@ button.code-index-status-chip:hover {
   color: var(--text-secondary);
   box-shadow: var(--shadow-whisper);
   pointer-events: auto;
+}
+
+/* 底栏在窄聊天列中分成两行；发送/停止按钮始终保留完整命中区。 */
+.chat-composer__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  margin-top: 8px;
+  padding-top: 4px;
+}
+
+.chat-composer__footer-start,
+.chat-composer__footer-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.chat-composer__footer-start {
+  flex: 1 1 220px;
+}
+
+.chat-composer__footer-end {
+  flex: 1 1 220px;
+  justify-content: flex-end;
+}
+
+.chat-composer__footer-start > *,
+.chat-composer__footer-end > * {
+  min-width: 0;
+}
+
+.chat-composer__footer-end > button[aria-label='发送'],
+.chat-composer__footer-end > button[aria-label='中断生成'],
+.chat-composer__footer-end > button[aria-label='正在停止'] {
+  flex: 0 0 auto;
+}
+
+.chat-composer__footer-end .model-selector__label {
+  display: inline-block;
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-composer__footer-end .effort-control,
+.chat-composer__footer-end .effort-control__trigger,
+.chat-composer__footer-end .effort-control__content {
+  min-width: 0;
+}
+
+.chat-composer__footer-end .effort-control__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-panel__composer-inner {
+  container: chat-composer / inline-size;
+}
+
+@container chat-composer (max-width: 320px) {
+  .chat-composer__footer-start,
+  .chat-composer__footer-end {
+    flex-basis: 100%;
+  }
+
+  .chat-composer__footer-end {
+    justify-content: space-between;
+    gap: 4px;
+  }
+
+  .chat-composer__footer-end .model-selector__label {
+    max-width: 96px;
+  }
 }
 
 /* Inspector 拖拽期间冻结阅读宽度：阅读柱与 Composer 固定为拖拽开始时的实际渲染宽度

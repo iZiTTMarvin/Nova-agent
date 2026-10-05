@@ -5,6 +5,7 @@ import {
   shouldForceExpand,
   useFileTreeStore
 } from '../../../../src/renderer/features/inspector/useFileTreeStore'
+import { useWorkspaceStore } from '../../../../src/renderer/stores/useWorkspaceStore'
 import type { FsEntry } from '../../../../src/shared/fs/types'
 
 describe('useFileTreeStore', () => {
@@ -13,6 +14,7 @@ describe('useFileTreeStore', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     resetFileTreeStoreForTests()
+    useWorkspaceStore.setState({ currentProjectPath: null })
     global.window = {
       ...global.window,
       api: {
@@ -91,5 +93,39 @@ describe('useFileTreeStore', () => {
     await useFileTreeStore.getState().loadDir('gone')
     expect(useFileTreeStore.getState().errors['gone']).toBeUndefined()
     expect(useFileTreeStore.getState().nodes['gone']).toEqual([])
+  })
+
+  it('过滤走工作区文件搜索，并丢弃过期结果', async () => {
+    useWorkspaceStore.setState({ currentProjectPath: 'D:/workspace' })
+    const pending: Array<(value: { files: string[]; source: 'git' | 'recursive' }) => void> = []
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel !== 'workspace:search-files') {
+        return Promise.resolve({ entries: [] })
+      }
+      return new Promise(resolve => {
+        pending.push(resolve)
+      })
+    })
+
+    useFileTreeStore.getState().setFilter('old')
+    useFileTreeStore.getState().setFilter('reset')
+    expect(mockInvoke).toHaveBeenNthCalledWith(1, 'workspace:search-files', {
+      workspaceRoot: 'D:/workspace',
+      query: 'old'
+    })
+    expect(mockInvoke).toHaveBeenNthCalledWith(2, 'workspace:search-files', {
+      workspaceRoot: 'D:/workspace',
+      query: 'reset'
+    })
+
+    pending[0]?.({ files: ['old.ts'], source: 'git' })
+    await Promise.resolve()
+    expect(useFileTreeStore.getState().filterMatches).toEqual([])
+
+    pending[1]?.({ files: ['styles/reset.css'], source: 'git' })
+    await vi.waitFor(() => {
+      expect(useFileTreeStore.getState().filterMatches).toEqual(['styles/reset.css'])
+    })
+    expect(useFileTreeStore.getState().filterLoading).toBe(false)
   })
 })

@@ -75,6 +75,10 @@
   --color-brand-hover: light-dark(#2563eb, #93c5fd);
   --color-brand-dim: light-dark(rgba(59, 130, 246, 0.08), rgba(96, 165, 250, 0.15));
   --color-accent: var(--accent-primary);
+  /* 警告文字与填充分离，浅色表面上的小字号不复用亮黄指示色。 */
+  --color-warning-fill: light-dark(#a15c00, #fbbf24);
+  --color-warning-on-fill: light-dark(#ffffff, #18181b);
+  --color-warning-text: light-dark(#8a4b00, #fbbf24);
   --color-warning: var(--accent-warning);
   --nova-status-error: var(--accent-error);
   --nova-status-success: var(--accent-running);

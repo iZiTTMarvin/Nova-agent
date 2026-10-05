@@ -16,7 +16,7 @@ import { InspectorToggleButton } from '../features/inspector/InspectorToggleButt
 import './ContentTopBar.css'
 
 /** 窗口控制按钮组：最小化 / 最大化或还原 / 关闭（Windows 风格，固定在内容区顶行右侧） */
-const WindowControls: React.FC = () => {
+export const WindowControls: React.FC = () => {
   const [isMaximized, setIsMaximized] = useState(false)
 
   useEffect(() => {

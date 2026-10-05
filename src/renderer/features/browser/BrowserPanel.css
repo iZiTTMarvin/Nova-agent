@@ -209,6 +209,22 @@
   background: var(--surface-canvas);
 }
 
+.browser-panel__empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.browser-panel__empty p {
+  margin: 0;
+}
+
 .browser-panel__failed {
   position: absolute;
   inset: 0;

@@ -41,10 +41,13 @@
 .skill-import-bar__url {
   display: flex;
   gap: 8px;
-  align-items: stretch;
+  align-items: center;
 }
 
 .skill-import-bar__url .skill-dialog__input {
   flex: 1;
   min-width: 0;
+  box-sizing: border-box;
+  height: var(--size-element-sm, 28px);
+  padding-block: 0;
 }

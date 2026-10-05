@@ -1,5 +1,5 @@
 /**
- * CreateSkillDialog — 创建技能弹窗（Task 7）
+ * CreateSkillDialog — 创建技能弹窗
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import type { SkillCreateLocation } from '../../../shared/skills/types'
@@ -143,21 +143,22 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
       className="skill-dialog"
       aria-labelledby="create-skill-title"
     >
-        <header className="skill-dialog__header">
-          <h3 id="create-skill-title" className="skill-dialog__title">
-            {skillsI18n.createTitle}
-          </h3>
-          <IconButton
-            label="关闭"
-            icon={<CloseIcon size={16} />}
-            variant="ghost"
-            size="sm"
-            className="skill-dialog__close"
-            onClick={onClose}
-          />
-        </header>
+      <header className="skill-dialog__header">
+        <h3 id="create-skill-title" className="skill-dialog__title">
+          {skillsI18n.createTitle}
+        </h3>
+        <IconButton
+          label="关闭"
+          icon={<CloseIcon size={16} />}
+          variant="ghost"
+          size="sm"
+          className="skill-dialog__close"
+          onClick={onClose}
+        />
+      </header>
 
-        <form className="skill-dialog__form" onSubmit={e => void handleSubmit(e)}>
+      <form className="skill-dialog__form" onSubmit={e => void handleSubmit(e)}>
+        <div className="skill-dialog__body">
           <div className="skill-dialog__field">
             <TextInput
               id="skill-name"
@@ -239,26 +240,27 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
           </div>
 
           {error && <p className="skill-dialog__error">{error}</p>}
+        </div>
 
-          <div className="skill-dialog__actions">
-            <Button
-              label={skillsI18n.createCancel}
-              variant="ghost"
-              size="sm"
-              type="button"
-              onClick={onClose}
-              isDisabled={submitting}
-            />
-            <Button
-              label={submitting ? skillsI18n.createSubmitting : skillsI18n.createSubmit}
-              variant="primary"
-              size="sm"
-              type="submit"
-              isDisabled={submitting || !nameValid || !description.trim()}
-              isLoading={submitting}
-            />
-          </div>
-        </form>
+        <div className="skill-dialog__actions">
+          <Button
+            label={skillsI18n.createCancel}
+            variant="ghost"
+            size="sm"
+            type="button"
+            onClick={onClose}
+            isDisabled={submitting}
+          />
+          <Button
+            label={submitting ? skillsI18n.createSubmitting : skillsI18n.createSubmit}
+            variant="primary"
+            size="sm"
+            type="submit"
+            isDisabled={submitting || !nameValid || !description.trim()}
+            isLoading={submitting}
+          />
+        </div>
+      </form>
     </Dialog>
   )
 }

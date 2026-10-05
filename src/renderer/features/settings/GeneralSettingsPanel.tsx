@@ -23,6 +23,7 @@ import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
 import type { AppUpdateSnapshot } from '../../../shared/update'
 import { FullAccessConfirmDialog } from '../permissions/FullAccessConfirmDialog'
+import { formatSettingsTime } from './formatDateTime'
 
 const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: 'default', label: '默认模式（模型自主循环）' },
@@ -46,7 +47,7 @@ function displayVersion(version: string): string {
 function formatCheckedAt(checkedAt: string): string {
   const date = new Date(checkedAt)
   if (Number.isNaN(date.getTime())) return ''
-  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit' }).format(date)
+  return formatSettingsTime(date.getTime())
 }
 
 function describeUpdateState(snapshot: AppUpdateSnapshot | null): string {

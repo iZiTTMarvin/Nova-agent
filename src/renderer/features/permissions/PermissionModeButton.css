@@ -7,7 +7,7 @@
 }
 
 .permission-mode__trigger--full_access {
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 
 .permission-mode__menu-title {
@@ -62,8 +62,9 @@
 }
 
 .full-access-confirm__enable {
-  background: var(--color-warning);
-  border-color: var(--color-warning);
+  background: var(--color-warning-fill);
+  border-color: var(--color-warning-fill);
+  color: var(--color-warning-on-fill);
 }
 
 @media (max-width: 720px) {

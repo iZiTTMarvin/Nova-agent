@@ -5,17 +5,20 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Switch } from '@astryxdesign/core/Switch'
+import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useSkillsStore } from '../skills/store'
 import { SkillCard } from '../skills/SkillCard'
 import { CreateSkillDialog } from '../skills/CreateSkillDialog'
 import { SkillImportBar } from '../skills/SkillImportBar'
-import { skillsI18n } from '../skills/i18n'
-import { SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
+import { skillSourceLabel, skillsI18n } from '../skills/i18n'
+import { SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
-import type { SkillCatalogDiagnostic } from '../../../shared/skills/types'
+import type { SkillCatalogDiagnostic, SkillSource } from '../../../shared/skills/types'
+import './SkillsSettingsPanel.css'
 
 const COLLAPSE_LIMIT = 5
+type SkillSourceFilter = SkillSource | 'all'
 
 export const SkillsSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -29,6 +32,8 @@ export const SkillsSettingsPanel: React.FC = () => {
 
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
   const [expanded, setExpanded] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>('all')
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -59,8 +64,32 @@ export const SkillsSettingsPanel: React.FC = () => {
     return unsub
   }, [loadSettings, refreshSkills, setSnapshot])
 
-  const sorted = [...skills].sort((a, b) => a.name.localeCompare(b.name))
-  const visible = expanded ? sorted : sorted.slice(0, COLLAPSE_LIMIT)
+  const sorted = useMemo(() => [...skills].sort((a, b) => a.name.localeCompare(b.name)), [skills])
+  const sourceOptions = useMemo(() => {
+    const sources = [...new Set(sorted.map(skill => skill.source))]
+      .sort((a, b) => skillSourceLabel(a).localeCompare(skillSourceLabel(b)))
+    return [
+      { value: 'all', label: skillsI18n.allSources },
+      ...sources.map(source => ({ value: source, label: skillSourceLabel(source) }))
+    ]
+  }, [sorted])
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase()
+  const filtered = useMemo(() => {
+    return sorted.filter(skill => {
+      if (sourceFilter !== 'all' && skill.source !== sourceFilter) return false
+      if (!normalizedQuery) return true
+      return [skill.name, skill.nameZh, skill.description, skill.descriptionZh]
+        .some(value => value?.toLocaleLowerCase().includes(normalizedQuery))
+    })
+  }, [normalizedQuery, sorted, sourceFilter])
+  const visible = expanded ? filtered : filtered.slice(0, COLLAPSE_LIMIT)
+
+  useEffect(() => {
+    if (sourceFilter !== 'all' && !sourceOptions.some(option => option.value === sourceFilter)) {
+      setSourceFilter('all')
+    }
+  }, [sourceFilter, sourceOptions])
+
   // 诊断按技能归属分组展示；无归属的目录级问题单列一行，不打断浏览
   const diagnosticsBySkill = useMemo(() => {
     const map = new Map<string, SkillCatalogDiagnostic[]>()
@@ -188,6 +217,51 @@ export const SkillsSettingsPanel: React.FC = () => {
               <SkillImportBar hasProject={Boolean(currentProject)} onImported={handleImported} />
             )}
 
+            <div className="skill-settings__filters" role="search" aria-label={skillsI18n.searchLabel}>
+              <div className="skill-settings__search">
+                <TextInput
+                  label={skillsI18n.searchLabel}
+                  isLabelHidden
+                  value={searchQuery}
+                  onChange={value => {
+                    setSearchQuery(value)
+                    setExpanded(false)
+                  }}
+                  placeholder={skillsI18n.searchPlaceholder}
+                  hasClear
+                  size="sm"
+                  width="100%"
+                />
+              </div>
+              {sourceOptions.length > 2 && (
+                <div className="skill-settings__source-filter">
+                  <SettingsSelect
+                    label={skillsI18n.sourceFilterLabel}
+                    isLabelHidden
+                    options={sourceOptions}
+                    value={sourceFilter}
+                    onChange={value => {
+                      setSourceFilter(value as SkillSourceFilter)
+                      setExpanded(false)
+                    }}
+                    size="sm"
+                    width="100%"
+                  />
+                </div>
+              )}
+              {filtered.length > COLLAPSE_LIMIT && (
+                <Button
+                  label={expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${filtered.length}）`}
+                  variant="ghost"
+                  size="sm"
+                  className="skill-settings__expand"
+                  onClick={() => setExpanded(value => !value)}
+                >
+                  {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${filtered.length}）`}
+                </Button>
+              )}
+            </div>
+
             {skillsError && (
               <Banner
                 status="error"
@@ -202,7 +276,11 @@ export const SkillsSettingsPanel: React.FC = () => {
             )}
             {visible.length === 0 && !skillsError && (
               <p className="settings-panel__muted">
-                {skillsLoading ? '加载中…' : skillsI18n.empty}
+                {skillsLoading
+                  ? '加载中…'
+                  : skills.length === 0
+                    ? skillsI18n.empty
+                    : skillsI18n.noSearchResults}
               </p>
             )}
             {unattributedDiagnostics.map((d, i) => (
@@ -226,17 +304,6 @@ export const SkillsSettingsPanel: React.FC = () => {
               </div>
             )}
 
-            {sorted.length > COLLAPSE_LIMIT && (
-              <Button
-                label={expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
-                variant="ghost"
-                size="sm"
-                className="settings-panel__link-btn"
-                onClick={() => setExpanded(v => !v)}
-              >
-                {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${sorted.length}）`}
-              </Button>
-            )}
           </SettingsSection>
         </SettingsPage>
       </div>

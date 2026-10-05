@@ -173,6 +173,26 @@ describe('InspectorPanel', () => {
     renderer.unmount()
   })
 
+  it('已被弹层消费的 Escape 不会同时收起面板，下一次 Escape 才关闭', () => {
+    const renderer = renderDom(<InspectorPanel />)
+    act(() => {
+      useLayoutStore.getState().toggleInspector()
+    })
+
+    act(() => {
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      event.preventDefault()
+      window.dispatchEvent(event)
+    })
+    expect(useLayoutStore.getState().inspectorOpen).toBe(true)
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    renderer.unmount()
+  })
+
   it('计划 surface 使用同一个面板壳且不并列显示标准 tabs', () => {
     const renderer = renderDom(<InspectorPanel />)
     act(() => {

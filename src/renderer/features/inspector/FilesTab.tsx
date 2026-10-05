@@ -182,8 +182,33 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
   )
 }
 
+const FileSearchResults: React.FC<{ paths: readonly string[] }> = ({ paths }) => {
+  const selectedFile = useFileTreeStore(s => s.selectedFile)
+  const selectFile = useFileTreeStore(s => s.selectFile)
+
+  return (
+    <div className="inspector-tree__search-results">
+      {paths.map(path => (
+        <button
+          key={path}
+          type="button"
+          className={`inspector-tree__search-row${selectedFile === path ? ' inspector-tree__row--selected' : ''}`}
+          title={path}
+          onClick={() => selectFile(path)}
+        >
+          <FileIcon size={14} />
+          <span className="inspector-tree__search-path">{path}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 const FileTreeView: React.FC = () => {
   const filter = useFileTreeStore(s => s.filter)
+  const filterMatches = useFileTreeStore(s => s.filterMatches)
+  const filterLoading = useFileTreeStore(s => s.filterLoading)
+  const filterError = useFileTreeStore(s => s.filterError)
   const rootEntries = useFileTreeStore(s => s.nodes[''])
   const loadingRoot = useFileTreeStore(s => s.loading[''])
   const rootError = useFileTreeStore(s => s.errors[''])
@@ -191,6 +216,7 @@ const FileTreeView: React.FC = () => {
   const collapseAll = useFileTreeStore(s => s.collapseAll)
   const refresh = useFileTreeStore(s => s.refresh)
   const loadDir = useFileTreeStore(s => s.loadDir)
+  const filterQuery = filter.trim()
 
   useEffect(() => {
     if (rootEntries === undefined && !loadingRoot) {
@@ -229,24 +255,41 @@ const FileTreeView: React.FC = () => {
         </button>
       </div>
       <div className="inspector-tree">
-        {loadingRoot && rootEntries === undefined && (
-          <div className="inspector-tree__hint">加载中…</div>
+        {filterQuery ? (
+          <>
+            {filterLoading && <div className="inspector-tree__hint">搜索文件…</div>}
+            {filterError && <div className="inspector-tree__error">{filterError}</div>}
+            {!filterLoading && !filterError && filterMatches.length === 0 && (
+              <div className="inspector-empty">
+                <p className="inspector-empty__hint">未找到包含“{filter}”的文件</p>
+              </div>
+            )}
+            {!filterLoading && !filterError && filterMatches.length > 0 && (
+              <FileSearchResults paths={filterMatches} />
+            )}
+          </>
+        ) : (
+          <>
+            {loadingRoot && rootEntries === undefined && (
+              <div className="inspector-tree__hint">加载中…</div>
+            )}
+            {rootError && (
+              <div className="inspector-tree__error">
+                <span>{rootError}</span>
+                <button
+                  type="button"
+                  className="inspector-tree__retry"
+                  onClick={() => void loadDir('')}
+                >
+                  重试
+                </button>
+              </div>
+            )}
+            {rootEntries?.map(entry => (
+              <TreeNode key={entry.relativePath} entry={entry} depth={0} />
+            ))}
+          </>
         )}
-        {rootError && (
-          <div className="inspector-tree__error">
-            <span>{rootError}</span>
-            <button
-              type="button"
-              className="inspector-tree__retry"
-              onClick={() => void loadDir('')}
-            >
-              重试
-            </button>
-          </div>
-        )}
-        {rootEntries?.map(entry => (
-          <TreeNode key={entry.relativePath} entry={entry} depth={0} />
-        ))}
       </div>
     </div>
   )

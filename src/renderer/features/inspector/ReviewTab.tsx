@@ -57,8 +57,12 @@ function findDerivedMessageId(
   return null
 }
 
-/** 无内容时渲染极简空壳：不写散文，视图头已承载身份 */
-const ReviewEmpty: React.FC = () => null
+/** 没有 diff 时保留明确的空状态，避免把加载失败误认为空白。 */
+const ReviewEmpty: React.FC = () => (
+  <div className="inspector-empty">
+    <p className="inspector-empty__hint">当前会话暂无可审阅的文件改动</p>
+  </div>
+)
 
 /**
  * 精确订阅单条 messageId 的 diff 缓存与审查动作。

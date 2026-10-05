@@ -14,6 +14,10 @@ export function skillSourceLabel(source: SkillSource): string {
       return '项目'
     case 'third_party_claude':
       return '第三方'
+    case 'virtual':
+      return '虚拟'
+    case 'mcp':
+      return 'MCP'
     default:
       return source
   }
@@ -29,10 +33,17 @@ export const skillsI18n = {
   use: '使用',
   export: '导出',
   exportSuccess: (path: string) => `已导出到 ${path}`,
-  toggle: '启用模型调用',
+  toggle: '允许模型自动调用',
+  searchLabel: '搜索技能',
+  searchPlaceholder: '按名称或描述搜索',
+  sourceFilterLabel: '筛选来源',
+  allSources: '全部来源',
+  showDescription: '查看完整描述',
+  hideDescription: '收起描述',
   showAll: '显示全部',
   showLess: '收起',
   empty: '暂无技能',
+  noSearchResults: '没有匹配的技能',
   reload: '刷新列表',
   delete: '删除',
   builtinNoDelete: '内置技能不可删除',

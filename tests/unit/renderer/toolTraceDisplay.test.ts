@@ -21,6 +21,8 @@ describe('getToolTraceAction', () => {
     expect(getToolTraceAction('batch_task')).toBe('Batch')
     expect(getToolTraceAction('subagent_read')).toBe('Inspect')
     expect(getToolTraceAction('task_followup')).toBe('Followup')
+    expect(getToolTraceAction('browser_open')).toBe('Opened page')
+    expect(getToolTraceAction('browser_capture')).toBe('Captured page')
   })
 })
 
@@ -46,6 +48,25 @@ describe('getToolTraceTarget', () => {
     expect(getToolTraceTarget('batch_task', { items: [{ task: '检查第一项' }, { task: '检查第二项' }] })).toBe('2 项: 检查第一项')
     expect(getToolTraceTarget('task_followup', { child_session_id: 'sess_sub_abc123', task: '继续深入分析' })).toBe('sess_sub...: 继续深入分析')
   })
+
+  it('浏览器工具显示动作目标且不重复原始工具名', () => {
+    expect(getToolTraceTarget('browser_open', {
+      action: 'open',
+      url: 'https://example.com/docs'
+    })).toBe('· example.com')
+    expect(getToolTraceTarget('browser_observe', {
+      action: 'snapshot',
+      browserId: 'brw_123456789012345'
+    })).toBe('· brw_1234567890...')
+    expect(getToolTraceTarget('browser_act', {
+      action: { kind: 'click', ref: 'e3' }
+    })).toBe('· 点击 e3')
+    expect(getToolTraceTarget('browser_capture', {
+      observation: { browserId: 'brw_1' }
+    })).toBe('· brw_1')
+    expect(getToolTraceTarget('browser_close', { browserId: 'brw_1' })).toBe('· brw_1')
+    expect(getToolTraceTarget('custom_tool', {})).toBe('')
+  })
 })
 
 describe('getToolTraceActionChinese', () => {
@@ -61,6 +82,11 @@ describe('getToolTraceActionChinese', () => {
     expect(getToolTraceActionChinese('batch_task')).toBe('已批处理')
     expect(getToolTraceActionChinese('subagent_read')).toBe('已回读')
     expect(getToolTraceActionChinese('task_followup')).toBe('已续跑')
+    expect(getToolTraceActionChinese('browser_open')).toBe('打开网页')
+    expect(getToolTraceActionChinese('browser_observe')).toBe('读取页面')
+    expect(getToolTraceActionChinese('browser_act')).toBe('操作页面')
+    expect(getToolTraceActionChinese('browser_capture')).toBe('截取页面')
+    expect(getToolTraceActionChinese('browser_close')).toBe('关闭页面')
   })
 })
 

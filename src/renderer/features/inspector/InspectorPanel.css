@@ -494,6 +494,37 @@
   color: var(--color-brand);
 }
 
+.inspector-tree__search-results {
+  display: flex;
+  flex-direction: column;
+}
+
+.inspector-tree__search-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspector-tree__search-row:hover {
+  background-color: var(--bg-sand);
+}
+
+.inspector-tree__search-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .inspector-tree__spacer {
   width: 12px;
   flex-shrink: 0;
