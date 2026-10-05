@@ -26,6 +26,7 @@ import {
   WORKSPACE_SWITCH_BRANCH,
   WORKSPACE_BUMP_MESSAGES_REVISION,
   WORKSPACE_EDIT_RESEND,
+  WORKSPACE_SELECT_DEFAULT,
   WORKSPACE_CHANGED
 } from '../../shared/ipc/channels'
 import type { WorkspaceState } from '../../shared/workspace/types'
@@ -128,5 +129,9 @@ export function registerWorkspaceHandler(getMainWindow: () => BrowserWindow | nu
 
   handle(WORKSPACE_EDIT_RESEND, async (_event, params: { sessionId: string; messageId: string }) => {
     return service.prepareEditResend(params)
+  })
+
+  handle(WORKSPACE_SELECT_DEFAULT, async () => {
+    return service.selectDefaultWorkspace()
   })
 }

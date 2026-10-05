@@ -15,6 +15,11 @@ export interface WorkspaceState {
   currentSessionId: string | null
   /** 当前项目（工作区）绝对路径，无时为 null */
   currentProjectPath: string | null
+  /**
+   * 未选择项目时新会话使用的默认工作区绝对路径（已解析，settings 为 null 时
+   * 回落 ~/.nova/workspace）。主进程盖章下发，renderer 不自行推断。
+   */
+  defaultWorkspacePath: string
   /** 当前运行模式 */
   currentMode: Mode
   /**

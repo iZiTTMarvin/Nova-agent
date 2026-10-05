@@ -11,6 +11,7 @@ import { registerSettingsHandler } from './settingsHandler'
 import { registerRulesHandler } from './rulesHandler'
 import { registerSubagentsHandler } from './subagentsHandler'
 import { registerWorkspaceHandler } from './workspaceHandler'
+import { registerGitHandler } from './gitHandler'
 import { registerPermissionHandler } from './permissionHandler'
 import { registerDialogHandler } from './dialogHandler'
 import { registerUpdaterHandler } from './updaterHandler'
@@ -91,7 +92,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   registerSkillHandler(getMainWindow)
 
   // 设置 / 规则 / 子代理 IPC
-  registerSettingsHandler()
+  registerSettingsHandler(getMainWindow)
   registerRulesHandler()
   registerSubagentsHandler()
 
@@ -149,6 +150,8 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
     startupState.currentProjectPath
   )
   registerWorkspaceHandler(getMainWindow)
+  // Git 上下文（Composer 分支 chip）：依赖已初始化的 WorkspaceService
+  registerGitHandler()
   // 打开 active plan 文件（复用 WorkspaceService 的路径边界校验）
   registerPlanFileHandler()
 

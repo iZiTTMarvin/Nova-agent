@@ -49,6 +49,7 @@ import {
 import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
 import { ContextIndicator } from './ContextIndicator'
 import { CodeIndexStatusChip } from './CodeIndexStatusChip'
+import { ComposerContextBar } from '../composer-context/ComposerContextBar'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { TodoPanel } from '../todo/TodoPanel'
 import { useTodoStore } from '../todo/useTodoStore'
@@ -1155,7 +1156,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 <PlanApprovalCard review={planReviewForCurrentSession} />
               </div>
             ) : (
-              /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局 */
+              /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局；上下文条垫在卡片正下方并与之连体 */
+              <div className="chat-composer-stack w-full">
               <div
               ref={composerBoxRef}
               className={`chat-composer-box w-full flex flex-col p-3 ${
@@ -1245,6 +1247,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                   )}
                 </div>
               </div>
+              </div>
+              <ComposerContextBar />
               </div>
             )}
 

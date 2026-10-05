@@ -40,6 +40,7 @@ vi.mock('../../../src/renderer/features/chat/MessageItem', () => ({
 vi.mock('../../../src/renderer/features/mode-switch/ModeSwitch', () => ({ ModeSwitch: () => null }))
 vi.mock('../../../src/renderer/features/chat/ModelSelector', () => ({ ModelSelector: () => null }))
 vi.mock('../../../src/renderer/features/chat/ContextIndicator', () => ({ ContextIndicator: () => null }))
+vi.mock('../../../src/renderer/features/composer-context/ComposerContextBar', () => ({ ComposerContextBar: () => null }))
 vi.mock('../../../src/renderer/components/ImagePreviewBar', () => ({ ImagePreviewBar: () => null }))
 vi.mock('../../../src/renderer/features/todo/TodoPanel', () => ({ TodoPanel: () => null }))
 vi.mock('../../../src/renderer/features/ask/AskQuestionPanel', () => ({ AskQuestionPanel: () => null }))

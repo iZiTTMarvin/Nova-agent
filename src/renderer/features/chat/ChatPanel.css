@@ -1206,6 +1206,8 @@ button.code-index-status-chip:hover {
 .chat-composer__footer-end {
   flex: 1 1 220px;
   justify-content: flex-end;
+  /* 撑满行高：底栏左侧控件换行变高时，小耳的定位锚点仍以卡片内容底边为基准 */
+  align-self: stretch;
 }
 
 .chat-composer__footer-start > *,

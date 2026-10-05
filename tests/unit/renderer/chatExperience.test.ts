@@ -57,6 +57,7 @@ function resetStore(messages: ExtendedMessage[] = []) {
 describe('聊天体验回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockOn.mockReturnValue(() => {})
     resetChatStoreForTests()
     useRunStore.getState().resetForTests()
     // MessageItem mount 时会调 get-message-diffs，需要提供默认 mock

@@ -91,6 +91,7 @@ function getStats(values: number[]) {
 describe('长对话流式渲染性能回归', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockOn.mockReturnValue(() => {})
     resetChatStoreForTests()
     useRunStore.getState().resetForTests()
     // MessageItem mount 时会调 get-message-diffs，需要提供默认 mock 返回

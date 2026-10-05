@@ -91,6 +91,11 @@ export interface NovaSettingsDto {
   diffAutoExpand: boolean
   /** 上次打开的项目路径（启动时恢复，空表示无） */
   lastProjectPath: string | null
+  /**
+   * 默认工作区路径（未选择项目时的固定工作目录）；
+   * null 表示使用 ~/.nova/workspace。
+   */
+  defaultWorkspacePath: string | null
   /** 陈旧快照自动保留天数（超过此天数的 checkpoint files/ 会被启动时 GC 清理） */
   snapshotRetentionDays: number
   /** Tavily API Key（本地明文存储，不上传） */

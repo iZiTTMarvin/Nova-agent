@@ -24,6 +24,8 @@ export const SKILL_PICK_IMPORT = 'skill:pick-import' as const
 /** 应用设置 */
 export const SETTINGS_GET = 'settings:get' as const
 export const SETTINGS_SET = 'settings:set' as const
+/** 目录选择对话框（纯取路径，无会话副作用；用于默认工作区设置） */
+export const SETTINGS_PICK_DIRECTORY = 'settings:pick-directory' as const
 /** 诊断包导出（保存对话框由主进程负责） */
 export const DIAGNOSTICS_EXPORT = 'diagnostics:export' as const
 /** 工作区文件搜索（@ 引用候选） */
@@ -126,6 +128,17 @@ export const WORKSPACE_SWITCH_BRANCH = 'workspace:switch-branch' as const
 export const WORKSPACE_BUMP_MESSAGES_REVISION = 'workspace:bump-messages-revision' as const
 /** 编辑用户消息并重发（分叉准备：undo 文件 + 倒回 currentLeafId 到分叉点） */
 export const WORKSPACE_EDIT_RESEND = 'workspace:edit-resend' as const
+/** 使用 Nova 默认工作区（未选项目时的固定目录），自动创建会话 */
+export const WORKSPACE_SELECT_DEFAULT = 'workspace:select-default' as const
+// ── Git 上下文（Composer 分支 chip） ──────────────────────
+/** 当前工作区 Git 摘要（分支 / 未提交数） */
+export const GIT_GET_STATUS = 'git:get-status' as const
+/** 本地分支列表（含同一快照的 Git 摘要） */
+export const GIT_LIST_BRANCHES = 'git:list-branches' as const
+/** 切换分支（结构化 issue 返回） */
+export const GIT_SWITCH_BRANCH = 'git:switch-branch' as const
+/** 创建并检出新分支 */
+export const GIT_CREATE_BRANCH = 'git:create-branch' as const
 // ── 存储治理（WS3 后端） ──────────────────────
 export const STORAGE_USAGE = 'storage:usage' as const
 export const STORAGE_PRUNE_SESSION_CHECKPOINTS = 'storage:prune-session-checkpoints' as const

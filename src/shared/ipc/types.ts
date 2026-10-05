@@ -65,6 +65,11 @@ import type {
 } from '../permissions/types'
 import type { AskQuestionItem, AskQuestionAnswer } from '../askQuestion/types'
 import type {
+  GitStatusSummary,
+  GitBranchListResult,
+  GitBranchMutationResult
+} from '../git/types'
+import type {
   RunSnapshot,
   InteractionAnswerResult
 } from '../run/types'
@@ -440,6 +445,10 @@ export interface IpcCommands {
     params: Partial<NovaSettingsDto>
     result: NovaSettingsDto
   }
+  'settings:pick-directory': {
+    params: void
+    result: string | null
+  }
   'rules:list': {
     params: RulesListParams
     result: RuleFileEntry[]
@@ -557,6 +566,27 @@ export interface IpcCommands {
   'workspace:edit-resend': {
     params: { sessionId: string; messageId: string }
     result: WorkspaceState
+  }
+  'workspace:select-default': {
+    params: void
+    result: WorkspaceState
+  }
+  // ── Git 上下文（Composer 分支 chip） ──
+  'git:get-status': {
+    params: { workspaceRoot: string }
+    result: GitStatusSummary
+  }
+  'git:list-branches': {
+    params: { workspaceRoot: string }
+    result: GitBranchListResult
+  }
+  'git:switch-branch': {
+    params: { workspaceRoot: string; branchName: string }
+    result: GitBranchMutationResult
+  }
+  'git:create-branch': {
+    params: { workspaceRoot: string; branchName: string }
+    result: GitBranchMutationResult
   }
   // ── 权限持久化规则（PRD §5.2） ──
   'permission:list': {

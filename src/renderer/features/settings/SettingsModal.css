@@ -417,6 +417,14 @@
   color: var(--color-warning);
 }
 
+/* 行内路径展示（默认工作区等）：单行省略，完整值由 title 承载 */
+.settings-path {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .settings-help {
   font-size: 0.75rem;
   color: var(--text-muted);

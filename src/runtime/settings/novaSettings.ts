@@ -11,7 +11,7 @@
  * - 迁移函数独立，失败不阻塞启动（回退默认值）。
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { isAbsolute, join } from 'path'
 import { homedir } from 'os'
 import type { Mode, PermissionMode } from '../../shared/session/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
@@ -35,6 +35,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   theme: 'system',
   diffAutoExpand: false,
   lastProjectPath: null,
+  defaultWorkspacePath: null,
   snapshotRetentionDays: 30,
   webSearchTavilyApiKey: undefined,
   notificationsEnabled: true,
@@ -55,6 +56,15 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
 /** 返回 ~/.nova 目录路径 */
 export function getNovaHomeDir(): string {
   return join(homedir(), '.nova')
+}
+
+/**
+ * 解析「默认工作区」的生效路径：配置为空时回落 ~/.nova/workspace。
+ * 只负责解析，不创建目录、不建会话。
+ */
+export function resolveDefaultWorkspacePath(settings?: NovaSettings): string {
+  const configured = settings?.defaultWorkspacePath?.trim()
+  return configured || join(getNovaHomeDir(), 'workspace')
 }
 
 function getSettingsPath(): string {
@@ -126,6 +136,13 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   if (typeof obj.lastProjectPath === 'string') {
     result.lastProjectPath = obj.lastProjectPath
+  }
+  if (
+    typeof obj.defaultWorkspacePath === 'string' &&
+    obj.defaultWorkspacePath.trim() &&
+    isAbsolute(obj.defaultWorkspacePath.trim())
+  ) {
+    result.defaultWorkspacePath = obj.defaultWorkspacePath.trim()
   }
   if (
     typeof obj.snapshotRetentionDays === 'number' &&
@@ -225,6 +242,18 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   }
   if ('defaultShell' in patch && patch.defaultShell !== undefined && typeof patch.defaultShell !== 'string') {
     errors.push('defaultShell 必须是字符串')
+  }
+  if ('defaultWorkspacePath' in patch && patch.defaultWorkspacePath !== undefined) {
+    if (
+      patch.defaultWorkspacePath !== null &&
+      (
+        typeof patch.defaultWorkspacePath !== 'string' ||
+        !patch.defaultWorkspacePath.trim() ||
+        !isAbsolute(patch.defaultWorkspacePath.trim())
+      )
+    ) {
+      errors.push('defaultWorkspacePath 必须是绝对路径字符串或 null')
+    }
   }
   if ('editorFontFamily' in patch && patch.editorFontFamily !== undefined && typeof patch.editorFontFamily !== 'string') {
     errors.push('editorFontFamily 必须是字符串')

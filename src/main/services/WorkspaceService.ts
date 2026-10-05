@@ -11,6 +11,7 @@
  * - 会话列表（availableSessions）随状态一起广播，避免 renderer 二次拉取。
  */
 import { app, dialog, BrowserWindow } from 'electron'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionControlIntent, SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
@@ -49,7 +50,7 @@ import { planReviewWaiters } from '../agent/interaction/planReviewWaiters'
 import { buildSessionContextBreakdown } from './SessionContextView'
 import { readPlanDocumentInWorkspace } from '../../runtime/plans'
 import type { RunCoordinator } from '../../runtime/run'
-import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+import { loadNovaSettings, resolveDefaultWorkspacePath } from '../../runtime/settings/novaSettings'
 import {
   clearSessionWhitelist,
   hydrateSessionWhitelistFromSession
@@ -106,12 +107,13 @@ export type WorkspaceRootChangeListener = (
 
 export class WorkspaceService {
   /**
-   * 内部状态不含 messagesRevision / tier1 字段：revision 与 tier1 由独立成员维护，
-   * 在 getState() / broadcast() 出口统一盖章，避免每处状态字面量都漏写。
+   * 内部状态不含 messagesRevision / tier1 / defaultWorkspacePath 字段：revision 与 tier1
+   * 由独立成员维护，defaultWorkspacePath 从设置解析，均在 getState() / broadcast() 出口统一盖章，
+   * 避免每处状态字面量都漏写。
    */
   private state: Omit<
     WorkspaceState,
-    'messagesRevision' | 'tier1BranchContext' | 'tier1StaleDiffMessageIds'
+    'messagesRevision' | 'tier1BranchContext' | 'tier1StaleDiffMessageIds' | 'defaultWorkspacePath'
   > = {
     currentSessionId: null,
     currentProjectPath: null,
@@ -202,6 +204,13 @@ export class WorkspaceService {
     this.broadcaster = fn
   }
 
+  /** 设置等外部 Owner 改变 WorkspaceState 派生字段后，重新发布权威快照。 */
+  refreshProjection(): WorkspaceState {
+    const state = this.getState()
+    this.broadcaster?.(state)
+    return state
+  }
+
   subscribeWorkspaceRootChanges(listener: WorkspaceRootChangeListener): () => void {
     this.workspaceRootChangeListeners.add(listener)
     return () => {
@@ -234,10 +243,11 @@ export class WorkspaceService {
     throw new Error(message)
   }
 
-  /** 读取当前状态（不广播）；在此处盖上 messagesRevision 与 tier1 上下文 */
+  /** 读取当前状态（不广播）；在此处盖上 messagesRevision、tier1 上下文与默认工作区路径 */
   getState(): WorkspaceState {
     return {
       ...this.state,
+      defaultWorkspacePath: resolveDefaultWorkspacePath(loadNovaSettings()),
       messagesRevision: this.messagesRevision,
       tier1BranchContext: this.tier1BranchContext,
       tier1StaleDiffMessageIds: this.tier1StaleDiffMessageIds
@@ -285,14 +295,12 @@ export class WorkspaceService {
 
   /**
    * 选择项目工作区。
-   * - params.path 非空：直接使用该路径。
+   * - params.path 非空：直接使用该路径（必须是已存在的目录）。
    * - params 为空：弹出文件夹选择对话框。
    * 选择成功后自动创建新会话。
    */
   async selectProject(params?: { path?: string }): Promise<WorkspaceState> {
-    const store = this.deps.getSessionStore()
-    const previousRoot = this.state.currentProjectPath
-    let selectedPath = params?.path ?? null
+    let selectedPath = params?.path?.trim() ?? ''
 
     if (!selectedPath) {
       const window = this.deps.getMainWindow()
@@ -305,34 +313,44 @@ export class WorkspaceService {
         return this.getState()
       }
       selectedPath = result.filePaths[0]
+    } else {
+      try {
+        if (!existsSync(selectedPath) || !statSync(selectedPath).isDirectory()) {
+          throw new Error('invalid-directory')
+        }
+      } catch {
+        throw new Error('工作区目录不存在或不可访问')
+      }
     }
 
+    return this.openProjectPath(selectedPath)
+  }
+
+  /**
+   * 使用 Nova 默认工作区创建会话：目录不存在时按需创建（幂等）。
+   * 目录不可创建/不可访问时抛错，不静默建出坏会话。
+   */
+  selectDefaultWorkspace(): WorkspaceState {
+    const targetPath = resolveDefaultWorkspacePath(loadNovaSettings())
+    try {
+      mkdirSync(targetPath, { recursive: true })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(`无法创建默认工作区目录：${targetPath}（${message}）`)
+    }
+    if (!statSync(targetPath).isDirectory()) {
+      throw new Error(`默认工作区路径不是目录：${targetPath}`)
+    }
+    return this.openProjectPath(targetPath)
+  }
+
+  /**
+   * 在指定项目路径上新建会话并切换过去（selectProject / selectDefaultWorkspace 共用）。
+   * 建会话必须走 createSession：它负责离开旧会话的收尾（记忆提取、浏览器会话撤销）与视图上下文清理。
+   */
+  private openProjectPath(selectedPath: string): WorkspaceState {
     reloadSkillsForWorkspace(selectedPath)
-
-    // 创建新会话
-    const settings = loadNovaSettings()
-    const inheritedModelRef = this.state.activeModelRef ?? this.resolveEffectiveModelRef() ?? undefined
-    const data = store.create(selectedPath, this.state.currentMode, {
-      codeIndexEnabled: settings.codeIndexEnabled,
-      permissionMode: settings.defaultPermissionMode,
-      ...(inheritedModelRef ? { modelOverride: inheritedModelRef } : {}),
-      ...(this.state.reasoningEffortOverride
-        ? { reasoningEffortOverride: this.state.reasoningEffortOverride }
-        : {})
-    })
-
-    this.state = {
-      currentSessionId: data.id,
-      currentProjectPath: selectedPath,
-      currentMode: data.mode,
-      reasoningEffortOverride: data.reasoningEffortOverride ?? null,
-      activeModelRef: this.resolveEffectiveModelRef(data),
-      availableSessions: store.list()
-    }
-    this.notifyWorkspaceRootChanged(previousRoot, selectedPath)
-    this.broadcast()
-    pushContextBreakdownForSession(data, this.deps.getMainWindow, this.deps.getSessionStore())
-    return this.getState()
+    return this.createSession({ workspaceRoot: selectedPath })
   }
 
   /** 显式创建新会话（使用给定 workspaceRoot，或沿用当前项目） */

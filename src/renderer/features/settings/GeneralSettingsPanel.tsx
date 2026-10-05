@@ -182,6 +182,17 @@ export const GeneralSettingsPanel: React.FC = () => {
     void update('defaultPermissionMode', value)
   }
 
+  /** 默认工作区目录选择：纯取路径，选择后立即持久化 */
+  const pickDefaultWorkspace = async (): Promise<void> => {
+    setError(null)
+    try {
+      const picked = await window.api.invoke('settings:pick-directory')
+      if (picked) await update('defaultWorkspacePath', picked)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '选择文件夹失败')
+    }
+  }
+
   /** 手动检查 / 下载 / 安装共用入口；状态变化经 APP_UPDATE_STATE_CHANGED 回流 */
   const runUpdateAction = async (channel: typeof CHECK_APP_UPDATE | typeof DOWNLOAD_APP_UPDATE | typeof INSTALL_APP_UPDATE): Promise<void> => {
     setUpdateActionError(null)
@@ -238,6 +249,37 @@ export const GeneralSettingsPanel: React.FC = () => {
                   isDisabled={saving}
                   width={240}
                 />
+              }
+            />
+            <SettingsRow
+              label="默认工作区"
+              description="未选择项目时，新会话在这个目录下创建并使用；留空使用 ~/.nova/workspace。"
+              end={
+                <>
+                  <span className="settings-status settings-path" title={settings.defaultWorkspacePath ?? '~/.nova/workspace'}>
+                    {settings.defaultWorkspacePath ?? '默认（~/.nova/workspace）'}
+                  </span>
+                  <Button
+                    label="选择文件夹"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void pickDefaultWorkspace()}
+                    isDisabled={saving}
+                  >
+                    选择文件夹…
+                  </Button>
+                  {settings.defaultWorkspacePath ? (
+                    <Button
+                      label="恢复默认工作区"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void update('defaultWorkspacePath', null)}
+                      isDisabled={saving}
+                    >
+                      恢复默认
+                    </Button>
+                  ) : null}
+                </>
               }
             />
             <SettingsRow

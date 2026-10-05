@@ -240,4 +240,58 @@ describe('novaSettings', () => {
       /memoryCaptureEnabled/
     )
   })
+
+  it('defaultWorkspacePath 默认 null，可保存读回并可通过 null 清除', async () => {
+    const { loadNovaSettings, saveNovaSettings } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    expect(loadNovaSettings().defaultWorkspacePath).toBeNull()
+    saveNovaSettings({ defaultWorkspacePath: join(mockHome, 'work') })
+    expect(loadNovaSettings().defaultWorkspacePath).toBe(join(mockHome, 'work'))
+    saveNovaSettings({ defaultWorkspacePath: null })
+    expect(loadNovaSettings().defaultWorkspacePath).toBeNull()
+  })
+
+  it('defaultWorkspacePath 非法值被 saveNovaSettings 拒绝', async () => {
+    const { saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    for (const bad of ['', '   ', 'relative/workspace', 42 as unknown as string]) {
+      expect(() => saveNovaSettings({ defaultWorkspacePath: bad })).toThrow(/defaultWorkspacePath/)
+    }
+  })
+
+  it('旧配置中的相对 defaultWorkspacePath 被丢弃，回落默认目录', async () => {
+    const { loadNovaSettings, resolveDefaultWorkspacePath } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    writeFileSync(
+      join(mockHome, '.nova', 'settings.json'),
+      JSON.stringify({ settingsVersion: 3, defaultWorkspacePath: 'relative/workspace' }),
+      'utf-8'
+    )
+    const settings = loadNovaSettings()
+    expect(settings.defaultWorkspacePath).toBeNull()
+    expect(resolveDefaultWorkspacePath(settings)).toBe(join(mockHome, '.nova', 'workspace'))
+  })
+
+  it('旧 settings.json 缺少 defaultWorkspacePath 时迁移为 null', async () => {
+    const { loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    writeFileSync(
+      join(mockHome, '.nova', 'settings.json'),
+      JSON.stringify({ settingsVersion: 3, theme: 'dark' }),
+      'utf-8'
+    )
+    expect(loadNovaSettings().defaultWorkspacePath).toBeNull()
+  })
+
+  it('resolveDefaultWorkspacePath 未配置时回落 ~/.nova/workspace，配置后取配置值', async () => {
+    const { loadNovaSettings, saveNovaSettings, resolveDefaultWorkspacePath } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    expect(resolveDefaultWorkspacePath(loadNovaSettings())).toBe(
+      join(mockHome, '.nova', 'workspace')
+    )
+    saveNovaSettings({ defaultWorkspacePath: join(mockHome, 'custom-ws') })
+    expect(resolveDefaultWorkspacePath(loadNovaSettings())).toBe(join(mockHome, 'custom-ws'))
+    expect(resolveDefaultWorkspacePath()).toBe(join(mockHome, '.nova', 'workspace'))
+  })
 })

@@ -22,6 +22,8 @@ export interface WorkspaceStoreState {
   // ── 状态（由 dispatcher 写入） ──
   currentSessionId: string | null
   currentProjectPath: string | null
+  /** 未选择项目时新会话使用的默认工作区（主进程按设置解析后下发） */
+  defaultWorkspacePath: string
   currentMode: Mode
   /** 当前会话思考强度覆盖；null 表示无覆盖（回落模型默认） */
   reasoningEffortOverride: ReasoningEffort | null
@@ -38,8 +40,10 @@ export interface WorkspaceStoreState {
   setSessionLoading: (loading: boolean) => void
   /** 启动时拉取初始状态（App 顶层调用一次，内部会 dispatch） */
   init: () => Promise<void>
-  /** 选择项目（弹对话框），成功后自动建会话 */
-  selectProject: () => Promise<void>
+  /** 选择项目（带 path 直接使用该目录；不带则弹对话框），成功后自动建会话 */
+  selectProject: (path?: string) => Promise<void>
+  /** 使用 Nova 默认工作区（未选项目时的固定目录）创建会话 */
+  selectDefaultWorkspace: () => Promise<void>
   /** 创建新会话 */
   createSession: (workspaceRoot: string, mode?: Mode) => Promise<void>
   /** 删除会话 */
@@ -73,6 +77,7 @@ let reasoningEffortRequestVersion = 0
 export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   currentSessionId: null,
   currentProjectPath: null,
+  defaultWorkspacePath: '',
   currentMode: 'default',
   reasoningEffortOverride: null,
   activeModelRef: null,
@@ -94,14 +99,22 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
     }
   },
 
-  selectProject: async () => {
+  selectProject: async (path?: string) => {
     try {
-      const state = await window.api.invoke('workspace:select-project', {})
+      const state = await window.api.invoke('workspace:select-project', path ? { path } : {})
       const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
       dispatchWorkspaceChange(state)
     } catch (err) {
       console.error('[useWorkspaceStore] 选择项目失败:', err)
+      // 显式路径失败（目录不存在等）需要调用方就地展示；对话框路径维持原有静默语义
+      if (path) throw err
     }
+  },
+
+  selectDefaultWorkspace: async () => {
+    const state = await window.api.invoke('workspace:select-default')
+    const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
+    dispatchWorkspaceChange(state)
   },
 
   createSession: async (workspaceRoot: string, mode?: Mode) => {
@@ -244,6 +257,7 @@ export function resetWorkspaceStoreForTests(): void {
   useWorkspaceStore.setState({
     currentSessionId: null,
     currentProjectPath: null,
+    defaultWorkspacePath: '',
     currentMode: 'default',
     reasoningEffortOverride: null,
     activeModelRef: null,
