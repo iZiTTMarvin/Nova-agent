@@ -12,6 +12,7 @@ import { selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayo
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
+import { exportSession } from '../features/chat/exportSession'
 import { InspectorToggleButton } from '../features/inspector/InspectorToggleButton'
 import './ContentTopBar.css'
 
@@ -64,7 +65,7 @@ export const WindowControls: React.FC = () => {
   )
 }
 
-/** 当前会话 ⋯ 菜单：置顶/取消置顶、删除。仅普通会话可用（子会话由父会话管理）。 */
+/** 当前会话 ⋯ 菜单：置顶/取消置顶、复制/导出、删除。仅普通会话可用（子会话由父会话管理）。 */
 const SessionMoreMenu: React.FC = () => {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
@@ -112,6 +113,14 @@ const SessionMoreMenu: React.FC = () => {
       <DropdownMenuItem
         label={currentSession.pinned ? '取消置顶' : '置顶'}
         onClick={() => void setSessionPinned(currentSession.id, !currentSession.pinned)}
+      />
+      <DropdownMenuItem
+        label="复制全部对话"
+        onClick={() => void exportSession(currentSession.id, 'clipboard')}
+      />
+      <DropdownMenuItem
+        label="导出为 .md 文件"
+        onClick={() => void exportSession(currentSession.id, 'file')}
       />
       <DropdownMenuItem
         label="删除"

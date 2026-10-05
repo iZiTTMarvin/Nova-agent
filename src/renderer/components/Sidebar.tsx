@@ -39,6 +39,7 @@ import {
   switchToDevSurface,
   switchToLearningSurface
 } from '../features/learning/learningSurfaceSwitch'
+import { exportSession } from '../features/chat/exportSession'
 import type { AppUpdateSnapshot } from '../../shared/update'
 import { UpdateIndicator } from '../features/update/UpdateIndicator'
 import { formatCompactRelativeTime } from '../lib/time'
@@ -648,6 +649,20 @@ const SidebarSessions = React.memo(function SidebarSessions({
                     onClick={() => {
                       setOpenMenuSessionId(null)
                       startEditing(session)
+                    }}
+                  />
+                  <DropdownMenuItem
+                    label="复制全部对话"
+                    onClick={() => {
+                      setOpenMenuSessionId(null)
+                      void exportSession(session.id, 'clipboard')
+                    }}
+                  />
+                  <DropdownMenuItem
+                    label="导出为 .md 文件"
+                    onClick={() => {
+                      setOpenMenuSessionId(null)
+                      void exportSession(session.id, 'file')
                     }}
                   />
                   <DropdownMenuItem

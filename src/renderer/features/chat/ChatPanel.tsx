@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, useMemo, Profiler } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { DropdownMenu } from '@astryxdesign/core/DropdownMenu'
 import {
   ChatComposerInput,
   type ChatComposerInputHandle,
@@ -23,8 +22,7 @@ import {
   SendIcon,
   StopIcon,
   NovaLogo,
-  ChevronIcon,
-  CopyIcon
+  ChevronIcon
 } from '../../components/Icons'
 import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
@@ -749,21 +747,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     window.alert(message)
   }, [])
 
-  /** 会话导出：主进程一次性读激活路径并转 Markdown */
-  const handleExportSession = useCallback(async (target: 'clipboard' | 'file') => {
-    if (!currentSessionId) {
-      showToast('当前没有可导出的会话')
-      return
-    }
-    try {
-      const result = await window.api.invoke('session:export-markdown', { sessionId: currentSessionId, target })
-      if (result.status === 'copied') showToast('已复制全部对话')
-      else if (result.status === 'saved') showToast(`已导出到 ${result.filePath}`)
-      else if (result.status === 'failed') showToast(`导出失败：${result.error}`)
-    } catch (err) {
-      showToast(`导出失败：${err instanceof Error ? err.message : String(err)}`)
-    }
-  }, [currentSessionId, showToast])
 
   /** 按钮上传：将有效图片加入附件列表，失败项逐条提示 */
   const addImageFiles = useCallback(async (files: File[]) => {
@@ -1028,19 +1011,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       >
         <div ref={composerInnerRef} className="chat-panel__composer-inner">
           {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
-          {!isEmptyState && currentSessionId && (
-            <div className="chat-session-export">
-              <DropdownMenu
-                button={{ label: '导出会话', variant: 'ghost', size: 'sm', icon: <CopyIcon size={14} /> }}
-                placement="above"
-                menuWidth={200}
-                items={[
-                  { label: '复制全部对话', onClick: () => void handleExportSession('clipboard') },
-                  { label: '导出为 .md 文件', onClick: () => void handleExportSession('file') }
-                ]}
-              />
-            </div>
-          )}
+
           {!isEmptyState && showScrollToBottom && (
             <button
               type="button"
