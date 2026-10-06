@@ -401,6 +401,10 @@ export interface IpcCommands {
     params: void
     result: void
   }
+  'window:brand-frame-ready': {
+    params: void
+    result: void
+  }
   'skill:list': {
     params: void
     result: SkillCatalogSnapshot

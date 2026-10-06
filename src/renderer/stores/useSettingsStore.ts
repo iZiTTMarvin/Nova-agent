@@ -235,7 +235,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   isConfigModalOpen: false,
   currentProject: null,
   currentMode: 'default',
-  theme: 'system',
+  theme: (typeof localStorage !== 'undefined' && (localStorage.getItem('nova-settings-theme') as SettingsTheme)) || 'system',
   sessionUsage: null,
   sessionUsageByProfile: {},
   contextBreakdown: null,
@@ -259,6 +259,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   loadTheme: async () => {
     try {
       const settings = await window.api.invoke('settings:get')
+      try {
+        localStorage.setItem('nova-settings-theme', settings.theme)
+      } catch (_) {}
       set({ theme: settings.theme })
     } catch (err) {
       console.error('读取主题设置失败:', err)
@@ -268,6 +271,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setTheme: async (theme: SettingsTheme) => {
     try {
       const settings = await window.api.invoke('settings:set', { theme })
+      try {
+        localStorage.setItem('nova-settings-theme', settings.theme)
+      } catch (_) {}
       set({ theme: settings.theme })
     } catch (err) {
       console.error('保存主题设置失败:', err)

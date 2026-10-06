@@ -18,6 +18,7 @@ class TestWindow extends EventEmitter {
   throttled = false
   nativeShown = false
   opacity = 0
+  skipTaskbar = true
   visible = false
   destroyed = false
   shows = 0
@@ -26,6 +27,7 @@ class TestWindow extends EventEmitter {
   show(): void { this.visible = true; this.shows++ }
   showInactive(): void { if (!this.nativeShown) this.shows++; this.nativeShown = true }
   setOpacity(value: number): void { this.opacity = value; this.visible = this.nativeShown && value === 1 }
+  setSkipTaskbar(value: boolean): void { this.skipTaskbar = value }
   isMinimized(): boolean { return false }
   focus(): void {}
   close(): void { this.destroyed = true; this.emit('closed') }
@@ -51,6 +53,7 @@ describe('主窗口首次内容帧生命周期', () => {
     expect(win.visible).toBe(false)
     await renderAndShowWindow(win.asWindow())
     expect(win.visible).toBe(true)
+    if (process.platform === 'win32') expect(win.skipTaskbar).toBe(false)
     expect(win.throttled).toBe(true)
     win.visible = false
     await renderAndShowWindow(win.asWindow())

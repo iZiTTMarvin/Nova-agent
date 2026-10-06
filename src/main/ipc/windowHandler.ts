@@ -10,6 +10,7 @@ import {
   WINDOW_MAXIMIZE,
   WINDOW_CLOSE,
   WINDOW_IS_MAXIMIZED,
+  WINDOW_BRAND_FRAME_READY,
   WINDOW_RENDERER_READY
 } from '../../shared/ipc/channels'
 
@@ -21,6 +22,11 @@ export function registerWindowHandler(
   getMainWindow: () => BrowserWindow | null
 ): void {
   handle(WINDOW_RENDERER_READY, async () => {
+    const win = getMainWindow()
+    if (win) await renderAndShowWindow(win)
+  })
+
+  handle(WINDOW_BRAND_FRAME_READY, async () => {
     const win = getMainWindow()
     if (win) await renderAndShowWindow(win)
   })

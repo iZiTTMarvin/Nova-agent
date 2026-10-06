@@ -5,9 +5,230 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Nova Agent</title>
     <link rel="icon" type="image/png" href="./assets/app-icon.png" />
+    <script>
+      (function() {
+        try {
+          var queryTheme = new URLSearchParams(window.location.search).get('theme');
+          var saved = queryTheme || localStorage.getItem('nova-settings-theme') || 'system';
+          var resolved = saved === 'system'
+            ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+            : (saved === 'dark' ? 'dark' : 'light');
+          document.documentElement.setAttribute('data-theme', resolved);
+          document.documentElement.style.colorScheme = resolved;
+        } catch (_) {}
+      })();
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+
+      #root {
+        opacity: 0;
+        transition: opacity 0.16s ease;
+      }
+
+      body.nova-startup-ready #root {
+        opacity: 1;
+      }
+
+      :root {
+        color-scheme: light dark;
+        --startup-bg: light-dark(#f7f4ed, #141517);
+        --startup-card-bg: light-dark(
+          linear-gradient(180deg, #ffffff 0%, #f9f8f4 100%),
+          linear-gradient(180deg, #222327 0%, #161719 100%)
+        );
+        --startup-card-border: light-dark(rgba(60, 48, 30, 0.09), rgba(255, 255, 255, 0.08));
+        --startup-card-shadow: light-dark(
+          0 20px 36px -8px rgba(60, 48, 30, 0.12), 0 6px 14px -3px rgba(60, 48, 30, 0.06),
+          0 20px 40px -8px rgba(0, 0, 0, 0.65), 0 8px 16px -4px rgba(0, 0, 0, 0.45)
+        );
+      }
+
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --startup-bg: #141517;
+        --startup-card-bg: linear-gradient(180deg, #222327 0%, #161719 100%);
+        --startup-card-border: rgba(255, 255, 255, 0.08);
+        --startup-card-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.65), 0 8px 16px -4px rgba(0, 0, 0, 0.45);
+      }
+
+      :root[data-theme="light"],
+      :root[data-theme="parchment"] {
+        color-scheme: light;
+        --startup-bg: #f7f4ed;
+        --startup-card-bg: linear-gradient(180deg, #ffffff 0%, #f9f8f4 100%);
+        --startup-card-border: rgba(60, 48, 30, 0.09);
+        --startup-card-shadow: 0 20px 36px -8px rgba(60, 48, 30, 0.12), 0 6px 14px -3px rgba(60, 48, 30, 0.06);
+      }
+
+      #loading {
+        position: fixed;
+        inset: 0;
+        z-index: 2147483647;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--startup-bg);
+        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        user-select: none;
+        -webkit-app-region: drag;
+      }
+
+      body.nova-startup-ready #loading {
+        pointer-events: none;
+        opacity: 0;
+      }
+
+      .startup-logo-shell {
+        position: relative;
+        display: flex;
+        width: 92px;
+        height: 92px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 24px;
+        background: var(--startup-card-bg);
+        box-shadow: var(--startup-card-shadow);
+        border: 1px solid var(--startup-card-border);
+        transform: scale(0.88);
+        animation: startup-logo-pop 0.44s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        animation-play-state: paused;
+        transform-origin: center;
+        -webkit-app-region: no-drag;
+      }
+
+      body.nova-startup-visible .startup-logo-shell {
+        animation-play-state: running;
+      }
+
+      #startup-recovery {
+        display: none;
+        position: absolute;
+        bottom: 32px;
+        color: inherit;
+        -webkit-app-region: no-drag;
+      }
+
+      body.nova-startup-slow #startup-recovery {
+        display: block;
+      }
+
+      .startup-logo-shell::before {
+        position: absolute;
+        inset: 0;
+        border-radius: inherit;
+        pointer-events: none;
+        content: "";
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 40%);
+      }
+
+      .startup-logo-img {
+        width: 64px;
+        height: 64px;
+        object-fit: contain;
+        display: block;
+        pointer-events: none;
+      }
+
+      @keyframes startup-logo-pop {
+        0% {
+          transform: scale(0.88);
+        }
+        60% {
+          transform: scale(1.02);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .startup-logo-shell {
+          transform: scale(1);
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <div id="loading" role="status" aria-busy="true" aria-label="Loading...">
+      <div class="startup-logo-shell">
+        <img src="./assets/app-icon.png" class="startup-logo-img" alt="Nova Agent" draggable="false" />
+      </div>
+      <button id="startup-recovery" type="button">启动时间较长，点击重新加载</button>
+    </div>
+    <script>
+      (function() {
+        var startupLoading = document.getElementById('loading');
+        var startupLogo = document.querySelector('.startup-logo-shell');
+        var recoveryButton = document.getElementById('startup-recovery');
+        var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+        var finished = false;
+        var animationDone = false;
+        var reactReady = false;
+        var windowVisible = false;
+
+        function tryFinishStartupAnimation() {
+          if (finished || !windowVisible || !animationDone || !reactReady) return;
+          finished = true;
+          performance.mark('nova-startup-complete');
+          document.body.classList.add('nova-startup-ready');
+          window.setTimeout(function() {
+            if (startupLoading && startupLoading.parentNode) {
+              startupLoading.parentNode.removeChild(startupLoading);
+            }
+          }, 400);
+        }
+
+        function markAnimationDone() {
+          animationDone = true;
+          tryFinishStartupAnimation();
+        }
+
+        function markReactReady() {
+          reactReady = true;
+          tryFinishStartupAnimation();
+        }
+
+        window.addEventListener('nova-react-startup-ready', markReactReady, { once: true });
+
+        function showBrandFrame() {
+          window.api.invoke('window:brand-frame-ready').then(function() {
+            requestAnimationFrame(function() {
+              windowVisible = true;
+              performance.mark('nova-brand-visible');
+              document.body.classList.add('nova-startup-visible');
+              if (reduceMotion || !startupLogo) {
+                markAnimationDone();
+              } else {
+                startupLogo.addEventListener('animationend', markAnimationDone, { once: true });
+                window.setTimeout(markAnimationDone, 650);
+              }
+              tryFinishStartupAnimation();
+            });
+          }).catch(function(error) {
+            console.error('品牌首帧通知失败', error);
+          });
+        }
+
+        requestAnimationFrame(function() {
+          requestAnimationFrame(showBrandFrame);
+        });
+        recoveryButton.addEventListener('click', function() { window.location.reload(); });
+        window.setTimeout(function() {
+          if (!reactReady) document.body.classList.add('nova-startup-slow');
+        }, 15000);
+      })();
+    </script>
     <script type="module" src="./main.tsx"></script>
   </body>
 </html>

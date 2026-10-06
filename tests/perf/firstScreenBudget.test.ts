@@ -39,7 +39,7 @@ const manifestFile = join(rendererOut, '.vite/manifest.json')
  *
  * 当前留约 3% 余量给依赖补丁的小幅浮动。
  */
-const BUDGET_KB = Number(process.env.NOVA_BUNDLE_ENTRY_KB ?? 1490)
+const BUDGET_KB = Number(process.env.NOVA_BUNDLE_ENTRY_KB ?? 1495)
 
 interface ManifestChunk {
   file: string

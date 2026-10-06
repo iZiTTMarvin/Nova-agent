@@ -128,6 +128,7 @@ function createMainWindow(): void {
     minHeight: 650,
     frame: false,
     ...(process.platform === 'win32' ? { opacity: 0 } : {}),
+    ...(process.platform === 'win32' ? { skipTaskbar: true } : {}),
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -204,10 +205,16 @@ function createMainWindow(): void {
     renderReloadAttempts = 0
   })
 
+  const startupTheme = process.argv.find(a => a.startsWith('--theme='))?.split('=')[1]
   if (process.env.ELECTRON_RENDERER_URL) {
-    win.loadURL(process.env.ELECTRON_RENDERER_URL)
+    const url = new URL(process.env.ELECTRON_RENDERER_URL)
+    if (startupTheme) url.searchParams.set('theme', startupTheme)
+    win.loadURL(url.toString())
   } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'))
+    win.loadFile(
+      join(__dirname, '../renderer/index.html'),
+      startupTheme ? { query: { theme: startupTheme } } : undefined
+    )
   }
 
   // 开发模式下自动打开开发者工具（修复 F12 打不开的问题）

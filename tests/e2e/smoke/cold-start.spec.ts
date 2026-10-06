@@ -20,6 +20,18 @@ test('隔离新 profile 下窗口、preload 与基础 UI 可冷启动', async ({
     await expect.poll(() => nova.app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].isVisible() && BrowserWindow.getAllWindows()[0].getOpacity() === 1
     )).toBe(true)
+    await expect.poll(() => nova.page.evaluate(() =>
+      performance.getEntriesByName('nova-startup-complete', 'mark').length
+    )).toBe(1)
+    const startup = await nova.page.evaluate(() => ({
+      brand: performance.getEntriesByName('nova-brand-visible', 'mark')[0]?.startTime,
+      complete: performance.getEntriesByName('nova-startup-complete', 'mark')[0]?.startTime,
+      reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches
+    }))
+    expect(startup.brand).toBeDefined()
+    expect(startup.complete).toBeDefined()
+    expect(startup.complete!).toBeGreaterThanOrEqual(startup.brand!)
+    if (!startup.reducedMotion) expect(startup.complete! - startup.brand!).toBeGreaterThanOrEqual(400)
     expect(await nova.app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.getBackgroundThrottling()
     )).toBe(true)

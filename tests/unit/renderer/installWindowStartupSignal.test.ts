@@ -13,11 +13,14 @@ describe('首次窗口通知复用工作区恢复状态', () => {
     for (const callback of pending) callback(0)
   }
 
+  const dispatchEvent = vi.fn()
+
   beforeEach(() => {
     frames.clear()
     invoke.mockClear()
+    dispatchEvent.mockClear()
     useWorkspaceStore.setState({ initialized: false, isSessionLoading: false })
-    vi.stubGlobal('window', { api: { invoke } })
+    vi.stubGlobal('window', { api: { invoke }, dispatchEvent })
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
       frames.set(++nextFrame, callback)
       return nextFrame
@@ -30,18 +33,24 @@ describe('首次窗口通知复用工作区恢复状态', () => {
   it('等待首次工作区与会话恢复，绘制后只通知一次并释放订阅', () => {
     tick(); tick()
     expect(invoke).not.toHaveBeenCalled()
+    expect(dispatchEvent).not.toHaveBeenCalled()
     useWorkspaceStore.setState({ initialized: true, isSessionLoading: true })
     tick(); tick()
     expect(invoke).not.toHaveBeenCalled()
+    expect(dispatchEvent).not.toHaveBeenCalled()
     useWorkspaceStore.setState({ isSessionLoading: false })
     tick()
     expect(invoke).not.toHaveBeenCalled()
+    expect(dispatchEvent).not.toHaveBeenCalled()
     tick()
     expect(invoke).toHaveBeenCalledWith('window:renderer-ready')
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
+    expect(dispatchEvent.mock.calls[0][0].type).toBe('nova-react-startup-ready')
     useWorkspaceStore.setState({ isSessionLoading: true })
     useWorkspaceStore.setState({ isSessionLoading: false })
     tick(); tick()
     expect(invoke).toHaveBeenCalledTimes(1)
+    expect(dispatchEvent).toHaveBeenCalledTimes(1)
     expect(frames.size).toBe(0)
   })
 

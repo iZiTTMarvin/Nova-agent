@@ -11,6 +11,7 @@ export function installWindowStartupSignal(): () => void {
     frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
         unsubscribe()
+        window.dispatchEvent?.(new Event('nova-react-startup-ready'))
         void window.api.invoke(WINDOW_RENDERER_READY).catch(error => {
           console.error('首屏通知失败', error)
         })

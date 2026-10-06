@@ -85,6 +85,7 @@ export function bindWindowStartup(win: BrowserWindow): void {
       if (process.platform === 'win32') {
         cleanup()
         win.setOpacity(1)
+        win.setSkipTaskbar(false)
         if (!win.isMinimized()) win.focus()
         return
       }
