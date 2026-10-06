@@ -33,6 +33,7 @@ type IpcInvokeArgs<C extends IpcCommandChannel> = IpcCommands[C]['params'] exten
 interface LaunchOptions {
   executablePath?: string
   skipWorkspaceSetup?: boolean
+  skipViewportResize?: boolean
   codeIndexEnabled?: boolean
   codeFileCount?: number
   recordTrace?: boolean
@@ -182,7 +183,9 @@ export async function launchNova(
   })
 
   const page = await app.firstWindow()
-  await page.setViewportSize({ width: 1200, height: 800 })
+  if (!options.skipViewportResize) {
+    await page.setViewportSize({ width: 1200, height: 800 })
+  }
   page.on('pageerror', error => {
     pageErrors.push(error.stack ?? error.message)
   })

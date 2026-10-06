@@ -1,9 +1,10 @@
-import React from 'react'
+import React, { useLayoutEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { installRendererStallDetector } from '../shared/diagnostics/stallDetector'
 import { installPopoverReentrancyGuard } from './installPopoverReentrancyGuard'
+import { installWindowStartupSignal } from './installWindowStartupSignal'
 import '@astryxdesign/core/reset.css'
 import '@astryxdesign/core/astryx.css'
 import './styles/astryx-parchment.css'
@@ -14,11 +15,14 @@ import './styles/global.css'
 installPopoverReentrancyGuard()
 installRendererStallDetector()
 
+function StartupRoot(): React.JSX.Element {
+  useLayoutEffect(installWindowStartupSignal, [])
+  return <ErrorBoundary><App /></ErrorBoundary>
+}
+
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
+    <StartupRoot />
   </React.StrictMode>
 )
 

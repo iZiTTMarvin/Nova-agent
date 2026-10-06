@@ -4,11 +4,13 @@
  */
 import { BrowserWindow } from 'electron'
 import { handle } from './secureIpc'
+import { renderAndShowWindow } from '../windowStartup'
 import {
   WINDOW_MINIMIZE,
   WINDOW_MAXIMIZE,
   WINDOW_CLOSE,
-  WINDOW_IS_MAXIMIZED
+  WINDOW_IS_MAXIMIZED,
+  WINDOW_RENDERER_READY
 } from '../../shared/ipc/channels'
 
 /**
@@ -18,6 +20,11 @@ import {
 export function registerWindowHandler(
   getMainWindow: () => BrowserWindow | null
 ): void {
+  handle(WINDOW_RENDERER_READY, async () => {
+    const win = getMainWindow()
+    if (win) await renderAndShowWindow(win)
+  })
+
   handle(WINDOW_MINIMIZE, async () => {
     getMainWindow()?.minimize()
   })

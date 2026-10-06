@@ -397,6 +397,10 @@ export interface IpcCommands {
     params: void
     result: boolean
   }
+  'window:renderer-ready': {
+    params: void
+    result: void
+  }
   'skill:list': {
     params: void
     result: SkillCatalogSnapshot

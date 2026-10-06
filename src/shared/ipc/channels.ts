@@ -89,6 +89,7 @@ export const WINDOW_MINIMIZE = 'window-minimize' as const
 export const WINDOW_MAXIMIZE = 'window-maximize' as const
 export const WINDOW_CLOSE = 'window-close' as const
 export const WINDOW_IS_MAXIMIZED = 'window-is-maximized' as const
+export const WINDOW_RENDERER_READY = 'window:renderer-ready' as const
 // ── Workspace 单一事实源（PRD §5.1） ──────────────────────
 /** 读取当前工作区状态 */
 export const WORKSPACE_GET = 'workspace:get' as const

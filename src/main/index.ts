@@ -28,6 +28,7 @@ import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
 import { processRegistry } from '../runtime/process'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
+import { bindWindowStartup } from './windowStartup'
 import { bindWebviewPolicy, getBrowserSessionHost } from './browser'
 import { initMainLogger, mainLog } from './logger'
 import { initAutoUpdater } from './updater'
@@ -53,6 +54,11 @@ export { getMainWindow } from './mainWindowRef'
 // 注册 nova-image:// scheme 属性。必须在 app.whenReady 之前执行，
 // 否则 registerSchemesAsPrivileged 静默失败，<img src="nova-image://..."> 无法加载。
 registerNovaImageScheme()
+
+// Windows 的冷启动 GPU 栅格化会等待着色器编译；CPU 栅格化仍保留 GPU 合成与 WebGL。
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('disable-gpu-rasterization')
+}
 
 /**
  * 启动时自动载入持久化的模型配置以提供免配直接运行体验
@@ -121,10 +127,12 @@ function createMainWindow(): void {
     minWidth: 900,
     minHeight: 650,
     frame: false,
+    ...(process.platform === 'win32' ? { opacity: 0 } : {}),
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
+      backgroundThrottling: false,
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
@@ -140,13 +148,9 @@ function createMainWindow(): void {
     bindWebviewPolicy(win, browserHost)
   }
 
-  win.on('ready-to-show', () => {
-    if (getMainWindow()) {
-      watchWindowMaximizeState(win)
-      bindSkillServiceWindow(win)
-    }
-    win.show()
-  })
+  watchWindowMaximizeState(win)
+  bindSkillServiceWindow(win)
+  bindWindowStartup(win)
 
   win.on('closed', () => {
     setMainWindow(null)
@@ -256,7 +260,7 @@ async function bootstrap(): Promise<void> {
   //      scheme 属性已在模块顶层通过 registerSchemesAsPrivileged 注册）
   registerNovaImageHandler(imageStore)
 
-  // 5. 创建渲染视窗（窗口尽早诞生，loadURL → ready-to-show → show 异步进行）
+  // 5. 创建渲染视窗，内容帧完成后显示窗口。
   createMainWindow()
 
   initAutoUpdater(getMainWindow)
