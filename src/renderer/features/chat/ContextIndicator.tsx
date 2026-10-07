@@ -36,36 +36,39 @@ const ROWS: Array<{ key: BreakdownRow['key']; label: string }> = [
   { key: 'other', label: '其他' }
 ]
 
-/** 渲染进度圆环的小图标,圆环底色走主题变量,进度色随占用率走语义 token */
+/** 进度圆环。底环必须比所在卡片亮一档，否则深色下整圈消失，只剩线帽上的一个点。 */
 const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ratio }) => {
   const size = 16
-  const strokeWidth = 3
+  const strokeWidth = 2
   const radius = (size - strokeWidth) / 2
   const circumference = 2 * Math.PI * radius
-  const dashOffset = circumference * (1 - Math.min(1, Math.max(0, ratio)))
+  const clamped = Math.min(1, Math.max(0, ratio))
+  const dashOffset = circumference * (1 - clamped)
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" focusable="false">
       <circle
+        className="context-indicator__track"
         cx={size / 2}
         cy={size / 2}
         r={radius}
         fill="none"
-        stroke="var(--border-warm)"
         strokeWidth={strokeWidth}
       />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={radius}
-        fill="none"
-        stroke={color}
-        strokeWidth={strokeWidth}
-        strokeDasharray={circumference}
-        strokeDashoffset={dashOffset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: 'stroke-dashoffset 0.3s ease' }}
-      />
+      {clamped > 0 && (
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={color}
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={dashOffset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: 'stroke-dashoffset 0.3s ease' }}
+        />
+      )}
     </svg>
   )
 }
@@ -87,8 +90,8 @@ export const ContextIndicator: React.FC = () => {
   const percent = total > 0 ? Math.round(ratio * 1000) / 10 : 0
   const getColor = () => {
     if (ratio >= 0.8) return 'var(--color-error)'
-    if (ratio >= 0.5) return 'var(--color-accent)'
-    return 'var(--color-success)'
+    if (ratio >= 0.5) return 'var(--color-warning)'
+    return 'var(--text-primary)'
   }
   const color = getColor()
 

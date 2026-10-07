@@ -121,7 +121,6 @@ export const PermissionModeButton: React.FC<PermissionModeButtonProps> = ({
           icon={<ShieldIcon size={14} />}
           endContent={permissionMode === option.id ? <CheckSmallIcon size={16} /> : undefined}
           isDisabled={option.disabled}
-          className={permissionMode === option.id ? 'permission-mode__item--active' : undefined}
           onClick={() => void selectMode(option)}
         />
       ))}

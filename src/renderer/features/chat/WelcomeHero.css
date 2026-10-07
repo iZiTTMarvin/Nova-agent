@@ -36,11 +36,8 @@
 }
 
 .welcome-wordmark__letters {
-  color: light-dark(#777780, #85858e);
+  color: light-dark(#777780, #a1a1aa);
   fill: currentColor;
-  stroke: currentColor;
-  stroke-width: 1.5;
-  stroke-linejoin: round;
 }
 
 .welcome-mascot {
@@ -48,8 +45,8 @@
 }
 
 .welcome-mascot__body {
-  fill: light-dark(#eae8fc, #3c394f);
-  stroke: light-dark(#c9c5ef, #645c80);
+  fill: light-dark(#eae8fc, #3f3f46);
+  stroke: light-dark(#c9c5ef, #52525b);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
   stroke-linejoin: round;
@@ -57,7 +54,7 @@
 }
 
 .welcome-mascot__eye {
-  fill: light-dark(#73669d, #c9c0f0);
+  fill: light-dark(#73669d, #fafafa);
   transform-box: fill-box;
   transform-origin: center;
   transition: transform 70ms ease-out;

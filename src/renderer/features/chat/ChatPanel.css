@@ -797,6 +797,10 @@
   background: var(--surface-hover);
 }
 
+.context-indicator__track {
+  stroke: light-dark(rgba(0, 0, 0, 0.16), #52525b);
+}
+
 .context-indicator:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;

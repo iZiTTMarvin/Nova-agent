@@ -69,8 +69,9 @@ describe('主题 token 层契约', () => {
     expect(globalCss.match(/:root\s*\{/g)).toHaveLength(1)
   })
 
-  it('深色表面阶梯逐级变亮，且地板离开准纯黑', () => {
-    // 越靠近观察者越亮；地板过暗会让黑色投影与叠加层全部失效（黑上叠黑）
+  it('深色侧栏沉在内容之下，卡片从内容底抬起', () => {
+    // 侧栏是最暗的一层，但不能落到准纯黑，否则投影和悬停都会消失。
+    // 卡片必须比内容底亮出一档，表面才靠明度分开。
     const tier = (name: string) => {
       const m = globalCss.match(new RegExp(`--surface-${name}:\\s*light-dark\\([^,]+,\\s*(#[0-9a-f]{6})\\)`))
       if (!m) throw new Error(`missing --surface-${name}`)
@@ -84,9 +85,10 @@ describe('主题 token 层契约', () => {
     const canvas = tier('canvas')
     const sidebar = tier('sidebar')
     const card = tier('card')
-    expect(canvas).toBeGreaterThan(6)   // 不再是 #09090b 那样的准纯黑
-    expect(sidebar - canvas).toBeGreaterThan(3.5)
-    expect(card - sidebar).toBeGreaterThan(3.5)
+    expect(canvas).toBeGreaterThan(6)
+    expect(sidebar).toBeGreaterThan(4)
+    expect(canvas - sidebar).toBeGreaterThan(1.5)
+    expect(card - canvas).toBeGreaterThan(3.5)
   })
 
   it('阴影阶梯在深色下保留可见的抬升信号', () => {

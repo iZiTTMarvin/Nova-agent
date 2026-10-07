@@ -28,15 +28,6 @@
   line-height: 1.35;
 }
 
-.permission-mode__item--active {
-  background: var(--color-brand);
-  color: #fff;
-}
-
-.permission-mode__item--active [class*='description'] {
-  color: rgba(255, 255, 255, 0.78);
-}
-
 .full-access-confirm__body {
   padding: 22px 22px 12px;
 }
