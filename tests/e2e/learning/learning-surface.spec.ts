@@ -80,13 +80,11 @@ test.describe('学习表面主路径', () => {
     const learnSessionId = await createLearnSession(nova)
 
     // 开发会话仍是 default，没有被原地改成 learn
-    const sessions = await nova.page.evaluate(async () => {
-      const api = (window as typeof window & { api?: { invoke: (c: string, ...a: unknown[]) => Promise<unknown> } }).api
-      return api!.invoke('load-sessions') as Promise<Array<{ id: string; mode: string }>>
-    })
+    const sessions = (await nova.getWorkspace()).availableSessions
     const devSession = sessions.find(session => session.id === devSessionId)
     expect(devSession?.mode).toBe('default')
     expect(sessions.some(session => session.id === learnSessionId && session.mode === 'learn')).toBe(true)
+    expect(await nova.invoke('load-sessions')).toEqual([])
 
     // 分段切换处于学习态；空状态给三条起点建议
     await expect(nova.page.getByRole('button', { name: '学习' }).first()).toHaveAttribute(

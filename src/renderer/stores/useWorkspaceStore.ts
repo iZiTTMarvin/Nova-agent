@@ -34,6 +34,8 @@ export interface WorkspaceStoreState {
   initialized: boolean
   /** 会话切换或水合加载状态 */
   isSessionLoading: boolean
+  /** 新会话动作的输入聚焦请求；仅属于 Renderer 交互。 */
+  composerFocusVersion: number
 
   // ── Actions（只转发 IPC） ──
   /** 设置会话加载等待状态 */
@@ -84,6 +86,7 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
   availableSessions: [],
   initialized: false,
   isSessionLoading: false,
+  composerFocusVersion: 0,
 
   setSessionLoading: (loading: boolean) => useWorkspaceStore.setState({ isSessionLoading: loading }),
 
@@ -122,6 +125,9 @@ export const useWorkspaceStore = create<WorkspaceStoreState>(() => ({
       const state = await window.api.invoke('workspace:create-session', { workspaceRoot, mode })
       const { dispatchWorkspaceChange } = await import('./workspaceDispatcher')
       dispatchWorkspaceChange(state)
+      if (useWorkspaceStore.getState().currentSessionId === state.currentSessionId) {
+        useWorkspaceStore.setState(current => ({ composerFocusVersion: current.composerFocusVersion + 1 }))
+      }
     } catch (err) {
       console.error('[useWorkspaceStore] 创建会话失败:', err)
     }
@@ -263,6 +269,7 @@ export function resetWorkspaceStoreForTests(): void {
     activeModelRef: null,
     availableSessions: [],
     initialized: false,
-    isSessionLoading: false
+    isSessionLoading: false,
+    composerFocusVersion: 0
   })
 }

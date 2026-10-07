@@ -72,7 +72,7 @@ import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
 import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
 import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
-import { retainDevComposerDrafts, useDevComposerDraft } from './devComposerDraft'
+import { retainDevComposerDrafts, useDevComposerDraft, useDevComposerAttachments } from './devComposerDraft'
 import { useLearningStore } from '../learning/useLearningStore'
 import { switchToLearningSurface } from '../learning/learningSurfaceSwitch'
 import '../todo/TodoPanel.css'
@@ -260,6 +260,10 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSnapshot = useSkillsStore(state => state.setSnapshot)
   const composerInputHandleRef = useRef<ChatComposerInputHandle>(null)
+  const composerFocusVersion = useWorkspaceStore(state => state.composerFocusVersion)
+  useEffect(() => {
+    composerInputHandleRef.current?.focus()
+  }, [currentSessionId, composerFocusVersion])
   const isComposeSession = currentSession?.mode === 'compose'
 
   useEffect(() => {
@@ -366,7 +370,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const streamScrollPollerRef = useRef<ReturnType<typeof createStreamingScrollPoller> | null>(null)
 
   // 图片附件状态
-  const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([])
+  const [imageAttachments, setImageAttachments] = useDevComposerAttachments(currentSessionId)
   const [isDragOver, setIsDragOver] = useState(false)
   // 全屏预览状态
   const [previewDialog, setPreviewDialog] = useState<{ open: boolean; images: { dataUrl: string; fileName: string }[]; index: number }>({
@@ -640,6 +644,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     const restoreRejectedDraft = (rejectedText: string) => {
       if (useChatStore.getState().currentSessionId !== sendingSessionId) return
       setInputVal(current => current === '' ? rejectedText : current)
+      setImageAttachments(current => current.length === 0 ? images : current)
     }
 
     // 用户主动发送：无论之前是否上滚离开底部，都恢复跟随，让用户看到自己刚发的消息。

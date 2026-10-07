@@ -218,6 +218,8 @@ interface SessionBase {
 /** 普通会话摘要不携带 child lineage。 */
 export interface PrimarySession extends SessionBase {
   kind: 'primary'
+  /** 尚未提交的内存草稿；不属于历史列表，也不写入持久化格式。 */
+  isDraft?: true
   subagent?: never
 }
 

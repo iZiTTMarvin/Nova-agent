@@ -141,6 +141,25 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
         set(state => setRollbackErrorPatch(state, userMsg.id, (err as Error).message))
         return true
       }
+      const selected = get().sessions.find(session => session.id === activeSessionId)
+      if (selected?.kind === 'primary' && selected.isDraft) {
+        try {
+          const detail = await window.api.invoke('load-session', { sessionId: activeSessionId })
+          if (!isCurrentRequest()) return true
+          // 仍是草稿证明首发未提交；结果未知或已持久化时不能恢复成待重发输入。
+          if (detail.kind === 'primary' && detail.isDraft) {
+            set(state => ({
+              ...commitMessageList(state, { nextMessages: state.messages.filter(message => message.id !== userMsg.id), skipWindowTrim: true }),
+              sendInFlight: false, activeAgentSessionId: null
+            }))
+            options?.onRejected?.(content)
+            await get().handleError('msg_err_' + Date.now(), (err as Error).message, { skipReconcile: true })
+            return true
+          }
+        } catch (reloadError) {
+          console.error('[sendMessage] 首发提交状态读取失败:', reloadError)
+        }
+      }
       set({ sendInFlight: false, activeAgentSessionId: null })
       await get().handleError('msg_err_' + Date.now(), (err as Error).message)
     } finally {

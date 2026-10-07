@@ -83,6 +83,30 @@ describe('WorkspaceService workspace root changes', () => {
     return service
   }
 
+  it('重复新建复用项目草稿，首次消息提交后才进入历史', () => {
+    const service = createService()
+    const first = service.createSession({ workspaceRoot: '/workspace/a' }).currentSessionId!
+    for (let index = 0; index < 10; index++) {
+      expect(service.createSession({ workspaceRoot: '/workspace/a' }).currentSessionId).toBe(first)
+    }
+    expect(store.list()).toEqual([])
+    expect(fs.existsSync(path.join(tempRoot, 'sessions', first))).toBe(false)
+    service.setMode({ mode: 'plan' })
+    expect(service.createSession({ workspaceRoot: '/workspace/a' }).currentSessionId).toBe(first)
+    const learn = service.createSession({ workspaceRoot: '/workspace/a', mode: 'learn' }).currentSessionId!
+    expect(learn).not.toBe(first)
+    expect(service.createSession({ workspaceRoot: '/workspace/a', mode: 'plan' }).currentSessionId).toBe(first)
+    expect(store.appendMessageFast(first, { id: 'first-input', role: 'user', content: 'hello', timestamp: 1 }).ok).toBe(true)
+    service.refreshAvailableSessions()
+    expect(store.list().map(session => session.id)).toEqual([first])
+    const next = service.createSession({ workspaceRoot: '/workspace/a' }).currentSessionId!
+    expect(next).not.toBe(first)
+    expect(store.load(first)?.messages.map(message => message.content)).toEqual(['hello'])
+    expect(service.createSession({ workspaceRoot: '/workspace/a', mode: 'compose' }).currentSessionId).toBe(next)
+    expect(store.load(next)?.mode).toBe('compose')
+    expect(store.load(first)?.mode).toBe('plan')
+  })
+
   it('向多个订阅者发送 previousRoot 与 nextRoot，并忽略同根会话切换', () => {
     const service = createService()
     const firstEvents: WorkspaceRootChange[] = []
@@ -217,7 +241,7 @@ describe('WorkspaceService workspace root changes', () => {
     expect(fs.statSync(defaultDir).isDirectory()).toBe(true)
     expect(service.getState().currentProjectPath).toBe(defaultDir)
     expect(service.getState().defaultWorkspacePath).toBe(defaultDir)
-    expect(service.getState().currentSessionId).not.toBe(firstId)
+    expect(service.getState().currentSessionId).toBe(firstId)
 
     const blockedPath = path.join(tempRoot, 'not-a-directory')
     fs.writeFileSync(blockedPath, 'file')

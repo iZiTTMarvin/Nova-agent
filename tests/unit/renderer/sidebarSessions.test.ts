@@ -38,6 +38,12 @@ const child: Session = {
 }
 
 describe('listSidebarRootSessions', () => {
+  it('草稿不进历史、置顶或面包屑，旧空会话仍可见', () => {
+    const draft: Session = { ...parent, id: 'draft', isDraft: true, pinned: true }
+    expect(listSidebarRootSessions([draft, parent])).toEqual([parent])
+    expect(listPinnedSessions([draft, parent])).toEqual([])
+    expect(listBreadcrumbSessions([draft, parent], parent.workspaceRoot, 'dev')).toEqual([parent])
+  })
   it('只返回 primary 会话，子代理不进入侧栏列表', () => {
     expect(listSidebarRootSessions([child, parent]).map((session) => session.id)).toEqual(['parent'])
   })

@@ -26,6 +26,64 @@ afterEach(() => {
 })
 
 describe('SessionStore', () => {
+  describe('内存草稿', () => {
+    it('回收草稿只删除草稿附件，保留正式历史与附件', () => {
+      const store = new SessionStore(tmpDir)
+      const draft = store.create('/workspace', 'default', { deferPersistence: true })
+      const saved = store.create('/workspace')
+      for (const session of [draft, saved]) {
+        const images = path.join(tmpDir, 'sessions', session.id, 'images')
+        fs.mkdirSync(images, { recursive: true })
+        fs.writeFileSync(path.join(images, 'attachment.png'), 'image')
+      }
+      store.discardDrafts()
+      expect(store.load(draft.id)).toBeNull()
+      expect(fs.existsSync(path.join(tmpDir, 'sessions', draft.id))).toBe(false)
+      expect(store.load(saved.id)?.id).toBe(saved.id)
+      expect(fs.existsSync(path.join(tmpDir, 'sessions', saved.id, 'images', 'attachment.png'))).toBe(true)
+    })
+    it('配置和预热保存只留在内存，首条消息连同图片目录成为可恢复历史', () => {
+      const store = new SessionStore(tmpDir)
+      const draft = store.create('/workspace', 'default', { deferPersistence: true })
+      store.updateMode(draft.id, 'plan')
+      store.updatePermissionMode(draft.id, 'auto')
+      store.updateReasoningEffortOverride(draft.id, 'high')
+      const loaded = store.load(draft.id)!
+      loaded.frozenSystemPrompt = 'frozen'
+      store.save(loaded)
+      loaded.mode = 'default'
+      expect(store.load(draft.id)?.mode).toBe('plan')
+      expect(store.loadForDisplay(draft.id, { tailLimit: 20 })?.hasMore).toBe(false)
+      expect(store.list()).toEqual([])
+      expect(new SessionStore(tmpDir).load(draft.id)).toBeNull()
+      const images = path.join(tmpDir, 'sessions', draft.id, 'images')
+      fs.mkdirSync(images, { recursive: true })
+      fs.writeFileSync(path.join(images, 'attachment.png'), 'image')
+      const message = { id: 'user-first', role: 'user' as const, content: 'hello', timestamp: 1 }
+      expect(store.appendMessageFast(draft.id, message)).toMatchObject({ ok: true, status: 'appended' })
+      expect(store.appendMessageFast(draft.id, message)).toMatchObject({ ok: true, status: 'already_exists' })
+      const recovered = new SessionStore(tmpDir).load(draft.id)!
+      expect(recovered).toMatchObject({ mode: 'plan', permissionMode: 'auto', reasoningEffortOverride: 'high', frozenSystemPrompt: 'frozen', messageCount: 1 })
+      expect(recovered.messages.map(item => item.content)).toEqual(['hello'])
+      expect(fs.readFileSync(path.join(images, 'attachment.png'), 'utf8')).toBe('image')
+      expect(store.listDrafts()).toEqual([])
+    })
+
+    it('首发发布失败保留草稿与配置，重试只提交一条消息', () => {
+      const store = new SessionStore(tmpDir)
+      const draft = store.create('/workspace', 'learn', { deferPersistence: true })
+      const blockedMetadata = path.join(tmpDir, 'sessions', draft.id, 'session.json')
+      fs.mkdirSync(blockedMetadata, { recursive: true })
+      const message = { id: 'first', role: 'user' as const, content: 'question', timestamp: 1 }
+      expect(store.appendMessageFast(draft.id, message)).toMatchObject({ ok: false, status: 'failed' })
+      fs.rmdirSync(blockedMetadata)
+      expect(store.isDraft(draft.id)).toBe(true)
+      expect(store.list()).toEqual([])
+      expect(store.load(draft.id)?.messages).toEqual([])
+      expect(store.appendMessageFast(draft.id, message).ok).toBe(true)
+      expect(new SessionStore(tmpDir).load(draft.id)?.messages).toHaveLength(1)
+    })
+  })
   describe('createChildIfAbsent', () => {
     const spawnKey = 'task_tool:stable-spawn-key'
     const createCommand = () => ({

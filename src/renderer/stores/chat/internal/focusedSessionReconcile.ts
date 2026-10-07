@@ -18,7 +18,7 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
   }
   const nextSummary: Session = detail.kind === 'subagent'
     ? { ...base, kind: 'subagent', subagent: detail.subagent }
-    : { ...base, kind: 'primary' }
+    : { ...base, kind: 'primary', ...(detail.isDraft ? { isDraft: true as const } : {}) }
   return [nextSummary, ...sessions.filter(session => session.id !== detail.id)]
 }
 

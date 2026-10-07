@@ -25,6 +25,7 @@ import { closeAllCodeGraphs } from './services/CodeGraphHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
+import { getSessionStore } from './services/SessionStoreHost'
 import { processRegistry } from '../runtime/process'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
@@ -339,6 +340,11 @@ async function bootstrap(): Promise<void> {
             console.error('[ProcessRegistry] 退出前终止持久进程失败:', processes.reason)
           }
         })
+      try {
+        getSessionStore().discardDrafts()
+      } catch (error) {
+        console.error('[SessionStore] 退出时回收未提交草稿失败:', error)
+      }
       // 干净退出标记：让下次启动跳过 Chromium 缓存重建，复用代码缓存加速启动。
       // 仅打包态写入；dev 恒重建，不留标记。
       if (app.isPackaged) {

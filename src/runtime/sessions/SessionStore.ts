@@ -334,6 +334,7 @@ function sameFrozenTargets(a: readonly string[], b: readonly string[]): boolean 
 
 export class SessionStore {
   private readonly sessionsDir: string
+  private readonly drafts = new Map<string, SessionData>()
   // 写盘失败的意图仅用于维持本进程冻结；重试仍须真正提交，不能作为持久回执。
   private readonly unpersistedControlIntents = new Map<string, SessionControlIntent>()
 
@@ -365,6 +366,7 @@ export class SessionStore {
     workspaceRoot: string,
     mode: Mode = 'default',
     options: {
+      readonly deferPersistence?: boolean
       readonly codeIndexEnabled?: boolean
       readonly permissionMode?: PermissionMode
       /** 新会话的模型覆盖；缺省跟随注册表全局最近选择 */
@@ -397,8 +399,22 @@ export class SessionStore {
         : {})
     }
 
-    this.save(session)
+    if (options.deferPersistence) this.drafts.set(session.id, structuredClone(session))
+    else this.save(session)
     return session
+  }
+
+  isDraft(sessionId: string): boolean {
+    return this.drafts.has(sessionId)
+  }
+
+  listDrafts(): SessionData[] {
+    return [...this.drafts.values()].map(draft => structuredClone(draft))
+  }
+
+  /** 应用退出时回收未提交草稿及其暂存附件，正式历史不受影响。 */
+  discardDrafts(): void {
+    for (const id of this.drafts.keys()) this.delete(id)
   }
 
   /**
@@ -518,6 +534,11 @@ export class SessionStore {
    * - 只改元数据（mode/todos）应使用 saveMetadata，避免碰 messages.jsonl
    */
   save(session: SessionData): void {
+    if (this.drafts.has(session.id)) {
+      if (session.messages.length > 0) throw new Error('草稿消息必须通过追加入口提交')
+      this.drafts.set(session.id, structuredClone(session))
+      return
+    }
     const messages = ensureMessageParentChain(session.messages).map(normalizeMessageToBlocksSource)
     const currentLeafId = resolveCurrentLeafId(messages, session.currentLeafId)
     const messageCount = computeMessageCount(messages, currentLeafId)
@@ -585,6 +606,11 @@ export class SessionStore {
     session: SessionData,
     options?: { recomputeMessageCount?: boolean }
   ): void {
+    const draft = this.drafts.get(session.id)
+    if (draft) {
+      this.drafts.set(session.id, structuredClone({ ...session, messages: draft.messages }))
+      return
+    }
     const dir = this.resolveSessionDir(session.id)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
@@ -608,6 +634,7 @@ export class SessionStore {
     sessionId: string,
     options: { tailLimit: number }
   ): SessionDisplayLoad | null {
+    if (this.drafts.has(sessionId)) return { session: this.load(sessionId)!, hasMore: false }
     let sessionDir: string
     try {
       sessionDir = this.resolveSessionDir(sessionId)
@@ -666,6 +693,8 @@ export class SessionStore {
    * 返回体 messages 为空，供切换/启动读取模式、思考强度与白名单前缀。
    */
   loadMetadata(sessionId: string): SessionData | null {
+    const draft = this.drafts.get(sessionId)
+    if (draft) return structuredClone({ ...draft, messages: [] })
     try {
       const filePath = path.join(this.resolveSessionDir(sessionId), SESSION_DATA_FILE)
       if (!fs.existsSync(filePath)) return null
@@ -685,6 +714,8 @@ export class SessionStore {
    * 迁移失败返回 null（与"文件损坏静默跳过"行为一致），避免阻塞 UI。
    */
   load(sessionId: string): SessionData | null {
+    const draft = this.drafts.get(sessionId)
+    if (draft) return structuredClone(draft)
     let sessionDir: string
     try {
       sessionDir = this.resolveSessionDir(sessionId)
@@ -864,10 +895,11 @@ export class SessionStore {
    */
   delete(sessionId: string): boolean {
     const sessionDir = this.resolveSessionDir(sessionId)
-    if (!fs.existsSync(sessionDir)) return false
+    if (!fs.existsSync(sessionDir)) return this.drafts.delete(sessionId)
 
     closeSessionIndex(sessionDir)
     fs.rmSync(sessionDir, { recursive: true, force: true })
+    this.drafts.delete(sessionId)
     return true
   }
 
@@ -946,6 +978,8 @@ export class SessionStore {
     sessionId: string,
     message: SessionMessageAppend
   ): AppendMessageResult {
+    const draft = this.drafts.get(sessionId)
+    if (draft) return this.commitDraft(draft, message)
     let dir: string
     try {
       dir = this.resolveSessionDir(sessionId)
@@ -969,6 +1003,29 @@ export class SessionStore {
       const msg = err instanceof Error ? err.message : String(err)
       console.error(`[SessionStore] 追加消息到会话 ${sessionId} 失败:`, err)
       return { ok: false, status: 'failed', error: msg }
+    }
+  }
+
+  /** 第一条用户消息与元数据一起原子发布；失败保留原草稿供用户重试。 */
+  private commitDraft(draft: SessionData, message: SessionMessageAppend): AppendMessageResult {
+    if (message.role !== 'user') {
+      return { ok: false, status: 'failed', error: '草稿只能由用户消息提交' }
+    }
+    const dir = this.resolveSessionDir(draft.id)
+    try {
+      const first = serializeMessageForDisk({ ...message, parentId: null } as SessionMessage)
+      const committed: SessionData = {
+        ...draft, messages: [first], currentLeafId: first.id, messageCount: 1, updatedAt: Date.now()
+      }
+      // 图片可先写入同一目录；元数据最后发布，历史读取只认 session.json。
+      fs.mkdirSync(dir, { recursive: true })
+      writeMessagesJsonl(dir, committed.messages)
+      atomicWriteFileSync(path.join(dir, SESSION_DATA_FILE), JSON.stringify(this.toMetadata(committed), null, 2), 'utf8')
+      this.drafts.delete(draft.id)
+      const { messages: _messages, ...meta } = committed
+      return { ok: true, status: 'appended', meta }
+    } catch (error) {
+      return { ok: false, status: 'failed', error: error instanceof Error ? error.message : String(error) }
     }
   }
 
@@ -1150,6 +1207,7 @@ export class SessionStore {
 
   /** 只读 session.json 元数据（不含 messages） */
   private loadMetadataOnly(sessionId: string): SessionData | null {
+    if (this.drafts.has(sessionId)) return this.loadMetadata(sessionId)
     try {
       const filePath = path.join(this.resolveSessionDir(sessionId), SESSION_DATA_FILE)
       if (!fs.existsSync(filePath)) return null
@@ -1164,6 +1222,7 @@ export class SessionStore {
    * 优先走 SQLite 激活链 + 字节范围随机读；失败回退全量 load。
    */
   loadActivePath(sessionId: string): SessionData | null {
+    if (this.drafts.has(sessionId)) return this.load(sessionId)
     let sessionDir: string
     try {
       sessionDir = this.resolveSessionDir(sessionId)
@@ -1796,6 +1855,7 @@ export class SessionStore {
     sessionId: string,
     options: { beforeId?: string; limit: number }
   ): { messages: SessionMessage[]; hasMore: boolean } | null {
+    if (this.drafts.has(sessionId)) return { messages: [], hasMore: false }
     let sessionDir: string
     try {
       sessionDir = this.resolveSessionDir(sessionId)

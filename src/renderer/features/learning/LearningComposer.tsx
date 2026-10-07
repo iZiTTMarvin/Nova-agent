@@ -2,7 +2,8 @@
  * 学习输入区：自由提问走 message 命令；当前题等待回答时整个输入区换成停靠问题面板，
  * 保证同屏只有一个可编辑输入框。Enter 语义与开发输入框一致，命令未被接纳不清空草稿。
  */
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { ChatComposerInput, type ChatComposerInputHandle } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { SendIcon, StopIcon } from '../../components/Icons'
@@ -39,6 +40,10 @@ export function LearningComposer({
   const sendCommand = useLearningStore(state => state.sendCommand)
   const cancelExecution = useAgentStore(state => state.cancelExecution)
   const inputHandleRef = useRef<ChatComposerInputHandle>(null)
+  const composerFocusVersion = useWorkspaceStore(state => state.composerFocusVersion)
+  useEffect(() => {
+    inputHandleRef.current?.focus()
+  }, [sessionId, composerFocusVersion])
 
   const currentQuestion =
     projection?.questions.find(question => question.checkpointId === projection.currentCheckpointId) ?? null

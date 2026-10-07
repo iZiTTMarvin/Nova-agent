@@ -12,12 +12,13 @@
  */
 import { app, dialog, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, statSync } from 'fs'
+import * as path from 'path'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
 import type { SessionControlIntent, SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
-import { assertSessionModeMutable } from '../../shared/session/mode'
+import { assertSessionModeMutable, parseStrictMode } from '../../shared/session/mode'
 import type { LlmRegistry, ReasoningEffort, ActiveModelRef } from '../../shared/config/llmRegistry'
 import {
   getSupportedReasoningEfforts,
@@ -245,8 +246,12 @@ export class WorkspaceService {
 
   /** 读取当前状态（不广播）；在此处盖上 messagesRevision、tier1 上下文与默认工作区路径 */
   getState(): WorkspaceState {
+    const drafts = this.deps.getSessionStore().listDrafts().map(data => ({
+      ...this.summaryFromMetadata(data), isDraft: true as const
+    }))
     return {
       ...this.state,
+      availableSessions: drafts.length > 0 ? [...this.state.availableSessions, ...drafts] : this.state.availableSessions,
       defaultWorkspacePath: resolveDefaultWorkspacePath(loadNovaSettings()),
       messagesRevision: this.messagesRevision,
       tier1BranchContext: this.tier1BranchContext,
@@ -355,14 +360,28 @@ export class WorkspaceService {
 
   /** 显式创建新会话（使用给定 workspaceRoot，或沿用当前项目） */
   createSession(params: { workspaceRoot: string; mode?: Mode }): WorkspaceState {
-    this.clearTier1View()
     const store = this.deps.getSessionStore()
+    const mode = parseStrictMode(params.mode ?? this.state.currentMode)
+    const existing = store.listDrafts().find(draft =>
+      path.relative(draft.workspaceRoot, params.workspaceRoot) === '' &&
+      (draft.mode === 'learn') === (mode === 'learn')
+    )
+    if (existing) {
+      if (params.mode !== undefined && existing.mode !== mode) {
+        this.setMode({ sessionId: existing.id, mode })
+        return this.selectSession(existing.id)
+      }
+      if (existing.id === this.state.currentSessionId) return this.getState()
+      return this.selectSession(existing.id)
+    }
+    this.clearTier1View()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store)
     const settings = loadNovaSettings()
     // 新会话固化当前显示的模型，避免旧会话随全局默认值漂移。
     const inheritedModelRef = this.state.activeModelRef ?? this.resolveEffectiveModelRef() ?? undefined
-    const data = store.create(params.workspaceRoot, params.mode ?? this.state.currentMode, {
+    const data = store.create(params.workspaceRoot, mode, {
+      deferPersistence: true,
       codeIndexEnabled: settings.codeIndexEnabled,
       permissionMode: settings.defaultPermissionMode,
       ...(inheritedModelRef ? { modelOverride: inheritedModelRef } : {}),
@@ -651,6 +670,7 @@ export class WorkspaceService {
 
   /** 只更新被选中那一条摘要，不扫全部会话目录 */
   private retainAvailableSessions(meta: SessionData): SessionSummary[] {
+    if (this.deps.getSessionStore().isDraft(meta.id)) return this.state.availableSessions
     const current = this.state.availableSessions
     const index = current.findIndex(session => session.id === meta.id)
     if (index >= 0) return current
@@ -664,6 +684,7 @@ export class WorkspaceService {
 
   /** 就地更新单条会话摘要（模型/强度等元数据变化），不重扫全部会话目录 */
   private upsertSessionSummary(data: SessionData): void {
+    if (this.deps.getSessionStore().isDraft(data.id)) return
     const next = [...this.state.availableSessions]
     const index = next.findIndex(session => session.id === data.id)
     if (index >= 0) {

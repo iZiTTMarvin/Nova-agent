@@ -2,9 +2,13 @@ import { expect, test } from '../fixtures/nova'
 import { isTerminalRunStatus } from '../../../src/shared/run/types'
 
 test('读取旧会话详情不会改变当前选择或重新进入加载状态', async ({ nova }) => {
+  nova.provider.enqueue({ kind: 'text', text: 'FIRST_SESSION_READY' })
+  await nova.sendPrompt('保留第一条会话')
+  await nova.waitUntilIdle()
   const old = await nova.getWorkspace()
   if (!old.currentSessionId) throw new Error('session id missing')
   const current = await nova.createSession()
+  expect(current.currentSessionId).not.toBe(old.currentSessionId)
   await nova.invoke('load-session', { sessionId: old.currentSessionId })
   expect((await nova.getWorkspace()).currentSessionId).toBe(current.currentSessionId)
   await expect(nova.page.locator('.chat-session-loading')).toHaveCount(0)

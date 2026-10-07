@@ -2,7 +2,7 @@ import type { PrimarySession, Session } from '../../../shared/session/types'
 
 /** 侧栏只展示用户级会话；子代理数据仍留在 store，经消息流活动行呈现。 */
 export function listSidebarRootSessions(sessions: readonly Session[]): PrimarySession[] {
-  return sessions.filter((session): session is PrimarySession => session.kind === 'primary')
+  return sessions.filter((session): session is PrimarySession => session.kind === 'primary' && !session.isDraft)
 }
 
 /**

@@ -52,7 +52,7 @@ function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _
 /** 将持久化 SessionData 转换为共享 SessionDetail 格式 */
 function toSessionDetail(
   data: SessionData,
-  options?: { displayPage?: boolean; hasMore?: boolean; subagentTask?: string }
+  options?: { displayPage?: boolean; hasMore?: boolean; subagentTask?: string; isDraft?: boolean }
 ): SessionDetail {
   const displayPage = options?.displayPage === true
   const activeMessages = displayPage ? data.messages : getSessionActiveMessages(data)
@@ -119,7 +119,7 @@ function toSessionDetail(
       subagentTask
     }
   }
-  return { ...base, kind: 'primary' }
+  return { ...base, kind: 'primary', ...(options?.isDraft ? { isDraft: true as const } : {}) }
 }
 
 
@@ -177,6 +177,7 @@ export function registerSessionHandler(): void {
     hydrateSessionWhitelistFromSession(display.session)
     getWorkspaceService().scheduleContextBreakdown(params.sessionId)
     return toSessionDetail(display.session, {
+      isDraft: sessionStore.isDraft(params.sessionId),
       displayPage: true,
       hasMore: display.hasMore,
       subagentTask: display.subagentTask
@@ -217,7 +218,7 @@ export function registerSessionHandler(): void {
     if (!data) {
       throw new Error('新会话创建后无法读取')
     }
-    return toSessionDetail(data)
+    return toSessionDetail(data, { isDraft: sessionStore.isDraft(data.id) })
   })
 
   // 接受文件改动：标记为已审查（委托 WorkspaceService → DiffReviewService）

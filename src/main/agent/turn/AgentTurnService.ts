@@ -632,6 +632,7 @@ export async function sendAgentMessage(
       blocks: persistBlocks.length > 0 ? persistBlocks : undefined,
       timestamp: Date.now()
     }
+    const wasDraft = sessionStore.isDraft(params.sessionId)
     const userAppend = sessionStore.appendMessageFast(params.sessionId, userMessage)
     if (userAppend.ok && userAppend.status === 'already_exists') {
       // 崩溃窗口：append 返回 already_exists 但 turn 未建 run 时，
@@ -668,11 +669,12 @@ export async function sendAgentMessage(
       const newText = extractTextFromSerializableContent(persistContent).trim()
       if (newText !== '') {
         const title = generateSessionTitleFromText(newText)
-        if (sessionStore.updateTitle(params.sessionId, title, 'generated')) {
+        if (sessionStore.updateTitle(params.sessionId, title, 'generated') && !wasDraft) {
           getWorkspaceService().refreshAvailableSessions()
         }
       }
     }
+    if (wasDraft) getWorkspaceService().refreshAvailableSessions()
   }
   if (!turnUserMessageId) {
     throw new Error('轮次执行缺少持久化用户消息坐标')

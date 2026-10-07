@@ -268,7 +268,9 @@ const SidebarSessions = React.memo(function SidebarSessions({
     })
     if (response !== 1) return
     try {
-      for (const session of projectSessions) {
+      const drafts = sessions.filter(session => session.kind === 'primary' && session.isDraft &&
+        session.workspaceRoot === projectPath && (session.mode === 'learn') === (surface === 'learn'))
+      for (const session of [...projectSessions, ...drafts]) {
         await deleteSession(session.id)
       }
     } catch (err) {
@@ -411,13 +413,19 @@ const SidebarSessions = React.memo(function SidebarSessions({
   // 项目分组派生：会话抽屉按面过滤（§20.2）
   const rootSessions = listSidebarSessionsForSurface(sessions, surface)
   const projectGroups = useMemo(() => {
-    return rootSessions.reduce((acc, session) => {
+    const groups = rootSessions.reduce((acc, session) => {
       const p = session.workspaceRoot
       if (!acc[p]) acc[p] = []
       acc[p].push(session)
       return acc
     }, {} as Record<string, ReturnType<typeof listSidebarRootSessions>>)
-  }, [rootSessions])
+    for (const session of sessions) {
+      if (session.kind === 'primary' && session.isDraft && (session.mode === 'learn') === (surface === 'learn')) {
+        groups[session.workspaceRoot] ??= []
+      }
+    }
+    return groups
+  }, [rootSessions, sessions, surface])
 
   // 项目分组与排序（分离归档与置顶排序）
   const { activeProjectEntries, archivedProjectEntries } = useMemo(() => {
