@@ -209,4 +209,52 @@ describe('ReasoningEffortControl', () => {
     expect(withoutSession.container.querySelector('[role="slider"]')).toBeNull()
     withoutSession.unmount()
   })
+
+  it('拖动时图标连续跟随指针，只有松开才写入离散档位', async () => {
+    const request = deferred()
+    setReasoningEffortOverride.mockReturnValueOnce(request.promise)
+    const { renderer, slider } = mountMiniMax()
+
+    act(() => pointer(slider, 'pointerdown', 0))
+    act(() => pointer(slider, 'pointermove', 58))
+
+    expect(Number.parseFloat(slider.style.getPropertyValue('--effort-progress'))).toBeCloseTo(58)
+    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
+    expect(setReasoningEffortOverride).not.toHaveBeenCalled()
+
+    act(() => pointer(slider, 'pointerup', 58))
+    expect(setReasoningEffortOverride).toHaveBeenCalledWith('max')
+
+    await act(async () => {
+      useWorkspaceStore.setState({ reasoningEffortOverride: 'max' })
+      request.resolve()
+      await request.promise
+    })
+    renderer.unmount()
+  })
+
+  it('只在最高可用档展示 Nova 星光，仍使用模型真实的档位名称', async () => {
+    const request = deferred()
+    setReasoningEffortOverride.mockReturnValueOnce(request.promise)
+    const { renderer, slider } = mountMiniMax()
+
+    expect(slider.classList.contains('effort-slider--stellar')).toBe(false)
+    expect(renderer.container.querySelectorAll('.effort-slider__spark')).toHaveLength(16)
+
+    act(() => slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })))
+    expect(slider.classList.contains('effort-slider--stellar')).toBe(true)
+    expect(slider.getAttribute('aria-valuetext')).toBe('Max')
+    expect(renderer.container.querySelector('.effort-panel__value')?.textContent).toBe('Max')
+
+    await act(async () => {
+      useWorkspaceStore.setState({ reasoningEffortOverride: 'max' })
+      request.resolve()
+      await request.promise
+    })
+
+    act(() => slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true })))
+    expect(slider.classList.contains('effort-slider--stellar')).toBe(false)
+    renderer.unmount()
+  })
+
 })
