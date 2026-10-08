@@ -72,6 +72,8 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   await expect(slider).toHaveAttribute('aria-valuemax', '3')
   await expect(nova.page.locator('.effort-slider__stop')).toHaveCount(4)
   await slider.press('End')
+  await expect(slider).toHaveClass(/effort-slider--stellar/)
+  await expect(nova.page.locator('.effort-slider__spark')).toHaveCount(16)
   await expect(nova.page.getByRole('button', { name: '思考强度：XHigh' })).toBeVisible()
   await slider.press('Escape')
   await expect(slider).toBeHidden()
