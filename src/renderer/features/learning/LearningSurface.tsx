@@ -48,7 +48,6 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
-  const composerAreaRef = useRef<HTMLDivElement | null>(null)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const userScrolledUpRef = useRef(false)
 
@@ -100,30 +99,6 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     observer.observe(content)
     return () => observer.disconnect()
   }, [hasMessages])
-
-  // 悬浮输入区高度同步到滚动区 paddingBottom，消息流滚到底时刚好避让输入框
-  useEffect(() => {
-    const composerEl = composerAreaRef.current
-    if (!composerEl || typeof ResizeObserver === 'undefined') return
-    let rafId: number | null = null
-    const update = (entries: ResizeObserverEntry[]) => {
-      if (rafId !== null) cancelAnimationFrame(rafId)
-      rafId = requestAnimationFrame(() => {
-        for (const entry of entries) {
-          const height = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height)
-          if (height > 0 && scrollContainerRef.current) {
-            scrollContainerRef.current.style.paddingBottom = `${height + 16}px`
-          }
-        }
-      })
-    }
-    const observer = new ResizeObserver(update)
-    observer.observe(composerEl)
-    return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId)
-      observer.disconnect()
-    }
-  }, [])
 
   // 出题或收题时若用户在底部附近，平滑跟随一次
   useEffect(() => {
@@ -177,7 +152,7 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
           className="chat-messages flex-1 overflow-y-auto"
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          style={{ overflowAnchor: 'none', paddingBottom: '156px' }}
+          style={{ overflowAnchor: 'none' }}
         >
           <div className="chat-messages__flow-inner" ref={contentRef} role="region" aria-label={LEARNING_MESSAGES_LABEL}>
             <LearningConversation
@@ -191,7 +166,6 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
         </div>
       )}
       <div
-        ref={composerAreaRef}
         className={`chat-panel__composer-area ${isEmptyState ? 'chat-panel__composer-area--empty' : ''}`}
       >
         <div className="chat-panel__composer-inner">

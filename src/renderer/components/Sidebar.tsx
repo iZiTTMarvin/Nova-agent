@@ -20,7 +20,9 @@ import {
   SearchIcon,
   ChevronDownIcon,
   FilterIcon,
-  TerminalIcon
+  TerminalIcon,
+  CodeIcon,
+  BookIcon
 } from './Icons'
 import { Button } from '@astryxdesign/core/Button'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
@@ -710,27 +712,33 @@ const SidebarSessions = React.memo(function SidebarSessions({
           <div className="sidebar-top-actions flex flex-col gap-0.5 w-full px-2 pt-2">
             {/* 项目级表面切换：开发 | 学习（§12.1）。学习有独立会话，不原地改变开发会话 */}
             <div
-              className="sidebar-surface-switch"
+              className={`sidebar-surface-switch${!currentProject ? ' sidebar-surface-switch--disabled' : ''}`}
               role="group"
               aria-label="开发或学习表面"
+              data-surface={surface}
             >
+              <span className="sidebar-surface-switch__thumb" aria-hidden="true" />
               <button
                 type="button"
                 className={`sidebar-surface-switch__btn${surface === 'dev' ? ' sidebar-surface-switch__btn--active' : ''}`}
                 aria-pressed={surface === 'dev'}
                 disabled={!currentProject || surface === 'dev'}
+                title="开发"
                 onClick={() => void switchToDevSurface()}
               >
-                开发
+                <CodeIcon size={14} />
+                <span className="sidebar-surface-switch__label">开发</span>
               </button>
               <button
                 type="button"
                 className={`sidebar-surface-switch__btn${surface === 'learn' ? ' sidebar-surface-switch__btn--active' : ''}`}
                 aria-pressed={surface === 'learn'}
                 disabled={!currentProject || surface === 'learn'}
+                title="学习"
                 onClick={() => void switchToLearningSurface()}
               >
-                学习
+                <BookIcon size={14} />
+                <span className="sidebar-surface-switch__label">学习</span>
               </button>
             </div>
 

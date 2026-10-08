@@ -194,7 +194,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     expect(renderer.container.querySelector('.memory-file-dialog')).toBeNull()
 
     const editButton = [...renderer.container.querySelectorAll('button')].find(
-      b => b.textContent === '编辑文件'
+      b => b.getAttribute('aria-label') === '编辑项目记忆'
     )
     expect(editButton).toBeDefined()
 
@@ -220,7 +220,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     await flushAsync()
 
     const globalButton = [...renderer.container.querySelectorAll('button')].find(
-      b => b.textContent === '全局'
+      b => b.textContent?.startsWith('全局记忆')
     )
     expect(globalButton).toBeDefined()
     await act(async () => {
@@ -349,8 +349,8 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
     useSettingsStore.setState({ currentProject: '/tmp/project' })
     const renderer = renderDom(<MemorySettingsPanel />); await flushAsync()
-    const click = async (label: string) => { const button = [...renderer.container.querySelectorAll('button')].find(item => item.textContent === label); expect(button).toBeDefined(); await act(async () => button!.click()); await flushAsync() }
-    await click('编辑文件')
+    const click = async (label: string) => { const button = [...renderer.container.querySelectorAll('button')].find(item => item.textContent === label || item.getAttribute('aria-label') === label); expect(button).toBeDefined(); await act(async () => button!.click()); await flushAsync() }
+    await click('编辑项目记忆')
     expect(renderer.container.querySelector<HTMLTextAreaElement>('textarea')!.disabled).toBe(true)
     const notes = [...renderer.container.querySelectorAll<HTMLButtonElement>('.memory-settings-panel__file-chip')].find(item => item.textContent?.startsWith('notes.md'))!
     await act(async () => notes.click()); await flushAsync()
@@ -368,7 +368,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'unsaved local draft')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
     })
-    await click('全局')
+    await act(async () => [...renderer.container.querySelectorAll('button')].find(b => b.textContent?.startsWith('全局记忆'))!.click()); await flushAsync()
     expect(textarea.value).toBe('unsaved local draft')
     expect(mockInvoke.mock.calls.filter(call => call[0] === 'memory:list-entries').every(call => call[1].scopeKind === 'project')).toBe(true)
     renderer.unmount()
@@ -382,7 +382,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
     useSettingsStore.setState({ currentProject: '/tmp/project' })
     const renderer = renderDom(<MemorySettingsPanel />); await flushAsync()
-    const globalButton = [...renderer.container.querySelectorAll('button')].find(button => button.textContent === '全局')!
+    const globalButton = [...renderer.container.querySelectorAll('button')].find(button => button.textContent?.startsWith('全局记忆'))!
     await act(async () => globalButton.click()); await flushAsync()
     expect(renderer.container.textContent).toContain('当前全局约定')
     await act(async () => resolveProject([recordDto({ text: '迟到的旧项目结果' })])); await flushAsync()
@@ -399,8 +399,8 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
     useSettingsStore.setState({ currentProject: '/tmp/project' })
     const renderer = renderDom(<MemorySettingsPanel />); await flushAsync()
-    const click = async (label: string) => { const button = [...renderer.container.querySelectorAll('button')].find(item => item.textContent === label)!; await act(async () => button.click()); await flushAsync() }
-    await click('编辑文件')
+    const click = async (label: string) => { const button = [...renderer.container.querySelectorAll('button')].find(item => item.textContent === label || item.getAttribute('aria-label') === label)!; await act(async () => button.click()); await flushAsync() }
+    await click('编辑项目记忆')
     const content = '手写数据 sk-ant-api03-' + 'TEST_ONLY_FAKE_'.repeat(4)
     const textarea = renderer.container.querySelector<HTMLTextAreaElement>('textarea')!
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, content); textarea.dispatchEvent(new Event('input', { bubbles: true })) })

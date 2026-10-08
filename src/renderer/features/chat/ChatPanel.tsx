@@ -387,8 +387,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // 隐藏的文件上传 input
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // 悬浮输入区高度动态监测（保证消息流滚动到底部时刚好避让输入框与 Todo 卡片）
-  const composerAreaRef = useRef<HTMLDivElement | null>(null)
   /** composer 阅读柱容器：Inspector 拖拽时冻结其实际渲染宽度 */
   const composerInnerRef = useRef<HTMLDivElement | null>(null)
 
@@ -873,30 +871,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // ── 空状态引导界面 ─────────────────────────────────────────
   const isEmptyState = messages.length === 0 && !isSessionLoading
 
-  // 悬浮输入区高度动态监测：通过 rAF 直接同步 DOM paddingBottom，避免在动画期间每帧触发 React 重渲染
-  useEffect(() => {
-    const composerEl = composerAreaRef.current
-    if (!composerEl || typeof ResizeObserver === 'undefined') return
-    let rafId: number | null = null
-    const update = (entries: ResizeObserverEntry[]) => {
-      if (rafId !== null) cancelAnimationFrame(rafId)
-      rafId = requestAnimationFrame(() => {
-        for (const entry of entries) {
-          const h = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height)
-          if (h > 0 && scrollContainerRef.current) {
-            scrollContainerRef.current.style.paddingBottom = `${h + 16}px`
-          }
-        }
-      })
-    }
-    const ro = new ResizeObserver(update)
-    ro.observe(composerEl)
-    return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId)
-      ro.disconnect()
-    }
-  }, [isEmptyState, isSessionLoading])
-
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
     <div
@@ -936,10 +910,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           ref={bindScrollContainer}
           onScroll={handleScroll}
           onWheel={handleWheel}
-          style={{
-            overflowAnchor: 'none',
-            paddingBottom: '156px'
-          }}
+          style={{ overflowAnchor: 'none' }}
         >
           {showMemoryNotice && (
             <div className="chat-tier1-notice" role="status">
@@ -1022,7 +993,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
       {/* 底部输入框 / 空状态中央输入框 */}
       <div
-        ref={composerAreaRef}
         className={`chat-panel__composer-area ${
           isEmptyState ? 'chat-panel__composer-area--empty' : ''
         }`}

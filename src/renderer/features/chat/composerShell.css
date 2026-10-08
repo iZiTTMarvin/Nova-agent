@@ -52,15 +52,12 @@
 }
 
 .chat-panel__composer-area {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  flex-shrink: 0;
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 0 16px 1.5rem;
+  padding: 8px 16px 10px;
   pointer-events: none;
   z-index: 20;
   background: transparent;
@@ -93,7 +90,7 @@
   z-index: 2;
   background-color: var(--bg-card);
   border: 1px solid var(--border-composer);
-  border-radius: 16px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-whisper);
   pointer-events: auto;
   /* 常态微呼吸：描边透明度往复；focus 后停呼吸转稳定描边 */

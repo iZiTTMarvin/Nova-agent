@@ -1077,13 +1077,19 @@
 
 /* ── 记忆 ── */
 
-.memory-settings-panel {
-  gap: 0;
+.memory-settings-panel__scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.memory-settings-panel__scroll > section,
+.memory-settings-panel__scroll > details {
+  flex-shrink: 0;
 }
 
 .settings-panel__warning-banner {
   flex-shrink: 0;
-  margin-bottom: 12px;
 }
 
 /* ── 代码索引 ── */
@@ -1203,31 +1209,145 @@
   }
 }
 
-.memory-settings-panel__empty-hint {
+/* 开关行 / 卡片共用的图标方块 */
+.memory-settings-panel__icon-tile {
   flex-shrink: 0;
-  margin-bottom: 12px;
-}
-
-.memory-settings-panel__meta {
-  flex-shrink: 0;
-  display: flex;
-  flex-wrap: wrap;
+  display: inline-flex;
   align-items: center;
-  gap: 6px 14px;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  border-radius: var(--radius-lg);
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-cream);
   background: var(--bg-sand);
-  font-size: 0.74rem;
-  line-height: 1.45;
+  color: var(--text-secondary);
+}
+.memory-settings-panel__scope-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.memory-settings-panel__scope-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  transition: border-color 0.12s ease;
+}
+
+.memory-settings-panel__scope-card:hover {
+  border-color: var(--border-warm);
+}
+
+.memory-settings-panel__scope-card--active {
+  border-color: var(--color-brand);
+}
+
+.memory-settings-panel__scope-card--active .memory-settings-panel__icon-tile {
+  color: var(--color-brand);
+  border-color: color-mix(in srgb, var(--color-brand) 40%, var(--border-cream));
+  background: var(--color-brand-dim);
+}
+
+.memory-settings-panel__scope-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.memory-settings-panel__scope-main:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.memory-settings-panel__scope-main:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+.memory-settings-panel__scope-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.memory-settings-panel__scope-title {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-settings-panel__scope-meta {
+  font-size: 0.72rem;
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.memory-settings-panel__advanced {
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+}
+
+.memory-settings-panel__advanced summary {
+  padding: 10px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.memory-settings-panel__advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 12px 12px;
+  border-top: 1px solid var(--border-cream);
+}
+
+.memory-settings-panel__advanced-title {
+  margin: 6px 0 0;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.memory-settings-panel__advanced-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.memory-settings-panel__advanced-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .memory-settings-panel__meta-item {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   max-width: 100%;
 }
@@ -1240,31 +1360,8 @@
   white-space: nowrap;
 }
 
-.memory-settings-panel__meta-details {
-  flex-basis: 100%;
-  padding-top: 6px;
-  border-top: 1px solid var(--border-cream);
-  color: var(--text-muted);
-  font-size: 0.7rem;
-}
-
-.memory-settings-panel__meta-details summary {
-  width: fit-content;
-  cursor: pointer;
-}
-
-.memory-settings-panel__meta-details[open] {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-}
-
 .memory-settings-panel__meta-item--path {
   flex: 1 1 200px;
-}
-
-.memory-settings-panel__meta-item--stats {
-  flex-shrink: 0;
 }
 
 .memory-settings-panel__meta-label {
@@ -1295,10 +1392,6 @@
   flex-shrink: 0;
 }
 
-.memory-settings-panel__controls {
-  flex-shrink: 0;
-  margin-bottom: 12px;
-}
 
 .memory-settings-panel__preview {
   max-height: 320px;
@@ -1352,11 +1445,6 @@
   line-height: 1.35;
 }
 
-.memory-settings-panel__toggle-sublabel {
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: var(--text-muted);
-}
 
 .memory-settings-panel__toggle-hint {
   margin: 4px 0 0;
@@ -1370,10 +1458,6 @@
   margin-top: 2px;
 }
 
-.memory-settings-panel__error {
-  flex-shrink: 0;
-  margin-bottom: 10px;
-}
 
 .memory-settings-panel__records-hint {
   margin: 0 0 8px;
@@ -1381,11 +1465,6 @@
   line-height: 1.4;
 }
 
-.memory-settings-panel__records-toolbar {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 8px;
-}
 
 .memory-settings-panel__record-list {
   list-style: none;
@@ -1421,6 +1500,21 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  gap: 6px;
+}
+.memory-settings-panel__record-main h5 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.memory-settings-panel__record-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
 }
 
@@ -1531,17 +1625,6 @@
   min-width: 0;
 }
 
-.memory-settings-panel__file-dock-action {
-  flex-shrink: 0;
-}
-
-.memory-settings-panel__file-dock-actions {
-  display: flex;
-  flex-shrink: 0;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 6px;
-}
 
 .memory-settings-panel__file-chip-list {
   display: flex;

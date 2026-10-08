@@ -19,13 +19,13 @@ function rule(selector: string): string {
 }
 
 describe('chat panel layout contracts', () => {
-  it('keeps messages stream in full-height flex container with floating composer overlay', () => {
+  it('keeps composer docked in document flow below the message stream', () => {
     expect(rule('.chat-panel')).toMatch(/display:\s*flex/)
     expect(rule('.chat-panel')).toMatch(/flex-direction:\s*column/)
     expect(rule('.chat-messages')).toMatch(/flex:\s*1/)
     const composerRule = rule('.chat-panel__composer-area')
-    expect(composerRule).toMatch(/position:\s*absolute/)
-    expect(composerRule).toMatch(/bottom:\s*0/)
+    expect(composerRule).not.toMatch(/position:\s*absolute/)
+    expect(composerRule).toMatch(/flex-shrink:\s*0/)
     expect(composerRule).toMatch(/background:\s*transparent/)
     expect(composerRule).toMatch(/pointer-events:\s*none/)
   })

@@ -38,9 +38,15 @@
   --border-strong: light-dark(rgba(0, 0, 0, 0.12), #303036); /* 浮层与弹窗边框 */
   --border-cream: var(--border-subtle);
   --border-warm: var(--border-subtle);
-  /* composer 呼吸描边：跟着强调色走；lo/hi 为呼吸两档 */
-  --composer-breath-lo: color-mix(in srgb, var(--accent-purple) 26%, transparent);
-  --composer-breath-hi: color-mix(in srgb, var(--accent-purple) 55%, transparent);
+  /* composer 呼吸描边：跟着强调色走；lo/hi 为呼吸两档。深色强调色本身是近白，要压得更淡才不显白边 */
+  --composer-breath-lo: light-dark(
+    color-mix(in srgb, var(--accent-purple) 26%, transparent),
+    color-mix(in srgb, var(--accent-purple) 15%, transparent)
+  );
+  --composer-breath-hi: light-dark(
+    color-mix(in srgb, var(--accent-purple) 55%, transparent),
+    color-mix(in srgb, var(--accent-purple) 30%, transparent)
+  );
   --border-composer: var(--composer-breath-lo);
 
   /*

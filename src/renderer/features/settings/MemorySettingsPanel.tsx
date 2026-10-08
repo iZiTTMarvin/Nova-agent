@@ -3,7 +3,7 @@
  *
  * 提供：记忆总开关、已学习记忆查看与忘记、记忆文件列表编辑、目录与索引维护。
  */
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { ClickableCard } from '@astryxdesign/core/ClickableCard'
@@ -11,7 +11,7 @@ import { Dialog } from '@astryxdesign/core/Dialog'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
-import { CloseIcon } from '../../components/Icons'
+import { BrainIcon, CloseIcon, EditIcon, FolderIcon, GlobeIcon, SparklesIcon } from '../../components/Icons'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { formatSettingsDateTime } from './formatDateTime'
 import { containsSensitiveMemoryText } from '../../../shared/memory/sensitiveText'
@@ -33,9 +33,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function formatMtime(ms: number): string {
-  return formatSettingsDateTime(ms)
-}
 
 /** 已学习记忆的类型标签（产品语言） */
 const RECORD_KIND_LABELS: Record<MemoryKindDto, string> = {
@@ -59,7 +56,8 @@ export const MemorySettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
   const [files, setFiles] = useState<MemoryFileDto[]>([])
-  const [stats, setStats] = useState<MemoryScopeStats | null>(null)
+  /** 两个记忆范围的摘要统计：卡片概览用，活动范围的技术信息也取自这里 */
+  const [scopeStats, setScopeStats] = useState<Partial<Record<MemoryScopeKindDto, MemoryScopeStats | null>>>({})
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [content, setContent] = useState('')
   /** 最近一次从磁盘加载或保存成功时的正文，用于 dirty 判定 */
@@ -88,6 +86,7 @@ export const MemorySettingsPanel: React.FC = () => {
   const selectedFile = selectedPath
     ? files.find(file => file.relPath === selectedPath) ?? null
     : null
+  const stats = scopeStats[recordScope] ?? null
 
   const refreshPreview = useCallback(async () => {
     setPreview(await window.api.invoke('memory:snapshot-preview'))
@@ -133,30 +132,36 @@ export const MemorySettingsPanel: React.FC = () => {
     }
   }, [])
 
-  /** 仅拉列表与统计；切项目时才重拉，不依赖 selectedPath */
+  /** 拉当前范围的文件列表；两个范围的统计一起取，供概览卡片与高级信息展示 */
   const loadMemoryData = useCallback(async () => {
     const epoch = requestContext.current.epoch
-    if (!currentProject && recordScope === 'project') {
+    const scopes: MemoryScopeKindDto[] = currentProject ? ['project', 'global'] : ['global']
+    const statsPromises = scopes.map(async kind => {
+      const st = await window.api.invoke('memory:stats', { scopeKind: kind }).catch(() => null as MemoryScopeStats | null)
+      return [kind, st] as [MemoryScopeKindDto, MemoryScopeStats | null]
+    })
+    const needFiles = !!currentProject || recordScope === 'global'
+    if (!needFiles) {
       setFiles([])
-      setStats(null)
       setSelectedPath(null)
-      return
+    } else {
+      setLoading(true)
     }
-    setLoading(true)
     setError(null)
     try {
-      const [list, st] = await Promise.all([
-        window.api.invoke('memory:list-files', { scopeKind: recordScope }),
-        window.api.invoke('memory:stats', { scopeKind: recordScope })
+      const [list, ...resolved] = await Promise.all([
+        needFiles
+          ? window.api.invoke('memory:list-files', { scopeKind: recordScope })
+          : Promise.resolve([]),
+        ...statsPromises
       ])
       if (epoch !== requestContext.current.epoch) return
-      setFiles(list)
-      setStats(st)
+      if (needFiles) setFiles(list)
+      setScopeStats(Object.fromEntries(resolved))
     } catch (err) {
       if (epoch !== requestContext.current.epoch) return
       setError(err instanceof Error ? err.message : '加载记忆失败')
       setFiles([])
-      setStats(null)
     } finally {
       if (epoch === requestContext.current.epoch) setLoading(false)
     }
@@ -202,14 +207,15 @@ export const MemorySettingsPanel: React.FC = () => {
     void loadRecords(recordScope)
   }, [loadRecords, recordScope])
 
-  const handleSwitchRecordScope = async (scopeKind: MemoryScopeKindDto) => {
-    if (scopeKind === recordScope) return
+  const handleSwitchRecordScope = async (scopeKind: MemoryScopeKindDto): Promise<boolean> => {
+    if (scopeKind === recordScope) return true
     if (isDirty) {
       const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '未保存的更改', message: '切换范围会放弃当前文件的修改，是否继续？', buttons: ['继续编辑', '放弃改动'], defaultId: 0, cancelId: 0 })
-      if (response !== 1) return
+      if (response !== 1) return false
     }
     setSelectedPath(null); setContent(''); setBaselineContent(''); setFileEditorOpen(false); setFiles([]); setRecords([])
     setRecordScope(scopeKind)
+    return true
   }
 
   const handleForgetRecord = async (record: MemoryEntryDto) => {
@@ -353,13 +359,20 @@ export const MemorySettingsPanel: React.FC = () => {
     }
   }
 
-  const handleOpenDir = async () => {
+  const handleOpenDir = async (scopeKind: MemoryScopeKindDto) => {
     setError(null)
     try {
-      await window.api.invoke('memory:open-dir', { scopeKind: recordScope })
+      await window.api.invoke('memory:open-dir', { scopeKind })
     } catch (err) {
       setError(err instanceof Error ? err.message : '打开目录失败')
     }
+  }
+
+  /** 卡片上的编辑按钮：先切到对应范围，再开编辑浮窗；首个文件由 files 自动选中 */
+  const handleOpenScopeEditor = async (scopeKind: MemoryScopeKindDto) => {
+    if (scopeKind === 'project' && !currentProject) return
+    if (!(await handleSwitchRecordScope(scopeKind))) return
+    setFileEditorOpen(true)
   }
 
   const handleReconcile = async () => {
@@ -415,305 +428,336 @@ export const MemorySettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel memory-settings-panel">
-      <Banner
-        status="warning"
-        title="记忆系统为实验性功能，默认关闭。开启后新会话加载核心记忆并可按需检索；自动学习需单独开启。"
-        container="section"
-        className="settings-panel__warning-banner"
-      />
+      <div className="settings-panel__scroll memory-settings-panel__scroll">
+        <Banner
+          status="warning"
+          title="记忆系统为实验性功能，默认关闭。开启后新会话加载核心记忆并可按需检索；自动学习需单独开启。"
+          container="section"
+          className="settings-panel__warning-banner"
+        />
 
-      <div className="settings-panel__toolbar">
-        <Button
-          label="重建索引"
-          variant="secondary"
-          size="sm"
-          type="button"
-          onClick={() => void handleReconcile()}
-          isDisabled={(!currentProject && recordScope === 'project') || loading}
-        >
-          重建索引
-        </Button>
-      </div>
-
-      {!currentProject && (
-        <p className="settings-panel__muted memory-settings-panel__empty-hint">
-          项目记忆需先打开工作区；全局记忆仍可管理。
-        </p>
-      )}
-
-      {currentProject && stats && (
-        <div className="memory-settings-panel__meta" aria-label="记忆 scope 信息">
-          <div className="memory-settings-panel__meta-item">
-            <span className="memory-settings-panel__meta-label">工作区</span>
-            <span className="memory-settings-panel__meta-workspace" title={currentProject}>
-              {currentProject}
-            </span>
+        {error && (
+          <div className="settings-status settings-status--error">{error}</div>
+        )}
+        {status && !fileEditorOpen && (
+          <div className="settings-status settings-status--ok" role="status">
+            {status}
           </div>
-          <div className="memory-settings-panel__meta-item">
-            <span className="memory-settings-panel__meta-label">作用范围</span>
-            <span>当前工作区</span>
-          </div>
-          <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--stats">
-            <span className="memory-settings-panel__meta-label">统计</span>
-            <span>
-              {stats.fileCount} 文件 · 索引 {stats.indexCount} · 磁盘 {formatBytes(stats.diskBytes)}
-              {' · 生效 '}{stats.entries.topics}{' · 待批准 '}{stats.entries.inbox}{' · 归档 '}{stats.entries.archive}
-            </span>
-          </div>
-          <details className="memory-settings-panel__meta-details">
-            <summary>技术信息</summary>
-            <div className="memory-settings-panel__meta-item">
-              <span className="memory-settings-panel__meta-label">scopeId</span>
-              <code className="memory-settings-panel__meta-code">{stats.scopeId}</code>
-            </div>
-            <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--path">
-              <span className="memory-settings-panel__meta-label">目录</span>
-              <code className="memory-settings-panel__meta-path" title={stats.scopeDir}>
-                {stats.scopeDir}
-              </code>
-              <Button
-                label="复制完整路径"
-                variant="ghost"
-                size="sm"
-                type="button"
-                className="memory-settings-panel__copy-btn"
-                onClick={handleCopyScopePath}
-              >
-                复制
-              </Button>
-            </div>
-          </details>
-        </div>
-      )}
+        )}
 
-      {settings && (
-        <section className="memory-settings-panel__controls" aria-label="记忆开关">
-          <h4 className="memory-settings-panel__section-title">记忆</h4>
-          <div className="memory-settings-panel__toggle-group">
-            <div className="memory-settings-panel__toggle-row">
-              <div className="memory-settings-panel__toggle-copy">
-                <span className="memory-settings-panel__toggle-label">
-                  启用跨会话记忆
+        {settings && (
+          <section aria-label="记忆行为">
+            <h4 className="memory-settings-panel__section-title">记忆行为</h4>
+            <div className="memory-settings-panel__toggle-group">
+              <div className="memory-settings-panel__toggle-row">
+                <span className="memory-settings-panel__icon-tile" aria-hidden>
+                  <BrainIcon size={16} />
                 </span>
-                <p className="memory-settings-panel__toggle-hint">
-                  开启后，新会话带上核心记忆，并可按需检索约定、偏好和经验。自动学习需另行开启；关闭记忆后停止采集、学习和检索。
-                </p>
-              </div>
-              <Switch
-                label="启用跨会话记忆"
-                isLabelHidden
-                className="memory-settings-panel__toggle-input"
-                value={settings.memoryEnabled}
-                onChange={checked => void updateSetting('memoryEnabled', checked)}
-                isDisabled={settingSaving}
-              />
-            </div>
-          </div>
-          <div className="memory-settings-panel__toggle-row">
-            <div className="memory-settings-panel__toggle-copy">
-              <span className="memory-settings-panel__toggle-label">自动从对话中学习</span>
-              <p className="memory-settings-panel__toggle-hint">默认关闭。开启后后台提炼和整理会调用模型，可能产生 API 费用。</p>
-            </div>
-            <Switch label="自动从对话中学习" isLabelHidden value={settings.memoryAutoExtractEnabled} onChange={checked => void updateSetting('memoryAutoExtractEnabled', checked)} isDisabled={settingSaving || !settings.memoryEnabled} />
-          </div>
-        </section>
-      )}
-
-      <section className="memory-settings-panel__controls" aria-label="开局记忆预览">
-        <h4 className="memory-settings-panel__section-title">开局记忆预览</h4>
-        <p>全局 {preview?.globalCoreCount ?? 0} 条 · 项目 {preview?.projectCoreCount ?? 0} 条 · 预算外 {preview?.omittedCoreCount ?? 0} 条</p>
-        <pre className="memory-settings-panel__preview">{preview?.text ?? '暂无开局记忆'}</pre>
-      </section>
-      {stats?.diagnostic && <p role="alert">{stats.diagnostic}</p>}
-      {stats && stats.indexStatus !== 'ok' && <p role="alert">{stats.indexStatus === 'dirty' ? '索引待重建' : '索引不可用，使用文件检索'}</p>}
-      {!!stats?.ledgerBadLines && <p role="alert">账本存在 {stats.ledgerBadLines} 个坏行，请检查原文件；坏行已保留。</p>}
-      {files.filter(file => file.needsOrganization).map(file => <div key={file.relPath}><span>{file.relPath} 条目较多，建议整理。</span><Button label={`立即整理 ${file.relPath}`} onClick={() => void organizeFile(file.relPath)} isDisabled={file.readOnly}>立即整理</Button></div>)}
-      {legacy.map(dir => <div key={dir.oldHash}><span>未关联的旧记忆：{dir.oldHash} · {dir.fileCount} 文件</span><Button label={`删除旧记忆 ${dir.oldHash}`} onClick={() => void (async () => {
-        const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '删除旧记忆', message: `永久删除未关联目录 ${dir.oldHash}？`, buttons: ['取消', '删除'], defaultId: 0, cancelId: 0 })
-        if (response !== 1) return
-        try { await window.api.invoke('memory:delete-legacy', { oldHash: dir.oldHash }); setLegacy(await window.api.invoke('memory:list-legacy')) }
-        catch (err) { setError(err instanceof Error ? err.message : '删除失败') }
-      })()}>删除</Button></div>)}
-
-      <section className="memory-settings-panel__controls" aria-label="已学习的记忆">
-        <h4 className="memory-settings-panel__section-title">已学习的记忆</h4>
-        <p className="settings-panel__muted memory-settings-panel__records-hint">
-          主题条目可置顶或彻底遗忘；待批准条目不会进入检索和开局快照。
-        </p>
-        <div className="memory-settings-panel__records-toolbar">
-          <Button
-            label="查看项目记忆"
-            variant={recordScope === 'project' ? 'primary' : 'secondary'}
-            size="sm"
-            type="button"
-            onClick={() => handleSwitchRecordScope('project')}
-            isDisabled={saving || forgettingId !== null}
-          >
-            项目
-          </Button>
-          <Button
-            label="查看全局记忆"
-            variant={recordScope === 'global' ? 'primary' : 'secondary'}
-            size="sm"
-            type="button"
-            onClick={() => handleSwitchRecordScope('global')}
-            isDisabled={saving || forgettingId !== null}
-          >
-            全局
-          </Button>
-        </div>
-
-        {recordsError && (
-          <div className="settings-status settings-status--error memory-settings-panel__error">
-            {recordsError}
-          </div>
-        )}
-
-        {recordsLoading && <p className="settings-panel__muted">加载中…</p>}
-
-        {!recordsLoading && recordScope === 'project' && !currentProject && (
-          <p className="settings-panel__muted">请先打开工作区项目以查看项目记忆。</p>
-        )}
-
-        {!recordsLoading && records.length === 0 && (recordScope === 'global' || currentProject) && (
-          <p className="settings-panel__muted">
-            {recordScope === 'project' ? '当前项目还没有已学习的记忆。' : '还没有已学习的全局记忆。'}
-          </p>
-        )}
-
-        <ul className="memory-settings-panel__record-list">
-          {records.map((record, index) => (
-            <li key={record.id} className="memory-settings-panel__record-item">
-              <div className="memory-settings-panel__record-main">
-                {(index === 0 || records[index - 1].relPath !== record.relPath) && <h5>{record.relPath}{record.location === 'inbox' ? ' · 待批准' : record.location === 'archive' ? ' · 历史归档' : ''}</h5>}
-                <p className="memory-settings-panel__record-content">{record.text}</p>
-                <div className="memory-settings-panel__record-meta">
-                  <span className="memory-settings-panel__record-kind">
-                    {RECORD_KIND_LABELS[record.kind]}
+                <div className="memory-settings-panel__toggle-copy">
+                  <span className="memory-settings-panel__toggle-label">
+                    启用跨会话记忆
                   </span>
-                  <span>{RECORD_EXPLICITNESS_LABELS[record.explicitness]}</span>
-                  <span>证据 {record.evidenceCount} 条</span>
-                  <span>最近观察：{formatMtime(record.lastSeenAt)}</span>
-                  {record.needsVerification && <span>需要核对</span>}
-                  {record.pinned && <span>已置顶</span>}
+                  <p className="memory-settings-panel__toggle-hint">
+                    开启后，新会话带上核心记忆，并可按需检索约定、偏好和经验。自动学习需另行开启；关闭记忆后停止采集、学习和检索。
+                  </p>
                 </div>
-                {record.key && (
-                  <details className="memory-settings-panel__record-details">
-                    <summary>技术信息</summary>
-                    <div className="memory-settings-panel__record-detail-row">
-                      <span>标识</span>
-                      <code className="memory-settings-panel__meta-code">{record.key}</code>
-                    </div>
-                  </details>
-                )}
+                <Switch
+                  label="启用跨会话记忆"
+                  isLabelHidden
+                  className="memory-settings-panel__toggle-input"
+                  value={settings.memoryEnabled}
+                  onChange={checked => void updateSetting('memoryEnabled', checked)}
+                  isDisabled={settingSaving}
+                />
               </div>
-              <Button label={record.pinned ? '取消置顶' : '置顶'} onClick={() => void updateEntry(record, 'pin')} isDisabled={forgettingId !== null}>{record.pinned ? '取消置顶' : '置顶'}</Button>
-              {record.location === 'inbox' && <><Button label="批准" onClick={() => void updateEntry(record, 'approve')} isDisabled={forgettingId !== null}>批准</Button><Button label="拒绝" onClick={() => void updateEntry(record, 'reject')} isDisabled={forgettingId !== null}>拒绝</Button></>}
-              <Button
-                label={forgettingId === record.id ? '忘记中…' : '忘记'}
-                variant="ghost"
-                size="sm"
-                type="button"
-                className="memory-settings-panel__forget-btn"
-                onClick={() => void handleForgetRecord(record)}
-                isDisabled={forgettingId !== null}
-              >
-                {forgettingId === record.id ? '忘记中…' : '忘记'}
-              </Button>
-            </li>
-          ))}
-        </ul>
-      </section>
+              <div className="memory-settings-panel__toggle-row">
+                <span className="memory-settings-panel__icon-tile" aria-hidden>
+                  <SparklesIcon size={16} />
+                </span>
+                <div className="memory-settings-panel__toggle-copy">
+                  <span className="memory-settings-panel__toggle-label">自动从对话中学习</span>
+                  <p className="memory-settings-panel__toggle-hint">默认关闭。开启后后台提炼和整理会调用模型，可能产生 API 费用。</p>
+                </div>
+                <Switch label="自动从对话中学习" isLabelHidden value={settings.memoryAutoExtractEnabled} onChange={checked => void updateSetting('memoryAutoExtractEnabled', checked)} isDisabled={settingSaving || !settings.memoryEnabled} />
+              </div>
+            </div>
+          </section>
+        )}
 
-      {error && (
-        <div className="settings-status settings-status--error memory-settings-panel__error">{error}</div>
-      )}
-      {status && !fileEditorOpen && (
-        <div className="settings-status settings-status--ok memory-settings-panel__error" role="status">
-          {status}
-        </div>
-      )}
-
-      <section className="memory-settings-panel__files-section" aria-label="记忆文件">
-        <Button label="清除操作摘要" isDisabled={!currentProject || stats?.readOnly} onClick={() => void (async () => {
-          const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '清除操作摘要', message: '永久清除当前项目的操作摘要？主题记忆不会受影响。', buttons: ['取消', '清除'], defaultId: 0, cancelId: 0 })
-          if (response !== 1) return
-          try { await window.api.invoke('memory:clear-episodic'); await loadMemoryData(); await refreshPreview() }
-          catch (err) { setError(err instanceof Error ? err.message : '清除摘要失败') }
-        })()}>清除操作摘要</Button>
-        <div className="memory-settings-panel__files-heading">
-          <div className="memory-settings-panel__files-copy">
-            <h4 className="memory-settings-panel__section-title">记忆文件</h4>
-            <p className="settings-panel__muted memory-settings-panel__files-hint">
-              手写内容请写在 notes.md；MEMORY.md 是生成视图，请编辑主题文件。
-            </p>
-          </div>
-          {currentProject && (
-            <span className="memory-settings-panel__file-count">
-              {loading ? '同步中…' : `${files.length} 文件`}
-            </span>
-          )}
-        </div>
-
-        <div className="memory-settings-panel__file-dock">
-          <div className="memory-settings-panel__file-dock-main">
-            {!currentProject && (
-              <p className="settings-panel__muted">打开项目后可查看和编辑记忆文件。</p>
-            )}
-            {loading && <p className="settings-panel__muted">正在同步记忆文件…</p>}
-            {!loading && currentProject && files.length === 0 && (
-              <p className="settings-panel__muted">
-                暂无记忆文件。打开目录后可手动创建 notes.md。
-              </p>
-            )}
-            {!loading && files.length > 0 && (
-              <div className="memory-settings-panel__file-chip-list">
-                {files.slice(0, 3).map(file => (
+        <section aria-label="记忆范围">
+          <h4 className="memory-settings-panel__section-title">记忆</h4>
+          <div className="memory-settings-panel__scope-list">
+            {([
+              { scopeKind: 'global', title: '全局记忆', icon: <GlobeIcon size={16} />, unavailable: false },
+              { scopeKind: 'project', title: '项目记忆', icon: <FolderIcon size={16} />, unavailable: !currentProject }
+            ] as { scopeKind: MemoryScopeKindDto; title: string; icon: ReactNode; unavailable: boolean }[]).map(scope => {
+              const s = scopeStats[scope.scopeKind]
+              const active = recordScope === scope.scopeKind
+              return (
+                <div key={scope.scopeKind} className={`memory-settings-panel__scope-card${active ? ' memory-settings-panel__scope-card--active' : ''}`}>
                   <button
-                    key={file.relPath}
                     type="button"
-                    className="memory-settings-panel__file-chip"
-                    onClick={() => void handleOpenFileEditor(file.relPath)}
+                    className="memory-settings-panel__scope-main"
+                    disabled={scope.unavailable}
+                    onClick={() => void handleSwitchRecordScope(scope.scopeKind)}
                   >
-                    <span className="memory-settings-panel__file-chip-name">{file.relPath}</span>
-                    <span className="memory-settings-panel__file-chip-meta">
-                      {formatBytes(file.size)} · {formatMtime(file.mtimeMs)}
+                    <span className="memory-settings-panel__icon-tile" aria-hidden>{scope.icon}</span>
+                    <span className="memory-settings-panel__scope-copy">
+                      <span className="memory-settings-panel__scope-title">{scope.title}</span>
+                      <span className="memory-settings-panel__scope-meta">
+                        {scope.unavailable
+                          ? '需打开工作区'
+                          : s
+                            ? `${s.fileCount} 个文件 · ${s.entries.topics} 条生效`
+                            : '加载中…'}
+                      </span>
                     </span>
                   </button>
-                ))}
-                {files.length > 3 && (
-                  <span className="memory-settings-panel__file-chip-more">
-                    +{files.length - 3}
-                  </span>
-                )}
-              </div>
+                  <IconButton
+                    label={`打开${scope.title}目录`}
+                    icon={<FolderIcon size={15} />}
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onClick={() => void handleOpenDir(scope.scopeKind)}
+                  />
+                  <IconButton
+                    label={`编辑${scope.title}`}
+                    icon={<EditIcon size={15} />}
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onClick={() => void handleOpenScopeEditor(scope.scopeKind)}
+                    isDisabled={scope.unavailable}
+                  />
+                </div>
+              )
+            })}
+          </div>
+        </section>
+
+        <section className="memory-settings-panel__files-section" aria-label="记忆文件">
+          <div className="memory-settings-panel__files-heading">
+            <div className="memory-settings-panel__files-copy">
+              <h4 className="memory-settings-panel__section-title">记忆文件</h4>
+              <p className="settings-panel__muted memory-settings-panel__files-hint">
+                手写内容请写在 notes.md；MEMORY.md 是生成视图，请编辑主题文件。
+              </p>
+            </div>
+            {currentProject && (
+              <span className="memory-settings-panel__file-count">
+                {loading ? '同步中…' : `${files.length} 文件`}
+              </span>
             )}
           </div>
-          <div className="memory-settings-panel__file-dock-actions">
-            <Button
-              label="打开记忆目录"
-              variant="secondary"
-              size="sm"
-              type="button"
-              className="memory-settings-panel__file-dock-action"
-              onClick={() => void handleOpenDir()}
-            >
-              打开目录
-            </Button>
-            <Button
-              label="编辑记忆文件"
-              variant="secondary"
-              size="sm"
-              type="button"
-              className="memory-settings-panel__file-dock-action"
-              onClick={() => void handleOpenFileEditor()}
-              isDisabled={(!currentProject && recordScope === 'project') || loading || files.length === 0}
-            >
-              编辑文件
-            </Button>
+
+          <div className="memory-settings-panel__file-dock">
+            <div className="memory-settings-panel__file-dock-main">
+              {!currentProject && recordScope === 'project' && (
+                <p className="settings-panel__muted">打开项目后可查看和编辑记忆文件。</p>
+              )}
+              {loading && <p className="settings-panel__muted">正在同步记忆文件…</p>}
+              {!loading && (currentProject || recordScope === 'global') && files.length === 0 && (
+                <p className="settings-panel__muted">
+                  暂无记忆文件。打开目录后可手动创建 notes.md。
+                </p>
+              )}
+              {!loading && files.length > 0 && (
+                <div className="memory-settings-panel__file-chip-list">
+                  {files.slice(0, 3).map(file => (
+                    <button
+                      key={file.relPath}
+                      type="button"
+                      className="memory-settings-panel__file-chip"
+                      onClick={() => void handleOpenFileEditor(file.relPath)}
+                    >
+                      <span className="memory-settings-panel__file-chip-name">{file.relPath}</span>
+                      <span className="memory-settings-panel__file-chip-meta">
+                        {formatBytes(file.size)} · {formatSettingsDateTime(file.mtimeMs)}
+                      </span>
+                    </button>
+                  ))}
+                  {files.length > 3 && (
+                    <span className="memory-settings-panel__file-chip-more">
+                      +{files.length - 3}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </section>
+        </section>
+
+        <section aria-label="已学习的记忆">
+          <h4 className="memory-settings-panel__section-title">
+            已学习的记忆 · {recordScope === 'project' ? '项目' : '全局'}
+          </h4>
+          <p className="settings-panel__muted memory-settings-panel__records-hint">
+            主题条目可置顶或彻底遗忘；待批准条目不会进入检索和开局快照。
+          </p>
+
+          {recordsError && (
+            <div className="settings-status settings-status--error">
+              {recordsError}
+            </div>
+          )}
+
+          {recordsLoading && <p className="settings-panel__muted">加载中…</p>}
+
+          {!recordsLoading && recordScope === 'project' && !currentProject && (
+            <p className="settings-panel__muted">请先打开工作区项目以查看项目记忆。</p>
+          )}
+
+          {!recordsLoading && records.length === 0 && (recordScope === 'global' || currentProject) && (
+            <p className="settings-panel__muted">
+              {recordScope === 'project' ? '当前项目还没有已学习的记忆。' : '还没有已学习的全局记忆。'}
+            </p>
+          )}
+
+          <ul className="memory-settings-panel__record-list">
+            {records.map((record, index) => (
+              <li key={record.id} className="memory-settings-panel__record-item">
+                <div className="memory-settings-panel__record-main">
+                  {(index === 0 || records[index - 1].relPath !== record.relPath) && <h5>{record.relPath}{record.location === 'inbox' ? ' · 待批准' : record.location === 'archive' ? ' · 历史归档' : ''}</h5>}
+                  <p className="memory-settings-panel__record-content">{record.text}</p>
+                  <div className="memory-settings-panel__record-meta">
+                    <span className="memory-settings-panel__record-kind">
+                      {RECORD_KIND_LABELS[record.kind]}
+                    </span>
+                    <span>{RECORD_EXPLICITNESS_LABELS[record.explicitness]}</span>
+                    <span>证据 {record.evidenceCount} 条</span>
+                    <span>最近观察：{formatSettingsDateTime(record.lastSeenAt)}</span>
+                    {record.needsVerification && <span>需要核对</span>}
+                    {record.pinned && <span>已置顶</span>}
+                  </div>
+                  {record.key && (
+                    <details className="memory-settings-panel__record-details">
+                      <summary>技术信息</summary>
+                      <div className="memory-settings-panel__record-detail-row">
+                        <span>标识</span>
+                        <code className="memory-settings-panel__meta-code">{record.key}</code>
+                      </div>
+                    </details>
+                  )}
+                </div>
+                <div className="memory-settings-panel__record-actions">
+                  <Button label={record.pinned ? '取消置顶' : '置顶'} variant="secondary" size="sm" onClick={() => void updateEntry(record, 'pin')} isDisabled={forgettingId !== null}>{record.pinned ? '取消置顶' : '置顶'}</Button>
+                  {record.location === 'inbox' && (
+                    <>
+                      <Button label="批准" variant="secondary" size="sm" onClick={() => void updateEntry(record, 'approve')} isDisabled={forgettingId !== null}>批准</Button>
+                      <Button label="拒绝" variant="secondary" size="sm" onClick={() => void updateEntry(record, 'reject')} isDisabled={forgettingId !== null}>拒绝</Button>
+                    </>
+                  )}
+                  <Button
+                    label={forgettingId === record.id ? '忘记中…' : '忘记'}
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="memory-settings-panel__forget-btn"
+                    onClick={() => void handleForgetRecord(record)}
+                    isDisabled={forgettingId !== null}
+                  >
+                    {forgettingId === record.id ? '忘记中…' : '忘记'}
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <details className="memory-settings-panel__advanced">
+          <summary>高级：预览、索引与技术信息</summary>
+          <div className="memory-settings-panel__advanced-body">
+            {stats?.diagnostic && <p role="alert">{stats.diagnostic}</p>}
+            {stats && stats.indexStatus !== 'ok' && <p role="alert">{stats.indexStatus === 'dirty' ? '索引待重建' : '索引不可用，使用文件检索'}</p>}
+            {!!stats?.ledgerBadLines && <p role="alert">账本存在 {stats.ledgerBadLines} 个坏行，请检查原文件；坏行已保留。</p>}
+
+            <h5 className="memory-settings-panel__advanced-title">开局记忆预览</h5>
+            <p className="settings-panel__muted">全局 {preview?.globalCoreCount ?? 0} 条 · 项目 {preview?.projectCoreCount ?? 0} 条 · 预算外 {preview?.omittedCoreCount ?? 0} 条</p>
+            <pre className="memory-settings-panel__preview">{preview?.text ?? '暂无开局记忆'}</pre>
+
+            <h5 className="memory-settings-panel__advanced-title">维护</h5>
+            <div className="memory-settings-panel__advanced-actions">
+              <Button
+                label="重建索引"
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => void handleReconcile()}
+                isDisabled={(!currentProject && recordScope === 'project') || loading}
+              >
+                重建索引
+              </Button>
+              <Button
+                label="清除操作摘要"
+                variant="secondary"
+                size="sm"
+                type="button"
+                isDisabled={!currentProject || stats?.readOnly}
+                onClick={() => void (async () => {
+                  const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '清除操作摘要', message: '永久清除当前项目的操作摘要？主题记忆不会受影响。', buttons: ['取消', '清除'], defaultId: 0, cancelId: 0 })
+                  if (response !== 1) return
+                  try { await window.api.invoke('memory:clear-episodic'); await loadMemoryData(); await refreshPreview() }
+                  catch (err) { setError(err instanceof Error ? err.message : '清除摘要失败') }
+                })()}
+              >
+                清除操作摘要
+              </Button>
+            </div>
+            {files.filter(file => file.needsOrganization).map(file => (
+              <div key={file.relPath} className="memory-settings-panel__advanced-row">
+                <span className="settings-panel__muted">{file.relPath} 条目较多，建议整理。</span>
+                <Button label={`立即整理 ${file.relPath}`} variant="secondary" size="sm" onClick={() => void organizeFile(file.relPath)} isDisabled={file.readOnly}>立即整理</Button>
+              </div>
+            ))}
+            {legacy.map(dir => (
+              <div key={dir.oldHash} className="memory-settings-panel__advanced-row">
+                <span className="settings-panel__muted">未关联的旧记忆：<code className="memory-settings-panel__meta-code">{dir.oldHash}</code> · {dir.fileCount} 个文件</span>
+                <Button label={`删除旧记忆 ${dir.oldHash}`} variant="secondary" size="sm" onClick={() => void (async () => {
+                  const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '删除旧记忆', message: `永久删除未关联目录 ${dir.oldHash}？`, buttons: ['取消', '删除'], defaultId: 0, cancelId: 0 })
+                  if (response !== 1) return
+                  try { await window.api.invoke('memory:delete-legacy', { oldHash: dir.oldHash }); setLegacy(await window.api.invoke('memory:list-legacy')) }
+                  catch (err) { setError(err instanceof Error ? err.message : '删除失败') }
+                })()}>删除</Button>
+              </div>
+            ))}
+
+            <h5 className="memory-settings-panel__advanced-title">技术信息</h5>
+            {currentProject && (
+              <div className="memory-settings-panel__meta-item">
+                <span className="memory-settings-panel__meta-label">工作区</span>
+                <span className="memory-settings-panel__meta-workspace" title={currentProject}>
+                  {currentProject}
+                </span>
+              </div>
+            )}
+            {stats && (
+              <>
+                <div className="memory-settings-panel__meta-item">
+                  <span className="memory-settings-panel__meta-label">scopeId</span>
+                  <code className="memory-settings-panel__meta-code">{stats.scopeId}</code>
+                </div>
+                <div className="memory-settings-panel__meta-item memory-settings-panel__meta-item--path">
+                  <span className="memory-settings-panel__meta-label">目录</span>
+                  <code className="memory-settings-panel__meta-path" title={stats.scopeDir}>
+                    {stats.scopeDir}
+                  </code>
+                  <Button
+                    label="复制完整路径"
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    className="memory-settings-panel__copy-btn"
+                    onClick={handleCopyScopePath}
+                  >
+                    复制
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </details>
+      </div>
 
       {fileEditorOpen && (
         <Dialog
@@ -743,7 +787,7 @@ export const MemorySettingsPanel: React.FC = () => {
                 variant="secondary"
                 size="sm"
                 type="button"
-                onClick={() => void handleOpenDir()}
+                onClick={() => void handleOpenDir(recordScope)}
                 isDisabled={!currentProject && recordScope === 'project'}
               >
                 打开目录
@@ -795,7 +839,7 @@ export const MemorySettingsPanel: React.FC = () => {
                       )}
                     </span>
                     <span className="memory-settings-panel__file-meta">
-                      {formatBytes(file.size)} · {formatMtime(file.mtimeMs)}
+                      {formatBytes(file.size)} · {formatSettingsDateTime(file.mtimeMs)}
                     </span>
                   </ClickableCard>
                 ))}
@@ -811,7 +855,7 @@ export const MemorySettingsPanel: React.FC = () => {
                         </span>
                         {selectedFile && (
                           <span className="memory-settings-panel__editor-meta">
-                            {formatBytes(selectedFile.size)} · {formatMtime(selectedFile.mtimeMs)}
+                            {formatBytes(selectedFile.size)} · {formatSettingsDateTime(selectedFile.mtimeMs)}
                           </span>
                         )}
                       </div>

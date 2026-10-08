@@ -116,11 +116,11 @@ test('运行中退出重启后按中断终态恢复，手动继续开新轮次',
     await expect(resumed.page.locator('.tool-trace-row--live')).toHaveCount(0)
     await expect(resumed.page.getByRole('button', { name: '中断生成' })).toHaveCount(0)
     await expect(resumed.page.getByLabel('消息输入')).toBeEditable()
+    // 停靠式输入区应贴着聊天面板底边：底部间距即输入区自身高度
     await expect.poll(async () => resumed.page.locator('.chat-panel').evaluate(panel => {
-      const scroll = panel.querySelector('.chat-messages')
       const dock = panel.querySelector('.chat-panel__composer-area')
-      return scroll && dock ? parseFloat(getComputedStyle(scroll).paddingBottom) - dock.getBoundingClientRect().height : -1
-    })).toBeGreaterThanOrEqual(16)
+      return dock ? panel.getBoundingClientRect().bottom - dock.getBoundingClientRect().bottom : -1
+    })).toBeLessThanOrEqual(1)
     expect(await readFile(path.join(nova.workspacePath, 'interrupt-target.txt'), 'utf8'))
       .toContain('nova e2e interrupt')
 

@@ -81,29 +81,98 @@
   color: var(--text-primary);
 }
 
-/* 项目级表面切换：开发 | 学习 */
+/*
+ * 项目级表面切换：开发 | 学习（液态玻璃胶囊）
+ * 轨道半透 + 顶部受光内边缘；激活段由滑动 thumb 指示（弹簧回弹），
+ * 未激活段折叠为纯图标。--switch-icon-w 必须等于折叠段渲染宽度
+ * （横向 padding * 2 + 图标宽），thumb 位移量据此 calc 得出。
+ */
 .sidebar-surface-switch {
-  display: flex;
+  --switch-pad: 3px;
+  --switch-gap: 4px;
+  --switch-icon-w: 30px;
+  --switch-ease: cubic-bezier(0.34, 1.35, 0.55, 1);
+  position: relative;
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
+  align-self: center;
+  gap: var(--switch-gap);
   margin: 0 0 4px;
-  padding: 2px;
+  padding: var(--switch-pad);
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
-  background: var(--surface-card);
+  background: color-mix(in srgb, var(--surface-card) 55%, transparent);
+  box-shadow: inset 0 1px 0 var(--glass-top-light);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+}
+
+/* 滑块：激活段背后的玻璃 pill，位移与宽度分用不同弹性，带轻微拉伸感 */
+.sidebar-surface-switch__thumb {
+  position: absolute;
+  top: var(--switch-pad);
+  bottom: var(--switch-pad);
+  left: var(--switch-pad);
+  width: calc(100% - var(--switch-pad) * 2 - var(--switch-icon-w) - var(--switch-gap));
+  border: 1px solid var(--border-brand);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, var(--glass-top-light), transparent 55%),
+    var(--surface-brand);
+  box-shadow:
+    inset 0 1px 0 var(--glass-top-light),
+    0 2px 6px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.4));
+  pointer-events: none;
+  will-change: transform;
+  transition:
+    transform 0.45s var(--switch-ease),
+    width 0.45s cubic-bezier(0.34, 1.15, 0.55, 1);
+}
+
+.sidebar-surface-switch[data-surface='learn'] .sidebar-surface-switch__thumb {
+  transform: translateX(calc(var(--switch-icon-w) + var(--switch-gap)));
 }
 
 .sidebar-surface-switch__btn {
-  flex: 1 1 0;
+  position: relative;
+  z-index: 1;
   appearance: none;
   border: none;
   background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 999px;
   color: var(--text-secondary);
   font-size: 12px;
-  padding: 4px 0;
-  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
   cursor: pointer;
-  transition: background-color var(--transition-fast), color var(--transition-fast);
+  transition:
+    padding 0.4s var(--switch-ease),
+    color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.sidebar-surface-switch__btn svg {
+  flex-shrink: 0;
+}
+
+/* 折叠态标签：max-width + 位移收进图标旁，仍在 a11y 树里 */
+.sidebar-surface-switch__label {
+  display: inline-block;
+  max-width: 0;
+  margin-left: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(-3px);
+  transition:
+    max-width 0.4s var(--switch-ease),
+    margin-left 0.4s var(--switch-ease),
+    transform 0.4s var(--switch-ease),
+    opacity 0.25s ease;
 }
 
 .sidebar-surface-switch__btn:hover:not(:disabled) {
@@ -111,15 +180,43 @@
   background: var(--surface-hover);
 }
 
+.sidebar-surface-switch__btn:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
+}
+
 .sidebar-surface-switch__btn--active {
-  background: var(--surface-brand);
+  padding: 0 13px;
   color: var(--text-primary);
+}
+
+.sidebar-surface-switch__btn--active svg {
+  color: var(--accent-primary);
+}
+
+.sidebar-surface-switch__btn--active .sidebar-surface-switch__label {
+  max-width: 3em;
+  margin-left: 6px;
   font-weight: 600;
+  opacity: 1;
+  transform: none;
 }
 
 .sidebar-surface-switch__btn:disabled {
   cursor: default;
-  opacity: 0.75;
+}
+
+/* 无工作区时整组禁用，统一降透明度而不是单按钮置灰 */
+.sidebar-surface-switch--disabled {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-surface-switch__thumb,
+  .sidebar-surface-switch__btn,
+  .sidebar-surface-switch__label {
+    transition: none;
+  }
 }
 
 /* 项目树标题行：高密度紧凑，无多余边框 */
@@ -365,11 +462,37 @@
   letter-spacing: 0.02em;
 }
 
-/* 列表滚动槽优化 */
+/*
+ * 列表滚动槽优化：gutter 常驻防抖动。
+ * 滚动条平时透明，hover 项目区才淡入——webkit 伪元素不吃 transition，
+ * 改用可插值的 scrollbar-color 驱动淡入；下面的 thumb 规则是同效果的
+ * webkit 路径兜底（走到这条路径时退化为瞬时显隐）。
+ */
 .sidebar-astryx-nav > div:nth-of-type(2) {
   box-sizing: border-box;
   padding-inline: 6px;
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color var(--transition-normal);
+}
+
+.sidebar-astryx-nav > div:nth-of-type(2):hover {
+  scrollbar-color: var(--border-subtle) transparent;
+}
+
+.sidebar-astryx-nav > div:nth-of-type(2)::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.sidebar-astryx-nav > div:nth-of-type(2):hover::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-astryx-nav > div:nth-of-type(2) {
+    transition: none;
+  }
 }
 
 /*

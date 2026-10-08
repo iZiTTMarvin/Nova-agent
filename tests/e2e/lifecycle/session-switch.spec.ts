@@ -30,6 +30,7 @@ test('记忆计数跟随会话投影，菜单选择持久化且下轮排除工�
   await expect(nova.page.getByRole('button', { name: '已加载 1 条记忆', exact: true })).toBeVisible()
   expect(JSON.stringify(summary)).not.toContain('Always check release notes')
   await nova.page.getByRole('button', { name: '已加载 1 条记忆', exact: true }).click()
+  await nova.page.locator('.memory-settings-panel__advanced > summary').click()
   await expect(nova.page.getByText('开局记忆预览', { exact: true })).toBeVisible()
   await nova.page.getByRole('button', { name: '返回应用', exact: true }).click()
   await nova.page.getByRole('button', { name: '当前会话操作', exact: true }).click()
