@@ -110,6 +110,14 @@ const SessionMoreMenu: React.FC = () => {
         tooltip: '当前会话操作'
       }}
     >
+      {currentSession.mode !== 'learn' && <DropdownMenuItem
+        label={currentSession.memoryOptOut ? '允许本会话记忆' : '本会话不记忆'}
+        onClick={() => {
+          void window.api.invoke('session:set-memory-opt-out', { sessionId: currentSession.id, optOut: !currentSession.memoryOptOut }).catch(err => {
+            void window.api.invoke('dialog:confirm', { type: 'error', title: '无法更新记忆设置', message: err instanceof Error ? err.message : '更新失败', buttons: ['确定'], defaultId: 0, cancelId: 0 })
+          })
+        }}
+      />}
       <DropdownMenuItem
         label={currentSession.pinned ? '取消置顶' : '置顶'}
         onClick={() => void setSessionPinned(currentSession.id, !currentSession.pinned)}

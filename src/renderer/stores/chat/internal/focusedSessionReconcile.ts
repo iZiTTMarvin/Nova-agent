@@ -7,6 +7,7 @@ import { getHydrationEpoch, isHydrationEpochCurrent } from './hydrationEpoch'
 import type { ChatStoreApi } from './storeApi'
 
 function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Session[] {
+  const current = sessions.find(session => session.id === detail.id)
   const base = {
     id: detail.id,
     workspaceRoot: detail.workspaceRoot,
@@ -14,7 +15,9 @@ function upsertSessionSummary(sessions: Session[], detail: SessionDetail): Sessi
     permissionMode: detail.permissionMode,
     createdAt: detail.createdAt,
     updatedAt: detail.updatedAt,
-    messageCount: detail.messageCount
+    messageCount: detail.messageCount,
+    memoryOptOut: current?.memoryOptOut ?? detail.memoryOptOut,
+    memorySnapshot: current?.memorySnapshot ?? detail.memorySnapshot
   }
   const nextSummary: Session = detail.kind === 'subagent'
     ? { ...base, kind: 'subagent', subagent: detail.subagent }

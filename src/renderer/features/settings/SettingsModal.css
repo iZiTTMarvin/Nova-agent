@@ -1300,6 +1300,14 @@
   margin-bottom: 12px;
 }
 
+.memory-settings-panel__preview {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
 .memory-settings-panel__section-title {
   margin: 0 0 6px;
   color: var(--text-primary);

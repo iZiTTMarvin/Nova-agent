@@ -44,7 +44,7 @@ const settingsDto = {
   memoryReconcileOnSearch: false,
   memoryCaptureEnabled: true,
   memoryEpisodicSummaryEnabled: true,
-  memoryExtractEnabled: true
+  memoryAutoExtractEnabled: false
 }
 
 function idleSnapshot(): AppUpdateSnapshot {

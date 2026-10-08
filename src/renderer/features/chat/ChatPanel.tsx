@@ -122,6 +122,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const selectProject = useSettingsStore(state => state.selectProject)
   const composerPrefill = useSettingsStore(state => state.composerPrefill)
   const clearComposerPrefill = useSettingsStore(state => state.clearComposerPrefill)
+  const openMemorySettings = useSettingsStore(state => state.openMemorySettings)
   const isSessionLoading = useWorkspaceStore(state => state.isSessionLoading)
   const setPermissionMode = useWorkspaceStore(state => state.setPermissionMode)
 
@@ -139,6 +140,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     state.sessions.find((session) => session.id === state.currentSessionId)
   )
   const currentGeneratingMessageId = useChatStore(state => state.currentGeneratingMessageId)
+  const [dismissedMemoryNotices, setDismissedMemoryNotices] = useState<ReadonlySet<string>>(() => new Set())
+  const memoryCount = (currentSession?.memorySnapshot?.globalCoreCount ?? 0) + (currentSession?.memorySnapshot?.projectCoreCount ?? 0)
+  const memoryNoticeKey = `${currentSessionId}:${currentSession?.memorySnapshot?.capturedAt}`
+  const showMemoryNotice = !isSessionLoading && currentSession?.kind === 'primary' && currentSession.mode !== 'learn'
+    && !currentSession.memoryOptOut && memoryCount > 0 && !dismissedMemoryNotices.has(memoryNoticeKey)
   const sendMessage = useChatStore(state => state.sendMessage)
   const regenerateAssistant = useChatStore(state => state.regenerateAssistant)
   const switchBranch = useChatStore(state => state.switchBranch)
@@ -935,6 +941,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
             paddingBottom: '156px'
           }}
         >
+          {showMemoryNotice && (
+            <div className="chat-tier1-notice" role="status">
+              <Button label={`已加载 ${memoryCount} 条记忆`} variant="ghost" size="sm" onClick={openMemorySettings} />
+              <IconButton className="chat-tier1-notice__dismiss" label="关闭记忆提示" icon={<span aria-hidden="true">×</span>}
+                variant="ghost" size="sm" onClick={() => setDismissedMemoryNotices(previous => new Set([...previous, memoryNoticeKey]))} />
+            </div>
+          )}
           {tier1BranchContext && (
             <div className="chat-tier1-notice" role="status">
               <span className="chat-tier1-notice__text">

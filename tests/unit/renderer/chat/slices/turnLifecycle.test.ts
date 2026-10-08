@@ -11,6 +11,7 @@ import {
   resetWorkspaceStoreForTests,
   useWorkspaceStore
 } from '../../../../../src/renderer/stores/useWorkspaceStore'
+import { reconcileFocusedSession } from '../../../../../src/renderer/stores/chat/internal/focusedSessionReconcile'
 
 const mockInvoke = vi.fn()
 
@@ -80,6 +81,16 @@ describe('turnLifecycleSlice', () => {
         removeAllListeners: vi.fn()
       }
     } as unknown as Window & typeof globalThis
+  })
+
+  it('终态对账保留快照计数，迟到详情不能覆盖更新的隐私选择', async () => {
+    const summary = { id: 'sess-1', kind: 'primary' as const, workspaceRoot: '/tmp/project', mode: 'default' as const, permissionMode: 'auto' as const,
+      createdAt: 1, updatedAt: 1, messageCount: 0, memoryOptOut: true,
+      memorySnapshot: { capturedAt: 1, globalCoreCount: 1, projectCoreCount: 2, omittedCoreCount: 0 } }
+    useChatStore.setState({ currentSessionId: summary.id, sessions: [summary] })
+    mockInvoke.mockResolvedValue({ ...summary, memoryOptOut: false, memorySnapshot: summary.memorySnapshot, messages: [] })
+    await reconcileFocusedSession(useChatStore, summary.id)
+    expect(useChatStore.getState().sessions[0]).toMatchObject({ memoryOptOut: true, memorySnapshot: summary.memorySnapshot })
   })
 
   it('handleMessageEnd 封存显示但不终止权威运行', async () => {

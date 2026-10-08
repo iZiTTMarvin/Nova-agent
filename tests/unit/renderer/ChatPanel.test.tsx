@@ -122,6 +122,27 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     expect(captured!.isPausedForInput).toBe(false)
   })
 
+  it('记忆提示仅使用当前会话计数，打开设置；关闭后切换回来不重复，opt-out 隐藏', () => {
+    const session = { id: 'sess_1', kind: 'primary' as const, mode: 'default' as const, permissionMode: 'auto' as const,
+      workspaceRoot: '/workspace', createdAt: 1, updatedAt: 1, messageCount: 1,
+      memorySnapshot: { capturedAt: 1, globalCoreCount: 2, projectCoreCount: 3, omittedCoreCount: 1 } }
+    act(() => { useWorkspaceStore.setState({ isSessionLoading: false }); useChatStore.setState({ currentSessionId: session.id, sessions: [session], messages: [makeAssistantMessage('m1')] }) })
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const notice = Array.from(renderer.container.querySelectorAll('button')).find(button => button.textContent === '已加载 5 条记忆')
+    expect(notice).toBeDefined()
+    act(() => notice!.click())
+    expect(useSettingsStore.getState().isConfigModalOpen).toBe(true)
+    expect(sessionStorage.getItem('nova-settings-nav')).toBe('memory')
+    act(() => renderer.container.querySelector<HTMLButtonElement>('[aria-label="关闭记忆提示"]')!.click())
+    expect(renderer.container.textContent).not.toContain('已加载 5 条记忆')
+    act(() => useChatStore.setState({ currentSessionId: 'other' }))
+    act(() => useChatStore.setState({ currentSessionId: session.id }))
+    expect(renderer.container.textContent).not.toContain('已加载 5 条记忆')
+    act(() => useChatStore.setState({ sessions: [{ ...session, memoryOptOut: true, memorySnapshot: { ...session.memorySnapshot, capturedAt: 2 } }] }))
+    expect(renderer.container.textContent).not.toContain('已加载 5 条记忆')
+    renderer.unmount()
+  })
+
   it('有 pending askQuestion 时（面板开着等回答），只有当前生成消息收到 isPausedForInput=true', () => {
     act(() => {
       useChatStore.setState({currentSessionId: 'sess_1',

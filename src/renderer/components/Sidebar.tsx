@@ -636,6 +636,15 @@ const SidebarSessions = React.memo(function SidebarSessions({
                 tooltip: '会话操作'
               }}
             >
+              {session.mode !== 'learn' && <DropdownMenuItem
+                label={session.memoryOptOut ? '允许本会话记忆' : '本会话不记忆'}
+                onClick={() => {
+                  setOpenMenuSessionId(null)
+                  void window.api.invoke('session:set-memory-opt-out', { sessionId: session.id, optOut: !session.memoryOptOut }).catch(err => {
+                    void window.api.invoke('dialog:confirm', { type: 'error', title: '无法更新记忆设置', message: err instanceof Error ? err.message : '更新失败', buttons: ['确定'], defaultId: 0, cancelId: 0 })
+                  })
+                }}
+              />}
               {showWaiting || showRunning ? (
                 <DropdownMenuItem
                   label="停止运行"

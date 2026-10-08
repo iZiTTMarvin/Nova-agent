@@ -63,6 +63,8 @@ export function getToolDisplayName(toolName: string): string {
       return '运行探索代码 (run_code)'
     case 'memory_search':
       return '检索记忆 (memory_search)'
+    case 'memory_read':
+      return '读取记忆 (memory_read)'
     case 'memory_manage':
       return '更新长期记忆 (memory_manage)'
     case 'code_context':

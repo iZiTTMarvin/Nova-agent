@@ -1,5 +1,7 @@
 import { expect, test } from '../fixtures/nova'
 import { isTerminalRunStatus } from '../../../src/shared/run/types'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 
 test('读取旧会话详情不会改变当前选择或重新进入加载状态', async ({ nova }) => {
   nova.provider.enqueue({ kind: 'text', text: 'FIRST_SESSION_READY' })
@@ -13,6 +15,43 @@ test('读取旧会话详情不会改变当前选择或重新进入加载状态',
   expect((await nova.getWorkspace()).currentSessionId).toBe(current.currentSessionId)
   await expect(nova.page.locator('.chat-session-loading')).toHaveCount(0)
   await expect(nova.page.getByLabel('消息输入')).toBeEditable()
+})
+
+test('记忆计数跟随会话投影，菜单选择持久化且下轮排除工具和快照', async ({ nova }) => {
+  await nova.invoke('settings:set', { memoryEnabled: true })
+  await nova.invoke('memory:write-file', { scopeKind: 'project', relPath: 'conventions.md', content: '<!-- nova-memory v1 -->\n- Always check release notes before publishing\n' })
+  nova.provider.enqueue({ kind: 'text', text: 'MEMORY_FIRST_READY' })
+  await nova.sendPrompt('第一轮记忆投影')
+  await nova.waitUntilIdle()
+  const first = (await nova.getWorkspace()).currentSessionId
+  if (!first) throw new Error('missing first session')
+  const summary = (await nova.getWorkspace()).availableSessions.find(session => session.id === first)
+  expect(summary?.memorySnapshot).toEqual(expect.objectContaining({ globalCoreCount: 0, projectCoreCount: 1 }))
+  await expect(nova.page.getByRole('button', { name: '已加载 1 条记忆', exact: true })).toBeVisible()
+  expect(JSON.stringify(summary)).not.toContain('Always check release notes')
+  await nova.page.getByRole('button', { name: '已加载 1 条记忆', exact: true }).click()
+  await expect(nova.page.getByText('开局记忆预览', { exact: true })).toBeVisible()
+  await nova.page.getByRole('button', { name: '返回应用', exact: true }).click()
+  await nova.page.getByRole('button', { name: '当前会话操作', exact: true }).click()
+  await nova.page.getByRole('menuitem', { name: '本会话不记忆', exact: true }).click()
+  await expect.poll(async () => (await nova.getWorkspace()).availableSessions.find(session => session.id === first)?.memoryOptOut).toBe(true)
+  await expect(nova.page.getByRole('button', { name: '已加载 1 条记忆', exact: true })).toHaveCount(0)
+  nova.provider.enqueue({ kind: 'text', text: 'MEMORY_PRIVATE_READY' })
+  await nova.sendPrompt('私密内容不应写入记忆')
+  await nova.waitUntilIdle()
+  const wire = nova.provider.requests.at(-1)?.body
+  expect(JSON.stringify(wire?.tools)).not.toMatch(/memory_(read|search|manage)/)
+  const system = Array.isArray(wire?.messages) ? wire.messages.filter((message: { role?: string }) => message.role === 'system') : []
+  expect(JSON.stringify(system)).not.toContain('Always check release notes')
+  await nova.createSession()
+  await expect(nova.page.getByRole('button', { name: /^已加载 \d+ 条记忆$/ })).toHaveCount(0)
+  await nova.selectSession(first)
+  await nova.page.reload()
+  await expect(nova.page.getByLabel('消息输入')).toBeEditable()
+  expect((await nova.getWorkspace()).availableSessions.find(session => session.id === first)?.memoryOptOut).toBe(true)
+  expect(JSON.parse(await readFile(path.join(nova.profileRoot, 'userData', 'sessions', first, 'session.json'), 'utf8')).memoryOptOut).toBe(true)
+  await expect(nova.invoke('session:set-memory-opt-out', { sessionId: 'missing', optOut: true })).rejects.toThrow('主会话不存在')
+  expect(nova.pageErrors).toEqual([])
 })
 
 test('旧会话迟到完成后，当前会话不会被旧结果污染', async ({ nova }) => {

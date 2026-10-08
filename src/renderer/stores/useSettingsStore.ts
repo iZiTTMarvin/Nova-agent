@@ -61,6 +61,7 @@ export interface SettingsState {
   openLlmSettings: () => void
   /** 打开设置并定位到代码索引分区 */
   openCodeIndexSettings: () => void
+  openMemorySettings: () => void
   /** 打开设置并定位到技能与规则定制面板 */
   openCustomizeSettings: (initialTab?: 'skills' | 'rules') => void
   selectProject: () => Promise<void>
@@ -350,6 +351,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch {
       // sessionStorage 不可用时仍可打开设置壳层。
     }
+    set({ isConfigModalOpen: true })
+  },
+
+  openMemorySettings: () => {
+    try { sessionStorage.setItem(SETTINGS_NAV_KEY, 'memory') } catch { /* Opening remains available without browser storage. */ }
     set({ isConfigModalOpen: true })
   },
 
