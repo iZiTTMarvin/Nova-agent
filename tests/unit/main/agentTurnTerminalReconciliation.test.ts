@@ -97,6 +97,7 @@ vi.mock('../../../src/main/services/SessionStoreHost', () => ({
 }))
 
 vi.mock('../../../src/main/services/MemoryExtractHost', () => ({
+  onMemoryExtractTurnStarted: vi.fn(),
   onUserTurnCompleteForExtract: extractSpy
 }))
 
@@ -187,6 +188,7 @@ function makeSession(mode: 'default' | 'compose' = 'default') {
 }
 
 const sessionStore = {
+  isDraft: () => false,
   load: vi.fn(() => makeSession()),
   save: vi.fn(),
   getSessionsDir: vi.fn(() => '/tmp/sessions'),

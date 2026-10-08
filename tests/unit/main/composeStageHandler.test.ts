@@ -51,6 +51,7 @@ let sessionComposeStages: ComposeStageEntry[] | undefined
 let sessionMode = 'compose'
 let sessionKind = 'primary'
 let pendingInteractions: Array<{ type: string }> = []
+let sessionMemorySnapshot: import('../../../src/runtime/sessions/types').MemorySnapshotRecord | undefined
 
 const mockStore = {
   load: vi.fn((sessionId: string) => {
@@ -65,7 +66,8 @@ const mockStore = {
       messageCount: 0,
       messages: [],
       currentLeafId: null,
-      composeStages: sessionComposeStages
+      composeStages: sessionComposeStages,
+      memorySnapshot: sessionMemorySnapshot
     }
   }),
   loadForDisplay: vi.fn((sessionId: string) => {
@@ -74,6 +76,7 @@ const mockStore = {
     return { session: data, hasMore: false }
   }),
   save: vi.fn(),
+  isDraft: () => false,
   getSessionsDir: () => '/tmp/test-sessions',
   getComposeStages: vi.fn(() => currentStages),
   getComposePlanApproval: vi.fn(() => currentApproval),
@@ -475,6 +478,7 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
     mockCreateSession.mockClear()
     sessionExists = true
     sessionComposeStages = undefined
+    sessionMemorySnapshot = undefined
     registerSessionHandler()
   })
 
@@ -489,6 +493,13 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
     expect(detail.id).toBe('sess_1')
     expect(detail.composeStages).toEqual(sessionComposeStages)
     expect(mockSelectSession).not.toHaveBeenCalled()
+  })
+
+  it('记忆快照只投影计数和时间，不投影正文', async () => {
+    sessionMemorySnapshot = { formatVersion: 1, reason: 'captured', capturedAt: 3, text: 'Private memory body', globalCoreCount: 1, projectCoreCount: 2, omittedCoreCount: 4 }
+    const detail = await registeredHandler('load-session')(makeTrustedEvent(), { sessionId: 'sess_1' })
+    expect(detail).toMatchObject({ memorySnapshot: { capturedAt: 3, globalCoreCount: 1, projectCoreCount: 2, omittedCoreCount: 4 } })
+    expect(JSON.stringify(detail)).not.toContain('Private memory body')
   })
 
   it('旧会话无 composeStages 字段时透出 undefined，由 renderer 按初始表投影', async () => {

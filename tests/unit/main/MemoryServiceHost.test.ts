@@ -2,28 +2,48 @@
  * MemoryServiceHost reconcile 调度：fire-and-forget、并发安全、memoryEnabled 门禁
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const hostEnvironment = vi.hoisted(() => ({ userData: '' }))
 
 const reconcileMock = vi.fn()
 const loadNovaSettingsMock = vi.fn()
 
 vi.mock('electron', () => ({
   app: {
-    getPath: () => '/tmp/nova-test-userdata'
+    getPath: () => hostEnvironment.userData
   }
 }))
 
-vi.mock('fs', () => ({
-  mkdirSync: vi.fn()
+vi.mock('../../../src/runtime/memory/BetterSqliteMemoryDb', () => ({
+  BetterSqliteMemoryDb: vi.fn(),
+  openBetterSqliteMemoryDb: vi.fn(() => ({
+    exec: vi.fn(),
+    prepare: vi.fn(() => ({ get: () => undefined, all: () => [], run: () => ({ changes: 0 }) })),
+    close: vi.fn(),
+    sqliteVersion: '3.49.0'
+  }))
 }))
 
-vi.mock('../../../src/runtime/memory/BetterSqliteMemoryDb', () => ({
-  openBetterSqliteMemoryDb: vi.fn(() => ({}))
-}))
+vi.mock('../../../src/main/services/SessionStoreHost', async () => {
+  const { SessionStore } = await import('../../../src/runtime/sessions/SessionStore')
+  let store: InstanceType<typeof SessionStore> | null = null
+  const instance = () => (store ??= new SessionStore(hostEnvironment.userData))
+  return {
+    getSessionStore: instance,
+    initSessionStoreHost: instance,
+    resetSessionStoreHostForTests: () => { store = null }
+  }
+})
 
 vi.mock('../../../src/runtime/memory/MemoryService', () => ({
-  MemoryService: vi.fn().mockImplementation(() => ({
+  MemoryService: vi.fn().mockImplementation((_root, db) => ({
     reconcile: reconcileMock,
-    close: vi.fn()
+    registerWorkspace: vi.fn(),
+    close: vi.fn(),
+    hasIndex: () => db !== null
   }))
 }))
 
@@ -33,6 +53,7 @@ vi.mock('../../../src/runtime/settings/novaSettings', () => ({
 
 describe('MemoryServiceHost reconcile 调度', () => {
   beforeEach(() => {
+    hostEnvironment.userData = mkdtempSync(join(tmpdir(), 'nova-memory-host-'))
     vi.clearAllMocks()
     loadNovaSettingsMock.mockReturnValue({
       memoryEnabled: true,
@@ -47,6 +68,7 @@ describe('MemoryServiceHost reconcile 调度', () => {
       '../../../src/main/services/MemoryServiceHost'
     )
     resetMemoryServiceForTests()
+    rmSync(hostEnvironment.userData, { recursive: true, force: true })
   })
 
   it('scheduleMemoryScopeReconcile 为 fire-and-forget，同步返回不阻塞', async () => {
@@ -88,18 +110,23 @@ describe('MemoryServiceHost reconcile 调度', () => {
     expect(reconcileMock).not.toHaveBeenCalled()
   })
 
-  it('原生绑定缺失时 getMemoryService 抛可行动报错（含修复命令，不透传原始堆栈）', async () => {
+  it('原生绑定缺失时保留文件读写和降级检索，并提供可行动诊断', async () => {
     const { openBetterSqliteMemoryDb } = await import(
       '../../../src/runtime/memory/BetterSqliteMemoryDb'
     )
     vi.mocked(openBetterSqliteMemoryDb).mockImplementationOnce(() => {
       throw new Error('Could not locate the bindings file')
     })
-    const { getMemoryService } = await import(
+    const { getMemoryService, getMemoryRepository, getMemoryIndexDiagnostic } = await import(
       '../../../src/main/services/MemoryServiceHost'
     )
-    expect(() => getMemoryService()).toThrow(/rebuild:native:electron/)
     expect(() => getMemoryService()).not.toThrow()
+    expect(getMemoryService().hasIndex()).toBe(false)
+    expect(getMemoryIndexDiagnostic()).toContain('rebuild:native:electron')
+    const repo = getMemoryRepository()
+    repo.insertRecord({ id: 'm_0000000001', scope: { scopeKind: 'global', scopeId: 'user' }, kind: 'preference', memoryKey: 'reply.language', content: '用户要求中文回答', status: 'active', explicitness: 'user_explicit', confidence: 1, sourceType: 'user_message' })
+    expect(repo.searchFts('中文')[0].record.id).toBe('m_0000000001')
+    expect(repo.purge('m_0000000001')).toBe(true)
   })
 
   it('结构化仓储、候选处理器与检索层随服务单例装配，close 后一并释放', async () => {
@@ -125,5 +152,28 @@ describe('MemoryServiceHost reconcile 调度', () => {
     expect(getMemoryRepository()).not.toBe(repo)
     expect(getMemoryCandidateProcessor()).not.toBe(processor)
     expect(getMemoryRetrievalService()).not.toBe(retrieval)
+  })
+
+  it('an unavailable legacy database preserves read access and rejects managed writes', async () => {
+    const root = join(hostEnvironment.userData, 'memory')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, 'memory.db'), 'unavailable legacy database')
+    const { openBetterSqliteMemoryDb } = await import('../../../src/runtime/memory/BetterSqliteMemoryDb')
+    vi.mocked(openBetterSqliteMemoryDb).mockImplementationOnce(() => { throw new Error('binding unavailable') })
+    const { getMemoryEntryStore, getMemoryIndexDiagnostic } = await import('../../../src/main/services/MemoryServiceHost')
+    const store = getMemoryEntryStore()
+    expect(store.isReadOnly()).toBe(true)
+    expect(getMemoryIndexDiagnostic()).toContain('仅可读取')
+    expect(store.list({ scopeKind: 'global', scopeId: 'user' })).toEqual([])
+    expect(() => store.insert({ id: 'm_0000000001', scope: { scopeKind: 'global', scopeId: 'user' }, kind: 'preference', content: '中文回答', status: 'active', explicitness: 'user_explicit', confidence: 1, sourceType: 'user_message' })).toThrow('read-only')
+  })
+
+  it('a corrupt migration marker cannot bypass read-only degradation', async () => {
+    const root = join(hostEnvironment.userData, 'memory')
+    mkdirSync(root, { recursive: true })
+    writeFileSync(join(root, '.migration.json'), '{ broken marker')
+    const { getMemoryEntryStore, getMemoryIndexDiagnostic } = await import('../../../src/main/services/MemoryServiceHost')
+    expect(getMemoryEntryStore().isReadOnly()).toBe(true)
+    expect(getMemoryIndexDiagnostic()).toContain('仅可读取')
   })
 })

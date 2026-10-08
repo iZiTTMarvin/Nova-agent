@@ -149,6 +149,7 @@ vi.mock('../../../src/main/services/SkillServiceHost', () => ({
 
 
 vi.mock('../../../src/main/services/MemoryExtractHost', () => ({
+  onMemoryExtractTurnStarted: vi.fn(),
   onUserTurnCompleteForExtract: vi.fn()
 }))
 
@@ -271,6 +272,7 @@ function makeSession(
 }
 
 const sessionStore = {
+  isDraft: () => false,
   load: vi.fn(() => makeSession()),
   save: vi.fn(),
   getSessionsDir: vi.fn(() => '/tmp/sessions'),

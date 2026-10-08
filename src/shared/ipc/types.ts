@@ -74,13 +74,19 @@ import type {
   InteractionAnswerResult
 } from '../run/types'
 import type {
-  MemoryScopeFileEntry,
+  MemoryFileDto,
   MemoryScopeStats,
   MemoryReadFileParams,
   MemoryWriteFileParams,
-  MemoryListRecordsParams,
-  MemoryRetractRecordParams,
-  MemoryRecordDto,
+  MemoryScopeParams,
+  MemoryListEntriesParams,
+  MemoryEntryParams,
+  MemorySetEntryPinnedParams,
+  MemoryDecideInboxParams,
+  MemoryEntryDto,
+  MemorySnapshotPreview,
+  MemoryOrganizationResult,
+  MemoryLegacyDto,
   ReconcileStats
 } from '../memory/types'
 import type {
@@ -654,8 +660,8 @@ export interface IpcCommands {
   }
   // ── 跨会话记忆（可观测/可编辑）──
   'memory:list-files': {
-    params: void
-    result: MemoryScopeFileEntry[]
+    params: MemoryScopeParams
+    result: MemoryFileDto[]
   }
   'memory:read-file': {
     params: MemoryReadFileParams
@@ -663,26 +669,28 @@ export interface IpcCommands {
   }
   'memory:write-file': {
     params: MemoryWriteFileParams
-    result: void
+    result: { parseIssues: number }
   }
   'memory:reconcile': {
-    params: void
+    params: MemoryScopeParams | void
     result: ReconcileStats
   }
   'memory:stats': {
-    params: void
+    params: MemoryScopeParams | void
     result: MemoryScopeStats
   }
-  'memory:list-records': {
-    params: MemoryListRecordsParams
-    result: MemoryRecordDto[]
-  }
-  'memory:retract-record': {
-    params: MemoryRetractRecordParams
-    result: void
-  }
+  'memory:list-entries': { params: MemoryListEntriesParams; result: MemoryEntryDto[] }
+  'memory:forget-entry': { params: MemoryEntryParams; result: void }
+  'memory:set-entry-pinned': { params: MemorySetEntryPinnedParams; result: void }
+  'memory:decide-inbox': { params: MemoryDecideInboxParams; result: void }
+  'memory:snapshot-preview': { params: void; result: MemorySnapshotPreview }
+  'memory:consolidate': { params: MemoryReadFileParams; result: MemoryOrganizationResult }
+  'memory:clear-episodic': { params: void; result: void }
+  'memory:list-legacy': { params: void; result: MemoryLegacyDto[] }
+  'memory:delete-legacy': { params: { oldHash: string }; result: void }
+  'session:set-memory-opt-out': { params: { sessionId: string; optOut: boolean }; result: void }
   'memory:open-dir': {
-    params: void
+    params: MemoryScopeParams | void
     result: void
   }
   'fs:list-directory': {

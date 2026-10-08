@@ -126,8 +126,8 @@ export interface NovaSettingsDto {
   memoryCaptureEnabled: boolean
   /** 是否将会话结束摘要写入 episodic 记忆 */
   memoryEpisodicSummaryEnabled: boolean
-  /** 记忆 LLM 提炼开关（测试版，默认关） */
-  memoryExtractEnabled: boolean
+  /** 可选的后台自动学习，会额外调用模型。 */
+  memoryAutoExtractEnabled: boolean
 }
 
 export interface RulesListParams {

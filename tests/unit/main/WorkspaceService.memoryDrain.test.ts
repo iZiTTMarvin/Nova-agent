@@ -77,6 +77,10 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
       onSessionCaptureCleanup: (sessionId) => {
         events.push('cleanup')
         expect(store.load(sessionId)).not.toBeNull()
+      },
+      onSessionDeleted: (sessionId) => {
+        events.push('cursor-cleanup')
+        expect(store.load(sessionId)).toBeNull()
       }
     })
     service.setBroadcaster(() => {})
@@ -84,7 +88,7 @@ describe('WorkspaceService 记忆 drain 生命周期', () => {
     service.selectSession(session.id)
     await service.deleteSession(session.id)
 
-    expect(events).toEqual(['leaving', 'cleanup'])
+    expect(events).toEqual(['leaving', 'cleanup', 'cursor-cleanup'])
     expect(store.load(session.id)).toBeNull()
   })
 

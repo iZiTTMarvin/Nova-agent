@@ -23,6 +23,8 @@ import { getModelClient, setModelClient } from './services/ModelClientHost'
 import { closeMemoryService } from './services/MemoryServiceHost'
 import { closeAllCodeGraphs } from './services/CodeGraphHost'
 import { flushCurrentSessionOnQuit } from './services/MemoryConsolidationHost'
+import { shutdownMemoryExtractHost } from './services/MemoryExtractHost'
+import { shutdownMemoryMaintenanceHost } from './services/MemoryMaintenanceHost'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
 import { getSessionStore } from './services/SessionStoreHost'
@@ -307,6 +309,8 @@ async function bootstrap(): Promise<void> {
     quitInProgress = true
 
     void (async () => {
+      shutdownMemoryExtractHost()
+      shutdownMemoryMaintenanceHost()
       try {
         markSubagentsShuttingDown()
         const interrupted = await interruptActiveSubagentsOnShutdown()

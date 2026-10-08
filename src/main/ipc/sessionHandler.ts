@@ -42,6 +42,10 @@ import { getWorkspaceService } from '../services/WorkspaceService'
 import { hydrateSessionWhitelistFromSession } from '../../runtime/permissions/PermissionManager'
 import { INITIAL_SESSION_DISPLAY_PAGE_SIZE } from '../../shared/session/messagePagination'
 import { getSubagentProjectionService } from '../services/SubagentProjectionServiceHost'
+import { getSessionMemorySnapshotSummary } from '../../runtime/sessions/memorySnapshot'
+import { SESSION_SET_MEMORY_OPT_OUT } from '../../shared/ipc/channels'
+import { skipMemoryExtractionThroughCurrentTail } from '../services/MemoryExtractHost'
+import { cleanupObservationCaptureSession } from '../services/MemoryConsolidationHost'
 
 /** 将持久化 SessionMessage 转换为共享 Message 格式，保留工具调用结果与分支元信息 */
 function toMessage(msg: SessionMessage & { branch?: BranchMeta }): Message & { _toolCallResults?: Record<string, string> } {
@@ -79,6 +83,8 @@ function toSessionDetail(
     permissionMode: data.permissionMode,
     createdAt: data.createdAt,
     updatedAt: data.updatedAt,
+    ...(data.memoryOptOut !== undefined ? { memoryOptOut: data.memoryOptOut } : {}),
+    ...(data.memorySnapshot ? { memorySnapshot: getSessionMemorySnapshotSummary(data) } : {}),
     messageCount: totalCount,
     hasMoreMessagesAbove,
     currentLeafId,
@@ -126,6 +132,16 @@ function toSessionDetail(
 export function registerSessionHandler(): void {
   const appDataPath = app.getPath('userData')
   const sessionStore = initSessionStoreHost(appDataPath)
+
+  handle(SESSION_SET_MEMORY_OPT_OUT, async (_event, raw: unknown) => {
+    if (!raw || typeof raw !== 'object' || !('sessionId' in raw) || typeof raw.sessionId !== 'string' || !('optOut' in raw) || typeof raw.optOut !== 'boolean') throw new Error('session:set-memory-opt-out 参数不合法')
+    const session = sessionStore.loadMetadata(raw.sessionId)
+    if (!session || session.kind !== 'primary') throw new Error('主会话不存在')
+    if (!raw.optOut && session.memoryOptOut) skipMemoryExtractionThroughCurrentTail(session.id, sessionStore)
+    sessionStore.updateMemoryOptOut(session.id, raw.optOut)
+    try { if (raw.optOut) skipMemoryExtractionThroughCurrentTail(session.id, sessionStore) }
+    finally { if (raw.optOut) cleanupObservationCaptureSession(session.id); getWorkspaceService().refreshAvailableSessions() }
+  })
 
   // 加载会话列表
   handle(LOAD_SESSIONS, async () => {

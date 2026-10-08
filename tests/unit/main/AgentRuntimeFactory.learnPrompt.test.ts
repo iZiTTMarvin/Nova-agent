@@ -118,12 +118,13 @@ describe('AgentRuntimeFactory learn prompt assembly', () => {
     }
   })
 
-  async function runOnce(mode: 'learn' | 'default', memoryEnabled: boolean) {
+  async function runOnce(mode: 'learn' | 'default', memoryEnabled: boolean, memoryOptOut = false) {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-learn-prompt-'))
     roots.push(sessionsDir)
     const workspaceRoot = '/nova-learn-prompt'
     const store = new SessionStore(sessionsDir)
     const session = store.create(workspaceRoot, mode)
+    session.memoryOptOut = memoryOptOut
     let wireBody: Record<string, unknown> | null = null
     const prepared = prepareAgentRuntime({
       session,
@@ -210,5 +211,16 @@ describe('AgentRuntimeFactory learn prompt assembly', () => {
     const system = systemContent(body)
     expect(system).toContain('=== Skills ===')
     expect(system).toContain('demo-skill')
+  })
+
+  it('opt-out 不注册三个记忆工具，普通会话仍注册', async () => {
+    const enabled = await runOnce('default', true)
+    const excluded = await runOnce('default', true, true)
+    const names = (body: Record<string, unknown>) => JSON.stringify(body.tools)
+    for (const name of ['memory_read', 'memory_search', 'memory_manage']) {
+      expect(names(enabled)).toContain(`"${name}"`)
+      expect(names(excluded)).not.toContain(`"${name}"`)
+    }
+    expect(systemContent(excluded)).not.toContain('=== Memory Policy ===')
   })
 })

@@ -174,13 +174,21 @@ describe('novaSettings', () => {
     expect(s.memoryScoreFloor).toBe(0.25)
   })
 
-  it('记忆子能力默认随总开关开启', async () => {
+  it('采集默认开启，付费自动学习默认关闭', async () => {
     const { loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     const s = loadNovaSettings()
-    // 用户视角下记忆只有 memoryEnabled 一个按钮；子开关默认全 true，由总开关一键统控。
     expect(s.memoryCaptureEnabled).toBe(true)
     expect(s.memoryEpisodicSummaryEnabled).toBe(true)
-    expect(s.memoryExtractEnabled).toBe(true)
+    expect(s.memoryAutoExtractEnabled).toBe(false)
+  })
+
+  it('旧提炼字段为 true 不会打开付费自动学习，新字段可显式保存', async () => {
+    const { loadNovaSettings, saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    writeFileSync(join(mockHome, '.nova', 'settings.json'), JSON.stringify({ settingsVersion: 1, memoryEnabled: true, memoryExtractEnabled: true }), 'utf8')
+    expect(loadNovaSettings().memoryAutoExtractEnabled).toBe(false)
+    expect(loadNovaSettings()).not.toHaveProperty('memoryExtractEnabled')
+    saveNovaSettings({ memoryAutoExtractEnabled: true })
+    expect(loadNovaSettings().memoryAutoExtractEnabled).toBe(true)
   })
 
   it('采集设置可保存并读回', async () => {

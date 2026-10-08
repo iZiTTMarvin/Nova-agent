@@ -31,6 +31,7 @@ import {
   runStartupGc
 } from '../../runtime/storage/storageService'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+import { clearMemoryExtractSession } from '../services/MemoryExtractHost'
 
 export function registerStorageHandler(): void {
   const appDataPath = app.getPath('userData')
@@ -52,7 +53,9 @@ export function registerStorageHandler(): void {
     await processRegistry.terminateForSession(params.sessionId)
     clearSessionWhitelist(params.sessionId)
     clearSessionPathGrants(params.sessionId)
-    return deleteSessionCompletely(appDataPath, params.sessionId)
+    const result = deleteSessionCompletely(appDataPath, params.sessionId)
+    clearMemoryExtractSession(params.sessionId)
+    return result
   })
 
   handle(STORAGE_RUN_GC, async (_event, params?: { snapshotRetentionDays?: number }) => {

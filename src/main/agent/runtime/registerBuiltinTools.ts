@@ -11,6 +11,7 @@ import { webSearchTool } from '../../../runtime/tools/webSearch'
 import { webFetchTool } from '../../../runtime/tools/webFetch'
 import { createMemorySearchTool } from '../../../runtime/tools/memorySearch'
 import { createMemoryManageTool } from '../../../runtime/tools/memoryManage'
+import { createMemoryReadTool } from '../../../runtime/tools/memoryRead'
 import { createCodeContextTool } from '../../../runtime/tools/codeContext'
 import { editTool } from '../../../runtime/tools/editTool'
 import { writeTool } from '../../../runtime/tools/writeTool'
@@ -118,6 +119,13 @@ export function registerBuiltinTools(
   toolRegistry.register(webSearchTool)
   toolRegistry.register(webFetchTool)
   if (deps.memoryEnabled) {
+    toolRegistry.register(createMemoryReadTool({
+      loadSettings: deps.loadSettings,
+      getMemoryService: async () => {
+        const { getMemoryService } = await import('../../services/MemoryServiceHost')
+        return getMemoryService()
+      }
+    }))
     toolRegistry.register(
       createMemorySearchTool({
         getMemoryRetrievalService: deps.getMemoryRetrievalService,

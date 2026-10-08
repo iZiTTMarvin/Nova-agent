@@ -163,8 +163,16 @@ export const MEMORY_WRITE_FILE = 'memory:write-file' as const
 export const MEMORY_RECONCILE = 'memory:reconcile' as const
 export const MEMORY_STATS = 'memory:stats' as const
 /** 结构化长期记忆：按 scope 列举记录 / 忘记单条记录 */
-export const MEMORY_LIST_RECORDS = 'memory:list-records' as const
-export const MEMORY_RETRACT_RECORD = 'memory:retract-record' as const
+export const MEMORY_LIST_ENTRIES = 'memory:list-entries' as const
+export const MEMORY_FORGET_ENTRY = 'memory:forget-entry' as const
+export const MEMORY_SET_ENTRY_PINNED = 'memory:set-entry-pinned' as const
+export const MEMORY_DECIDE_INBOX = 'memory:decide-inbox' as const
+export const MEMORY_SNAPSHOT_PREVIEW = 'memory:snapshot-preview' as const
+export const MEMORY_CONSOLIDATE = 'memory:consolidate' as const
+export const MEMORY_CLEAR_EPISODIC = 'memory:clear-episodic' as const
+export const MEMORY_LIST_LEGACY = 'memory:list-legacy' as const
+export const MEMORY_DELETE_LEGACY = 'memory:delete-legacy' as const
+export const SESSION_SET_MEMORY_OPT_OUT = 'session:set-memory-opt-out' as const
 /** 在系统文件管理器中打开当前 scope 记忆目录 */
 export const MEMORY_OPEN_DIR = 'memory:open-dir' as const
 /** 当前项目：单层目录列举（只读） */

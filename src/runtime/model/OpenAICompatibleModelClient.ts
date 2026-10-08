@@ -187,6 +187,10 @@ export class OpenAICompatibleModelClient implements ModelClient {
       stream: true,
       stream_options: { include_usage: true }
     }
+    if (options?.maxOutputTokens !== undefined) {
+      if (!Number.isSafeInteger(options.maxOutputTokens) || options.maxOutputTokens <= 0) throw new Error('Invalid maxOutputTokens')
+      body.max_tokens = options.maxOutputTokens
+    }
 
     // 思考参数：GLM 在 auto 时也注入保留式思考；能力降级后再剥离 clear_thinking。
     // 请求级覆盖（会话思考强度覆盖）优先于 client config 的模型默认值。

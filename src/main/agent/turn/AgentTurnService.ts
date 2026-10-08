@@ -50,8 +50,10 @@ import { createModelClient } from '../../services/createModelClient'
 import { ensureSkillRegistryForWorkspace } from '../../services/SkillServiceHost'
 import { getWorkspaceService } from '../../services/WorkspaceService'
 import { ensureObservationCaptureForSession } from '../../services/MemoryConsolidationHost'
-import { onUserTurnCompleteForExtract } from '../../services/MemoryExtractHost'
-import { isMemoryExcludedMode } from '../../services/MemorySessionExclusion'
+import { onUserTurnCompleteForExtract, onMemoryExtractTurnStarted } from '../../services/MemoryExtractHost'
+import { isMemoryExcludedSessionState } from '../../../runtime/memory/MemorySessionExclusion'
+import { prepareSessionMemorySnapshot } from '../../services/SessionMemorySnapshot'
+import { captureMemorySnapshot } from '../../services/MemoryServiceHost'
 import {
   getRunCoordinator,
   getRunExecutionRegistry
@@ -386,6 +388,9 @@ export async function sendAgentMessage(
   }
 
   let spawnSubagentPort: SpawnSubagentPort | undefined
+  const capturedSnapshot = session.memorySnapshot === undefined
+  onMemoryExtractTurnStarted(session.id)
+  session.memorySnapshot = prepareSessionMemorySnapshot(session, novaSettings.memoryEnabled, Date.now(), captureMemorySnapshot)
   const prepared = prepareAgentRuntime({
     session,
     sessionStore,
@@ -512,7 +517,7 @@ export async function sendAgentMessage(
       getWorkspaceService().refreshAvailableSessions()
     }
   })
-  if (session.frozenSystemPrompt !== frozenPrompt) {
+  if (session.frozenSystemPrompt !== frozenPrompt || capturedSnapshot) {
     session.frozenSystemPrompt = frozenPrompt
     sessionStore.save(session)
   }
@@ -674,7 +679,7 @@ export async function sendAgentMessage(
         }
       }
     }
-    if (wasDraft) getWorkspaceService().refreshAvailableSessions()
+    if (wasDraft || capturedSnapshot) getWorkspaceService().refreshAvailableSessions()
   }
   if (!turnUserMessageId) {
     throw new Error('轮次执行缺少持久化用户消息坐标')
@@ -711,7 +716,7 @@ export async function sendAgentMessage(
 
   // 工具轨迹采集（memoryEnabled 一键统控；巩固落盘由会话生命周期 / LLM 提炼触发）
   // 学习会话不进入通用记忆体系，杜绝尝试作答与教练出题核对污染主开发记忆
-  if (novaSettings.memoryEnabled && capturedWorkspaceRoot && !isMemoryExcludedMode(capturedMode)) {
+  if (novaSettings.memoryEnabled && capturedWorkspaceRoot && !isMemoryExcludedSessionState(session)) {
     ensureObservationCaptureForSession(params.sessionId, capturedWorkspaceRoot)
     subscribeObservationCapture(eventBus, params.sessionId)
   }

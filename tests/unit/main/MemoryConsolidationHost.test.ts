@@ -7,6 +7,8 @@ const appendMock = vi.fn()
 const loadNovaSettingsMock = vi.fn()
 const drainMock = vi.fn()
 const clearSessionMock = vi.fn()
+const excludedMock = vi.fn(() => false)
+vi.mock('../../../src/main/services/MemorySessionExclusion', () => ({ isMemoryExcludedSession: () => excludedMock() }))
 
 vi.mock('../../../src/runtime/settings/novaSettings', () => ({
   loadNovaSettings: () => loadNovaSettingsMock()
@@ -29,6 +31,7 @@ vi.mock('../../../src/main/services/MemoryServiceHost', () => ({
 describe('MemoryConsolidationHost', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    excludedMock.mockReturnValue(false)
     loadNovaSettingsMock.mockReturnValue({
       memoryEnabled: true,
       memoryCaptureEnabled: true,
@@ -65,6 +68,18 @@ describe('MemoryConsolidationHost', () => {
 
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(appendMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('opt-out 在 drain 后、异步写盘前生效时不写 episodic；已排除会话不再消费缓冲', async () => {
+    const host = await import('../../../src/main/services/MemoryConsolidationHost')
+    host.drainAndSchedulePersist('s1', '/tmp/ws')
+    excludedMock.mockReturnValue(true)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    expect(appendMock).not.toHaveBeenCalled()
+    drainMock.mockClear()
+    host.drainAndPersistSync('s1', '/tmp/ws')
+    expect(drainMock).not.toHaveBeenCalled()
+    expect(appendMock).not.toHaveBeenCalled()
   })
 
   it('落盘开关关时仅 drain 不写盘', async () => {

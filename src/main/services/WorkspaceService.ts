@@ -14,6 +14,7 @@ import { app, dialog, BrowserWindow } from 'electron'
 import { existsSync, mkdirSync, statSync } from 'fs'
 import * as path from 'path'
 import type { SessionStore } from '../../runtime/sessions/SessionStore'
+import { getSessionMemorySnapshotSummary } from '../../runtime/sessions/memorySnapshot'
 import type { SessionControlIntent, SessionData, SessionSummary } from '../../runtime/sessions/types'
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
@@ -93,6 +94,7 @@ export interface WorkspaceServiceDeps {
   onSessionLeaving?: (sessionId: string, workspaceRoot: string) => void
   /** 会话采集收尾：清 pending/buffer 注册表 */
   onSessionCaptureCleanup?: (sessionId: string) => void
+  onSessionDeleted?: (sessionId: string) => void
   /** 删除前把会话的 queued 接力预约结算为 cancelled 并解绑源，保证 durable 删除门禁通过。 */
   settleQueuedRelayReservations?: (sessionIds: ReadonlySet<string>) => void
 }
@@ -505,6 +507,7 @@ export class WorkspaceService {
       const detail = store.load(id)
       if (detail) this.leaveSession(id, detail.workspaceRoot)
       store.delete(id)
+      this.deps.onSessionDeleted?.(id)
       clearSessionWhitelist(id)
       deleteReadStateForSession(id)
       this.deps.disposeIdleLoopForSession(id)
@@ -710,6 +713,8 @@ export class WorkspaceService {
       messageCount: data.messageCount ?? 0,
       title: data.title,
       titleSource: data.titleSource,
+      ...(data.memoryOptOut !== undefined ? { memoryOptOut: data.memoryOptOut } : {}),
+      ...(data.memorySnapshot ? { memorySnapshot: getSessionMemorySnapshotSummary(data) } : {}),
       ...(data.pinned ? { pinned: true as const } : {}),
       ...(data.modelOverride ? { modelOverride: data.modelOverride } : {}),
       ...(data.reasoningEffortOverride

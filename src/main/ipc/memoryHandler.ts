@@ -1,195 +1,139 @@
-/**
- * 跨会话记忆 IPC — scope 文件浏览/编辑、索引维护与结构化记忆管理
- */
-import { mkdirSync } from 'fs'
+import { mkdirSync, existsSync, readdirSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
 import { shell } from 'electron'
 import { handle } from './secureIpc'
-import {
-  MEMORY_LIST_FILES,
-  MEMORY_READ_FILE,
-  MEMORY_WRITE_FILE,
-  MEMORY_RECONCILE,
-  MEMORY_STATS,
-  MEMORY_OPEN_DIR,
-  MEMORY_LIST_RECORDS,
-  MEMORY_RETRACT_RECORD
-} from '../../shared/ipc/channels'
-import { computeWorkspaceHash, GLOBAL_SCOPE_ID } from '../../runtime/memory/MemoryPaths'
-import { getMemoryService, getMemoryRepository } from '../services/MemoryServiceHost'
+import { MEMORY_LIST_FILES, MEMORY_READ_FILE, MEMORY_WRITE_FILE, MEMORY_RECONCILE, MEMORY_STATS, MEMORY_OPEN_DIR,
+  MEMORY_LIST_ENTRIES, MEMORY_FORGET_ENTRY, MEMORY_SET_ENTRY_PINNED, MEMORY_DECIDE_INBOX, MEMORY_SNAPSHOT_PREVIEW,
+  MEMORY_CONSOLIDATE, MEMORY_CLEAR_EPISODIC, MEMORY_LIST_LEGACY, MEMORY_DELETE_LEGACY } from '../../shared/ipc/channels'
+import { computeWorkspaceHash, GLOBAL_SCOPE_ID, isManagedMemoryFile } from '../../runtime/memory/MemoryPaths'
+import { getMemoryService, getMemoryEntryStore, getMemoryForgetter, getMemoryIndexDiagnostic, getMemoryIndexStatus, captureMemorySnapshot, listUnclaimedMemory, deleteUnclaimedMemory } from '../services/MemoryServiceHost'
+import { organizeMemoryTopic } from '../services/MemoryMaintenanceHost'
 import { getWorkspaceService } from '../services/WorkspaceService'
-import {
-  MEMORY_STATUSES,
-  SCOPE_KINDS
-} from '../../runtime/memory/types'
-import type { MemoryRecord, MemoryScope, MemoryStatus, ScopeKind } from '../../runtime/memory/types'
-import type {
-  MemoryScopeFileEntry,
-  MemoryScopeStats,
-  MemoryReadFileParams,
-  MemoryWriteFileParams,
-  MemoryListRecordsParams,
-  MemoryRetractRecordParams,
-  MemoryRecordDto,
-  MemoryRecordStatusCounts,
-  MemoryScopeKindDto
-} from '../../shared/memory/types'
-import type { ReconcileStats } from '../../shared/memory/types'
+import { parseMemoryFile, MEMORY_TOPIC_FILES } from '../../runtime/memory/markdown/entryFormat'
+import { assertMemoryFilePath } from '../../runtime/memory/markdown/atomicFile'
+import { renderMemorySnapshot } from '../../runtime/memory/snapshot/renderMemorySnapshot'
+import type { MemoryScope } from '../../runtime/memory/types'
+import type { StoredMemoryEntry } from '../../runtime/memory/markdown/MemoryEntryStore'
+import type { MemoryEntryDto, MemoryScopeStats, MemoryFileDto } from '../../shared/memory/types'
 
-/** 从当前工作区解析 scopeId；未打开项目时抛错 */
-function requireScopeId(): string {
-  const projectPath = getWorkspaceService().getState().currentProjectPath
-  if (!projectPath?.trim()) {
-    throw new Error('请先打开工作区项目')
-  }
-  return computeWorkspaceHash(projectPath)
+function object(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('请求参数非法')
+  return raw as Record<string, unknown>
 }
-
-/**
- * 解析 renderer 请求的 scope 归属。project scope 只允许当前工作区（scopeId 由主进程
- * 解析，renderer 传入值仅作越权校验）；禁止跨项目访问他人记忆。
- */
-function resolveRequestedScope(
-  scopeKind: MemoryScopeKindDto,
-  requestedScopeId: string | undefined
-): MemoryScope {
-  if (scopeKind === 'global') {
+function text(raw: unknown, name: string): string {
+  if (typeof raw !== 'string' || !raw.trim()) throw new Error(`缺少 ${name}`)
+  return raw
+}
+function requestedScope(params: Record<string, unknown>): MemoryScope {
+  if (params.scopeKind !== 'project' && params.scopeKind !== 'global') throw new Error('scopeKind 必须是 project 或 global')
+  if (params.scopeId !== undefined && typeof params.scopeId !== 'string') throw new Error('scopeId 非法')
+  if (params.scopeKind === 'global') {
+    if (params.scopeId !== undefined && params.scopeId !== GLOBAL_SCOPE_ID) throw new Error('无权访问其他范围的记忆')
     return { scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID }
   }
-  const currentScopeId = requireScopeId()
-  if (requestedScopeId !== undefined && requestedScopeId !== currentScopeId) {
-    throw new Error('无权访问其他项目的记忆')
-  }
-  return { scopeKind: 'project', scopeId: currentScopeId }
+  const path = getWorkspaceService().getState().currentProjectPath
+  if (!path?.trim()) throw new Error('请先打开工作区项目')
+  const scopeId = computeWorkspaceHash(path)
+  if (params.scopeId !== undefined && params.scopeId !== scopeId) throw new Error('无权访问其他项目的记忆')
+  getMemoryService().registerWorkspace(path)
+  return { scopeKind: 'project', scopeId }
 }
-
-function parseScopeKind(raw: unknown): MemoryScopeKindDto {
-  if (typeof raw !== 'string' || !(SCOPE_KINDS as readonly string[]).includes(raw)) {
-    throw new Error('scopeKind 必须是 project 或 global')
-  }
-  return raw as ScopeKind
+function projectScope(): MemoryScope { return requestedScope({ scopeKind: 'project' }) }
+function entryParams(raw: unknown) {
+  const params = object(raw), scope = requestedScope(params), id = text(params.id, '记忆条目 id').trim()
+  const store = getMemoryEntryStore(), entry = store.find(id, scope) ?? store.find(id)
+  if (!entry) throw new Error('记忆条目不存在或已被清除')
+  if (entry.record.scopeId !== scope.scopeId || entry.record.scopeKind !== scope.scopeKind) throw new Error('无权操作其他范围的记忆')
+  return { params, scope, id, store, entry }
 }
-
-function parseStatus(raw: unknown): MemoryStatus {
-  if (raw === undefined) {
-    return 'active'
-  }
-  if (typeof raw !== 'string' || !(MEMORY_STATUSES as readonly string[]).includes(raw)) {
-    throw new Error('status 值非法')
-  }
-  return raw as MemoryStatus
+function toDto(entry: StoredMemoryEntry): MemoryEntryDto {
+  const record = entry.record
+  return { id: record.id, scopeKind: record.scopeKind, kind: record.kind, location: entry.location, relPath: entry.relPath,
+    text: record.content, key: record.memoryKey, aliases: entry.aliases, explicitness: record.explicitness,
+    pinned: entry.pinned, needsVerification: record.status === 'needs_verification', addedDate: entry.addedDate,
+    lastSeenAt: record.lastSeenAt, evidenceCount: record.evidenceCount }
 }
-
-/** domain 记录 → IPC DTO（唯一权威转换；不携带 evidence 全文与内部指纹） */
-function toMemoryRecordDto(record: MemoryRecord): MemoryRecordDto {
-  return {
-    id: record.id,
-    scopeKind: record.scopeKind,
-    kind: record.kind,
-    memoryKey: record.memoryKey,
-    content: record.content,
-    status: record.status,
-    explicitness: record.explicitness,
-    evidenceCount: record.evidenceCount,
-    sourceSummary: record.sourcePath ?? record.sourceType,
-    createdAt: record.createdAt,
-    updatedAt: record.updatedAt
-  }
-}
-
-function countRecordsByStatus(rows: ReadonlyArray<{ status: MemoryStatus; count: number }>): MemoryRecordStatusCounts {
-  const counts: MemoryRecordStatusCounts = {
-    active: 0,
-    pending: 0,
-    superseded: 0,
-    retracted: 0,
-    needsVerification: 0
-  }
-  for (const row of rows) {
-    switch (row.status) {
-      case 'active':
-        counts.active += row.count
-        break
-      case 'pending':
-        counts.pending += row.count
-        break
-      case 'superseded':
-        counts.superseded += row.count
-        break
-      case 'retracted':
-        counts.retracted += row.count
-        break
-      case 'needs_verification':
-        counts.needsVerification += row.count
-        break
-    }
-  }
-  return counts
-}
-
 export function registerMemoryHandler(): void {
-  handle(MEMORY_LIST_FILES, async (): Promise<MemoryScopeFileEntry[]> => {
-    const scopeId = requireScopeId()
-    return getMemoryService().listScopeFiles(scopeId)
+  handle(MEMORY_LIST_FILES, async (_event, raw: unknown): Promise<MemoryFileDto[]> => {
+    const scope = requestedScope(object(raw)), service = getMemoryService(), store = getMemoryEntryStore()
+    store.reconcile(scope)
+    return service.listScopeFiles(scope.scopeId).map(file => {
+      const managed = isManagedMemoryFile(file.relPath, scope.scopeKind)
+      const model = managed ? parseMemoryFile(service.readScopeFile(scope.scopeId, file.relPath)) : null
+      const topic = Object.values(MEMORY_TOPIC_FILES).includes(file.relPath)
+      return { ...file, managed, readOnly: store.isReadOnly() || file.relPath.toLowerCase() === 'memory.md' || scope.scopeKind === 'global' && file.relPath === 'facts.md' || !!model?.readOnly,
+        parseIssues: model?.issues ?? 0, needsOrganization: topic && !(scope.scopeKind === 'global' && file.relPath === 'facts.md') && !model?.readOnly && store.topicMaintenanceInput(scope, file.relPath).suggested }
+    })
   })
-
-  handle(MEMORY_READ_FILE, async (_event, params: MemoryReadFileParams): Promise<string> => {
-    const scopeId = requireScopeId()
-    return getMemoryService().readScopeFile(scopeId, params.relPath)
+  handle(MEMORY_READ_FILE, async (_event, raw: unknown) => {
+    const params = object(raw), scope = requestedScope(params)
+    return getMemoryService().readScopeFile(scope.scopeId, text(params.relPath, 'relPath'))
   })
-
-  handle(MEMORY_WRITE_FILE, async (_event, params: MemoryWriteFileParams): Promise<void> => {
-    const scopeId = requireScopeId()
-    getMemoryService().upsertMarkdown(scopeId, params.relPath, params.content)
+  handle(MEMORY_WRITE_FILE, async (_event, raw: unknown) => {
+    const params = object(raw), scope = requestedScope(params), relPath = text(params.relPath, 'relPath').replace(/\\/g, '/')
+    if (typeof params.content !== 'string') throw new Error('content 必须是文本')
+    if (relPath.split('/').some(part => part.startsWith('.')) || relPath.toLowerCase() === 'memory.md') throw new Error('该记忆文件只读，请编辑主题文件或 notes.md')
+    const store = getMemoryEntryStore()
+    if (store.isReadOnly()) throw new Error('Memory files are read-only')
+    if (scope.scopeKind === 'global' && relPath === 'facts.md') throw new Error('全局记忆不允许项目事实')
+    if (isManagedMemoryFile(relPath, scope.scopeKind)) return { parseIssues: store.writeManagedFile(scope, relPath, params.content) }
+    getMemoryService().upsertMarkdown(scope.scopeId, relPath, params.content)
+    return { parseIssues: 0 }
   })
-
-  handle(MEMORY_RECONCILE, async (): Promise<ReconcileStats> => {
-    const scopeId = requireScopeId()
-    return getMemoryService().reconcile(scopeId)
+  handle(MEMORY_LIST_ENTRIES, async (_event, raw: unknown): Promise<MemoryEntryDto[]> => {
+    const params = object(raw), scope = requestedScope(params), location = params.location
+    if (location !== undefined && location !== 'topics' && location !== 'inbox' && location !== 'archive') throw new Error('location 非法')
+    return getMemoryEntryStore().list(scope, location).map(toDto)
   })
-
-  handle(MEMORY_STATS, async (): Promise<MemoryScopeStats> => {
-    const scopeId = requireScopeId()
-    const stats = getMemoryService().stats(scopeId)
-    const recordRows = getMemoryRepository().stats({ scopeKind: 'project', scopeId })
-    return { ...stats, records: countRecordsByStatus(recordRows) }
+  handle(MEMORY_FORGET_ENTRY, async (_event, raw: unknown) => {
+    const { scope, id } = entryParams(raw)
+    if (!getMemoryForgetter().forget(scope, id)) throw new Error('遗忘失败')
   })
-
-  handle(MEMORY_OPEN_DIR, async (): Promise<void> => {
-    const scopeId = requireScopeId()
-    const memoryService = getMemoryService()
-    const stats = memoryService.stats(scopeId)
-    mkdirSync(stats.scopeDir, { recursive: true })
-    const err = await shell.openPath(stats.scopeDir)
-    if (err) {
-      throw new Error(`无法打开记忆目录：${err}`)
+  handle(MEMORY_SET_ENTRY_PINNED, async (_event, raw: unknown) => {
+    const { params, scope, id, store } = entryParams(raw)
+    if (typeof params.pinned !== 'boolean') throw new Error('pinned 必须是布尔值')
+    if (!store.setPinned(scope, id, params.pinned)) throw new Error('置顶失败')
+  })
+  handle(MEMORY_DECIDE_INBOX, async (_event, raw: unknown) => {
+    const { params, scope, id, store, entry } = entryParams(raw)
+    if (entry.location !== 'inbox') throw new Error('条目不在 inbox')
+    if (params.decision !== 'approve' && params.decision !== 'reject') throw new Error('decision 非法')
+    const changed = params.decision === 'approve' ? store.approve(scope, id) : getMemoryForgetter().forget(scope, id)
+    if (!changed) throw new Error('inbox 决策失败')
+  })
+  handle(MEMORY_SNAPSHOT_PREVIEW, async () => {
+    const path = getWorkspaceService().getState().currentProjectPath
+    const rendered = path ? captureMemorySnapshot(path) : renderMemorySnapshot({ capturedAt: Date.now(), global: getMemoryEntryStore().snapshotScope({ scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID }) })
+    return { text: rendered.text, globalCoreCount: rendered.globalCoreCount, projectCoreCount: rendered.projectCoreCount, omittedCoreCount: rendered.omittedCoreCount }
+  })
+  handle(MEMORY_CONSOLIDATE, async (_event, raw: unknown) => {
+    const params = object(raw), scope = requestedScope(params)
+    return organizeMemoryTopic(scope, text(params.relPath, 'relPath'))
+  })
+  handle(MEMORY_CLEAR_EPISODIC, async () => {
+    const scope = projectScope(), service = getMemoryService(), store = getMemoryEntryStore()
+    if (store.isReadOnly()) throw new Error('Memory files are read-only')
+    const dir = join(service.stats(scope.scopeId).scopeDir, 'episodic')
+    assertMemoryFilePath(join(dir, 'probe.md'), store.memoryRoot)
+    if (!existsSync(dir)) return
+    for (const name of readdirSync(dir)) {
+      if (!/^\d{4}-(0[1-9]|1[0-2])\.md$/.test(name) && name !== 'legacy.md') continue
+      const path = join(dir, name); assertMemoryFilePath(path, store.memoryRoot); unlinkSync(path)
     }
+    service.reconcile(scope.scopeId)
   })
-
-  handle(MEMORY_LIST_RECORDS, async (_event, params: MemoryListRecordsParams): Promise<MemoryRecordDto[]> => {
-    const scopeKind = parseScopeKind(params?.scopeKind)
-    const status = parseStatus(params?.status)
-    const scope = resolveRequestedScope(scopeKind, params?.scopeId)
-    const records = getMemoryRepository().listByScope(scope, { status })
-    return records.map(toMemoryRecordDto)
+  handle(MEMORY_LIST_LEGACY, async () => listUnclaimedMemory())
+  handle(MEMORY_DELETE_LEGACY, async (_event, raw: unknown) => deleteUnclaimedMemory(text(object(raw).oldHash, 'oldHash')))
+  handle(MEMORY_RECONCILE, async (_event, raw: unknown) => getMemoryService().reconcile((raw === undefined ? projectScope() : requestedScope(object(raw))).scopeId))
+  handle(MEMORY_STATS, async (_event, raw: unknown): Promise<MemoryScopeStats> => {
+    const scope = raw === undefined ? projectScope() : requestedScope(object(raw)), store = getMemoryEntryStore(), entries = store.list(scope), diagnostic = getMemoryIndexDiagnostic()
+    return { ...getMemoryService().stats(scope.scopeId), entries: { topics: entries.filter(entry => entry.location === 'topics').length, inbox: entries.filter(entry => entry.location === 'inbox').length, archive: entries.filter(entry => entry.location === 'archive').length },
+      indexStatus: getMemoryIndexStatus(scope), diagnostic, ledgerBadLines: store.stats(scope).ledgerBadLines, readOnly: store.isReadOnly() }
   })
-
-  handle(MEMORY_RETRACT_RECORD, async (_event, params: MemoryRetractRecordParams): Promise<void> => {
-    const scopeKind = parseScopeKind(params?.scopeKind)
-    const id = typeof params?.id === 'string' ? params.id.trim() : ''
-    if (!id) {
-      throw new Error('缺少记忆记录 id')
-    }
-    const scope = resolveRequestedScope(scopeKind, undefined)
-    const repository = getMemoryRepository()
-    const record = repository.findById(id)
-    if (!record) {
-      throw new Error('记忆记录不存在或已被清除')
-    }
-    if (record.scopeKind !== scope.scopeKind || record.scopeId !== scope.scopeId) {
-      throw new Error('无权操作其他范围的记忆')
-    }
-    if (!repository.retract(id)) {
-      throw new Error('忘记失败，请稍后重试')
-    }
+  handle(MEMORY_OPEN_DIR, async (_event, raw: unknown) => {
+    const scope = raw === undefined ? projectScope() : requestedScope(object(raw)), store = getMemoryEntryStore(), dir = getMemoryService().stats(scope.scopeId).scopeDir
+    assertMemoryFilePath(join(dir, 'probe.md'), store.memoryRoot); mkdirSync(dir, { recursive: true })
+    const err = await shell.openPath(dir)
+    if (err) throw new Error(`无法打开记忆目录：${err}`)
   })
 }

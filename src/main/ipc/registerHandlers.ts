@@ -32,7 +32,7 @@ import { getRunCoordinator, initRunCoordinatorHost, convergeRunProtocolTailsOnSt
 import { getSubagentLifecycleCoordinator } from '../services/SubagentLifecycleHost'
 import { getSubagentDeliveryCoordinator } from '../services/SubagentDeliveryCoordinatorHost'
 import { initSubagentProjectionServiceHost } from '../services/SubagentProjectionServiceHost'
-import { scheduleMemoryReconcileForWorkspace } from '../services/MemoryServiceHost'
+import { scheduleMemoryReconcileForWorkspace, setMemoryWorkspaceRootsProvider } from '../services/MemoryServiceHost'
 import {
   closeCodeGraphForWorkspace,
   ensureCodeGraphForWorkspace,
@@ -44,6 +44,8 @@ import {
 } from '../services/MemoryConsolidationHost'
 import {
   extractOnSessionLeave,
+  initializeMemoryExtractHost,
+  clearMemoryExtractSession,
   isMemoryExtractEnabled
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
@@ -53,6 +55,7 @@ import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 import { registerDiagnosticsHandler } from './diagnosticsHandler'
 import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+import { initializeMemoryMaintenanceHost } from '../services/MemoryMaintenanceHost'
 
 /**
  * 注册所有主进程与渲染进程的 IPC 命令通信处理器
@@ -84,6 +87,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
 
   // 注册会话管理与回退操作 IPC（必须在 workspaceHandler 之前，初始化 SessionStore）
   registerSessionHandler()
+  initializeMemoryExtractHost()
 
   // compose 阶段条手动推进/回退（依赖 SessionStore，须在 registerSessionHandler 之后）
   registerComposeStageHandler()
@@ -115,6 +119,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
     onSessionCaptureCleanup: (sessionId) => {
       cleanupObservationCaptureSession(sessionId)
     },
+    onSessionDeleted: clearMemoryExtractSession,
     settleQueuedRelayReservations: (sessionIds) => {
       getSubagentDeliveryCoordinator().settleQueuedRelayReservationsForSessions(sessionIds)
     },
@@ -123,6 +128,11 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
     }
   })
   registerCodeIndexHandler(workspaceService, getSessionStore, getMainWindow)
+  setMemoryWorkspaceRootsProvider(() => {
+    const state = workspaceService.getState()
+    return [...new Set([state.currentProjectPath, ...state.availableSessions.map(session => session.workspaceRoot)].filter((root): root is string => !!root))]
+  })
+  initializeMemoryMaintenanceHost()
   workspaceService.subscribeWorkspaceRootChanges(({ previousRoot, nextRoot }) => {
     scheduleMemoryReconcileForWorkspace(nextRoot)
     if (previousRoot && previousRoot !== nextRoot) {

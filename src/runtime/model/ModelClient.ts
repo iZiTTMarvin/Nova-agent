@@ -10,6 +10,8 @@ export type { ChatRequestPurpose } from '../../shared/model/types'
 
 /** 模型调用时的可选参数 */
 export interface ChatOptions {
+  /** 受控后台调用的输出预算；缺省保留主对话的供应商默认值。 */
+  maxOutputTokens?: number
   /** 只读观测关联，不参与请求序列化或恢复决策。 */
   observation?: {
     logicalRequestId: string

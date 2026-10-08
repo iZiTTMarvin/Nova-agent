@@ -1,294 +1,113 @@
-/**
- * 结构化记忆管理 IPC（memory:list-records / memory:retract-record / memory:stats）
- *
- * mock 掉 electron / MemoryServiceHost / WorkspaceService / 主窗口引用，
- * 捕获 secureIpc 注册的监听函数直接调用，断言：
- * - project scope 只允许当前工作区（scopeId 由主进程解析，越权传入被拒）
- * - 非法 scopeKind / status 被拒；默认只列 active
- * - retract 校验记录归属后才执行；忘记后默认列表不再返回
- * - stats 追加结构化记录按状态计数
- */
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync, readFileSync, appendFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import type { IpcMainInvokeEvent } from 'electron'
-import { computeWorkspaceHash, GLOBAL_SCOPE_ID } from '../../../src/runtime/memory/MemoryPaths'
-import type { MemoryRecord } from '../../../src/runtime/memory/types'
-import type { MemoryRecordDto } from '../../../src/shared/memory/types'
-
-const mockHandle = vi.fn()
-
-// 主窗口主 frame 伪造链：secureIpc 要求 event.sender === mainWindow.webContents
-const fakeMainFrame = {}
-const fakeWebContents = { mainFrame: fakeMainFrame }
-const fakeWindow = { webContents: fakeWebContents }
-
-function makeTrustedEvent(): IpcMainInvokeEvent {
-  return { sender: fakeWebContents, senderFrame: fakeMainFrame } as unknown as IpcMainInvokeEvent
-}
-
-// ── 工作区状态 mock：currentProjectPath 可在用例间切换 ──
-let currentProjectPath: string | null = '/tmp/project-a'
-
-vi.mock('electron', () => ({
-  app: { getPath: () => '/tmp/nova-test' },
-  shell: { openPath: vi.fn(async () => '') },
-  ipcMain: { handle: (...args: unknown[]) => mockHandle(...args) }
-}))
-
-vi.mock('fs', () => ({
-  mkdirSync: vi.fn()
-}))
-
-vi.mock('../../../src/main/mainWindowRef', () => ({
-  getMainWindow: () => fakeWindow
-}))
-
-vi.mock('../../../src/main/services/WorkspaceService', () => ({
-  getWorkspaceService: () => ({
-    getState: () => ({ currentProjectPath })
-  })
-}))
-
-// ── 内存 fake 仓储：行为对齐 SqliteMemoryRepository 的语义（按 scope/status 过滤、retract 标记） ──
-function makeRecord(overrides: Partial<MemoryRecord> = {}): MemoryRecord {
-  return {
-    id: 'mem_1',
-    scopeKind: 'project',
-    scopeId: computeWorkspaceHash('/tmp/project-a'),
-    kind: 'decision',
-    memoryKey: 'database.primary',
-    content: '项目当前主要数据库为 PostgreSQL',
-    status: 'active',
-    confidence: 0.9,
-    explicitness: 'workspace_verified',
-    sourceType: 'workspace',
-    validFrom: 1,
-    validTo: null,
-    supersedesId: null,
-    evidenceCount: 2,
-    distinctSessionCount: 1,
-    distinctProjectCount: 1,
-    sourcePath: 'package.json',
-    sourceFingerprint: null,
-    createdAt: 1,
-    updatedAt: 2,
-    lastSeenAt: 2,
-    metadata: null,
-    ...overrides
-  }
-}
-
-let records: MemoryRecord[] = []
-
-const fakeRepository = {
-  listByScope: vi.fn((scope: { scopeKind: string; scopeId: string }, options?: { status?: string }) => {
-    const status = options?.status
-    return records.filter(
-      r =>
-        r.scopeKind === scope.scopeKind &&
-        r.scopeId === scope.scopeId &&
-        (status === undefined || r.status === status)
-    )
-  }),
-  findById: vi.fn((id: string) => records.find(r => r.id === id) ?? null),
-  retract: vi.fn((id: string) => {
-    const record = records.find(r => r.id === id)
-    if (!record) return false
-    record.status = 'retracted'
-    return true
-  }),
-  stats: vi.fn((scope?: { scopeKind: string; scopeId: string }) => {
-    const filtered = scope
-      ? records.filter(r => r.scopeKind === scope.scopeKind && r.scopeId === scope.scopeId)
-      : records
-    const grouped = new Map<string, { scopeKind: string; scopeId: string; kind: string; status: string; count: number }>()
-    for (const r of filtered) {
-      const key = `${r.scopeKind}:${r.scopeId}:${r.kind}:${r.status}`
-      const row = grouped.get(key)
-      if (row) {
-        row.count += 1
-      } else {
-        grouped.set(key, { scopeKind: r.scopeKind, scopeId: r.scopeId, kind: r.kind, status: r.status, count: 1 })
-      }
-    }
-    return [...grouped.values()]
-  })
-}
-
-const fakeMemoryService = {
-  stats: vi.fn((scopeId: string) => ({
-    scopeId,
-    scopeDir: `/tmp/nova-test/memory/${scopeId}`,
-    fileCount: 3,
-    indexCount: 3,
-    diskBytes: 1234
-  }))
-}
-
+import { MemoryEntryStore } from '../../../src/runtime/memory/markdown/MemoryEntryStore'
+import { MemoryForgetter } from '../../../src/runtime/memory/forget/MemoryForgetter'
+import { MemoryService } from '../../../src/runtime/memory/MemoryService'
+import { GLOBAL_SCOPE_ID } from '../../../src/runtime/memory/MemoryPaths'
+import { MEMORY_FILE_HEADER, generateMemoryEntryId } from '../../../src/runtime/memory/markdown/entryFormat'
+import { renderMemorySnapshot } from '../../../src/runtime/memory/snapshot/renderMemorySnapshot'
+import type { MemoryEntryDto } from '../../../src/shared/memory/types'
+const registrations = vi.fn(), mainFrame = {}, webContents = { mainFrame }, window = { webContents }
+let root: string, workspace: string | null, store: MemoryEntryStore, service: MemoryService, scopeId: string
+vi.mock('electron', () => ({ shell: { openPath: async () => '' }, ipcMain: { handle: (...args: unknown[]) => registrations(...args) }, app: { getPath: () => root } }))
+vi.mock('../../../src/main/mainWindowRef', () => ({ getMainWindow: () => window }))
+vi.mock('../../../src/main/services/WorkspaceService', () => ({ getWorkspaceService: () => ({ getState: () => ({ currentProjectPath: workspace }) }) }))
+vi.mock('../../../src/main/services/MemoryMaintenanceHost', () => ({ organizeMemoryTopic: async () => ({ merged: 0, retired: 0 }) }))
 vi.mock('../../../src/main/services/MemoryServiceHost', () => ({
-  getMemoryService: () => fakeMemoryService,
-  getMemoryRepository: () => fakeRepository
+  getMemoryService: () => service, getMemoryEntryStore: () => store, getMemoryIndexDiagnostic: () => null, getMemoryIndexStatus: () => 'ok',
+  getMemoryForgetter: () => new MemoryForgetter({ store, copies: [], index: null }),
+  captureMemorySnapshot: () => renderMemorySnapshot({ capturedAt: Date.now(), global: store.snapshotScope({ scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID }), project: store.snapshotScope({ scopeKind: 'project', scopeId }) }),
+  listUnclaimedMemory: () => [], deleteUnclaimedMemory: () => undefined
 }))
-
 import { registerMemoryHandler } from '../../../src/main/ipc/memoryHandler'
-
-type HandlerFn = (event: IpcMainInvokeEvent, params: unknown) => Promise<unknown>
-
-function registeredHandler(channel: string): HandlerFn {
-  const call = mockHandle.mock.calls.find(c => c[0] === channel)
-  if (!call) throw new Error(`channel ${channel} 未注册`)
-  return call[1] as HandlerFn
+function call(channel: string, params?: unknown): Promise<unknown> {
+  const registration = registrations.mock.calls.find(row => row[0] === channel)
+  if (!registration) throw new Error(`Missing handler ${channel}`)
+  const handler = registration[1] as (event: IpcMainInvokeEvent, params: unknown) => Promise<unknown>
+  return handler({ sender: webContents, senderFrame: mainFrame } as unknown as IpcMainInvokeEvent, params)
 }
-
-describe('memoryHandler 结构化记忆管理 IPC', () => {
-  beforeEach(() => {
-    mockHandle.mockClear()
-    vi.clearAllMocks()
-    currentProjectPath = '/tmp/project-a'
-    records = [makeRecord()]
-    registerMemoryHandler()
+function insert(global = false, pending = false) {
+  return store.insert({ id: generateMemoryEntryId(), scope: { scopeKind: global ? 'global' : 'project', scopeId: global ? GLOBAL_SCOPE_ID : scopeId }, kind: 'convention', memoryKey: null, content: '提交信息使用中文并说明必要原因', status: pending ? 'pending' : 'active', confidence: .8, explicitness: 'observed', sourceType: 'user_message', evidence: [{ evidenceType: 'user_message', excerpt: '提交信息使用中文并说明必要原因' }] })
+}
+beforeEach(() => {
+  registrations.mockClear(); root = mkdtempSync(join(tmpdir(), 'nova-memory-ipc-')); workspace = join(root, 'workspace')
+  store = new MemoryEntryStore(root); service = new MemoryService(root, null, { entryStore: store })
+  scopeId = store.registerWorkspace(workspace); service.registerWorkspace(workspace); registerMemoryHandler()
+})
+afterEach(() => { service.close(); rmSync(root, { recursive: true, force: true }) })
+describe('Markdown memory IPC', () => {
+  it('lists file-derived DTOs without evidence text or internal fingerprints, including locations', async () => {
+    const active = insert(), pending = insert(false, true)
+    const rows = await call('memory:list-entries', { scopeKind: 'project' }) as MemoryEntryDto[]
+    expect(rows.map(row => row.id)).toEqual([active.id, pending.id])
+    expect(rows[0]).toMatchObject({ relPath: 'conventions.md', location: 'topics', text: active.content, evidenceCount: 1, pinned: false })
+    expect(Object.keys(rows[0]).sort()).toEqual(['addedDate', 'aliases', 'evidenceCount', 'explicitness', 'id', 'key', 'kind', 'lastSeenAt', 'location', 'needsVerification', 'pinned', 'relPath', 'scopeKind', 'text'].sort())
+    expect(await call('memory:list-entries', { scopeKind: 'project', location: 'inbox' })).toMatchObject([{ id: pending.id }])
   })
-
-  describe('memory:list-records', () => {
-    it('project scope：由主进程按当前工作区解析 scopeId，返回 DTO（无 evidence 全文）', async () => {
-      const handler = registeredHandler('memory:list-records')
-      const result = (await handler(makeTrustedEvent(), { scopeKind: 'project' })) as MemoryRecordDto[]
-
-      expect(fakeRepository.listByScope).toHaveBeenCalledWith(
-        { scopeKind: 'project', scopeId: computeWorkspaceHash('/tmp/project-a') },
-        { status: 'active' }
-      )
-      expect(result).toHaveLength(1)
-      expect(result[0]).toEqual({
-        id: 'mem_1',
-        scopeKind: 'project',
-        kind: 'decision',
-        memoryKey: 'database.primary',
-        content: '项目当前主要数据库为 PostgreSQL',
-        status: 'active',
-        explicitness: 'workspace_verified',
-        evidenceCount: 2,
-        sourceSummary: 'package.json',
-        createdAt: 1,
-        updatedAt: 2
-      })
-      // DTO 不泄漏内部字段
-      expect(Object.keys(result[0])).not.toContain('sourceFingerprint')
-      expect(Object.keys(result[0])).not.toContain('metadata')
-    })
-
-    it('renderer 传入他人项目 scopeId 时被拒', async () => {
-      const handler = registeredHandler('memory:list-records')
-      await expect(
-        handler(makeTrustedEvent(), { scopeKind: 'project', scopeId: 'deadbeefdeadbeef' })
-      ).rejects.toThrow(/无权访问其他项目/)
-      expect(fakeRepository.listByScope).not.toHaveBeenCalled()
-    })
-
-    it('未打开工作区时 project scope 报可理解错误', async () => {
-      currentProjectPath = null
-      const handler = registeredHandler('memory:list-records')
-      await expect(handler(makeTrustedEvent(), { scopeKind: 'project' })).rejects.toThrow(
-        /请先打开工作区项目/
-      )
-    })
-
-    it('global scope：固定 user scopeId，无需工作区', async () => {
-      currentProjectPath = null
-      records = [makeRecord({ id: 'mem_g', scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID, kind: 'preference' })]
-      const handler = registeredHandler('memory:list-records')
-      const result = (await handler(makeTrustedEvent(), { scopeKind: 'global' })) as MemoryRecordDto[]
-      expect(fakeRepository.listByScope).toHaveBeenCalledWith(
-        { scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID },
-        { status: 'active' }
-      )
-      expect(result.map(r => r.id)).toEqual(['mem_g'])
-    })
-
-    it('非法 scopeKind / status 被拒', async () => {
-      const handler = registeredHandler('memory:list-records')
-      await expect(handler(makeTrustedEvent(), { scopeKind: 'workspace' })).rejects.toThrow(/scopeKind/)
-      await expect(handler(makeTrustedEvent(), { scopeKind: 123 })).rejects.toThrow(/scopeKind/)
-      await expect(
-        handler(makeTrustedEvent(), { scopeKind: 'project', status: 'bogus' })
-      ).rejects.toThrow(/status/)
-    })
-
-    it('默认只返回 active；retract 后的记录从默认列表消失', async () => {
-      const handler = registeredHandler('memory:list-records')
-      const retract = registeredHandler('memory:retract-record')
-
-      const before = (await handler(makeTrustedEvent(), { scopeKind: 'project' })) as MemoryRecordDto[]
-      expect(before.map(r => r.id)).toEqual(['mem_1'])
-
-      await retract(makeTrustedEvent(), { id: 'mem_1', scopeKind: 'project' })
-
-      const after = (await handler(makeTrustedEvent(), { scopeKind: 'project' })) as MemoryRecordDto[]
-      expect(after).toEqual([])
-    })
+  it('rejects cross-project scopes, invalid parameters, and project access without workspace', async () => {
+    await expect(call('memory:list-entries', { scopeKind: 'project', scopeId: 'deadbeefdeadbeef' })).rejects.toThrow('无权访问其他项目')
+    for (const params of [null, { scopeKind: 'workspace' }, { scopeKind: 123 }, { scopeKind: 'project', location: 'bogus' }]) await expect(call('memory:list-entries', params)).rejects.toThrow()
+    workspace = null; await expect(call('memory:list-entries', { scopeKind: 'project' })).rejects.toThrow('请先打开工作区')
   })
-
-  describe('memory:retract-record', () => {
-    it('归属校验通过时标记 retracted', async () => {
-      const handler = registeredHandler('memory:retract-record')
-      await handler(makeTrustedEvent(), { id: 'mem_1', scopeKind: 'project' })
-      expect(fakeRepository.retract).toHaveBeenCalledWith('mem_1')
-      expect(records[0].status).toBe('retracted')
-    })
-
-    it('记录不存在时报可理解错误', async () => {
-      const handler = registeredHandler('memory:retract-record')
-      await expect(
-        handler(makeTrustedEvent(), { id: 'mem_missing', scopeKind: 'project' })
-      ).rejects.toThrow(/不存在/)
-      expect(fakeRepository.retract).not.toHaveBeenCalled()
-    })
-
-    it('记录属于其他项目 scope 时拒绝操作', async () => {
-      records = [makeRecord({ id: 'mem_other', scopeId: computeWorkspaceHash('/tmp/project-b') })]
-      const handler = registeredHandler('memory:retract-record')
-      await expect(
-        handler(makeTrustedEvent(), { id: 'mem_other', scopeKind: 'project' })
-      ).rejects.toThrow(/无权操作其他范围/)
-      expect(fakeRepository.retract).not.toHaveBeenCalled()
-    })
-
-    it('声明 global 但记录属于 project scope 时拒绝操作', async () => {
-      const handler = registeredHandler('memory:retract-record')
-      await expect(
-        handler(makeTrustedEvent(), { id: 'mem_1', scopeKind: 'global' })
-      ).rejects.toThrow(/无权操作其他范围/)
-      expect(fakeRepository.retract).not.toHaveBeenCalled()
-    })
-
-    it('缺少 id 时报错', async () => {
-      const handler = registeredHandler('memory:retract-record')
-      await expect(handler(makeTrustedEvent(), { id: '  ', scopeKind: 'project' })).rejects.toThrow(
-        /缺少记忆记录 id/
-      )
-    })
+  it('allows all permitted global kinds without a workspace and verifies global scope ID', async () => {
+    const global = insert(true); workspace = null
+    expect(await call('memory:list-entries', { scopeKind: 'global' })).toMatchObject([{ id: global.id, kind: 'convention' }])
+    expect(await call('memory:list-files', { scopeKind: 'global' })).toMatchObject([{ relPath: 'conventions.md', managed: true, readOnly: false }, { relPath: 'MEMORY.md', managed: true, readOnly: true }])
+    await expect(call('memory:list-entries', { scopeKind: 'global', scopeId })).rejects.toThrow('无权访问')
   })
-
-  describe('memory:stats', () => {
-    it('保留文档统计并追加结构化记录按状态计数', async () => {
-      records = [
-        makeRecord(),
-        makeRecord({ id: 'mem_2', status: 'pending', memoryKey: null }),
-        makeRecord({ id: 'mem_3', status: 'retracted' })
-      ]
-      const handler = registeredHandler('memory:stats')
-      const stats = (await handler(makeTrustedEvent(), undefined)) as {
-        fileCount: number
-        records: { active: number; pending: number; superseded: number; retracted: number; needsVerification: number }
-      }
-
-      expect(stats.fileCount).toBe(3)
-      expect(stats.records).toEqual({
-        active: 1,
-        pending: 1,
-        superseded: 0,
-        retracted: 1,
-        needsVerification: 0
-      })
-    })
+  it('complete forget removes topic, ledger, generated view and repository projection; missing IDs fail', async () => {
+    const record = insert()
+    await call('memory:forget-entry', { scopeKind: 'project', id: record.id })
+    expect(store.find(record.id)).toBeNull()
+    expect(await call('memory:list-entries', { scopeKind: 'project' })).toEqual([])
+    const dir = service.stats(scopeId).scopeDir
+    for (const path of ['conventions.md', '.ledger.jsonl', 'MEMORY.md']) expect(readFileSync(join(dir, path), 'utf8')).not.toContain(record.id)
+    expect(readFileSync(join(dir, 'MEMORY.md'), 'utf8')).not.toContain(record.content)
+    await expect(call('memory:forget-entry', { scopeKind: 'project', id: record.id })).rejects.toThrow('不存在')
+  })
+  it('refuses forgetting or pinning entries from another scope and validates boolean pin', async () => {
+    const record = insert(true)
+    for (const channel of ['memory:forget-entry', 'memory:set-entry-pinned', 'memory:decide-inbox']) await expect(call(channel, { scopeKind: 'project', id: record.id, pinned: true, decision: 'reject' })).rejects.toThrow('无权操作其他范围')
+    await expect(call('memory:set-entry-pinned', { scopeKind: 'global', id: record.id, pinned: 1 })).rejects.toThrow('布尔')
+    await expect(call('memory:forget-entry', { scopeKind: 'global', id: ' ' })).rejects.toThrow('缺少')
+    expect(store.find(record.id)?.pinned).toBe(false)
+  })
+  it('pin changes the file and preview, and inbox approve promotes by=user while reject purges', async () => {
+    const record = insert(), pending = insert(false, true), rejected = insert(false, true)
+    await call('memory:set-entry-pinned', { scopeKind: 'project', id: record.id, pinned: true })
+    expect(store.find(record.id)?.pinned).toBe(true)
+    expect(await call('memory:snapshot-preview')).toMatchObject({ projectCoreCount: 1 })
+    await call('memory:decide-inbox', { scopeKind: 'project', id: pending.id, decision: 'approve' })
+    expect(store.find(pending.id)?.record).toMatchObject({ explicitness: 'user_explicit', status: 'active' })
+    await call('memory:decide-inbox', { scopeKind: 'project', id: rejected.id, decision: 'reject' })
+    expect(store.find(rejected.id)).toBeNull()
+    await expect(call('memory:decide-inbox', { scopeKind: 'project', id: record.id, decision: 'approve' })).rejects.toThrow('不在 inbox')
+  })
+  it('managed writes assign manual IDs, synchronize facts and report parse issues; generated/private files are rejected', async () => {
+    for (const relPath of ['MEMORY.md', 'memory.md', '.ledger.md', 'sub/.hidden.md']) await expect(call('memory:write-file', { scopeKind: 'project', relPath, content: 'overwrite' })).rejects.toThrow('只读')
+    expect(await call('memory:write-file', { scopeKind: 'project', relPath: 'conventions.md', content: `${MEMORY_FILE_HEADER}\n# Conventions\n- 手动填写的记忆应进入同一文件事实源\n- broken <!-- invalid -->\n` })).toEqual({ parseIssues: 1 })
+    const entries = store.list({ scopeKind: 'project', scopeId })
+    expect(entries).toHaveLength(1); expect(entries[0].record.explicitness).toBe('user_explicit')
+    expect(service.readScopeFile(scopeId, 'MEMORY.md')).toContain('手动填写的记忆')
+    store.setReadOnly(true)
+    await expect(call('memory:write-file', { scopeKind: 'project', relPath: 'notes.md', content: 'notes' })).rejects.toThrow('read-only')
+  })
+  it('future format remains read-only and file metadata reports it', async () => {
+    service.upsertMarkdown(scopeId, 'conventions.md', '<!-- nova-memory v99 -->\n- future data\n')
+    expect(await call('memory:list-files', { scopeKind: 'project' })).toMatchObject([{ relPath: 'conventions.md', readOnly: true }, { relPath: 'MEMORY.md', readOnly: true }])
+    await expect(call('memory:write-file', { scopeKind: 'project', relPath: 'conventions.md', content: MEMORY_FILE_HEADER })).rejects.toThrow('read-only')
+  })
+  it('stats include positions and malformed ledger diagnostics; removed record channels are not registered', async () => {
+    insert(); insert(false, true)
+    expect(await call('memory:stats')).toMatchObject({ entries: { topics: 1, inbox: 1, archive: 0 }, indexStatus: 'ok', ledgerBadLines: 0 })
+    const ledger = join(service.stats(scopeId).scopeDir, '.ledger.jsonl')
+    appendFileSync(ledger, 'malformed raw provenance\n')
+    expect(await call('memory:stats')).toMatchObject({ ledgerBadLines: 1 })
+    expect(readFileSync(ledger, 'utf8')).toContain('malformed raw provenance')
+    expect(registrations.mock.calls.map(row => row[0])).not.toContain('memory:list-records')
+    expect(registrations.mock.calls.map(row => row[0])).not.toContain('memory:retract-record')
   })
 })

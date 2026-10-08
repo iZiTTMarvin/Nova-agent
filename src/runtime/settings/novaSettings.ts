@@ -45,12 +45,9 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   memorySearchLimit: 10,
   memoryScoreFloor: 0.15,
   memoryReconcileOnSearch: false,
-  // 用户视角下记忆只有「总开关」一个按钮（memoryEnabled）。
-  // 下列三个子开关默认 true：开启记忆即一并启用采集 / 提炼 / episodic 落盘，
-  // 不再要求用户逐个勾选。UI 不暴露这三个开关。
   memoryCaptureEnabled: true,
   memoryEpisodicSummaryEnabled: true,
-  memoryExtractEnabled: true
+  memoryAutoExtractEnabled: false
 }
 
 /** 返回 ~/.nova 目录路径 */
@@ -192,8 +189,8 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   // memoryAutoMergeEnabled 已从 schema 移除；旧 settings.json 中的该字段
   // 在此被显式忽略（migrateAndFill 只按已知字段名填充，未知字段自然丢弃）。
-  if (typeof obj.memoryExtractEnabled === 'boolean') {
-    result.memoryExtractEnabled = obj.memoryExtractEnabled
+  if (typeof obj.memoryAutoExtractEnabled === 'boolean') {
+    result.memoryAutoExtractEnabled = obj.memoryAutoExtractEnabled
   }
 
   return result
@@ -316,9 +313,9 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
       errors.push('memoryEpisodicSummaryEnabled 必须是布尔值')
     }
   }
-  if ('memoryExtractEnabled' in patch && patch.memoryExtractEnabled !== undefined) {
-    if (typeof patch.memoryExtractEnabled !== 'boolean') {
-      errors.push('memoryExtractEnabled 必须是布尔值')
+  if ('memoryAutoExtractEnabled' in patch && patch.memoryAutoExtractEnabled !== undefined) {
+    if (typeof patch.memoryAutoExtractEnabled !== 'boolean') {
+      errors.push('memoryAutoExtractEnabled 必须是布尔值')
     }
   }
   return errors

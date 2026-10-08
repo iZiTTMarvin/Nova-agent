@@ -59,6 +59,7 @@ export function drainAndSchedulePersist(sessionId: string, workspaceRoot: string
   const scopeId = computeWorkspaceHash(workspaceRoot)
   setImmediate(() => {
     try {
+      if (isMemoryExcludedSession(sessionId) || !isEpisodicPersistEnabled()) return
       persistObservationsSnapshot(scopeId, snapshot)
     } catch (err) {
       console.error(`[MemoryConsolidation] session ${sessionId} 落盘失败:`, err)
@@ -105,6 +106,7 @@ export function handleBufferOverflow(sessionId: string, workspaceRoot: string): 
   const scopeId = computeWorkspaceHash(workspaceRoot)
   setImmediate(() => {
     try {
+      if (isMemoryExcludedSession(sessionId) || !isEpisodicPersistEnabled()) return
       persistObservationsSnapshot(scopeId, snapshot)
     } catch (err) {
       console.error(`[MemoryConsolidation] buffer 溢出落盘失败:`, err)
