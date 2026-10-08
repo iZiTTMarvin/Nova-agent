@@ -29,6 +29,7 @@ export interface EvalCase {
   expectedMemoryIds: readonly string[]
   /** 结果中不允许出现的记忆（旧事实 / 他项目 / 已撤回） */
   forbiddenMemoryIds: readonly string[]
+  forbiddenRetractedMemoryIds?: readonly string[]
   expectedBehavior: EvalBehavior
 }
 
@@ -42,6 +43,7 @@ export interface EvalCaseOutcome {
   firstExpectedRank: number | null
   /** 禁止记忆是否出现在结果中 */
   forbiddenLeak: readonly string[]
+  forbiddenRetractedLeak: readonly string[]
   durationMs: number
 }
 
@@ -77,6 +79,7 @@ export function evaluateOutcome(evalCase: EvalCase, returnedIds: readonly string
     expectedHits,
     firstExpectedRank: firstExpectedRank && firstExpectedRank > 0 ? firstExpectedRank : null,
     forbiddenLeak: evalCase.forbiddenMemoryIds.filter((id) => returnedTop.includes(id)),
+    forbiddenRetractedLeak: (evalCase.forbiddenRetractedMemoryIds ?? []).filter(id => returnedTop.includes(id)),
     durationMs
   }
 }
@@ -94,11 +97,11 @@ export function computeMetrics(outcomes: readonly EvalCaseOutcome[], evalCases: 
   const defaultOutcomes = outcomes.filter((o) => byId.get(o.caseId)!.history !== true)
   const staleCount = defaultOutcomes.filter((o) => o.forbiddenLeak.length > 0).length
   const retractedCount = defaultOutcomes.filter((o) =>
-    o.forbiddenLeak.some((id) => id.includes('_r_') || id.startsWith('cfr_'))
+    o.forbiddenRetractedLeak.length > 0
   ).length
   const leakageCount = outcomes.filter((o) => o.forbiddenLeak.length > 0 && byId.get(o.caseId)!.category === 'project-scope-isolation').length
 
-  const abstentionOutcomes = outcomes.filter((o) => byId.get(o.caseId)!.expectedBehavior === 'abstention')
+  const abstentionOutcomes = outcomes.filter((o) => byId.get(o.caseId)!.expectedBehavior === 'abstain')
   const abstentionEmpty = abstentionOutcomes.filter((o) => o.returnedIds.length === 0).length
 
   const durations = outcomes.map((o) => o.durationMs).sort((a, b) => a - b)

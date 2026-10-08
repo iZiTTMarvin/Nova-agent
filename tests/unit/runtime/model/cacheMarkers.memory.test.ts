@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { applyCacheMarkers } from '../../../../src/runtime/model/messageFormat'
+import { SystemPromptBuilder } from '../../../../src/runtime/agent/promptBuilder/SystemPromptBuilder'
 
 /** 判断 API 消息是否被注入了 cache_control */
 function hasCacheControl(msg: Record<string, unknown>): boolean {
@@ -85,4 +86,16 @@ describe('applyCacheMarkers — L2 skipCacheMarker 隔离', () => {
     expect(withL2Indices).toEqual(baselineIndices)
     expect(baselineIndices).toEqual([0, 2, 3])
   })
+})
+
+it('frozen memory is part of the cacheable system prefix without adding a history message', () => {
+  const prompt = SystemPromptBuilder.build({ agentRole: 'Nova', toolSummary: 'memory_search',
+    memorySnapshot: '<memory captured="2026-10-08">\nSaved preference\n</memory>' })
+  const input = [{ role: 'system', content: prompt }, { role: 'user', content: 'first' },
+    { role: 'assistant', content: 'answer' }, { role: 'user', content: 'next' }]
+  const output = applyCacheMarkers(input, 'cache_control')
+  expect(output).toHaveLength(input.length)
+  expect(cacheMarkerIndices(output)).toEqual([0, 2, 3])
+  expect(JSON.stringify(output[0].content)).toContain('=== Memory ===')
+  expect(applyCacheMarkers(structuredClone(input), 'cache_control')).toEqual(output)
 })

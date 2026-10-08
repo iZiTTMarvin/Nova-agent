@@ -13,10 +13,17 @@ import { readTool } from '../../src/runtime/tools/readTool'
 import { lsTool } from '../../src/runtime/tools/lsTool'
 import { writeTool } from '../../src/runtime/tools/writeTool'
 import { createMemorySearchTool } from '../../src/runtime/tools/memorySearch'
+import { createMemoryReadTool } from '../../src/runtime/tools/memoryRead'
+import { MemoryService } from '../../src/runtime/memory/MemoryService'
+import { renderMemorySnapshot } from '../../src/runtime/memory/snapshot/renderMemorySnapshot'
+import { SystemPromptBuilder } from '../../src/runtime/agent/promptBuilder/SystemPromptBuilder'
+import { computeCacheHitRate } from '../../src/shared/model/types'
 import { PermissionManager } from '../../src/runtime/permissions/PermissionManager'
 import { DEFAULT_NOVA_SETTINGS } from '../../src/runtime/settings/novaSettings'
 import { openBetterSqliteMemoryDb } from '../../src/runtime/memory/BetterSqliteMemoryDb'
-import { SqliteMemoryRepository } from '../../src/runtime/memory/repository/SqliteMemoryRepository'
+import { createMarkdownMemoryFixture } from '../fixtures/memory/MarkdownMemoryFixture'
+import { generateMemoryEntryId } from '../../src/runtime/memory/markdown/entryFormat'
+import { createEnvProxyFetch } from '../../src/headless/envProxyFetch'
 import { StructuredMemoryRetriever } from '../../src/runtime/memory/retrieval/StructuredMemoryRetriever'
 import { DocumentMemoryRetriever } from '../../src/runtime/memory/retrieval/DocumentMemoryRetriever'
 import { MemoryRetrievalService } from '../../src/runtime/memory/retrieval/MemoryRetrievalService'
@@ -31,6 +38,7 @@ import type { NormalizedUsage } from '../../src/shared/model/types'
 
 const apiKey = process.env.MEMORY_AB_API_KEY
 const outputDir = process.env.MEMORY_AB_OUTPUT_DIR ?? '.local/memory-review/live'
+const modelFetch: TransportFetchImpl = createEnvProxyFetch() ?? fetch
 const cases = [
   { name: 'invoice', topic: '账单导出', key: 'encoding', value: 'utf8-bom' },
   { name: 'queue', topic: '队列重试', key: 'retrySchedule', value: 'fibonacci-jitter' },
@@ -41,10 +49,23 @@ const cases = [
 ].slice(0, Number(process.env.MEMORY_AB_CASES ?? '6'))
 
 interface RequestRecord { turn: number; messages: ChatMessage[]; usage?: NormalizedUsage }
+function usageSummary(requests: readonly RequestRecord[]) {
+  const reported = requests.flatMap(request => request.usage && request.usage.cacheReadReport !== 'unreported' ? [request.usage] : [])
+  const totals = reported.reduce((sum, usage) => ({ uncachedInputTokens: sum.uncachedInputTokens + usage.uncachedInputTokens,
+    cacheReadTokens: sum.cacheReadTokens + usage.cacheReadTokens, cacheWriteTokens: sum.cacheWriteTokens + usage.cacheWriteTokens }),
+  { uncachedInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 })
+  const allUsages = requests.flatMap(request => request.usage ? [request.usage] : [])
+  const turnFirstRequests = requests.filter((request, index) => index === 0 || request.turn !== requests[index - 1].turn)
+  return { requestCount: requests.length, usageReportedRequests: allUsages.length, cacheReportedRequests: reported.length,
+    inputTokens: allUsages.length ? allUsages.reduce((sum, usage) => sum + usage.uncachedInputTokens + usage.cacheReadTokens + usage.cacheWriteTokens, 0) : null,
+    cacheHitRate: reported.length ? computeCacheHitRate(totals) : null, ...totals,
+    firstRequests: turnFirstRequests.map(request => ({ turn: request.turn, usage: request.usage ?? null,
+      cacheHitRate: request.usage && request.usage.cacheReadReport !== 'unreported' ? computeCacheHitRate(request.usage) : null })) }
+}
 class Recorder implements ModelClient {
   readonly requests: RequestRecord[] = []
   turn = 0
-  constructor(readonly config: ModelClientConfig, private readonly inner = new OpenAICompatibleModelClient(config)) {}
+  constructor(readonly config: ModelClientConfig, private readonly inner = new OpenAICompatibleModelClient(config), private readonly label = '') {}
   updateConfig(config: ModelClientConfig): void { this.inner.updateConfig(config) }
   measureRequest(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions) {
     return this.inner.measureRequest(messages, tools, options)
@@ -52,8 +73,10 @@ class Recorder implements ModelClient {
   async *chat(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): AsyncIterable<ChatEvent> {
     const record: RequestRecord = { turn: this.turn, messages: structuredClone(messages) }
     this.requests.push(record)
+    console.info(JSON.stringify({ task: this.label, request: this.requests.length, turn: this.turn, event: 'request_start' }))
     for await (const event of this.inner.chat(messages, tools, options)) {
       if (event.type === 'usage') record.usage = event.usage
+      if (event.type === 'error') console.info(JSON.stringify({ task: this.label, request: this.requests.length, event: 'request_error' }))
       yield event
     }
   }
@@ -65,15 +88,20 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
     it(task.name, async () => {
       const root = mkdtempSync(join(tmpdir(), 'nova-memory-utility-'))
       const db = openBetterSqliteMemoryDb(join(root, 'memory.db'))
-      const repository = new SqliteMemoryRepository(db)
+      const fixture = createMarkdownMemoryFixture(root, db)
+      const repository = fixture.repository
       const retrieval = new MemoryRetrievalService({
         structuredRetriever: new StructuredMemoryRetriever(repository),
         documentRetriever: new DocumentMemoryRetriever(null)
       })
       const rows: unknown[] = []
       try {
-        const arms = caseIndex % 2 ? ['tool', 'off', 'ephemeral'] as const : ['off', 'ephemeral', 'tool'] as const
-        const selectedArms = arms.filter(arm => !process.env.MEMORY_AB_ARMS || process.env.MEMORY_AB_ARMS.split(',').includes(arm))
+        const arms = ['off', 'tool', 'snapshot', 'ephemeral'] as const
+        const requestedArms = process.env.MEMORY_AB_ARMS?.split(',') ?? ['off', 'tool', 'snapshot']
+        expect(requestedArms.every(arm => arms.some(known => known === arm))).toBe(true)
+        const selected = arms.filter(arm => requestedArms.includes(arm))
+        const offset = caseIndex % selected.length
+        const selectedArms = [...selected.slice(offset), ...selected.slice(0, offset)]
         expect(selectedArms.length).toBeGreaterThan(0)
         for (const arm of selectedArms) {
           const workspace = join(root, arm)
@@ -89,6 +117,7 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
             : `${task.topic}当前生效约定：service.json 的 ${task.key} 必须是 ${JSON.stringify(task.value)}。保留其他字段。`)
           writeFileSync(join(workspace, 'service.json'), JSON.stringify({ service: task.name, [task.key]: 'legacy', enabled: true }))
           const scopeId = computeWorkspaceHash(workspace)
+          fixture.store.registerWorkspace(workspace)
           const memoryContent = rememberedOnly ? `用户已明确确认本项目的${task.topic}约定：service.json 的 ${task.key}=${task.value}。`
             : `${task.topic}约定：service.json 的 ${task.key}=${task.value}；当前规范在 ${specPath}，直接读取该文件核对，无需重新遍历文档。`
           let learning: { candidates: unknown; result: unknown } | null = null
@@ -114,14 +143,14 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
             expect(result.added).toBeGreaterThan(0)
             const reopened = openBetterSqliteMemoryDb(join(root, 'memory.db'))
             try {
-              const persisted = new SqliteMemoryRepository(reopened).listByScope({ scopeKind: 'project', scopeId })
+              const persisted = createMarkdownMemoryFixture(root, reopened).repository.listByScope({ scopeKind: 'project', scopeId })
               expect(persisted.some(record => record.status === 'active' && record.content.includes(task.value))).toBe(true)
             } finally { reopened.close() }
             learning = { candidates, result }
-          } else repository.insertRecord({ id: randomUUID(), scope: { scopeKind: 'project', scopeId }, kind: 'convention',
+          } else repository.insertRecord({ id: generateMemoryEntryId(), scope: { scopeKind: 'project', scopeId }, kind: 'convention',
             memoryKey: `service.${task.name}`, status: 'active', explicitness: 'user_explicit', confidence: 1,
             content: memoryContent, sourceType: 'user_message' })
-          repository.insertRecord({ id: randomUUID(), scope: { scopeKind: 'project', scopeId }, kind: 'preference',
+          repository.insertRecord({ id: generateMemoryEntryId(), scope: { scopeKind: 'project', scopeId }, kind: 'preference',
             memoryKey: 'unrelated', status: 'active', explicitness: 'observed', confidence: 0.8,
             content: '暗色主题颜色通过 design tokens 设置。', sourceType: 'user_message' })
           const config: ModelClientConfig = { apiKey: apiKey!, baseUrl: process.env.MEMORY_AB_BASE_URL ?? 'https://api.commandcode.ai/provider/v1',
@@ -134,18 +163,27 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
               reasoningEffort: 'reasoning_effort' in body ? body.reasoning_effort : null,
               messages: 'messages' in body ? body.messages : null
             })
-            return fetch(url, init)
+            return modelFetch(url, init)
           }
-          const client = new Recorder(config, new OpenAICompatibleModelClient(config, { fetchImpl: recordingFetch }))
+          const client = new Recorder(config, new OpenAICompatibleModelClient(config, { fetchImpl: recordingFetch }), `${task.name}/${arm}`)
           const bus = new EventBus()
           const calls: { turn: number; name: string; args: unknown }[] = []
           bus.on(event => { if (event.type === 'tool_call') calls.push({ turn: client.turn, name: event.toolName, args: event.args }) })
           const registry = new ToolRegistry()
           for (const tool of [readTool, lsTool, writeTool]) registry.register(tool)
-          if (arm !== 'off') registry.register(createMemorySearchTool({ getMemoryRetrievalService: () => retrieval,
-            loadSettings: () => ({ ...DEFAULT_NOVA_SETTINGS, memoryEnabled: true }) }))
+          const memoryService = new MemoryService(root, null, { entryStore: fixture.store })
+          if (arm !== 'off') {
+            registry.register(createMemorySearchTool({ getMemoryRetrievalService: () => retrieval,
+              loadSettings: () => ({ ...DEFAULT_NOVA_SETTINGS, memoryEnabled: true }) }))
+            registry.register(createMemoryReadTool({ getMemoryService: () => memoryService,
+              loadSettings: () => ({ ...DEFAULT_NOVA_SETTINGS, memoryEnabled: true }) }))
+          }
+          const snapshot = arm === 'snapshot' ? renderMemorySnapshot({ capturedAt: Date.now(),
+            project: fixture.store.snapshotScope({ scopeKind: 'project', scopeId }) }) : null
+          const basePrompt = buildStableSystemPrompt({ workingDir: workspace })
+          const systemPrompt = arm === 'off' ? basePrompt : `${basePrompt}\n${MEMORY_POLICY_PROMPT}`
           const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access',
-            systemPrompt: `${buildStableSystemPrompt({ workingDir: workspace })}\n${MEMORY_POLICY_PROMPT}`,
+            systemPrompt: snapshot?.text ? `${systemPrompt}\n\n${SystemPromptBuilder.buildLayer('Memory', snapshot.text)}` : systemPrompt,
             contextWindow: 128_000, maxToolRounds: 12, promptCacheKey: randomUUID() })
           loop.setToolRegistry(registry)
           loop.setWorkingDir(workspace)
@@ -177,10 +215,17 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
               const previous = client.requests[i].messages
               return JSON.stringify(request.messages.slice(0, previous.length)) === JSON.stringify(previous) ? [] : [i + 1]
             })
+            const wirePrefixBreaks = wireRequests.slice(1).flatMap((request, i) => {
+              const previous = wireRequests[i].messages
+              return Array.isArray(previous) && Array.isArray(request.messages)
+                && JSON.stringify(request.messages.slice(0, previous.length)) === JSON.stringify(previous) ? [] : [i + 1]
+            })
             const row = { case: task.name, rememberedOnly, learning, arm, passed, first: first.status, second: second.status, calls,
               firstError: first.status === 'failed' ? first.error.message : null,
               secondError: second.status === 'failed' ? second.error.message : null,
-              prefixBreaks, wireRequests, requests: client.requests, extractionContainsMemory: projectExtractionMessages(loop.getContext()).some(
+              prefixBreaks, wirePrefixBreaks, metrics: usageSummary(client.requests),
+              snapshot: snapshot ? { globalCoreCount: snapshot.globalCoreCount, projectCoreCount: snapshot.projectCoreCount, omittedCoreCount: snapshot.omittedCoreCount } : null,
+              wireRequests, requests: client.requests, extractionContainsMemory: projectExtractionMessages(loop.getContext()).some(
                 message => message.role === 'tool' && typeof message.content === 'string' && message.content.includes('无需重新遍历文档')) }
             rows.push(row)
             mkdirSync(outputDir, { recursive: true })
@@ -189,12 +234,19 @@ describe.skipIf(!apiKey)('真实记忆任务闭环', () => {
               prefixBreaks, usage: client.requests.map(request => ({ turn: request.turn, usage: request.usage })) }))
             expect(first.status).not.toBe('failed')
             expect(second.status).not.toBe('failed')
+            if (arm === 'off') expect(client.requests.every(request =>
+              typeof request.messages[0]?.content === 'string' && !request.messages[0].content.includes(MEMORY_POLICY_PROMPT))).toBe(true)
             if (arm !== 'off' || !rememberedOnly) expect(actual).toEqual(expected)
-            if (arm === 'tool') {
+            if (arm === 'tool' || arm === 'snapshot') {
               expect(prefixBreaks).toEqual([])
+              expect(wirePrefixBreaks).toEqual([])
               expect(row.extractionContainsMemory).toBe(false)
+              if (arm === 'snapshot') {
+                expect(snapshot?.projectCoreCount).toBeGreaterThan(0)
+                expect(client.requests.every(request => request.messages[0]?.content === client.requests[0].messages[0]?.content)).toBe(true)
+              }
             }
-          } finally { loop.dispose() }
+          } finally { loop.dispose(); memoryService.close() }
         }
       } finally { db.close() }
     }, 900_000)

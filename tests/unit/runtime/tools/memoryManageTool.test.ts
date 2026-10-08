@@ -235,12 +235,14 @@ describe('memory_manage tool', () => {
     expect(process).not.toHaveBeenCalled()
   })
 
-  it('敏感信息 fail closed，不进入 processor', async () => {
+  it.each(['token=super-secret-value-123456', 'sk-ant-api03-' + 'TEST_ONLY_FAKE_'.repeat(4), 'AIza' + 'A'.repeat(35),
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0LW9ubHkifQ.' + 'F'.repeat(43),
+    '-----BEGIN PRIVATE KEY-----\nTEST_ONLY_FAKE_BODY\n-----END PRIVATE KEY-----', 'Authorization: Basic TEST_ONLY_FAKE_AUTH'])('敏感信息 fail closed，不进入 processor %#', async content => {
     const session = primarySession([userMessage('u1', '用户明确说过不要保存密钥')])
     const result = await tool.execute({
       action: 'remember',
       kind: 'project_fact',
-      content: 'token=super-secret-value-123456',
+      content,
       evidence: { type: 'user_message', excerpt: '用户明确说过不要保存密钥' }
     }, buildContext(session))
 
@@ -262,5 +264,27 @@ describe('memory_manage tool', () => {
 
     expect(result.success).toBe(true)
     expect(process.mock.calls[0][0].candidates[0].intent).toBe('negate')
+    expect(result.output).toContain('彻底清除')
+  })
+
+  it('全局允许非项目事实类别并保留多语言 aliases，拒绝超限 aliases', async () => {
+    const session = primarySession([userMessage('u1', '今后所有项目都遵守这个已确认的发布约定')])
+    const args = { action: 'remember', kind: 'convention', scope: 'global', key: 'release', content: '发布前必须核对变更日志', aliases: ['release', '发布'], evidence: { type: 'user_message', excerpt: '今后所有项目都遵守这个已确认的发布约定' } }
+    const result = await tool.execute(args, buildContext(session))
+    expect(result.success).toBe(true)
+    expect(process.mock.calls[0][0].candidates[0]).toMatchObject({ kind: 'convention', scopeHint: 'global', aliases: ['release', '发布'] })
+    process.mockClear()
+    expect((await tool.execute({ ...args, kind: 'project_fact' }, buildContext(session))).success).toBe(false)
+    expect((await tool.execute({ ...args, aliases: ['x'.repeat(33)] }, buildContext(session))).success).toBe(false)
+    expect((await tool.execute({ ...args, aliases: Array(9).fill('release') }, buildContext(session))).success).toBe(false)
+    expect(process).not.toHaveBeenCalled()
+  })
+
+  it('工具证据的遗忘文案说明归档，memory_read 不能给新记忆背书', async () => {
+    process.mockReturnValue({ ...baseCounts, added: 0, retracted: 1 })
+    const session = primarySession([assistantWithTool('a1', null, 'read', '这个约定已经不再适用于当前项目')])
+    const result = await tool.execute({ action: 'forget', kind: 'convention', content: '之前约定必须使用 npm', evidence: { type: 'tool_result', excerpt: '这个约定已经不再适用于当前项目' } }, buildContext(session))
+    expect(result.output).toContain('归档撤回')
+    expect(findMemoryEvidence([assistantWithTool('a2', null, 'memory_read', '这个约定已经不再适用于当前项目')], 'tool_result', '这个约定已经不再适用于当前项目')).toBeNull()
   })
 })

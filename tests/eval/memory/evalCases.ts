@@ -202,6 +202,12 @@ const CASE_SPECS: readonly CaseSpec[] = [
 ]
 
 /** 种子草稿（scope id 由运行期哈希填充） */
+export function evalMemoryId(symbol: string): string {
+  const index = SEED_SPECS.map(spec => spec.id).sort().indexOf(symbol)
+  if (index < 0) throw new Error(`Unknown memory seed: ${symbol}`)
+  return `m_${9000000000 + index}`
+}
+
 export function buildSeedDrafts(scopeIds: { projectA: string; projectB: string; global: string }): MemoryRecordDraft[] {
   return SEED_SPECS.map((spec) => {
     const scopeId =
@@ -209,7 +215,7 @@ export function buildSeedDrafts(scopeIds: { projectA: string; projectB: string; 
         : spec.scope === 'project-b' ? scopeIds.projectB
           : scopeIds.global
     return {
-      id: spec.id,
+      id: evalMemoryId(spec.id),
       scope: { scopeKind: spec.scope === 'global' ? 'global' : 'project', scopeId },
       kind: spec.kind,
       memoryKey: spec.memoryKey,
@@ -218,7 +224,7 @@ export function buildSeedDrafts(scopeIds: { projectA: string; projectB: string; 
       confidence: spec.explicitness === 'user_explicit' ? 0.95 : spec.explicitness === 'observed' ? 0.7 : 0.9,
       explicitness: spec.explicitness ?? 'workspace_verified',
       sourceType: spec.explicitness === 'user_explicit' ? 'user_message' : spec.explicitness === 'observed' ? 'tool_result' : 'workspace',
-      supersedesId: spec.supersedesId ?? null,
+      supersedesId: spec.supersedesId ? evalMemoryId(spec.supersedesId) : null,
       evidence: [
         {
           evidenceType: spec.explicitness === 'user_explicit' ? 'user_message' : spec.explicitness === 'observed' ? 'tool_result' : 'workspace',
@@ -235,8 +241,9 @@ export const EVAL_CASES: readonly EvalCase[] = CASE_SPECS.map((spec) => ({
   perspective: spec.perspective ?? 'project-a',
   query: spec.query,
   history: spec.history,
-  expectedMemoryIds: spec.expected ?? [],
-  forbiddenMemoryIds: spec.forbidden ?? [],
+  expectedMemoryIds: (spec.expected ?? []).map(evalMemoryId),
+  forbiddenMemoryIds: (spec.forbidden ?? []).map(evalMemoryId),
+  forbiddenRetractedMemoryIds: (spec.forbidden ?? []).filter(id => SEED_SPECS.some(seed => seed.id === id && seed.status === 'retracted')).map(evalMemoryId),
   expectedBehavior: spec.behavior ?? (spec.history ? 'return_history' : 'return_current')
 }))
 
@@ -258,3 +265,25 @@ export const EVAL_CATEGORY_COUNTS: Readonly<Record<EvalCategory, number>> = Obje
     } as Record<EvalCategory, number>
   )
 )
+
+export function buildRetrievalExtensionDrafts(projectScopeId: string): MemoryRecordDraft[] {
+  const samples = [
+    { id: 'm_9100000001', content: '事务回滚保留原始文件', aliases: ['transaction rollback'] },
+    { id: 'm_9100000002', content: '自动补全使用独立取消控制器', aliases: ['ghost_text', 'autocomplete'] },
+    { id: 'm_9100000003', content: 'Running checks protects persisted files', aliases: [] },
+    { id: 'm_9100000004', content: '响应解析保持错误语义', aliases: ['parseHTTPResponse'] }
+  ]
+  return samples.map(sample => ({ ...sample, scope: { scopeKind: 'project', scopeId: projectScopeId },
+    kind: 'convention', memoryKey: null, status: 'active', confidence: 1,
+    explicitness: 'user_explicit', sourceType: 'user_message' }))
+}
+
+export const RETRIEVAL_EXTENSION_CASES: readonly EvalCase[] = [
+  ['two-han', '回滚', 'm_9100000001'],
+  ['english-inflection', 'run check', 'm_9100000003'],
+  ['identifier-alias', 'ghost_text', 'm_9100000002'],
+  ['chinese-alias', '自动补全', 'm_9100000002'],
+  ['cross-language-alias', 'autocomplete', 'm_9100000002'],
+  ['identifier-components', 'parse http response', 'm_9100000004']
+].map(([id, query, target]) => ({ id, query, category: 'project-decision-convention', perspective: 'project-a',
+  expectedMemoryIds: [target], forbiddenMemoryIds: [], expectedBehavior: 'return_current' }))

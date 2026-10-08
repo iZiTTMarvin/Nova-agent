@@ -140,6 +140,8 @@ describe('memory_search 注册裁剪', () => {
     const registry = buildRegistry({ memoryEnabled: true })
     const names = registry.getToolDefinitions().map(d => d.name)
     expect(names).toContain('memory_search')
+    expect(names).toContain('memory_read')
+    expect(names).toContain('memory_manage')
     const visible = getModeVisibleTools('default', registry.getToolDefinitions()).map(d => d.name)
     expect(visible).toContain('memory_search')
   })
@@ -148,6 +150,8 @@ describe('memory_search 注册裁剪', () => {
     const registry = buildRegistry({ memoryEnabled: false })
     const definitions = registry.getToolDefinitions()
     expect(definitions.map(d => d.name)).not.toContain('memory_search')
+    expect(definitions.map(d => d.name)).not.toContain('memory_read')
+    expect(definitions.map(d => d.name)).not.toContain('memory_manage')
     // 可见性收窄与 XML/native 工具目录同源于注册清单：未注册即无处暴露
     expect(getModeVisibleTools('default', definitions).map(d => d.name)).not.toContain('memory_search')
     expect(getModeVisibleTools('plan', definitions).map(d => d.name)).not.toContain('memory_search')

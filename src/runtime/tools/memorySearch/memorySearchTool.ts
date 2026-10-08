@@ -3,6 +3,7 @@
  */
 import { computeWorkspaceHash } from '../../memory/MemoryPaths'
 import { extractMemorySnippet } from '../../memory/memorySnippet'
+import { MEMORY_TOPIC_FILES } from '../../memory/markdown/entryFormat'
 import type { MemoryRetrievalService } from '../../memory/retrieval/MemoryRetrievalService'
 import type { MemoryHistoricalNote, MemorySearchResult } from '../../memory/retrieval/MemoryRetriever'
 import type { NovaSettings } from '../../settings/novaSettings'
@@ -21,7 +22,9 @@ When to use:
 
 When not to use:
 - Querying current file contents (use read/grep)
-- General knowledge questions`
+- General knowledge questions
+
+Query with 2-6 distinct keywords rather than a sentence, and include terms in both English and the user's language (for example "cache 缓存 prefix").`
 
 export interface MemorySearchToolDeps {
   getMemoryRetrievalService: () => MemoryRetrievalService | null
@@ -89,10 +92,13 @@ function renderEntry(result: MemorySearchResult, query: string, withNote: boolea
     withNote && result.historicalNote !== null ? ` ${HISTORICAL_NOTE_LABELS[result.historicalNote]}` : ''
   if (result.group === 'document') {
     const snippet = extractMemorySnippet(result.body, query)
-    return `${result.relPath}${note} — ${snippet}`
+    return `${result.scopeKind ?? 'project'}/${result.relPath}${note} — ${snippet}`
   }
   const observed = result.explicitness === 'observed' ? ' (observed / advisory)' : ''
-  return `[${result.kind}]${note}${observed} ${result.content}`
+  const scope = result.group === 'structured-global' ? 'global' : 'project'
+  const relPath = result.relPath ?? MEMORY_TOPIC_FILES[result.kind]
+  const key = result.memoryKey ? ` · key=${result.memoryKey}` : ''
+  return `[${result.kind}]${note}${observed} ${scope}/${relPath}${key} — ${result.content}`
 }
 
 export function createMemorySearchTool(deps: MemorySearchToolDeps): ToolExecutor {
@@ -104,7 +110,7 @@ export function createMemorySearchTool(deps: MemorySearchToolDeps): ToolExecutor
       properties: {
         query: {
           type: 'string',
-          description: 'Search query. Describe in natural language what you want to recall.'
+          description: 'Search with 2-6 distinct keywords, mixing English and the user\'s language.'
         },
         history: {
           type: 'boolean',

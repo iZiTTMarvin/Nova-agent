@@ -19,6 +19,7 @@ import type { SessionData } from '../../sessions'
 import type { SkillManifest } from '../../skills/types'
 import type { ChatMessage } from '../../model/types'
 import type { ContextBreakdown } from '../../../shared/agent/contextBreakdown'
+import { getSessionMemorySnapshotText } from '../../sessions/memorySnapshot'
 
 /** 从冻结 system prompt 中提取 SystemPromptBuilder 某层正文 */
 function extractPromptLayer(frozenPrompt: string, layerTitle: string): string {
@@ -117,13 +118,14 @@ export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownRes
 }
 
 /**
- * 根据 6 层 system prompt 结构重新生成 frozenSystemPrompt。
+ * 根据会话字段重新生成 frozenSystemPrompt。
  * 用于旧会话没有持久化 frozenSystemPrompt 时兜底；如果会话已保存 frozenSystemPrompt，
  * 优先复用会话里的值以保证缓存前缀稳定。
  */
 export function buildFrozenSystemPromptForSession(
   session: SessionData,
-  skills: SkillManifest[]
+  skills: SkillManifest[],
+  memoryEnabled = true
 ): string {
   const skillContext = buildSkillContext(skills)
   return SystemPromptBuilder.build({
@@ -133,6 +135,7 @@ export function buildFrozenSystemPromptForSession(
     skillContext,
     modeInstruction: '',
     taskPolicy: renderMinimalEngineeringPolicy(),
-    toolSummary: ''
+    toolSummary: '',
+    memorySnapshot: getSessionMemorySnapshotText(session, memoryEnabled)
   })
 }

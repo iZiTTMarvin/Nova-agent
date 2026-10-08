@@ -76,11 +76,11 @@ describe('memory_search tool', () => {
     expect(result.success).toBe(true)
     expect(result.output).toContain('找到 4 条相关记忆')
     expect(result.output).toContain('Project memory:')
-    expect(result.output).toContain('[decision] 项目用 pnpm')
+    expect(result.output).toContain('[decision] project/decisions.md · key=db — 项目用 pnpm')
     expect(result.output).toContain('MEMORY.md — # 项目记忆')
     expect(result.output).toContain('紫罗兰')
     expect(result.output).toContain('Global user memory:')
-    expect(result.output).toContain('[preference] (observed / advisory) 偏好中文注释')
+    expect(result.output).toContain('[preference] (observed / advisory) global/preferences.md · key=db — 偏好中文注释')
     expect(result.output).toContain('Historical memory:')
     expect(result.output).toContain('（已被替代）')
     // 不输出内部排序分

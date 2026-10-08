@@ -3,19 +3,21 @@
  * 只测检索热路径（不含落库）；预热 20 次后计时。
  * 目标：warm P95 ≤ 100ms；CI 宽松硬顶 200ms（机器差异容忍）。
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { computeWorkspaceHash } from '@runtime/memory/MemoryPaths'
-import { SqliteMemoryRepository } from '@runtime/memory/repository/SqliteMemoryRepository'
+import { createMarkdownMemoryFixture, seedMarkdownMemoryFiles } from '../../fixtures/memory/MarkdownMemoryFixture'
 import type { MemoryRecordDraft } from '@runtime/memory/repository/MemoryRepository'
 import { MemoryService } from '@runtime/memory/MemoryService'
 import { StructuredMemoryRetriever } from '@runtime/memory/retrieval/StructuredMemoryRetriever'
 import { DocumentMemoryRetriever } from '@runtime/memory/retrieval/DocumentMemoryRetriever'
 import { MemoryRetrievalService } from '@runtime/memory/retrieval/MemoryRetrievalService'
 import { percentile } from './evalHarness'
+import { startMemoryProfile, writeEvalArtifact } from './evalArtifacts'
 
 const RECORD_COUNT = 10_000
 const QUERY_COUNT = 200
@@ -42,6 +44,7 @@ describe('记忆检索性能基准（10k 记录 / 200 查询）', () => {
   let service: MemoryService
   let retrieval: MemoryRetrievalService
   let scopeA: string
+  let fixture: ReturnType<typeof createMarkdownMemoryFixture>
   const queries: string[] = []
 
   beforeAll(() => {
@@ -51,14 +54,15 @@ describe('记忆检索性能基准（10k 记录 / 200 查询）', () => {
     const memoryRoot = join(tempDir, 'memory')
     mkdirSync(memoryRoot, { recursive: true })
     db = openBetterSqliteMemoryDb(join(memoryRoot, 'memory.db'))
-    const repo = new SqliteMemoryRepository(db, { now: () => FIXED_NOW })
-    service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false })
+    fixture = createMarkdownMemoryFixture(memoryRoot, db, () => FIXED_NOW)
+    const repo = fixture.repository
+    service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false, entryStore: fixture.store })
     scopeA = computeWorkspaceHash(wsA)
 
     const drafts: MemoryRecordDraft[] = []
     for (let i = 0; i < RECORD_COUNT; i += 1) {
       drafts.push({
-        id: `bench_${i}`,
+        id: `m_${String(i).padStart(10, '0')}`,
         scope: { scopeKind: 'project', scopeId: scopeA },
         kind: (['gotcha', 'decision', 'convention', 'workflow', 'project_fact'] as const)[i % 5],
         memoryKey: `bench.key.${i}`,
@@ -71,9 +75,8 @@ describe('记忆检索性能基准（10k 记录 / 200 查询）', () => {
         evidence: [{ evidenceType: 'workspace', excerpt: '基准种子' }]
       })
     }
-    for (const draft of drafts) {
-      repo.insertRecord(draft)
-    }
+    seedMarkdownMemoryFiles(memoryRoot, drafts, FIXED_NOW)
+    fixture.store.reconcile({ scopeKind: 'project', scopeId: scopeA })
 
     retrieval = new MemoryRetrievalService({
       structuredRetriever: new StructuredMemoryRetriever(repo),
@@ -106,12 +109,33 @@ describe('记忆检索性能基准（10k 记录 / 200 查询）', () => {
     }
 
     const durations: number[] = []
+    const resultsByQuery: unknown[] = []
+    if (!fixture.index) throw new Error('Benchmark requires the SQLite index')
+    const stageTimes = { storeMs: 0, indexMs: 0, storeCalls: 0, indexCalls: 0 }
+    const findByIds = fixture.store.findByIds.bind(fixture.store)
+    const indexSearch = fixture.index.searchScopes.bind(fixture.index)
+    const storeSpy = vi.spyOn(fixture.store, 'findByIds').mockImplementation((...args) => {
+      const start = performance.now()
+      try { return findByIds(...args) }
+      finally { stageTimes.storeMs += performance.now() - start; stageTimes.storeCalls++ }
+    })
+    const indexSpy = vi.spyOn(fixture.index, 'searchScopes').mockImplementation((...args) => {
+      const start = performance.now()
+      try { return indexSearch(...args) }
+      finally { stageTimes.indexMs += performance.now() - start; stageTimes.indexCalls++ }
+    })
+    const stopProfile = await startMemoryProfile()
+    try {
     for (const query of queries) {
       const started = performance.now()
       const results = await retrieval.search({ query, projectScopeId: scopeA, limit: 10 })
       durations.push(performance.now() - started)
+      resultsByQuery.push({ query, results })
       expect(results.length).toBeLessThanOrEqual(10)
     }
+    } finally { await stopProfile(); storeSpy.mockRestore(); indexSpy.mockRestore() }
+    writeEvalArtifact('benchmark.json', { stageTimes, durations, resultsByQuery,
+      resultHash: createHash('sha256').update(JSON.stringify(resultsByQuery)).digest('hex') })
 
     durations.sort((a, b) => a - b)
     const p50 = percentile(durations, 0.5)

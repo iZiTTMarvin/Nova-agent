@@ -31,6 +31,21 @@ function buildBody(): Record<string, unknown> {
 }
 
 describe('请求序列化 memo 一致性', () => {
+  it('后台调用显式输出上限随真实请求发送；主对话缺省不带预算字段', async () => {
+    const bodies: Record<string, unknown>[] = []
+    const client = new OpenAICompatibleModelClient({ baseUrl: 'https://fixture.invalid/v1', apiKey: 'fixture', modelId: 'fixture' }, {
+      fetchImpl: async (_url, init) => {
+        bodies.push(JSON.parse(String(init?.body)))
+        return new Response('data: {"choices":[{"delta":{"content":"[]"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+      }
+    })
+    for await (const _event of client.chat([{ role: 'user', content: 'fixture' }], undefined, { maxOutputTokens: 2000 })) { /* consume the real serializer */ }
+    for await (const _event of client.chat([{ role: 'user', content: 'fixture' }])) { /* consume the default request */ }
+    expect(bodies).toHaveLength(2)
+    expect(bodies[0].max_tokens).toBe(2000)
+    expect(bodies[1]).not.toHaveProperty('max_tokens')
+    expect(() => client.measureRequest([{ role: 'user', content: 'fixture' }], undefined, { maxOutputTokens: 0 })).toThrow('Invalid maxOutputTokens')
+  })
   it('Unicode 请求的预算计量、前缀哈希及原始字节保持一致', () => {
     const body = { model: 'fixture', messages: [{ role: 'user', content: 'ASCII 中文\ud800\udc00\udfff\u007f\u0080' }] }
     const raw = JSON.stringify(body)

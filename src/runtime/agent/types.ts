@@ -154,6 +154,7 @@ export interface SystemPromptLayers {
   /** 任务策略约束（如 headless economy 硬约束）；空则跳过 */
   taskPolicy?: string
   toolSummary?: string
+  memorySnapshot?: string
 }
 
 /** AgentLoop 配置 */

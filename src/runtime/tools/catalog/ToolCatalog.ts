@@ -28,6 +28,13 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
     registration: 'conditional'
   },
   {
+    name: 'memory_read',
+    capability: 'memory',
+    exposure: 'always',
+    codeMode: 'direct-only',
+    registration: 'conditional'
+  },
+  {
     name: 'memory_manage',
     capability: 'memory',
     exposure: 'always',

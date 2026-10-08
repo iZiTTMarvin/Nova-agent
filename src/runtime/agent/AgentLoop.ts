@@ -344,7 +344,8 @@ export class AgentLoop {
         taskPolicy: layers.taskPolicy ?? '',
         toolSummary: entryCount !== undefined && this.config.toolSummaryRenderer
           ? this.config.toolSummaryRenderer(getEffectiveToolDefinitions(this.ctx, entryCount))
-          : layers.toolSummary ?? ''
+          : layers.toolSummary ?? '',
+        memorySnapshot: layers.memorySnapshot ?? ''
       })
     }
     return this.config.systemPrompt ?? ''

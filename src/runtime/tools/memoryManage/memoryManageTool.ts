@@ -15,6 +15,7 @@ import {
   MEMORY_EVIDENCE_EXCERPT_MIN_CHARS,
   MEMORY_KEY_MAX_CHARS
 } from '../../memory/memoryConfig'
+import { MEMORY_ALIAS_MAX_COUNT, MEMORY_ALIAS_MAX_CHARS } from '../../memory/memoryConfig'
 import { filterPrivacyText } from '../../memory/PrivacyFilter'
 import type { MemoryCandidateProcessor } from '../../memory/policy/MemoryCandidateProcessor'
 import {
@@ -69,8 +70,9 @@ Do not save:
 - Secrets, credentials, or other sensitive information
 
 remember: add or update. New facts under the same key are merged/replaced by the memory policy; when the identity is uncertain, run memory_search first.
-forget: retract old memory. Prefer the same key and content as the old memory; when uncertain, run memory_search first.
-The evidence excerpt must be verbatim from user messages or tool results in the current active session. memory_search / memory_manage results cannot serve as evidence for new memories.`
+forget: user-message evidence permanently erases old memory; tool evidence archives it. Prefer the same key and content as the old memory; when uncertain, run memory_search first.
+Write content in the language the user is using.
+The evidence excerpt must be verbatim from user messages or tool results in the current active session. Memory tool results cannot serve as evidence for new memories.`
 
 export interface MemoryManageToolDeps {
   getMemoryCandidateProcessor: () => Promise<Pick<MemoryCandidateProcessor, 'process'> | null>
@@ -85,6 +87,7 @@ interface ParsedArgs {
   kind: MemoryKind
   scope: ScopeHint
   memoryKey: string | null
+  aliases?: string[]
   content: string
   evidenceType: EvidenceType
   evidenceExcerpt: string
@@ -122,6 +125,12 @@ function parseArgs(args: Record<string, unknown>): ParsedArgs | string {
   if (scope !== 'project' && scope !== 'global') {
     return 'scope 必须是 project 或 global'
   }
+  if (scope === 'global' && kind === 'project_fact') return 'project_fact 只允许 project scope'
+  if (args.aliases !== undefined && (!Array.isArray(args.aliases) || args.aliases.length > MEMORY_ALIAS_MAX_COUNT || args.aliases.some(alias => typeof alias !== 'string' || !alias.trim() || alias.trim().length > MEMORY_ALIAS_MAX_CHARS))) {
+    return `aliases 最多 ${MEMORY_ALIAS_MAX_COUNT} 个非空关键词，每个最多 ${MEMORY_ALIAS_MAX_CHARS} 个字符`
+  }
+  const aliases = Array.isArray(args.aliases) ? args.aliases.filter((alias): alias is string => typeof alias === 'string').map(alias => alias.trim()) : undefined
+  if (aliases?.some(alias => { const filtered = filterPrivacyText(alias); return filtered.hadSensitive || filtered.shouldDiscard })) return 'aliases 含敏感信息，已拒绝写入记忆'
 
   const rawContent = typeof args.content === 'string' ? args.content.trim() : ''
   if (!rawContent) return 'content 参数不能为空'
@@ -157,6 +166,7 @@ function parseArgs(args: Record<string, unknown>): ParsedArgs | string {
     kind: kind as MemoryKind,
     scope: scope as ScopeHint,
     memoryKey: normalizeMemoryKey(args.key),
+    aliases,
     content: contentFiltered.text.trim(),
     evidenceType,
     evidenceExcerpt: evidenceFiltered.text.trim()
@@ -216,6 +226,7 @@ function buildCandidate(parsed: ParsedArgs, match: EvidenceMatch): MemoryCandida
     kind: parsed.kind,
     scopeHint: parsed.scope,
     memoryKey: parsed.memoryKey,
+    aliases: parsed.aliases,
     content: parsed.content,
     explicitness:
       match.type === 'user_message'
@@ -234,13 +245,13 @@ function buildCandidate(parsed: ParsedArgs, match: EvidenceMatch): MemoryCandida
   }
 }
 
-function formatResult(action: MemoryManageAction, counts: ReturnType<MemoryCandidateProcessor['process']>): string {
+function formatResult(action: MemoryManageAction, counts: ReturnType<MemoryCandidateProcessor['process']>, evidenceType: EvidenceType): string {
   if (counts.failed > 0) {
     return '记忆处理失败，未可靠写入。不要反复重试；继续当前任务即可。'
   }
   if (action === 'forget') {
     return counts.retracted > 0 || counts.superseded > 0
-      ? '长期记忆已撤回或更新。'
+      ? evidenceType === 'user_message' ? '长期记忆已彻底清除。' : '长期记忆已归档撤回。'
       : '没有找到需要撤回的长期记忆；不要重复调用。'
   }
   if (counts.added > 0 || counts.merged > 0 || counts.superseded > 0 || counts.promoted > 0) {
@@ -259,7 +270,7 @@ export function createMemoryManageTool(deps: MemoryManageToolDeps): ToolExecutor
         action: {
           type: 'string',
           enum: ['remember', 'forget'],
-          description: 'remember=add/update long-term memory; forget=retract old memory.'
+          description: 'remember=add/update; forget=user evidence erases, tool evidence archives.'
         },
         kind: {
           type: 'string',
@@ -269,11 +280,15 @@ export function createMemoryManageTool(deps: MemoryManageToolDeps): ToolExecutor
         scope: {
           type: 'string',
           enum: ['project', 'global'],
-          description: 'Defaults to project. Use global only for user preferences / ways of working that hold across projects.'
+          description: 'Defaults to project. Global accepts every kind except project_fact; workspace-only evidence stays project-scoped.'
         },
         key: {
           type: 'string',
           description: 'Optional stable key. Recommended for decisions/constraints that can change, e.g. context.compaction.placeholder.'
+        },
+        aliases: {
+          type: 'array', items: { type: 'string', maxLength: MEMORY_ALIAS_MAX_CHARS }, maxItems: MEMORY_ALIAS_MAX_COUNT,
+          description: 'Search keywords in English and in the user\'s language.'
         },
         content: {
           type: 'string',
@@ -350,7 +365,7 @@ export function createMemoryManageTool(deps: MemoryManageToolDeps): ToolExecutor
           workspaceRoot,
           candidates: [buildCandidate(parsed, match)]
         })
-        return { success: true, output: formatResult(parsed.action, counts) }
+        return { success: true, output: formatResult(parsed.action, counts, parsed.evidenceType) }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         return { success: false, output: '', error: `记忆写入失败：${message}` }

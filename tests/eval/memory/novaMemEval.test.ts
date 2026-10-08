@@ -15,7 +15,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { computeWorkspaceHash, GLOBAL_SCOPE_ID } from '@runtime/memory/MemoryPaths'
-import { SqliteMemoryRepository } from '@runtime/memory/repository/SqliteMemoryRepository'
+import { createMarkdownMemoryFixture, seedMarkdownMemoryFiles } from '../../fixtures/memory/MarkdownMemoryFixture'
 import type { MemoryRepository } from '@runtime/memory/repository/MemoryRepository'
 import { MemoryService } from '@runtime/memory/MemoryService'
 import { StructuredMemoryRetriever } from '@runtime/memory/retrieval/StructuredMemoryRetriever'
@@ -24,8 +24,11 @@ import { MemoryRetrievalService } from '@runtime/memory/retrieval/MemoryRetrieva
 import { formatMemorySearchResults } from '@runtime/tools/memorySearch'
 import { MemoryCandidateProcessor } from '@runtime/memory/policy/MemoryCandidateProcessor'
 import type { MemoryCandidate } from '@runtime/memory/types'
-import { buildSeedDrafts, EVAL_CASES, EVAL_CATEGORY_COUNTS } from './evalCases'
+import { buildSeedDrafts, buildRetrievalExtensionDrafts, RETRIEVAL_EXTENSION_CASES, EVAL_CASES, EVAL_CATEGORY_COUNTS } from './evalCases'
 import { evaluateOutcome, computeMetrics, type EvalCaseOutcome } from './evalHarness'
+import { writeEvalArtifact } from './evalArtifacts'
+import { MemoryIndex } from '@runtime/memory/index/MemoryIndex'
+import { MarkdownMemoryRepository } from '@runtime/memory/repository/MarkdownMemoryRepository'
 
 const FIXED_NOW = 1_782_000_000_000
 
@@ -38,6 +41,8 @@ describe('NovaMemEval（确定性评测门禁）', () => {
   let scopeA: string
   let scopeB: string
   let outcomes: EvalCaseOutcome[]
+  const rankedResults: { caseId: string; results: Awaited<ReturnType<MemoryRetrievalService['search']>> }[] = []
+  let fixture: ReturnType<typeof createMarkdownMemoryFixture>
 
   beforeAll(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'nova-memeval-'))
@@ -48,14 +53,14 @@ describe('NovaMemEval（确定性评测门禁）', () => {
     const memoryRoot = join(tempDir, 'memory')
     mkdirSync(memoryRoot, { recursive: true })
     db = openBetterSqliteMemoryDb(join(memoryRoot, 'memory.db'))
-    repo = new SqliteMemoryRepository(db, { now: () => FIXED_NOW })
-    service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false })
+    fixture = createMarkdownMemoryFixture(memoryRoot, db, () => FIXED_NOW)
+    repo = fixture.repository
+    service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false, entryStore: fixture.store })
     scopeA = computeWorkspaceHash(wsA)
     scopeB = computeWorkspaceHash(wsB)
 
-    for (const draft of buildSeedDrafts({ projectA: scopeA, projectB: scopeB, global: GLOBAL_SCOPE_ID })) {
-      repo.insertRecord(draft)
-    }
+    seedMarkdownMemoryFiles(memoryRoot, buildSeedDrafts({ projectA: scopeA, projectB: scopeB, global: GLOBAL_SCOPE_ID }), FIXED_NOW)
+    for (const scopeId of [scopeA, scopeB, GLOBAL_SCOPE_ID]) fixture.store.reconcile({ scopeKind: scopeId === GLOBAL_SCOPE_ID ? 'global' : 'project', scopeId })
 
     retrieval = new MemoryRetrievalService({
       structuredRetriever: new StructuredMemoryRetriever(repo),
@@ -95,6 +100,7 @@ describe('NovaMemEval（确定性评测门禁）', () => {
       })
       const durationMs = performance.now() - started
       const outcome = evaluateOutcome(evalCase, results.map((r) => r.id), durationMs)
+      rankedResults.push({ caseId: evalCase.id, results })
       outcomes.push(outcome)
 
       const missing = evalCase.expectedMemoryIds.filter((id) => !outcome.returnedIds.includes(id))
@@ -111,6 +117,8 @@ describe('NovaMemEval（确定性评测门禁）', () => {
 
   it('指标门槛：Recall@5 ≥ 0.90，Stale/ScopeLeak/Retracted = 0', () => {
     const metrics = computeMetrics(outcomes, EVAL_CASES)
+    writeEvalArtifact('quality.json', { metrics, cases: EVAL_CASES, outcomes, rankedResults,
+      seeds: buildSeedDrafts({ projectA: scopeA, projectB: scopeB, global: GLOBAL_SCOPE_ID }) })
     // eslint-disable-next-line no-console
     console.info(
       `[NovaMemEval] cases=${metrics.caseCount} R@1=${metrics.recallAt1.toFixed(2)} R@5=${metrics.recallAt5.toFixed(2)} ` +
@@ -119,6 +127,8 @@ describe('NovaMemEval（确定性评测门禁）', () => {
       `latency(p50/p95/p99)=${metrics.latency.p50.toFixed(1)}/${metrics.latency.p95.toFixed(1)}/${metrics.latency.p99.toFixed(1)}ms`
     )
     expect(metrics.recallAt5).toBeGreaterThanOrEqual(0.9)
+    expect(metrics.recallAt1).toBeGreaterThanOrEqual(53 / 58)
+    expect(metrics.mrr).toBeGreaterThanOrEqual(0.96)
     expect(metrics.staleRate).toBe(0)
     expect(metrics.scopeLeakageRate).toBe(0)
     expect(metrics.retractedLeakRate).toBe(0)
@@ -130,7 +140,7 @@ describe('NovaMemEval（确定性评测门禁）', () => {
         projectScopeId: evalCase.perspective === 'project-b' ? scopeB : scopeA,
         history: evalCase.history ?? false, limit: 5 })
       const text = formatMemorySearchResults(results, evalCase.query)
-      if (evalCase.expectedBehavior === 'abstention' || results.length === 0) {
+      if (evalCase.expectedBehavior === 'abstain' || results.length === 0) {
         expect(evalCase.expectedMemoryIds).toEqual([])
         expect(results).toEqual([])
         expect(text).toContain('未找到相关记忆')
@@ -138,6 +148,38 @@ describe('NovaMemEval（确定性评测门禁）', () => {
         expect(text).toContain(`找到 ${results.length} 条相关记忆`)
       }
     }
+  })
+
+  it('字面加分校准保留原始用例逐例排名和安全指标', async () => {
+    const calibration = []
+    for (const bonus of [0, 0.05, 0.15, 0.3, 0.45]) {
+      const index = new MemoryIndex(db, () => FIXED_NOW, bonus)
+      const runner = new MemoryRetrievalService({
+        structuredRetriever: new StructuredMemoryRetriever(new MarkdownMemoryRepository(fixture.store, index, () => {}, (scope, id) => fixture.store.purge(scope, id))),
+        documentRetriever: { search: async () => [] }, now: () => FIXED_NOW
+      })
+      const results = []
+      for (const item of EVAL_CASES) {
+        const hits = await runner.search({ query: item.query, history: item.history,
+          projectScopeId: item.perspective === 'project-b' ? scopeB : scopeA, limit: 5 })
+        results.push(evaluateOutcome(item, hits.map(hit => hit.id), 0))
+      }
+      calibration.push({ bonus, metrics: computeMetrics(results, EVAL_CASES), outcomes: results })
+    }
+    writeEvalArtifact('literal-calibration.json', calibration)
+    expect(calibration.every(run => run.metrics.scopeLeakageRate === 0 && run.metrics.retractedLeakRate === 0)).toBe(true)
+  })
+
+  it('两字中文、词形、别名、跨语言和标识符切分独立评测', async () => {
+    for (const draft of buildRetrievalExtensionDrafts(scopeA)) repo.insertRecord(draft)
+    const extraOutcomes = []
+    for (const item of RETRIEVAL_EXTENSION_CASES) {
+      const results = await retrieval.search({ query: item.query, projectScopeId: scopeA, limit: 5 })
+      const outcome = evaluateOutcome(item, results.map(result => result.id), 0)
+      extraOutcomes.push(outcome)
+      expect(outcome.expectedHits, item.id).toEqual(item.expectedMemoryIds)
+    }
+    writeEvalArtifact('extension-quality.json', { metrics: computeMetrics(extraOutcomes, RETRIEVAL_EXTENSION_CASES), outcomes: extraOutcomes })
   })
 
   it('observed 全局偏好晋升门槛：单项目观察 → pending 且不进默认检索；跨两项目 → active', async () => {
@@ -157,7 +199,7 @@ describe('NovaMemEval（确定性评测门禁）', () => {
     const processor = new MemoryCandidateProcessor({
       repository: repo,
       now: () => clock,
-      generateRecordId: () => `mem_promo_${++seq}`
+      generateRecordId: () => `m_${String(800000 + ++seq).padStart(10, '0')}`
     })
 
     const first = processor.process({ sessionId: 'sess-1', projectScopeId: scopeA, candidates: [candidate(scopeA)] })
