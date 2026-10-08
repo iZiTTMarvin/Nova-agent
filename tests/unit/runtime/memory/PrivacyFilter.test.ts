@@ -2,6 +2,7 @@
  * PrivacyFilter 单测 — 断言过滤后不含敏感串（测试用假密钥，非真实凭据）
  */
 import { describe, it, expect } from 'vitest'
+import { FAKE_MEMORY_SECRETS as extendedSecrets } from '../../../fixtures/memory/privacyExamples'
 import {
   filterPrivacyText,
   filterToolPayload,
@@ -26,6 +27,26 @@ describe('isSensitiveFilePath', () => {
 })
 
 describe('filterPrivacyText', () => {
+  it.each(extendedSecrets)('识别并完整去除扩展的敏感内容 %#', secret => {
+    const result = filterPrivacyText(`正常说明\n${secret}\n保留末尾说明`)
+    expect(result.hadSensitive).toBe(true)
+    expect(result.shouldDiscard).toBe(false)
+    expect(result.text).not.toContain(secret)
+    expect(result.text).not.toContain('TEST_ONLY_FAKE_BODY')
+    expect(result.text).toContain(PRIVACY_REDACTED)
+    expect(result.text).toContain('正常说明')
+    expect(result.text).toContain('保留末尾说明')
+  })
+
+  it('未闭合私钥块仍去除整个私钥内容，超出默认输出窗的密钥仍被识别', () => {
+    const unclosed = filterPrivacyText('-----BEGIN PRIVATE KEY-----\nTEST_ONLY_FAKE_BODY')
+    expect(unclosed.text).toBe(PRIVACY_REDACTED)
+    expect(filterPrivacyText('正常文本'.repeat(3000) + extendedSecrets[0]).hadSensitive).toBe(true)
+  })
+
+  it.each(['使用中文提交信息，发布前运行构建。', 'const value = response.data.items; return value.length;', '版本 1.2.3；docs/api/v1.ts；对象 foo.bar.baz', 'JWT 使用三段编码；AIza 是前缀；sk-ant-api03 是示例名称。', '提交 3f2a9c1e5b7d4a6f8e0c2b4d6f8a0c2e4b6d8f0a；服务 https://example.com:8443/api；远端 git@github.com:org/repo.git'])('普通中文和代码不误判 %#', text => {
+    expect(filterPrivacyText(text)).toEqual({ text, hadSensitive: false, shouldDiscard: false, truncated: false })
+  })
   it('剥离 sk- / AKIA / Bearer / GitHub token', () => {
     const raw = `key=${FAKE_SK} aws=${FAKE_AWS} auth=${FAKE_BEARER} gh=${FAKE_GH}`
     const result = filterPrivacyText(raw)

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { computeWorkspaceHash, normalizeWorkspaceRoot } from '../../memory/MemoryPaths'
+import { normalize, resolve } from 'node:path'
 import type { LearningCommand, LearningCommandReceipt } from '../../../shared/learning/command'
 import {
   parseLearningCommand,
@@ -109,7 +109,7 @@ export type LearningDbWorkerResult =
   | { ok: false; message: string }
 
 export function deriveProjectId(workspaceRoot: string): string {
-  return computeWorkspaceHash(workspaceRoot)
+  return createHash('sha256').update(normalizeWorkspaceForProject(workspaceRoot)).digest('hex').slice(0, 16)
 }
 
 export function stablePayloadHash(value: unknown): string {
@@ -383,5 +383,5 @@ export function receiptFromRaw(raw: unknown): LearningCommandReceipt {
 }
 
 export function normalizeWorkspaceForProject(workspaceRoot: string): string {
-  return normalizeWorkspaceRoot(workspaceRoot)
+  return normalize(resolve(workspaceRoot))
 }

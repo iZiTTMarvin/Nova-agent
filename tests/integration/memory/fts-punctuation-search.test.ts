@@ -8,7 +8,7 @@ import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { getMemoryRoot, computeWorkspaceHash } from '@runtime/memory/MemoryPaths'
 import { MemoryService } from '@runtime/memory/MemoryService'
-import { buildMatchQuery } from '@runtime/memory/FtsQueryBuilder'
+import { buildMemoryIndexQuery } from '@runtime/memory/index/indexTerms'
 
 describe('含标点 CJK 查询 FTS 集成', () => {
   let tempDir: string | null = null
@@ -39,16 +39,15 @@ describe('含标点 CJK 查询 FTS 集成', () => {
     const { scopeId } = setup()
     service!.upsertMarkdown(
       scopeId,
-      'facts.md',
+      'deployment-notes.md',
       '# 部署\n本项目的部署密令是北极星协议，仅限生产环境。'
     )
 
     const rawQuery = '本项目的部署密令是什么?我是谁'
-    const { query, path } = buildMatchQuery(rawQuery)
-    expect(path).toBe('trigram')
-    expect(query).not.toBeNull()
-    expect(query!).not.toContain('?')
-    expect(query!).not.toMatch(/[^\p{L}\p{N}\s]/u)
+    const built = buildMemoryIndexQuery(rawQuery)
+    expect(built.terms).toContain('部署')
+    expect(built.terms).not.toContain('?')
+    expect(built.literal).not.toContain('?')
 
     let hits: ReturnType<MemoryService['search']> = []
     expect(() => {
@@ -56,10 +55,10 @@ describe('含标点 CJK 查询 FTS 集成', () => {
     }).not.toThrow()
     expect(Array.isArray(hits)).toBe(true)
 
-    // 长 intent 整串 MATCH 可能 0 命中，但含标点的短子串应能召回（锁死 ? 不进 MATCH）
+    expect(hits.some(hit => hit.relPath === 'deployment-notes.md')).toBe(true)
     const subHits = service!.search(scopeId, '部署密令?')
     expect(subHits.length).toBeGreaterThan(0)
-    expect(subHits.some((h) => h.relPath === 'facts.md')).toBe(true)
+    expect(subHits.some((h) => h.relPath === 'deployment-notes.md')).toBe(true)
     expect(subHits[0].body).toContain('部署密令')
   })
 
@@ -71,7 +70,7 @@ describe('含标点 CJK 查询 FTS 集成', () => {
     expect(hits.map(hit => hit.relPath)).toEqual(['native.md'])
   })
 
-  it('英文词超过配额时仍能召回中文约定', () => {
+  it('词项达到上限时字面匹配仍能召回后面的中文约定', () => {
     const { scopeId } = setup()
     service!.upsertMarkdown(scopeId, 'deployment.md', '部署错误需要先核对环境配置。')
     const query = `${Array.from({ length: 25 }, (_, i) => `word${i}`).join(' ')} 部署错误`

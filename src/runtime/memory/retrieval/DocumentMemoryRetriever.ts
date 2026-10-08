@@ -47,6 +47,7 @@ function toResult(hit: MemorySearchHit, normalizedLexical: number): ScoredMemory
   return {
     id: hit.relPath,
     group: 'document',
+    scopeKind: hit.scopeId === 'user' ? 'global' : 'project',
     kind: 'document',
     relPath: hit.relPath,
     body: hit.body,

@@ -23,6 +23,7 @@ import type { Mode, PermissionMode } from '../../shared/session/types'
 import { parseStrictMode } from '../../shared/session/mode'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, SESSION_BACKUP_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
 import { computeActivePath, resolveCurrentLeafId } from './tree'
+import { decodeMemorySnapshot } from './memorySnapshot'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
 import {
   COMPOSE_STAGE_IDS,
@@ -746,6 +747,7 @@ export function migrateSessionData(data: unknown): SessionData {
       permissionMode: normalizeAvailablePermissionMode(session.permissionMode),
       codeIndexEnabled: session.codeIndexEnabled === true
     }
+    normalizeMemoryFields(result, raw)
     assertValidSessionKind(result)
     return result
   }
@@ -772,8 +774,20 @@ export function migrateSessionData(data: unknown): SessionData {
     permissionMode: normalizeAvailablePermissionMode(migrated.permissionMode),
     codeIndexEnabled: migrated.codeIndexEnabled === true
   }
+  normalizeMemoryFields(result, raw)
   assertValidSessionKind(result)
   return result
+}
+
+function normalizeMemoryFields(session: SessionData, raw: Record<string, unknown>): void {
+  delete session.memorySnapshot
+  try {
+    const snapshot = decodeMemorySnapshot(raw.memorySnapshot)
+    if (snapshot) session.memorySnapshot = snapshot
+  } catch { console.warn('[SessionStore] invalid memory snapshot ignored') }
+  delete session.memoryOptOut
+  if (typeof raw.memoryOptOut === 'boolean') session.memoryOptOut = raw.memoryOptOut
+  else if (raw.memoryOptOut !== undefined) console.warn('[SessionStore] invalid memory opt-out ignored')
 }
 
 /**

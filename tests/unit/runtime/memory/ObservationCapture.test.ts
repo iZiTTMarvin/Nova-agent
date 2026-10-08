@@ -33,9 +33,11 @@ describe('ObservationCapture 纯逻辑', () => {
   })
 
   it('记忆检索结果不再次进入提炼工作缓冲', () => {
-    const identity = { sessionId: 's', messageId: 'm', toolCallId: 't', toolName: 'memory_search' }
-    capture.onToolCall({ ...identity, args: { query: '历史约定' } })
-    capture.onToolResult({ ...identity, result: '旧记忆仍然有效' })
+    for (const toolName of ['memory_search', 'memory_manage', 'memory_read']) {
+      const identity = { sessionId: 's', messageId: 'm', toolCallId: toolName, toolName }
+      capture.onToolCall({ ...identity, args: { query: '历史约定' } })
+      capture.onToolResult({ ...identity, result: '旧记忆仍然有效' })
+    }
     expect(capture.getWorkingBuffer('s')).toEqual([])
   })
 

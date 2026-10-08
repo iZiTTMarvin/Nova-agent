@@ -1,5 +1,5 @@
 /**
- * 关键回归：中文 MEMORY.md → trigram 召回（集成层）
+ * 关键回归：中文 notes.md → trigram 召回（集成层）
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync } from 'fs'
@@ -34,11 +34,11 @@ describe('中文记忆召回（集成）', () => {
     return { scopeId }
   }
 
-  it('长文档中的中文子串 query 命中 MEMORY.md', () => {
+  it('长文档中的中文子串 query 命中 notes.md', () => {
     const { scopeId } = setup()
     service!.upsertMarkdown(
       scopeId,
-      'MEMORY.md',
+      'notes.md',
       [
         '# 编码偏好',
         '',
@@ -50,7 +50,7 @@ describe('中文记忆召回（集成）', () => {
 
     const hits = service!.search(scopeId, '继续用中文写注释')
     expect(hits.length).toBeGreaterThan(0)
-    expect(hits[0].relPath).toBe('MEMORY.md')
+    expect(hits[0].relPath).toBe('notes.md')
     expect(hits[0].body).toContain('用中文')
   })
 
@@ -58,7 +58,7 @@ describe('中文记忆召回（集成）', () => {
     const { scopeId } = setup()
     service!.upsertMarkdown(
       scopeId,
-      'MEMORY.md',
+      'notes.md',
       '团队约定：PR 描述必须写中文摘要。'
     )
     const hits = service!.search(scopeId, '中文摘要')

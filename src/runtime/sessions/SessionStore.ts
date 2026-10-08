@@ -42,11 +42,14 @@ import type {
   StateDoc,
   SubagentSessionData,
   TouchedFilesSnapshot,
-  SessionToolAvailabilityState
+  SessionToolAvailabilityState,
+  MemorySnapshotRecord,
+  MemorySnapshotRedactor
 } from './types'
 import { isSameMessageOrigin, type MessageOrigin } from '../model/types'
 import {
   SESSION_DATA_FILE,
+  SESSION_BACKUP_FILE,
   SESSION_MESSAGES_FILE,
   SESSION_CONTEXT_SNAPSHOT_FILE,
   CONTEXT_SNAPSHOT_VERSION,
@@ -98,6 +101,7 @@ import {
 import { ensureSessionIndexFresh, closeSessionIndex } from './SessionIndexHost'
 import type { SessionIndexEntryRow } from './SessionIndexDb'
 import type { ActivePlanRef } from '../plans'
+import { decodeMemorySnapshot, getSessionMemorySnapshotSummary } from './memorySnapshot'
 import { isPlanRelativePath } from '../plans'
 
 /** 会话 ID 格式：sess_ + UUID，仅允许安全文件名字符 */
@@ -536,7 +540,11 @@ export class SessionStore {
   save(session: SessionData): void {
     if (this.drafts.has(session.id)) {
       if (session.messages.length > 0) throw new Error('草稿消息必须通过追加入口提交')
-      this.drafts.set(session.id, structuredClone(session))
+      const draft = this.drafts.get(session.id)!
+      const optOut = draft.memoryOptOut
+      const next: SessionData = { ...session, ...(optOut !== undefined ? { memoryOptOut: optOut } : {}) }
+      this.applyAuthoritativeMemorySnapshot(next, session, draft, false)
+      this.drafts.set(session.id, structuredClone(next))
       return
     }
     const messages = ensureMessageParentChain(session.messages).map(normalizeMessageToBlocksSource)
@@ -597,6 +605,24 @@ export class SessionStore {
   }
 
   /**
+   * 快照在首次捕获后冻结，只有遗忘能改写：非遗忘路径写回一律采用权威快照
+   * （磁盘 session.json 或 draft 现存值），运行中 turn 持有的旧对象不能把已遗忘内容写回。
+   */
+  private applyAuthoritativeMemorySnapshot(
+    next: SessionData,
+    incoming: SessionData,
+    authoritative: { memorySnapshot?: MemorySnapshotRecord; frozenSystemPrompt?: string },
+    allowRewrite: boolean
+  ): void {
+    if (allowRewrite || !authoritative.memorySnapshot) return
+    next.memorySnapshot = authoritative.memorySnapshot
+    if (authoritative.memorySnapshot.text !== incoming.memorySnapshot?.text) {
+      if (authoritative.frozenSystemPrompt === undefined) delete next.frozenSystemPrompt
+      else next.frozenSystemPrompt = authoritative.frozenSystemPrompt
+    }
+  }
+
+  /**
    * 只写 session.json 元数据，不碰 messages.jsonl。
    *
    * @param options.recomputeMessageCount 为 true 时按 session.messages + currentLeafId 重算 messageCount
@@ -604,11 +630,14 @@ export class SessionStore {
    */
   private saveMetadata(
     session: SessionData,
-    options?: { recomputeMessageCount?: boolean }
+    options?: { recomputeMessageCount?: boolean; memoryOptOut?: boolean; allowMemorySnapshotRewrite?: boolean }
   ): void {
     const draft = this.drafts.get(session.id)
     if (draft) {
-      this.drafts.set(session.id, structuredClone({ ...session, messages: draft.messages }))
+      const next: SessionData = { ...session, messages: draft.messages,
+        memoryOptOut: options?.memoryOptOut ?? draft.memoryOptOut ?? session.memoryOptOut }
+      this.applyAuthoritativeMemorySnapshot(next, session, draft, options?.allowMemorySnapshotRewrite === true)
+      this.drafts.set(session.id, structuredClone(next))
       return
     }
     const dir = this.resolveSessionDir(session.id)
@@ -618,10 +647,25 @@ export class SessionStore {
 
     const messageCount = this.resolveMessageCountForMetadata(session, options?.recomputeMessageCount === true)
 
-    const toWrite = { ...session, messageCount }
+    const filePath = path.join(dir, SESSION_DATA_FILE)
+    const current: unknown = fs.existsSync(filePath) ? JSON.parse(fs.readFileSync(filePath, 'utf8')) : undefined
+    const savedOptOut = current && typeof current === 'object' && 'memoryOptOut' in current && typeof current.memoryOptOut === 'boolean' ? current.memoryOptOut : undefined
+    // 磁盘快照解码失败时保持现状，不因遗忘守卫阻断正常保存
+    let authoritative: { memorySnapshot?: MemorySnapshotRecord; frozenSystemPrompt?: string } = {}
+    try {
+      if (current && typeof current === 'object') {
+        const disk = current as { memorySnapshot?: unknown; frozenSystemPrompt?: unknown }
+        authoritative = {
+          memorySnapshot: decodeMemorySnapshot(disk.memorySnapshot),
+          frozenSystemPrompt: typeof disk.frozenSystemPrompt === 'string' ? disk.frozenSystemPrompt : undefined
+        }
+      }
+    } catch { authoritative = {} }
+    // A late turn save cannot overwrite a newer user privacy choice.
+    const toWrite: SessionData = { ...session, messageCount, memoryOptOut: options?.memoryOptOut ?? savedOptOut ?? session.memoryOptOut }
+    this.applyAuthoritativeMemorySnapshot(toWrite, session, authoritative, options?.allowMemorySnapshotRewrite === true)
 
     const metadata = this.toMetadata(toWrite)
-    const filePath = path.join(dir, SESSION_DATA_FILE)
     atomicWriteFileSync(filePath, JSON.stringify(metadata, null, 2), 'utf8')
   }
 
@@ -850,6 +894,8 @@ export class SessionStore {
           title: data.title,
           titleSource: data.titleSource,
           ...(data.pinned ? { pinned: true } : {}),
+          ...(data.memoryOptOut !== undefined ? { memoryOptOut: data.memoryOptOut } : {}),
+          ...(data.memorySnapshot ? { memorySnapshot: getSessionMemorySnapshotSummary(data) } : {}),
           ...(data.reasoningEffortOverride
             ? { reasoningEffortOverride: data.reasoningEffortOverride }
             : {}),
@@ -1310,6 +1356,138 @@ export class SessionStore {
     session.updatedAt = Date.now()
     this.saveMetadata(session)
     return session
+  }
+
+  updateMemoryOptOut(sessionId: string, optOut: boolean): SessionData | null {
+    const session = this.loadMetadata(sessionId)
+    if (!session) return null
+    if (session.kind !== 'primary') throw new Error('Child sessions do not use memory')
+    session.memoryOptOut = optOut; session.updatedAt = Date.now()
+    this.saveMetadata(session, { memoryOptOut: optOut })
+    return session
+  }
+
+  /**
+   * 彻底遗忘入口：改写所有会话副本里的记忆快照与冻结 prompt 记忆层。
+   * 覆盖 drafts、sessions/<id>/session.json、session.json.backup 与 recovery/<hash>/session.json；
+   * messages.jsonl 是用户对话事实，不在遗忘范围。
+   * 单个副本失败不中断其余会话；全部尝试后仍有失败则抛错（不含正文），修复后可幂等重试。
+   */
+  redactMemorySnapshots(redactor: MemorySnapshotRedactor): { changed: number } {
+    let changed = 0
+    let failures = 0
+    for (const [id, draft] of this.drafts) {
+      try {
+        if (!draft.memorySnapshot) continue
+        const patch = redactor.redact({ memorySnapshot: draft.memorySnapshot, frozenSystemPrompt: draft.frozenSystemPrompt })
+        if (!patch) continue
+        const next: SessionData = { ...draft, memorySnapshot: patch.memorySnapshot }
+        if (patch.frozenSystemPrompt === undefined) delete next.frozenSystemPrompt
+        else next.frozenSystemPrompt = patch.frozenSystemPrompt
+        this.drafts.set(id, next)
+        changed++
+      } catch { failures++ }
+    }
+    if (fs.existsSync(this.sessionsDir)) {
+      for (const entry of fs.readdirSync(this.sessionsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory() || entry.isSymbolicLink() || !SESSION_ID_PATTERN.test(entry.name)) continue
+        const dir = path.join(this.sessionsDir, entry.name)
+        // 先处理主文件（load 可能触发迁移产出 session.json.backup），再处理其余副本
+        const main = path.join(dir, SESSION_DATA_FILE)
+        if (fs.existsSync(main)) {
+          const outcome = this.redactSessionSnapshotFile(entry.name, main, redactor, true)
+          if (outcome === 'changed') changed++
+          else if (outcome === 'failed') failures++
+        }
+        // recovery 目录不可读不能静默跳过，残留副本会让遗忘不完整
+        const { copies, failed } = this.sessionSnapshotCopies(dir)
+        if (failed) failures++
+        for (const copy of copies) {
+          const outcome = this.redactSessionSnapshotFile(entry.name, copy, redactor, false)
+          if (outcome === 'changed') changed++
+          else if (outcome === 'failed') failures++
+        }
+      }
+    }
+    if (failures) throw new Error(`${failures} 个会话记忆快照清理失败`)
+    return { changed }
+  }
+
+  /**
+   * 改写单个会话元数据文件：主 session.json 走 load + saveMetadata 的权威写入路径，
+   * 备份/恢复副本只替换 memorySnapshot 与 frozenSystemPrompt 字段，保留其余字节级语义。
+   * 解析失败但原文可能含被遗忘内容时按 fail closed 计失败。
+   */
+  private redactSessionSnapshotFile(
+    sessionId: string,
+    filePath: string,
+    redactor: MemorySnapshotRedactor,
+    authoritative: boolean
+  ): 'changed' | 'unchanged' | 'failed' {
+    let raw: string
+    try { raw = fs.readFileSync(filePath, 'utf8') } catch { return 'failed' }
+    let data: Record<string, unknown>
+    let snapshot: MemorySnapshotRecord | undefined
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not a session object')
+      data = parsed as Record<string, unknown>
+      snapshot = decodeMemorySnapshot(data.memorySnapshot)
+    } catch {
+      return redactor.matchesRaw(raw) ? 'failed' : 'unchanged'
+    }
+    if (!snapshot) {
+      // 没有可解码快照时只剩冻结 prompt 可能带快照行；title 等普通字段命中不算残留
+      const prompt = typeof data.frozenSystemPrompt === 'string' ? data.frozenSystemPrompt : undefined
+      if (prompt === undefined || !redactor.matchesPrompt(prompt)) return 'unchanged'
+      if (authoritative) {
+        let session: SessionData | null
+        try { session = this.load(sessionId) } catch { return 'failed' }
+        if (!session) return 'failed'
+        delete session.frozenSystemPrompt
+        try { this.saveMetadata(session, { allowMemorySnapshotRewrite: true }) } catch { return 'failed' }
+        return 'changed'
+      }
+      delete data.frozenSystemPrompt
+      try { atomicWriteFileSync(filePath, JSON.stringify(data, null, 2), 'utf8') } catch { return 'failed' }
+      return 'changed'
+    }
+    let patch: { memorySnapshot: MemorySnapshotRecord; frozenSystemPrompt?: string } | null
+    try {
+      patch = redactor.redact({ memorySnapshot: snapshot, frozenSystemPrompt: typeof data.frozenSystemPrompt === 'string' ? data.frozenSystemPrompt : undefined })
+    } catch { return 'failed' }
+    if (!patch) return 'unchanged'
+    if (authoritative) {
+      let session: SessionData | null
+      try { session = this.load(sessionId) } catch { return 'failed' }
+      if (!session) return 'failed'
+      session.memorySnapshot = patch.memorySnapshot
+      if (patch.frozenSystemPrompt === undefined) delete session.frozenSystemPrompt
+      else session.frozenSystemPrompt = patch.frozenSystemPrompt
+      try { this.saveMetadata(session, { allowMemorySnapshotRewrite: true }) } catch { return 'failed' }
+      return 'changed'
+    }
+    data.memorySnapshot = patch.memorySnapshot
+    if (patch.frozenSystemPrompt === undefined) delete data.frozenSystemPrompt
+    else data.frozenSystemPrompt = patch.frozenSystemPrompt
+    try { atomicWriteFileSync(filePath, JSON.stringify(data, null, 2), 'utf8') } catch { return 'failed' }
+    return 'changed'
+  }
+
+  private sessionSnapshotCopies(dir: string): { copies: string[]; failed: boolean } {
+    const copies: string[] = []
+    const backup = path.join(dir, SESSION_BACKUP_FILE)
+    if (fs.existsSync(backup)) copies.push(backup)
+    const recoveryDir = path.join(dir, 'recovery')
+    let failed = false
+    try {
+      for (const entry of fs.existsSync(recoveryDir) ? fs.readdirSync(recoveryDir, { withFileTypes: true }) : []) {
+        if (!entry.isDirectory() || entry.isSymbolicLink()) continue
+        const copy = path.join(recoveryDir, entry.name, SESSION_DATA_FILE)
+        if (fs.existsSync(copy)) copies.push(copy)
+      }
+    } catch { failed = true }
+    return { copies, failed }
   }
 
   /** 更新会话权限模式并持久化（只写 session.json 元数据）。 */

@@ -1,3 +1,4 @@
+import { episodicSummaryRelPath } from '@runtime/memory/MemoryConsolidator'
 /**
  * memory-extract-flow 集成：采集 → 候选提炼 → policy 落库 → episodic 零 LLM 落盘 → 检索召回。
  * 另覆盖自我污染防护：动态注入块与助手复述都不得强化既有记忆。
@@ -19,7 +20,8 @@ import {
   projectExtractionMessages
 } from '@runtime/memory/extraction/MemoryExtractor'
 import { consolidateObservations } from '@runtime/memory/MemoryConsolidator'
-import { SqliteMemoryRepository } from '@runtime/memory/repository/SqliteMemoryRepository'
+import { createMarkdownMemoryFixture } from '../../fixtures/memory/MarkdownMemoryFixture'
+import type { MemoryRepository } from '@runtime/memory/repository/MemoryRepository'
 import { MemoryCandidateProcessor } from '@runtime/memory/policy/MemoryCandidateProcessor'
 import { formatMemorySearchResults } from '@runtime/tools/memorySearch'
 import type { MemorySearchResult } from '@runtime/memory/retrieval/MemoryRetriever'
@@ -31,7 +33,7 @@ const TOOL_FACT = 'package.json 变更后必须运行 electron-rebuild 重建原
 describe('memory-extract-flow 集成', () => {
   let tempDir: string | null = null
   let service: MemoryService | null = null
-  let repo: SqliteMemoryRepository | null = null
+  let repo: MemoryRepository | null = null
 
   afterEach(() => {
     service?.close()
@@ -51,8 +53,9 @@ describe('memory-extract-flow 集成', () => {
     mkdirSync(memoryRoot, { recursive: true })
     const scopeId = computeWorkspaceHash(workspace)
     const db = openBetterSqliteMemoryDb(join(memoryRoot, 'memory.db'))
-    service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false })
-    repo = new SqliteMemoryRepository(db)
+    const fixture = createMarkdownMemoryFixture(memoryRoot, db)
+    service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false, entryStore: fixture.store })
+    repo = fixture.repository
     const processor = new MemoryCandidateProcessor({ repository: repo })
     return { scopeId, memoryRoot, processor }
   }
@@ -86,7 +89,7 @@ describe('memory-extract-flow 集成', () => {
       chat: vi.fn().mockResolvedValue(
         JSON.stringify([
           {
-            kind: 'workflow',
+            kind: 'gotcha',
             scopeHint: 'project',
             key: 'build.verify',
             content: 'package.json 变更后必须重建原生模块',
@@ -112,7 +115,7 @@ describe('memory-extract-flow 集成', () => {
 
     const record = repo!.findActiveByKey(
       { scopeKind: 'project', scopeId },
-      'workflow',
+      'gotcha',
       'build.verify'
     )
     expect(record).toMatchObject({
@@ -127,12 +130,12 @@ describe('memory-extract-flow 集成', () => {
       excerpt: TOOL_FACT
     })
 
-    // episodic 历史照写（零 LLM 观测格式化），MEMORY.md 不再被自动追加
+    // episodic 历史只追加，派生视图不混入历史观测正文。
     service!.appendEpisodicSummary(scopeId, consolidateObservations(observations))
-    const episodicPath = join(getProjectMemoryDir(memoryRoot, scopeId), 'episodic/summary.md')
+    const episodicPath = join(getProjectMemoryDir(memoryRoot, scopeId), episodicSummaryRelPath())
     expect(existsSync(episodicPath)).toBe(true)
     expect(readFileSync(episodicPath, 'utf8')).toContain(EPISODIC_MARKER)
-    expect(existsSync(join(getProjectMemoryDir(memoryRoot, scopeId), 'MEMORY.md'))).toBe(false)
+    expect(readFileSync(join(getProjectMemoryDir(memoryRoot, scopeId), 'MEMORY.md'), 'utf8')).not.toContain(EPISODIC_MARKER)
 
     const hits = service!.search(scopeId, EPISODIC_MARKER, { limit: 5, scoreFloor: 0.01 })
     expect(hits.length).toBeGreaterThan(0)
@@ -149,6 +152,27 @@ describe('memory-extract-flow 集成', () => {
 
     const structured = repo!.searchFts('原生模块')
     expect(structured.map((h) => h.record.id)).toEqual([record!.id])
+  })
+
+  it('后台硬闸只持久化有用户证据的偏好，敏感候选和工具推导的约定不落盘', async () => {
+    const { scopeId, memoryRoot, processor } = setup()
+    const userText = '今后回答请始终使用中文并保留足够的原因解释'
+    const base = { kind: 'preference', scopeHint: 'global', key: 'answer.language', content: '回答使用中文并保留原因解释', explicitness: 'user_explicit', confidence: 1, intent: 'assert', aliases: ['language', '中文'], evidence: [{ type: 'user_message', excerpt: userText }] }
+    const extractor = new MemoryExtractor({ chat: async () => JSON.stringify([
+      base,
+      { ...base, kind: 'convention', key: 'unsafe.convention', evidence: [{ type: 'tool_result', excerpt: TOOL_FACT }] },
+      { ...base, content: '保存 api_key=sk-fictionalfixturevalue000000001 供以后使用', key: 'unsafe.secret' },
+      { ...base, content: '太短', key: 'unsafe.short' }
+    ]) })
+    const candidates = await extractor.extract({ sessionId: 'hard-gate', recentMessages: [{ role: 'user', content: userText }, { role: 'tool', content: TOOL_FACT }], observations: [] })
+    expect(candidates).toHaveLength(1)
+    expect(processor.process({ sessionId: 'hard-gate', projectScopeId: scopeId, candidates: candidates!, via: 'extract' })).toMatchObject({ candidates: 1, added: 1, failed: 0 })
+    const record = repo!.findActiveByKey({ scopeKind: 'global', scopeId: 'user' }, 'preference', 'answer.language')
+    expect(record?.content).toBe(base.content)
+    const file = readFileSync(join(memoryRoot, 'global/preferences.md'), 'utf8')
+    expect(file).toContain('aliases=language,%E4%B8%AD%E6%96%87')
+    expect(file).not.toMatch(/unsafe\.|fictionalfixture|太短/)
+    expect(repo!.findActiveByKey({ scopeKind: 'project', scopeId }, 'convention', 'unsafe.convention')).toBeNull()
   })
 
   it('自我污染防护：注入块与助手复述不得强化既有记忆', async () => {

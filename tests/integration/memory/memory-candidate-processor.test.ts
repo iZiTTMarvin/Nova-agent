@@ -8,11 +8,12 @@ import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
-import { SqliteMemoryRepository } from '@runtime/memory/repository/SqliteMemoryRepository'
+import { createMarkdownMemoryFixture } from '../../fixtures/memory/MarkdownMemoryFixture'
 import type { MemoryRepository } from '@runtime/memory/repository/MemoryRepository'
 import { MemoryCandidateProcessor } from '@runtime/memory/policy/MemoryCandidateProcessor'
 import { computeFingerprint } from '@runtime/memory/FtsQueryBuilder'
 import type { MemoryCandidate } from '@runtime/memory/types'
+import { localMemoryDate } from '@runtime/memory/markdown/entryFormat'
 
 describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => {
   let tempDir: string | null = null
@@ -38,14 +39,11 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
   function setup(): void {
     tempDir = mkdtempSync(join(tmpdir(), 'nova-mem-proc-'))
     db = openBetterSqliteMemoryDb(join(tempDir, 'memory.db'))
-    repo = new SqliteMemoryRepository(db, {
-      now: () => clock,
-      generateId: () => `ev_${++idSeq}`
-    })
+    repo = createMarkdownMemoryFixture(tempDir, db, () => clock).repository
     processor = new MemoryCandidateProcessor({
       repository: repo,
       now: () => clock,
-      generateRecordId: () => `mem_${++idSeq}`
+      generateRecordId: () => `m_${String(++idSeq).padStart(10, '0')}`
     })
   }
 
@@ -187,7 +185,7 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
 
     const oldRow = repo.listByScope(PROJECT_A, { status: 'superseded' })[0]
     const newRow = repo.findActiveByKey(PROJECT_A, 'project_fact', 'database.primary')
-    expect(oldRow?.validTo).toBe(NOW + 1000)
+    expect(localMemoryDate(oldRow!.validTo!)).toBe(localMemoryDate(NOW + 1000))
     expect(newRow?.supersedesId).toBe(oldRow?.id)
     expect(newRow?.sourcePath).toBe('package.json')
     expect(newRow?.sourceFingerprint).toBe(source.fingerprint)
@@ -198,7 +196,7 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
     expect(historyHits).toHaveLength(2)
   })
 
-  it('RETRACT 软删除后默认检索消失；user_explicit 重申新增 active，非明确等价候选不复活', () => {
+  it('非用户证据归档撤回后默认检索消失；明确重申可新增，非明确等价候选不复活', () => {
     setup()
 
     processor.process({
@@ -230,7 +228,7 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
           explicitness: 'user_explicit',
           confidence: 0.9,
           intent: 'negate',
-          evidence: [{ type: 'user_message', excerpt: '以后 commit 别用 emoji 了' }]
+          evidence: [{ type: 'tool_result', excerpt: '当前约定已不使用 emoji' }]
         })
       ]
     })
@@ -278,6 +276,34 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
     const revived = repo.findActiveByKey(PROJECT_A, 'convention', 'commit.style')
     expect(revived?.status).toBe('active')
     expect(revived?.id).not.toBe(target!.id)
+  })
+
+  it('用户明确遗忘会清除条目及证据，历史检索也不可返回', () => {
+    setup()
+    const current = candidate({ explicitness: 'user_explicit', evidence: [{ type: 'user_message', excerpt: '请记住这个验证流程' }] })
+    expect(processor.process({ sessionId: 's1', projectScopeId: PROJECT_A.scopeId, candidates: [current] }).added).toBe(1)
+    const record = repo.findActiveByKey(PROJECT_A, 'workflow', 'build.verify')!
+    expect(processor.process({ sessionId: 's2', projectScopeId: PROJECT_A.scopeId, candidates: [{ ...current, intent: 'negate', evidence: [{ type: 'user_message', excerpt: '请遗忘这个验证流程' }] }] }).retracted).toBe(1)
+    expect(repo.findById(record.id)).toBeNull()
+    expect(repo.listEvidence(record.id)).toEqual([])
+    expect(repo.listByScope(PROJECT_A)).toEqual([])
+    expect(repo.searchFts('验证', { status: 'any' })).toEqual([])
+  })
+
+  it('重新确认复用需核对条目，刷新工作区指纹或解除用户确认的旧来源绑定', () => {
+    setup()
+    const source = writeWorkspaceFile('package.json', '{"database":"PostgreSQL"}')
+    const current = candidate({ kind: 'project_fact', memoryKey: 'database.primary', content: '项目主数据库使用 PostgreSQL', explicitness: 'workspace_verified', evidence: [{ type: 'workspace', excerpt: '当前依赖为 PostgreSQL', sourcePath: 'package.json' }] })
+    expect(processor.process({ sessionId: 's1', projectScopeId: PROJECT_A.scopeId, workspaceRoot: source.workspaceRoot, candidates: [current] }).added).toBe(1)
+    const record = repo.findActiveByKey(PROJECT_A, 'project_fact', 'database.primary')!
+    repo.updateStatus(record.id, 'needs_verification')
+    const changed = writeWorkspaceFile('package.json', '{"database":"PostgreSQL","name":"updated"}')
+    expect(processor.process({ sessionId: 's2', projectScopeId: PROJECT_A.scopeId, workspaceRoot: source.workspaceRoot, candidates: [current] })).toMatchObject({ merged: 1, added: 0 })
+    expect(repo.findById(record.id)).toMatchObject({ status: 'active', sourceFingerprint: changed.fingerprint })
+    repo.updateStatus(record.id, 'needs_verification')
+    expect(processor.process({ sessionId: 's3', projectScopeId: PROJECT_A.scopeId, candidates: [{ ...current, explicitness: 'user_explicit', evidence: [{ type: 'user_message', excerpt: '我确认继续使用 PostgreSQL' }] }] })).toMatchObject({ merged: 1, added: 0 })
+    expect(repo.findById(record.id)).toMatchObject({ status: 'active', sourcePath: null, sourceFingerprint: null })
+    expect(repo.listByScope(PROJECT_A)).toHaveLength(1)
   })
 
   it('scope 纠偏：global 提示的 project_fact 落入当前 project scope', () => {
@@ -403,7 +429,7 @@ describe('候选落库管线（MemoryCandidateProcessor + 真 SQLite）', () => 
     const failSoftProcessor = new MemoryCandidateProcessor({
       repository: failingRepo,
       now: () => clock,
-      generateRecordId: () => `mem_${++idSeq}`
+      generateRecordId: () => `m_${String(++idSeq).padStart(10, '0')}`
     })
 
     const counts = failSoftProcessor.process({

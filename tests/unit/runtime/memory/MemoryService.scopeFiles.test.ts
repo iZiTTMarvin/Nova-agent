@@ -25,6 +25,8 @@ describe('resolveSafeScopeRelPath', () => {
   it('拒绝绝对路径与非 .md', () => {
     expect(() => resolveSafeScopeRelPath(scopeDir, '/etc/passwd')).toThrow()
     expect(() => resolveSafeScopeRelPath(scopeDir, 'notes.txt')).toThrow(/\.md/)
+    expect(() => resolveSafeScopeRelPath(scopeDir, 'notes:stream.md')).toThrow(/流名称/)
+    expect(() => resolveSafeScopeRelPath(scopeDir, 'notes\0.md')).toThrow(/空字符/)
   })
 })
 
@@ -66,6 +68,14 @@ describe('MemoryService scope 文件 API', () => {
   it('readScopeFile 可读单个 md', () => {
     service.upsertMarkdown(scopeId, 'MEMORY.md', 'hello memory')
     expect(service.readScopeFile(scopeId, 'MEMORY.md')).toBe('hello memory')
+  })
+
+  it('registered workspace uses the project basename for newly created memory directories', () => {
+    const workspace = join(userData, 'ws')
+    expect(service.registerWorkspace(workspace)).toBe(scopeId)
+    service.upsertMarkdown(scopeId, 'notes.md', 'hand-written notes')
+    expect(service.stats(scopeId).scopeDir).toBe(join(memoryRoot, 'projects', `ws-${scopeId}`))
+    expect(service.readScopeFile(scopeId, 'notes.md')).toBe('hand-written notes')
   })
 
   it('upsertMarkdown 拒绝路径穿越', () => {

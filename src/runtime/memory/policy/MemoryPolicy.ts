@@ -151,12 +151,12 @@ function familyRecords(
 /** 既有 active/pending 目标，active 优先（supersede / retract 的落点） */
 function liveTargets(family: readonly MemoryPolicyRelatedRecord[]): MemoryPolicyRelatedRecord[] {
   return family
-    .filter((item) => item.record.status === 'active' || item.record.status === 'pending')
+    .filter((item) => item.record.status === 'active' || item.record.status === 'pending' || item.record.status === 'needs_verification')
     .sort((a, b) => statusRank(b.record.status) - statusRank(a.record.status))
 }
 
 function statusRank(status: MemoryPolicyRelatedRecord['record']['status']): number {
-  return status === 'active' ? 1 : 0
+  return status === 'active' ? 2 : status === 'needs_verification' ? 1 : 0
 }
 
 function decideNegate(
@@ -173,7 +173,7 @@ function decideNegate(
     if (!target) {
       return ignoreDecision('negate-no-target')
     }
-    return { operation: 'RETRACT', reason: 'negate-retract', targetId: target.record.id }
+    return { operation: 'RETRACT', reason: 'negate-retract', targetId: target.record.id, disposal: candidate.evidence.some(e => e.type === 'user_message') ? 'purge' : 'archive' }
   }
 
   const target = targets[0]
@@ -181,7 +181,7 @@ function decideNegate(
     return ignoreDecision('negate-no-target')
   }
   if (isEquivalentContent(candidate.content, target.record.content)) {
-    return { operation: 'RETRACT', reason: 'negate-retract', targetId: target.record.id }
+    return { operation: 'RETRACT', reason: 'negate-retract', targetId: target.record.id, disposal: candidate.evidence.some(e => e.type === 'user_message') ? 'purge' : 'archive' }
   }
   // 否定并给出新内容：按 SUPERSEDE 语义替换（仍受 rank 规则约束）
   return supersedeOrDefer(candidate, target, scope, 'negate-replace')
@@ -359,7 +359,8 @@ function buildDraft(
     explicitness: candidate.explicitness,
     sourceType: primaryEvidence.type,
     sourcePath: candidate.evidence.find((e) => e.sourcePath)?.sourcePath ?? null,
-    evidence: candidate.evidence
+    evidence: candidate.evidence,
+    aliases: candidate.aliases
   }
 }
 

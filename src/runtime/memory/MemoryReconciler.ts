@@ -7,6 +7,7 @@ import { join, relative } from 'path'
 import type { MemoryDb } from './MemoryDb'
 import type { ReconcilePlan, ReconcileStats, ScannedMemoryFile, MemoryScopeFileEntry } from './types'
 import { computeFingerprint } from './FtsQueryBuilder'
+import { isManagedMemoryFile } from './MemoryPaths'
 import {
   deleteIndexedFile,
   listIndexedFingerprints,
@@ -17,7 +18,7 @@ import {
  * 递归扫描 scope 目录下全部 .md 文件
  * @param scopeDir getProjectMemoryDir 返回值
  */
-export function scanScopeMarkdownFiles(scopeDir: string): ScannedMemoryFile[] {
+export function scanScopeMarkdownFiles(scopeDir: string, scopeKind: 'global' | 'project' = 'project'): ScannedMemoryFile[] {
   if (!existsSync(scopeDir)) {
     return []
   }
@@ -26,6 +27,7 @@ export function scanScopeMarkdownFiles(scopeDir: string): ScannedMemoryFile[] {
 
   function walk(dir: string): void {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue
       const full = join(dir, entry.name)
       if (entry.isDirectory()) {
         walk(full)
@@ -34,6 +36,7 @@ export function scanScopeMarkdownFiles(scopeDir: string): ScannedMemoryFile[] {
         const mtimeMs = Math.floor(stat.mtimeMs)
         const size = stat.size
         const relPath = relative(scopeDir, full).split(/[/\\]/).join('/')
+        if (isManagedMemoryFile(relPath, scopeKind)) continue
         const body = readFileSync(full, 'utf8')
         results.push({
           relPath,
@@ -62,6 +65,7 @@ export function listScopeMarkdownFileMeta(scopeDir: string): MemoryScopeFileEntr
 
   function walk(dir: string): void {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue
       const full = join(dir, entry.name)
       if (entry.isDirectory()) {
         walk(full)
@@ -142,7 +146,7 @@ export function reconcileScope(
   scopeDir: string,
   scan: (dir: string) => ScannedMemoryFile[] = scanScopeMarkdownFiles
 ): ReconcileStats {
-  const diskFiles = scan(scopeDir)
+  const diskFiles = scan === scanScopeMarkdownFiles ? scanScopeMarkdownFiles(scopeDir, scopeId === 'user' ? 'global' : 'project') : scan(scopeDir)
   const indexed = listIndexedFingerprints(db, scopeId)
   const plan = planReconcileDiff(diskFiles, indexed)
 

@@ -3,6 +3,7 @@
  * 仅依赖 MemoryDb 端口，集成测试在 BetterSqliteMemoryDb 上验证。
  */
 import type { MemoryDb } from './MemoryDb'
+import { buildIndexTerms } from './index/indexTerms'
 
 /** memory_files 上 (scope_id, rel_path) 唯一索引；勿命名为 memory_fts_idx（FTS5 阴影表占用） */
 export const MEMORY_FILES_SCOPE_PATH_IDX = 'memory_files_scope_path_uidx'
@@ -55,6 +56,16 @@ END;
  */
 export function initMemorySchema(db: MemoryDb): void {
   db.exec(SCHEMA_SQL)
+  const termsExists = db.prepare("SELECT name FROM sqlite_master WHERE name='memory_files_terms'").get<{ name: string }>()
+  if (!termsExists) {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      db.exec("CREATE VIRTUAL TABLE memory_files_terms USING fts5(terms, content='', tokenize='porter unicode61 remove_diacritics 2')")
+      const insert = db.prepare('INSERT INTO memory_files_terms(rowid,terms) VALUES (?,?)')
+      for (const row of db.prepare('SELECT id, body FROM memory_files').all<{ id: number; body: string }>()) insert.run(row.id, buildIndexTerms(row.body))
+      db.exec('COMMIT')
+    } catch (error) { db.exec('ROLLBACK'); throw error }
+  }
 }
 
 /** 列出 sqlite_master 中记忆相关对象（供集成测试断言） */

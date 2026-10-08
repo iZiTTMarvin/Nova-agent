@@ -7,7 +7,10 @@
 import type { MemoryObservation } from './ObservationCapture'
 
 /** episodic 摘要相对路径（仅允许 append，禁止写 MEMORY.md） */
-export const EPISODIC_SUMMARY_REL_PATH = 'episodic/summary.md'
+export function episodicSummaryRelPath(now: number = Date.now()): string {
+  const date = new Date(now)
+  return `episodic/${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}.md`
+}
 
 export interface ConsolidateOptions {
   /** 注入时钟（单测用） */

@@ -3,6 +3,7 @@
  *
  * 在任何 observation 持久化/缓冲之前强制过滤；命中敏感路径或无法安全过滤时丢弃整条采集。
  */
+import { MEMORY_SENSITIVE_TEXT_PATTERNS } from '../../shared/memory/sensitiveText'
 
 /** 敏感内容替换占位（测试断言用此常量，勿嵌入真实密钥） */
 export const PRIVACY_REDACTED = '[REDACTED]'
@@ -27,34 +28,6 @@ const DEFAULT_MAX_OUTPUT_CHARS = 8 * 1024
 /** 敏感文件路径（.env / 私钥等），命中则不采集 */
 const SENSITIVE_FILE_RE =
   /(?:^|\/)\.env(?:\.|$)|(?:^|\/)credentials\.json$|\.(?:pem|key|p12|pfx)$|(?:^|\/)(?:id_rsa|id_ed25519|id_ecdsa)(?:\.pub)?$/i
-
-/** OpenAI / 常见 API key */
-const SK_KEY_RE = /\bsk-[a-zA-Z0-9]{16,}\b/g
-/** AWS Access Key */
-const AWS_KEY_RE = /\bAKIA[0-9A-Z]{16}\b/g
-/** Bearer token */
-const BEARER_RE = /\bBearer\s+[a-zA-Z0-9._\-+/=]{8,}\b/gi
-/** GitHub PAT */
-const GITHUB_TOKEN_RE = /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g
-/** Slack token */
-const SLACK_TOKEN_RE = /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g
-/** 通用长 hex/base64 秘钥形态（保守匹配） */
-const GENERIC_SECRET_RE = /\b(?:api[_-]?key|secret|token|password)\s*[:=]\s*\S{8,}\b/gi
-/** .env 风格 KEY=VALUE（全行） */
-const ENV_LINE_RE = /^[A-Z][A-Z0-9_]{0,63}=\S+$/gm
-/** <private>...</private> 整段 */
-const PRIVATE_BLOCK_RE = /<private>[\s\S]*?<\/private>/gi
-
-const ALL_PATTERNS: RegExp[] = [
-  SK_KEY_RE,
-  AWS_KEY_RE,
-  BEARER_RE,
-  GITHUB_TOKEN_RE,
-  SLACK_TOKEN_RE,
-  GENERIC_SECRET_RE,
-  ENV_LINE_RE,
-  PRIVATE_BLOCK_RE
-]
 
 /**
  * 判断文件路径是否属于禁止采集的敏感文件
@@ -94,7 +67,7 @@ export function filterPrivacyText(
     }
   }
 
-  for (const pattern of ALL_PATTERNS) {
+  for (const pattern of MEMORY_SENSITIVE_TEXT_PATTERNS) {
     const re = new RegExp(pattern.source, pattern.flags)
     if (re.test(working)) {
       hadSensitive = true
@@ -122,8 +95,7 @@ function containsUnfilteredSecret(text: string): boolean {
   if (!text) {
     return false
   }
-  const probes = [SK_KEY_RE, AWS_KEY_RE, BEARER_RE, GITHUB_TOKEN_RE, SLACK_TOKEN_RE]
-  for (const p of probes) {
+  for (const p of MEMORY_SENSITIVE_TEXT_PATTERNS) {
     const re = new RegExp(p.source, p.flags)
     if (re.test(text)) {
       return true

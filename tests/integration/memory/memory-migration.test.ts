@@ -1,262 +1,219 @@
-/**
- * memory.db schema 迁移集成测试（better-sqlite3 @ Node ABI）：
- * 旧库无损升级、幂等重放、失败整体回滚、高版本 fail-closed。
- */
-import { describe, it, expect, afterEach } from 'vitest'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { BetterSqliteMemoryDb, openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { initMemorySchema } from '@runtime/memory/MemorySchema'
-import { upsertIndexedFile, searchIndexed } from '@runtime/memory/MemoryIndexer'
+import { searchIndexed, upsertIndexedFile } from '@runtime/memory/MemoryIndexer'
+import { LegacyMemoryMigrator } from '@runtime/memory/migration/LegacyMemoryMigrator'
+import { computeLegacyWorkspaceHashes, computeWorkspaceHash, getProjectMemoryDir } from '@runtime/memory/MemoryPaths'
+import { MemoryEntryStore } from '@runtime/memory/markdown/MemoryEntryStore'
+import { parseMemoryFile } from '@runtime/memory/markdown/entryFormat'
+import { parseMemoryLedger, reduceMemoryLedger } from '@runtime/memory/markdown/MemoryLedger'
+import { migrateMemorySchema, readMemorySchemaVersion, MemoryMigrationError } from '@runtime/memory/schema/MemoryMigrations'
+import type { MemoryDb } from '@runtime/memory/MemoryDb'
 import { MemoryService } from '@runtime/memory/MemoryService'
-import {
-  migrateMemorySchema,
-  readMemorySchemaVersion,
-  MEMORY_SCHEMA_VERSION,
-  MemoryMigrationError
-} from '@runtime/memory/schema/MemoryMigrations'
 
-describe('memory schema 迁移', () => {
-  let tempDir: string | null = null
-  let db: BetterSqliteMemoryDb | null = null
-  const legacyScopeId = 'scopelegacy'
-  const legacyBody = '旧库中的既有记忆正文，迁移后必须原样可检索。'
-
-  afterEach(() => {
-    db?.close()
-    db = null
-    if (tempDir) {
-      rmSync(tempDir, { recursive: true, force: true })
-      tempDir = null
-    }
-  })
-
-  function newTempDbPath(): string {
-    tempDir = mkdtempSync(join(tmpdir(), 'nova-mem-migration-'))
-    return join(tempDir, 'memory.db')
+describe('legacy memory migration', () => {
+  let root: string
+  let db: BetterSqliteMemoryDb | undefined
+  afterEach(() => { db?.close(); db = undefined; if (root) rmSync(root, { recursive: true, force: true }); vi.restoreAllMocks() })
+  function open(): BetterSqliteMemoryDb {
+    root = mkdtempSync(join(tmpdir(), 'nova-memory-migration-'))
+    db = new BetterSqliteMemoryDb(join(root, 'memory.db'))
+    return db
   }
-
-  /** 构造旧版本库：仅幂等建表（user_version=0）并写入 memory_files 数据 */
-  function createLegacyDb(dbPath: string): void {
-    const legacy = new BetterSqliteMemoryDb(dbPath)
-    initMemorySchema(legacy)
-    upsertIndexedFile(legacy, legacyScopeId, {
-      relPath: 'MEMORY.md',
-      body: legacyBody,
-      fingerprint: '10-1',
-      mtimeMs: 1,
-      size: 10
-    })
-    legacy.close()
-  }
-
-  function createLegacyMemoryFile(): string {
-    const filePath = join(tempDir!, 'memory', legacyScopeId, 'MEMORY.md')
-    mkdirSync(join(tempDir!, 'memory', legacyScopeId), { recursive: true })
-    writeFileSync(filePath, legacyBody, 'utf8')
-    return filePath
-  }
-
-  function schemaObjectNames(target: BetterSqliteMemoryDb): string[] {
+  function legacy(): BetterSqliteMemoryDb {
+    const target = open()
+    target.exec(readFileSync(join(process.cwd(), 'tests/fixtures/memory/legacy-v2.sql'), 'utf8'))
     return target
-      .prepare(`SELECT name FROM sqlite_master ORDER BY name`)
-      .all<{ name: string }>()
-      .map((r) => r.name)
   }
+  function add(id: string, scopeId: string, status = 'active', content = '项目数据库为 SQLite', supersedes: string | null = null, scopeKind = 'project', kind = 'project_fact'): void {
+    db!.prepare(`INSERT INTO memory_records (id,scope_kind,scope_id,kind,memory_key,content,status,confidence,explicitness,source_type,valid_from,valid_to,supersedes_id,created_at,updated_at,last_seen_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id, scopeKind, scopeId, kind, 'database.primary', content, status, .8, scopeKind === 'global' ? 'user_explicit' : 'workspace_verified', scopeKind === 'global' ? 'user_message' : 'workspace', 1000, status === 'superseded' ? 2000 : null, supersedes, 1000, 2000, 3000)
+    db!.prepare('INSERT INTO memory_evidence VALUES (?,?,?,?,?,?,?,?)').run(`e-${id}`, id, 's1', 'msg1', scopeId, 'workspace', '已确认数据库', 3000)
+  }
+  function objects(): string[] { return db!.prepare('SELECT name FROM sqlite_master ORDER BY name').all<{ name: string }>().map(row => row.name) }
 
-  it('旧库（user_version=0 + memory_files 数据）升级：旧数据无损、新表就位、版本到当前', () => {
-    const dbPath = newTempDbPath()
-    createLegacyDb(dbPath)
-
-    db = openBetterSqliteMemoryDb(dbPath)
-
-    expect(readMemorySchemaVersion(db)).toBe(MEMORY_SCHEMA_VERSION)
-
-    const names = schemaObjectNames(db)
-    expect(names).toContain('memory_records')
-    expect(names).toContain('memory_evidence')
-    expect(names).toContain('memory_record_fts')
-    expect(names).toContain('memory_records_scope_status_idx')
-    expect(names).toContain('memory_records_scope_key_idx')
-    expect(names).toContain('memory_records_active_key_uidx')
-    expect(names).toContain('memory_records_status_idx')
-    expect(names).toContain('memory_records_updated_at_idx')
-    expect(names).toContain('memory_records_fts_ai')
-    expect(names).toContain('memory_records_fts_ad')
-    expect(names).toContain('memory_records_fts_au')
-
-    const hits = searchIndexed(db, 'scopelegacy', '既有记忆正文', 10)
-    expect(hits).toHaveLength(1)
-    expect(hits[0].relPath).toBe('MEMORY.md')
+  it('fresh schema contains only current indexes; replay and reopen are idempotent', () => {
+    open()
+    expect(migrateMemorySchema(db!).appliedVersions).toEqual([3])
+    expect(objects()).toContain('memory_entry_index')
+    expect(objects()).not.toContain('memory_records')
+    expect(migrateMemorySchema(db!).appliedVersions).toEqual([])
+    db!.close(); db = openBetterSqliteMemoryDb(join(root, 'memory.db'))
+    expect(readMemorySchemaVersion(db)).toBe(3)
   })
 
-  it('旧库迁移后工作区 reconcile 保留物理 MEMORY.md，并更新旧索引指纹', () => {
-    const dbPath = newTempDbPath()
-    const memoryFilePath = createLegacyMemoryFile()
-    createLegacyDb(dbPath)
-
-    db = openBetterSqliteMemoryDb(dbPath)
-    const service = new MemoryService(join(tempDir!, 'memory'), db)
-    const stats = service.reconcile(legacyScopeId)
-
-    expect(stats.removed).toBe(0)
-    expect(stats.updated).toBe(1)
-    expect(existsSync(memoryFilePath)).toBe(true)
-    expect(service.search(legacyScopeId, '既有记忆正文')[0]?.body).toBe(legacyBody)
+  it('prepares indexes without discarding legacy records or advancing their version', () => {
+    legacy(); add('mem_old', 'a'.repeat(16))
+    expect(migrateMemorySchema(db!).toVersion).toBe(2)
+    expect(objects()).toContain('memory_entry_index')
+    expect(db!.prepare('SELECT count(*) AS n FROM memory_records').get<{ n: number }>()?.n).toBe(1)
   })
 
-  it('迁移本身不依赖物理文件；文件确实缺失时 reconcile 只清理孤儿索引', () => {
-    const dbPath = newTempDbPath()
-    createLegacyDb(dbPath)
-
-    db = openBetterSqliteMemoryDb(dbPath)
-    expect(searchIndexed(db, legacyScopeId, '既有记忆正文', 10)).toHaveLength(1)
-
-    const service = new MemoryService(join(tempDir!, 'memory'), db)
-    const stats = service.reconcile(legacyScopeId)
-
-    expect(stats).toEqual({ added: 0, updated: 0, removed: 1, skipped: 0 })
-    expect(existsSync(join(tempDir!, 'memory', legacyScopeId, 'MEMORY.md'))).toBe(false)
-    expect(service.search(legacyScopeId, '既有记忆正文')).toEqual([])
+  it('exports every retained status, evidence and replacement chain before dropping old tables', () => {
+    legacy()
+    const scopeId = 'a'.repeat(16)
+    add('mem_old', scopeId, 'superseded', '项目数据库为 MySQL')
+    add('mem_new', scopeId, 'active', '项目数据库为 SQLite', 'mem_old')
+    add('mem_pending', scopeId, 'pending', '可能采用新数据库')
+    add('mem_verify', scopeId, 'needs_verification', '待核实数据库版本')
+    add('mem_retracted', scopeId, 'retracted', '应当消失的秘密')
+    add('mem_global', 'user', 'active', '个人习惯使用数据库', null, 'global', 'preference')
+    const migrator = new LegacyMemoryMigrator(root, () => 4000)
+    migrator.backup(); migrateMemorySchema(db!)
+    expect(migrator.migrate(db!)).toEqual({ exported: 5, skipped: false })
+    expect(readMemorySchemaVersion(db!)).toBe(3)
+    expect(objects()).not.toContain('memory_records')
+    expect(objects()).not.toContain('memory_evidence')
+    expect(existsSync(join(root, 'memory.db.pre-markdown.bak'))).toBe(true)
+    const dir = join(root, 'projects/_legacy', scopeId)
+    const facts = parseMemoryFile(readFileSync(join(dir, 'facts.md'))).lines.filter(line => line.type === 'entry')
+    expect(facts).toHaveLength(2)
+    expect(facts.some(line => line.entry.metadata.verify === '1')).toBe(true)
+    const current = facts.find(line => line.entry.text.includes('SQLite'))!.entry
+    expect(current.metadata.id).toMatch(/^m_[a-z0-9]{10}$/)
+    const archived = parseMemoryFile(readFileSync(join(dir, 'archive.md'))).lines.find(line => line.type === 'entry')!
+    expect(archived.type === 'entry' && archived.entry.metadata.by_id).toBe(current.metadata.id)
+    expect(parseMemoryFile(readFileSync(join(dir, 'inbox.md'))).lines.filter(line => line.type === 'entry')).toHaveLength(1)
+    const ledger = parseMemoryLedger(readFileSync(join(dir, '.ledger.jsonl'), 'utf8'))
+    expect(ledger.badLines).toBe(0)
+    expect(reduceMemoryLedger(ledger.events, current.metadata.id!, 0)).toMatchObject({ createdAt: 1000, updatedAt: 2000, lastSeenAt: 3000, confidence: .8, evidenceCount: 1, via: 'migration' })
+    expect(readFileSync(join(dir, '.ledger.jsonl'), 'utf8')).not.toContain('应当消失')
+    // 被丢弃的旧表数据不应残留在库文件或 WAL 空闲页里
+    expect(readFileSync(join(root, 'memory.db')).includes(Buffer.from('应当消失的秘密', 'utf8'))).toBe(false)
+    const wal = join(root, 'memory.db-wal')
+    if (existsSync(wal)) expect(readFileSync(wal).includes(Buffer.from('应当消失的秘密', 'utf8'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(root, '.migration.json'), 'utf8'))).toEqual({ version: 1, markdownMigrated: true, migratedAt: 4000, learnedEpoch: 1 })
+    const snapshot = readFileSync(join(dir, 'facts.md'))
+    expect(migrator.migrate(db!)).toEqual({ exported: 0, skipped: true })
+    expect(readFileSync(join(dir, 'facts.md'))).toEqual(snapshot)
   })
 
-  it('全新库直接迁移到当前版本，重复迁移幂等（无版本步重复执行）', () => {
-    const dbPath = newTempDbPath()
-
-    db = new BetterSqliteMemoryDb(dbPath)
-    const first = migrateMemorySchema(db)
-    expect(first.fromVersion).toBe(0)
-    expect(first.appliedVersions).toEqual([1, 2])
-    expect(readMemorySchemaVersion(db)).toBe(MEMORY_SCHEMA_VERSION)
-
-    const second = migrateMemorySchema(db)
-    expect(second.appliedVersions).toEqual([])
-    expect(second.toVersion).toBe(MEMORY_SCHEMA_VERSION)
-
-    // 重开入口同样幂等
-    db.close()
-    db = openBetterSqliteMemoryDb(dbPath)
-    expect(readMemorySchemaVersion(db)).toBe(MEMORY_SCHEMA_VERSION)
+  it('preserves handwritten notes, legacy episodes and user documents alongside exports and backups', () => {
+    legacy()
+    const hash = 'b'.repeat(16)
+    const dir = join(root, hash)
+    mkdirSync(join(dir, 'episodic'), { recursive: true })
+    writeFileSync(join(dir, 'MEMORY.md'), '# Handwritten memory')
+    writeFileSync(join(dir, 'notes.md'), '# Original notes')
+    writeFileSync(join(dir, 'facts.md'), '# Ordinary old facts')
+    writeFileSync(join(dir, 'episodic/summary.md'), '# Original episode')
+    const migrator = new LegacyMemoryMigrator(root)
+    migrator.backup(); migrateMemorySchema(db!); migrator.migrate(db!)
+    const target = join(root, 'projects/_legacy', hash)
+    expect(readFileSync(join(target, 'notes.md'), 'utf8')).toContain('# Handwritten memory')
+    expect(readFileSync(join(target, 'notes.md'), 'utf8')).toContain('# Original notes')
+    expect(readFileSync(join(target, 'documents/legacy/facts.md'), 'utf8')).toBe('# Ordinary old facts')
+    expect(readFileSync(join(target, 'episodic/legacy.md'), 'utf8')).toBe('# Original episode')
+    expect(readFileSync(join(root, '.backups/pre-markdown', hash, 'MEMORY.md'), 'utf8')).toBe('# Handwritten memory')
+    expect(readFileSync(join(dir, 'MEMORY.md'), 'utf8')).toBe('# Handwritten memory')
   })
 
-  it('v1 双 active keyed 记录升级时只保留最新 active，并建立唯一约束', () => {
-    const dbPath = newTempDbPath()
-    db = new BetterSqliteMemoryDb(dbPath)
-    db.exec(`CREATE TABLE memory_records (
-      id TEXT PRIMARY KEY,
-      scope_kind TEXT NOT NULL,
-      scope_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      memory_key TEXT,
-      content TEXT NOT NULL,
-      status TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      explicitness TEXT NOT NULL,
-      source_type TEXT NOT NULL,
-      valid_from INTEGER NOT NULL,
-      valid_to INTEGER,
-      supersedes_id TEXT,
-      evidence_count INTEGER NOT NULL DEFAULT 1,
-      distinct_session_count INTEGER NOT NULL DEFAULT 1,
-      distinct_project_count INTEGER NOT NULL DEFAULT 1,
-      source_path TEXT,
-      source_fingerprint TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      last_seen_at INTEGER NOT NULL,
-      metadata_json TEXT
-    )`)
-    db.exec(`INSERT INTO memory_records (
-      id, scope_kind, scope_id, kind, memory_key, content, status, confidence,
-      explicitness, source_type, valid_from, evidence_count, distinct_session_count,
-      distinct_project_count, created_at, updated_at, last_seen_at
-    ) VALUES
-      ('mem_old', 'project', 'scope-a', 'project_fact', 'database.primary',
-       '项目主数据库为 SQLite', 'active', 0.8, 'workspace_verified', 'workspace',
-       1, 1, 1, 1, 1, 1, 1),
-      ('mem_new', 'project', 'scope-a', 'project_fact', 'database.primary',
-       '项目主数据库为 PostgreSQL', 'active', 0.9, 'workspace_verified', 'workspace',
-       2, 1, 1, 1, 2, 2, 2)
-    `)
-    db.exec('PRAGMA user_version = 1')
-
-    const result = migrateMemorySchema(db)
-    expect(result.appliedVersions).toEqual([2])
-    expect(readMemorySchemaVersion(db)).toBe(MEMORY_SCHEMA_VERSION)
-
-    const rows = db.prepare(
-      `SELECT id, status FROM memory_records ORDER BY id`
-    ).all<{ id: string; status: string }>()
-    expect(rows).toEqual([
-      { id: 'mem_new', status: 'active' },
-      { id: 'mem_old', status: 'needs_verification' }
-    ])
-
-    expect(() =>
-      db!.exec(`INSERT INTO memory_records (
-        id, scope_kind, scope_id, kind, memory_key, content, status, confidence,
-        explicitness, source_type, valid_from, evidence_count, distinct_session_count,
-        distinct_project_count, created_at, updated_at, last_seen_at
-      ) VALUES (
-        'mem_dup', 'project', 'scope-a', 'project_fact', 'database.primary',
-        '项目主数据库为 MySQL', 'active', 0.7, 'workspace_verified', 'workspace',
-        3, 1, 1, 1, 3, 3, 3
-      )`)
-    ).toThrow()
+  it('validation failure restores generated files, preserves database and leaves no success marker', () => {
+    legacy(); add('mem_old', 'a'.repeat(16))
+    const oldDir = join(root, 'a'.repeat(16))
+    const destination = join(root, 'projects/_legacy', 'a'.repeat(16), 'notes.md')
+    mkdirSync(oldDir, { recursive: true })
+    mkdirSync(join(root, 'projects/_legacy', 'a'.repeat(16)), { recursive: true })
+    writeFileSync(join(oldDir, 'MEMORY.md'), '# Handwritten original')
+    writeFileSync(join(oldDir, 'notes.md'), '# Other original notes')
+    writeFileSync(destination, '# Existing destination notes')
+    const migrator = new LegacyMemoryMigrator(root)
+    migrator.backup(); migrateMemorySchema(db!)
+    vi.spyOn(migrator, 'validateExport').mockImplementation(() => { throw new Error('validation failed') })
+    expect(() => migrator.migrate(db!)).toThrow('validation failed')
+    expect(readMemorySchemaVersion(db!)).toBe(2)
+    expect(db!.prepare('SELECT count(*) AS n FROM memory_records').get<{ n: number }>()?.n).toBe(1)
+    expect(existsSync(join(root, 'projects/_legacy', 'a'.repeat(16), 'facts.md'))).toBe(false)
+    expect(existsSync(join(root, '.migration.json'))).toBe(false)
+    expect(existsSync(join(root, 'memory.db.pre-markdown.bak'))).toBe(true)
+    expect(readFileSync(destination, 'utf8')).toBe('# Existing destination notes')
+    expect(readFileSync(join(oldDir, 'MEMORY.md'), 'utf8')).toBe('# Handwritten original')
+    expect(readFileSync(join(oldDir, 'notes.md'), 'utf8')).toBe('# Other original notes')
   })
 
-  it('迁移中途失败整体回滚：旧数据保留、版本不变、半成品对象不残留', () => {
-    const dbPath = newTempDbPath()
-    createLegacyDb(dbPath)
-
-    db = new BetterSqliteMemoryDb(dbPath)
-    // 占用 memory_records 表名且缺少索引所需列，迫使版本步在索引 DDL 处失败
-    db.exec(`CREATE TABLE memory_records (id TEXT PRIMARY KEY, only_col TEXT)`)
-
-    let caught: MemoryMigrationError | null = null
-    try {
-      migrateMemorySchema(db)
-    } catch (err) {
-      caught = err instanceof MemoryMigrationError ? err : null
-      if (!caught) {
-        throw err
-      }
-    }
-
-    expect(caught?.diagnostic.code).toBe('step-failed')
-    expect(caught?.diagnostic.failedStep).toBe(1)
-    expect(readMemorySchemaVersion(db)).toBe(0)
-
-    const names = schemaObjectNames(db)
-    expect(names).not.toContain('memory_evidence')
-    expect(names).not.toContain('memory_record_fts')
-
-    const hits = searchIndexed(db, 'scopelegacy', '既有记忆正文', 10)
-    expect(hits).toHaveLength(1)
+  it('migrates every allowed global category without reclassification or changing provenance', () => {
+    legacy()
+    for (const kind of ['convention', 'decision', 'gotcha']) add(`mem_global_${kind}`, 'user', 'active', `全局 ${kind} 约定`, null, 'global', kind)
+    const migrator = new LegacyMemoryMigrator(root)
+    migrator.backup(); migrateMemorySchema(db!)
+    expect(migrator.migrate(db!).exported).toBe(3)
+    const store = new MemoryEntryStore(root)
+    const records = store.list({ scopeKind: 'global', scopeId: 'user' }).map(entry => entry.record)
+    expect(records.map(record => record.kind).sort()).toEqual(['convention', 'decision', 'gotcha'])
+    expect(records.every(record => record.createdAt === 1000 && record.updatedAt === 2000 && record.lastSeenAt === 3000 && record.evidenceCount === 1)).toBe(true)
+    expect(readMemorySchemaVersion(db!)).toBe(3)
+    expect(existsSync(join(root, 'global/preferences.md'))).toBe(false)
+    expect(existsSync(join(root, 'global/conventions.md'))).toBe(true)
+    expect(existsSync(join(root, 'global/decisions.md'))).toBe(true)
+    expect(existsSync(join(root, 'global/gotchas.md'))).toBe(true)
+    expect(existsSync(join(root, '.migration.json'))).toBe(true)
+    expect(existsSync(join(root, 'memory.db.pre-markdown.bak'))).toBe(true)
   })
 
-  it('库版本高于当前支持时 fail-closed，不做降级迁移', () => {
-    const dbPath = newTempDbPath()
-    db = new BetterSqliteMemoryDb(dbPath)
-    db.exec(`PRAGMA user_version = ${MEMORY_SCHEMA_VERSION + 1}`)
+  it('SQL failure rolls back both tables and exported files', () => {
+    legacy(); add('mem_old', 'a'.repeat(16)); migrateMemorySchema(db!)
+    const failing: MemoryDb = { prepare: sql => db!.prepare(sql), close: () => {}, exec: sql => { if (sql === 'DROP TABLE IF EXISTS memory_records') throw new Error('drop failed'); db!.exec(sql) } }
+    expect(() => new LegacyMemoryMigrator(root).migrate(failing)).toThrow('drop failed')
+    expect(readMemorySchemaVersion(db!)).toBe(2)
+    expect(objects()).toContain('memory_evidence')
+    expect(existsSync(join(root, '.migration.json'))).toBe(false)
+    expect(existsSync(join(root, 'projects/_legacy', 'a'.repeat(16), 'facts.md'))).toBe(false)
+  })
 
-    let caught: MemoryMigrationError | null = null
-    try {
-      migrateMemorySchema(db)
-    } catch (err) {
-      caught = err instanceof MemoryMigrationError ? err : null
-      if (!caught) {
-        throw err
-      }
-    }
+  it('claims both drive-case hashes through policy equivalence without duplicate records or evidence', () => {
+    legacy()
+    const workspace = 'D:\\MemoryProject'
+    const hashes = computeLegacyWorkspaceHashes(workspace)
+    expect(hashes.length).toBeGreaterThan(1)
+    for (let index = 0; index < hashes.length; index++) add(`mem_${index}`, hashes[index])
+    const migrator = new LegacyMemoryMigrator(root)
+    migrator.backup(); migrateMemorySchema(db!); migrator.migrate(db!)
+    const store = new MemoryEntryStore(root)
+    expect(migrator.claim(workspace, store)).toBe(hashes.length)
+    const scope = { scopeKind: 'project' as const, scopeId: computeWorkspaceHash(workspace) }
+    expect(store.list(scope)).toHaveLength(1)
+    const record = store.list(scope)[0].record
+    expect(record.content).toBe('项目数据库为 SQLite')
+    expect(store.listEvidence(scope, record.id)).toHaveLength(hashes.length)
+    expect(existsSync(join(getProjectMemoryDir(root, scope.scopeId, workspace), 'facts.md'))).toBe(true)
+    expect(migrator.claim(workspace, store)).toBe(0)
+    expect(store.listEvidence(scope, record.id)).toHaveLength(hashes.length)
+  })
 
-    expect(caught?.diagnostic.code).toBe('newer-version')
-    expect(readMemorySchemaVersion(db)).toBe(MEMORY_SCHEMA_VERSION + 1)
+  it('retains ordinary document index data while exporting structured records', () => {
+    legacy(); initMemorySchema(db!)
+    const scope = 'a'.repeat(16)
+    upsertIndexedFile(db!, scope, { relPath: 'notes.md', body: '旧库中既有记忆正文', fingerprint: '10-1', mtimeMs: 1, size: 10 })
+    add('mem_old', scope)
+    const migrator = new LegacyMemoryMigrator(root)
+    migrator.backup(); migrateMemorySchema(db!); migrator.migrate(db!)
+    expect(searchIndexed(db!, scope, '既有记忆正文', 10)[0]?.relPath).toBe('notes.md')
+  })
 
-    // 打开入口同样抛出（fail-soft 由宿主处理）
-    db.close()
-    db = null
-    expect(() => openBetterSqliteMemoryDb(dbPath)).toThrow(MemoryMigrationError)
+  it('rejects future schemas before creating or modifying any objects', () => {
+    open(); db!.exec('PRAGMA user_version = 4')
+    expect(() => migrateMemorySchema(db!)).toThrow(MemoryMigrationError)
+    expect(objects()).toEqual([])
+    expect(readMemorySchemaVersion(db!)).toBe(4)
+  })
+
+  it('read-only degradation prevents source synchronization, ordinary writes and episode appends', () => {
+    open(); migrateMemorySchema(db!)
+    const store = new MemoryEntryStore(root)
+    store.setReadOnly(true)
+    const scope = { scopeKind: 'global' as const, scopeId: 'user' }
+    const dir = join(root, 'global')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'preferences.md'), '- User draft without metadata\n')
+    const service = new MemoryService(root, db!, { entryStore: store })
+    expect(store.list(scope)).toEqual([])
+    expect(readFileSync(join(dir, 'preferences.md'), 'utf8')).toBe('- User draft without metadata\n')
+    expect(() => service.upsertMarkdown('user', 'notes.md', 'changed')).toThrow('read-only')
+    expect(() => service.appendEpisodicSummary('user', 'episode')).toThrow('read-only')
+    expect(existsSync(join(dir, 'notes.md'))).toBe(false)
+    expect(existsSync(join(dir, '.ledger.jsonl'))).toBe(false)
   })
 })

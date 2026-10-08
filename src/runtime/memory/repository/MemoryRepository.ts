@@ -1,5 +1,5 @@
 /**
- * 结构化长期记忆仓储端口：memory_records / memory_evidence 的原子数据操作契约。
+ * 结构化长期记忆仓储端口：文件事实与来源记录的原子操作契约。
  * 仓储只提供确定性读写与事务边界，不做业务决策（是否 supersede / retract / 晋升属 policy）。
  */
 import type {
@@ -37,6 +37,8 @@ export interface MemoryRecordDraft {
   /** 开放扩展信息；必须是 JSON 对象 */
   metadata?: Readonly<Record<string, unknown>> | null
   evidence?: readonly MemoryEvidenceDraft[]
+  aliases?: readonly string[]
+  via?: 'tool' | 'extract' | 'user-edit' | 'migration'
 }
 
 export interface MemoryEvidenceDraft {
@@ -67,6 +69,7 @@ export interface MemoryEvidenceMergeInput {
   confidence?: number
   distinctSessionCount?: number
   distinctProjectCount?: number
+  sourceBinding?: { path: string; fingerprint: string } | null
 }
 
 /** 'any' 表示不过滤状态（历史检索用）；默认 'active' */
@@ -77,12 +80,14 @@ export interface MemoryFtsSearchOptions {
   scopeKinds?: readonly ScopeKind[]
   /** 精确 scope 过滤；提供时优先于 scopeKinds */
   scope?: MemoryScope
+  scopes?: readonly MemoryScope[]
   limit?: number
 }
 
 export interface MemoryRecordFtsHit {
   record: MemoryRecord
-  /** -bm25，越大越相关 */
+  relPath?: string
+  /** 两路归一后的词法分，越大越相关 */
   score: number
 }
 
@@ -107,6 +112,7 @@ export interface MemoryRepository {
   /** FTS 检索；query 经 sanitize，默认只回 active */
   searchFts(query: string, options?: MemoryFtsSearchOptions): MemoryRecordFtsHit[]
   retract(id: string): boolean
+  purge(id: string): boolean
   /** 按 scope/kind/status 聚合计数 */
   stats(scope?: MemoryScope): MemoryRecordStatsRow[]
 }

@@ -1,3 +1,4 @@
+import { episodicSummaryRelPath } from '@runtime/memory/MemoryConsolidator'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
@@ -61,7 +62,7 @@ describe('MemoryService.appendEpisodicSummary', () => {
     const block2 = '## block two\n\n---\n'
     service.appendEpisodicSummary(scopeId, block1)
     service.appendEpisodicSummary(scopeId, block2)
-    const content = service.readScopeFile(scopeId, 'episodic/summary.md')
+    const content = service.readScopeFile(scopeId, episodicSummaryRelPath())
     expect(content).toContain('block one')
     expect(content).toContain('block two')
   })

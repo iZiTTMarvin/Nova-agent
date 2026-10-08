@@ -2,7 +2,7 @@
  * MemoryConsolidator 纯逻辑单测（零 LLM episodic 格式化）
  */
 import { describe, it, expect } from 'vitest'
-import { consolidateObservations, consolidateFallback } from '../../../../src/runtime/memory/MemoryConsolidator'
+import { consolidateObservations, consolidateFallback, episodicSummaryRelPath } from '../../../../src/runtime/memory/MemoryConsolidator'
 import type { MemoryObservation } from '../../../../src/runtime/memory/ObservationCapture'
 
 function makeObs(partial: Partial<MemoryObservation> & Pick<MemoryObservation, 'fingerprint'>): MemoryObservation {
@@ -23,6 +23,10 @@ function makeObs(partial: Partial<MemoryObservation> & Pick<MemoryObservation, '
 }
 
 describe('consolidateObservations', () => {
+  it('uses local calendar months across year boundaries', () => {
+    expect(episodicSummaryRelPath(new Date(2025, 11, 31, 23, 59).getTime())).toBe('episodic/2025-12.md')
+    expect(episodicSummaryRelPath(new Date(2026, 0, 1, 0, 0).getTime())).toBe('episodic/2026-01.md')
+  })
   it('空输入返回空字符串', () => {
     expect(consolidateObservations([])).toBe('')
   })

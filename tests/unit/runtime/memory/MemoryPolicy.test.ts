@@ -3,6 +3,7 @@
  * 全部用 fake 既有记录；同输入同输出的确定性也在此断言。
  */
 import { describe, it, expect } from 'vitest'
+import { GLOBAL_SCOPE_ID } from '@runtime/memory/MemoryPaths'
 import {
   decideMemoryPolicy,
   resolveCandidateScope,
@@ -88,6 +89,10 @@ function ctx(overrides: Partial<MemoryPolicyContext> = {}): MemoryPolicyContext 
 }
 
 describe('resolveCandidateScope', () => {
+  it.each(['preference', 'workflow', 'convention', 'decision', 'gotcha'] as const)('global scope accepts %s with user evidence', kind => {
+    expect(resolveCandidateScope(makeCandidate({ scopeHint: 'global', kind }), PROJECT_A))
+      .toEqual({ scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID })
+  })
   it('scopeHint=global 且 kind=project_fact 强制写入 project scope', () => {
     const scope = resolveCandidateScope(
       makeCandidate({ scopeHint: 'global', kind: 'project_fact' }),
@@ -484,6 +489,16 @@ describe('SUPERSEDE', () => {
 })
 
 describe('RETRACT（negate 语义）', () => {
+  it.each([['user_message', 'purge'], ['tool_result', 'archive'], ['workspace', 'archive']] as const)('按 %s 证据决定 %s', (type, disposal) => {
+    const record = makeRecord()
+    const decision = decideMemoryPolicy(makeCandidate({ content: record.content, intent: 'negate', evidence: [{ type, excerpt: '否定既有约定' }] }), ctx({ relatedRecords: [related(record)] }))
+    expect(decision).toMatchObject({ operation: 'RETRACT', targetId: record.id, disposal })
+  })
+
+  it('需核对的等价条目仍以同一 ID 进入 MERGE', () => {
+    const record = makeRecord({ status: 'needs_verification' })
+    expect(decideMemoryPolicy(makeCandidate({ content: record.content }), ctx({ relatedRecords: [related(record)] }))).toMatchObject({ operation: 'MERGE', targetId: record.id })
+  })
   it('negate 命中同 key 既有 active：软删除该记录', () => {
     const record = makeRecord({ content: 'commit message 使用 emoji 风格' })
     const decision = decideMemoryPolicy(

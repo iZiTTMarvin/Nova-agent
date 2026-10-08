@@ -10,6 +10,8 @@ import type { ChatMessage } from '../../model/types'
 import { extractTextFromContent } from '../../model/types'
 import type { MemoryObservation } from '../ObservationCapture'
 import { filterPrivacyText } from '../PrivacyFilter'
+import { MEMORY_TOOL_NAMES } from '../memoryTools'
+import { MEMORY_ALIAS_MAX_CHARS, MEMORY_ALIAS_MAX_COUNT, MEMORY_CANDIDATE_CONTENT_MIN_CHARS, MEMORY_EVIDENCE_EXCERPT_MIN_CHARS, MEMORY_EXTRACT_MAX_CANDIDATES, MEMORY_INFERRED_MIN_CONFIDENCE } from '../memoryConfig'
 import {
   MEMORY_CANDIDATE_CONTENT_MAX_CHARS,
   MEMORY_EVIDENCE_EXCERPT_MAX_CHARS,
@@ -33,7 +35,7 @@ import { buildExtractMessages } from './memoryPrompts'
 
 /** 提炼模块依赖口子：chat 由宿主装配（独立 ModelClient，不复用主对话 pool） */
 export interface MemoryExtractorDeps {
-  chat: (messages: ChatMessage[], opts?: { reasoningEffort?: 'low' }) => Promise<string>
+  chat: (messages: ChatMessage[], opts?: { reasoningEffort?: 'low'; abortSignal?: AbortSignal }) => Promise<string>
 }
 
 /** 硬编码：覆盖主模型 thinking 强度 */
@@ -43,9 +45,11 @@ export interface MemoryExtractionInput {
   sessionId: string
   recentMessages: readonly ChatMessage[]
   observations: readonly MemoryObservation[]
+  existingEntries?: readonly string[]
+  abortSignal?: AbortSignal
 }
 
-/** 证据溯源域：按角色分组的原文文本（规范化空白与大小写后做逐字包含判定） */
+/** 证据溯源域：按角色分组，规范化空白后逐字核对。 */
 export interface EvidenceProvenance {
   userTexts: readonly string[]
   toolTexts: readonly string[]
@@ -63,7 +67,7 @@ export class MemoryExtractor {
       const projected = projectExtractionMessages(input.recentMessages).slice(
         -MEMORY_EXTRACT_WINDOW_SIZE
       )
-      const observations = input.observations.filter(observation => observation.toolName !== 'memory_search')
+      const observations = input.observations.filter(observation => !MEMORY_TOOL_NAMES.has(observation.toolName))
       if (projected.length === 0 && observations.length === 0) {
         return null
       }
@@ -71,12 +75,13 @@ export class MemoryExtractor {
       const messages = buildExtractMessages({
         sessionId: input.sessionId,
         messages: projected,
-        observations
+        observations,
+        existingEntries: input.existingEntries
       })
-      const raw = await this.deps.chat(messages, { reasoningEffort: EXTRACT_REASONING_EFFORT })
+      const raw = await this.deps.chat(messages, { reasoningEffort: EXTRACT_REASONING_EFFORT, ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}) })
       const provenance = buildEvidenceProvenance(projected, observations)
       const parsed = parseMemoryCandidateResponse(raw, provenance)
-      return parsed === null ? null : parsed.candidates
+      return parsed === null ? null : filterExtractCandidates(parsed.candidates)
     } catch {
       return null
     }
@@ -90,11 +95,11 @@ export class MemoryExtractor {
  */
 export function projectExtractionMessages(messages: readonly ChatMessage[]): ChatMessage[] {
   const memoryCalls = new Set(messages.flatMap(message =>
-    (message.toolCalls ?? []).filter(call => call.name === 'memory_search').map(call => call.id)
+    (message.toolCalls ?? []).filter(call => MEMORY_TOOL_NAMES.has(call.name)).map(call => call.id)
   ))
   return messages.filter((m) => !m.internal && !m.skipCacheMarker && m.role !== 'system'
     && !(m.role === 'assistant' && !extractTextFromContent(m.content).trim()
-      && m.toolCalls?.length && m.toolCalls.every(call => call.name === 'memory_search'))
+      && m.toolCalls?.length && m.toolCalls.every(call => MEMORY_TOOL_NAMES.has(call.name)))
     && !(m.role === 'tool' && m.toolCallId && memoryCalls.has(m.toolCallId)))
 }
 
@@ -117,7 +122,7 @@ export function buildEvidenceProvenance(
     }
   }
   for (const obs of observations) {
-    if (obs.toolName === 'memory_search') continue
+    if (MEMORY_TOOL_NAMES.has(obs.toolName)) continue
     toolTexts.push(normalizeForMatch([obs.title, ...obs.facts].join('\n')))
   }
   return { userTexts, toolTexts }
@@ -205,12 +210,26 @@ function normalizeCandidate(item: unknown, provenance: EvidenceProvenance): Memo
     return null
   }
 
+  if (Array.isArray(obj.evidence) && obj.evidence.some(item => {
+    if (!item || typeof item !== 'object' || !('excerpt' in item) || typeof item.excerpt !== 'string') return false
+    const filtered = filterPrivacyText(item.excerpt)
+    return filtered.hadSensitive || filtered.shouldDiscard
+  })) return null
   const evidence = normalizeEvidence(obj.evidence, provenance)
   if (evidence.length === 0) {
     return null
   }
 
-  return { kind, scopeHint, memoryKey: key, content, explicitness, confidence, intent, evidence }
+  let aliases: string[] | undefined
+  if (obj.aliases !== undefined) {
+    if (!Array.isArray(obj.aliases) || obj.aliases.length > MEMORY_ALIAS_MAX_COUNT || obj.aliases.some(alias => {
+      if (typeof alias !== 'string' || !alias.trim() || alias.trim().length > MEMORY_ALIAS_MAX_CHARS) return true
+      const filtered = filterPrivacyText(alias)
+      return filtered.hadSensitive || filtered.shouldDiscard
+    })) return null
+    aliases = obj.aliases.filter((alias): alias is string => typeof alias === 'string').map(alias => alias.trim())
+  }
+  return { kind, scopeHint, memoryKey: key, content, aliases, explicitness, confidence, intent, evidence }
 }
 
 function readEnumValue<T extends string>(value: unknown, allowed: readonly T[]): T | null {
@@ -237,7 +256,7 @@ function normalizeContent(value: unknown): string | null {
     return null
   }
   const filtered = filterPrivacyText(value)
-  if (filtered.shouldDiscard) {
+  if (filtered.shouldDiscard || filtered.hadSensitive) {
     return null
   }
   const normalized = filtered.text.replace(/\s+/g, ' ').trim().slice(0, MEMORY_CANDIDATE_CONTENT_MAX_CHARS)
@@ -279,7 +298,7 @@ function normalizeEvidence(
     }
 
     const filtered = filterPrivacyText(obj.excerpt.trim())
-    if (filtered.shouldDiscard || filtered.text.trim().length === 0) {
+    if (filtered.shouldDiscard || filtered.hadSensitive || filtered.text.trim().length === 0) {
       continue
     }
 
@@ -320,5 +339,16 @@ function matchesProvenance(
 }
 
 function normalizeForMatch(text: string): string {
-  return text.replace(/\s+/g, ' ').trim().toLowerCase()
+  return text.replace(/\s+/g, ' ').trim()
+}
+
+export function filterExtractCandidates(candidates: readonly MemoryCandidate[]): MemoryCandidate[] {
+  return candidates.filter(candidate => {
+    if (candidate.content.length < MEMORY_CANDIDATE_CONTENT_MIN_CHARS || candidate.evidence.some(evidence => evidence.excerpt.trim().length < MEMORY_EVIDENCE_EXCERPT_MIN_CHARS)) return false
+    if (['preference', 'convention', 'workflow'].includes(candidate.kind) && candidate.evidence.some(evidence => evidence.type !== 'user_message')) return false
+    if (candidate.explicitness === 'inferred' && candidate.confidence < MEMORY_INFERRED_MIN_CONFIDENCE) return false
+    return [candidate.content, ...candidate.evidence.map(evidence => evidence.excerpt)].every(text => { const filtered = filterPrivacyText(text); return !filtered.hadSensitive && !filtered.shouldDiscard })
+  }).slice(0, MEMORY_EXTRACT_MAX_CANDIDATES).map(candidate => ({ ...candidate,
+    scopeHint: candidate.evidence.some(evidence => evidence.type !== 'user_message') ? 'project' : candidate.scopeHint
+  }))
 }

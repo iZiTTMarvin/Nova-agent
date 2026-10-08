@@ -19,27 +19,25 @@ export class StructuredMemoryRetriever implements MemoryRetriever {
     const fetchLimit = computeOverFetchLimit(input.limit ?? DEFAULT_SEARCH_LIMIT)
     const status = input.history ? 'any' : 'active'
 
-    // 精确 scope 各查一次：scopeKinds 过滤会把其他项目的记录带进结果，禁止
-    const projectHits = this.repository.searchFts(input.query, {
-      scope: { scopeKind: 'project', scopeId: input.projectScopeId },
-      status,
-      limit: fetchLimit
-    })
-    const globalHits = this.repository.searchFts(input.query, {
-      scope: { scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID },
+    const scopedHits = this.repository.searchFts(input.query, {
+      scopes: [
+        { scopeKind: 'project', scopeId: input.projectScopeId },
+        { scopeKind: 'global', scopeId: GLOBAL_SCOPE_ID }
+      ],
       status,
       limit: fetchLimit
     })
 
     // pending 是未确认候选而非历史事实，任何检索模式都不外显
-    const hits = [...projectHits, ...globalHits].filter((hit) => hit.record.status !== 'pending')
-    return withNormalizedLexical(hits, input.scoreFloor).map((hit) => toResult(hit.record, hit.normalized))
+    const hits = scopedHits.filter((hit) => hit.record.status !== 'pending')
+    return withNormalizedLexical(hits, input.scoreFloor).map((hit) => ({ ...toResult(hit.record, hit.normalized), ...(hit.relPath ? { relPath: hit.relPath } : {}) }))
   }
 }
 
 interface NormalizedHit {
   record: MemoryRecordFtsHit['record']
   normalized: number
+  relPath?: string
 }
 
 /** 池内归一（top = 1）并按相对 floor 裁剪；top 恒留 */
@@ -54,7 +52,7 @@ function withNormalizedLexical(hits: MemoryRecordFtsHit[], scoreFloor?: number):
   const floor = scoreFloor ?? 0
   return hits
     .filter((hit) => hit.score >= top * floor)
-    .map((hit) => ({ record: hit.record, normalized: hit.score / top }))
+    .map((hit) => ({ record: hit.record, relPath: hit.relPath, normalized: hit.score / top }))
 }
 
 function toResult(

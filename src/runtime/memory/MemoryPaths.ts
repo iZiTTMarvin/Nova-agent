@@ -1,16 +1,13 @@
-/**
- * 记忆文件路径约定：按工作区根目录哈希隔离各项目 scope。
- *
- * 目录布局：{userData}/memory/{workspaceHash}/MEMORY.md
- * workspaceHash = sha256(normalize(workspaceRoot)).slice(0, 16)
- */
+/** 记忆目录按项目名称与规范化路径哈希隔离；全局目录固定为 global。 */
 import { createHash } from 'node:crypto'
-import { join, normalize, resolve, sep } from 'path'
+import { basename, join, normalize, resolve, sep, relative, parse } from 'path'
+import { existsSync, readdirSync, lstatSync } from 'node:fs'
+import { MEMORY_TOPIC_FILES } from './markdown/entryFormat'
 
 /** scope 目录名长度（sha256 十六进制前缀） */
 export const WORKSPACE_HASH_LENGTH = 16
 
-/** 全局用户 scope 的固定内部 ID；结构化 global 记忆只存 DB，不绑定 workspace hash */
+/** 全局用户 scope 的固定内部 ID。 */
 export const GLOBAL_SCOPE_ID = 'user'
 
 const SCOPE_ID_RE = /^[0-9a-f]{16}$/
@@ -28,8 +25,46 @@ export function normalizeWorkspaceRoot(workspaceRoot: string): string {
  * @param workspaceRoot 工作区根路径
  */
 export function computeWorkspaceHash(workspaceRoot: string): string {
-  const normalized = normalizeWorkspaceRoot(workspaceRoot)
+  let normalized = normalizeWorkspaceRoot(workspaceRoot)
+  const root = parse(normalized).root
+  while (normalized.length > root.length && /[/\\]$/.test(normalized)) normalized = normalized.slice(0, -1)
+  if (process.platform === 'win32') normalized = normalized.toLowerCase()
   return createHash('sha256').update(normalized).digest('hex').slice(0, WORKSPACE_HASH_LENGTH)
+}
+
+export function computeLegacyWorkspaceHashes(workspaceRoot: string): string[] {
+  const normalized = normalizeWorkspaceRoot(workspaceRoot)
+  const variants = [normalized, normalized.replace(/^[a-zA-Z]:/, value => value.toUpperCase()), normalized.replace(/^[a-zA-Z]:/, value => value.toLowerCase())]
+  return [...new Set(variants.map(value => createHash('sha256').update(value).digest('hex').slice(0, WORKSPACE_HASH_LENGTH)))]
+}
+
+export function memoryProjectSlug(workspaceRoot: string): string {
+  return basename(normalizeWorkspaceRoot(workspaceRoot)).toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'project'
+}
+
+export function getGlobalMemoryDir(memoryRoot: string): string {
+  return join(memoryRoot, 'global')
+}
+
+export function isManagedMemoryFile(relPath: string, scopeKind: 'project' | 'global'): boolean {
+  if (/[/\\]/.test(relPath)) return false
+  if (['MEMORY.md', 'inbox.md', 'archive.md'].includes(relPath)) return true
+  return Object.entries(MEMORY_TOPIC_FILES).some(([kind, name]) => name === relPath &&
+    (scopeKind === 'project' || kind !== 'project_fact'))
+}
+
+export function isReservedMemoryFile(relPath: string): boolean {
+  return !/[/\\]/.test(relPath) && (['MEMORY.md', 'inbox.md', 'archive.md', 'notes.md'].includes(relPath) || Object.values(MEMORY_TOPIC_FILES).includes(relPath))
+}
+
+export function listProjectMemoryDirs(memoryRoot: string, scopeId: string): string[] {
+  if (!SCOPE_ID_RE.test(scopeId)) throw new Error('Invalid project scope ID')
+  const projects = join(memoryRoot, 'projects')
+  if (!existsSync(projects)) return []
+  return readdirSync(projects, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && entry.name.endsWith(`-${scopeId}`) && parseScopeIdFromDirName(entry.name) === scopeId)
+    .map(entry => join(projects, entry.name)).sort()
 }
 
 /**
@@ -41,12 +76,46 @@ export function getMemoryRoot(userDataPath: string): string {
 }
 
 /**
- * 单个项目 scope 目录：{memoryRoot}/{scopeId}
+ * 单个项目 scope 目录：{memoryRoot}/projects/{slug}-{scopeId}
  * @param memoryRoot getMemoryRoot 返回值
  * @param scopeId computeWorkspaceHash 返回值
  */
-export function getProjectMemoryDir(memoryRoot: string, scopeId: string): string {
-  return join(memoryRoot, scopeId)
+export function getProjectMemoryDir(memoryRoot: string, scopeId: string, workspaceRoot?: string): string {
+  if (scopeId === GLOBAL_SCOPE_ID) return getGlobalMemoryDir(memoryRoot)
+  const candidates = listProjectMemoryDirs(memoryRoot, scopeId)
+  const slug = workspaceRoot ? memoryProjectSlug(workspaceRoot) : 'project'
+  const preferred = join(memoryRoot, 'projects', `${slug}-${scopeId}`)
+  return candidates.find(candidate => candidate === preferred) ?? candidates[0] ?? preferred
+}
+
+export class MemoryScopeDirectoryResolver {
+  private readonly paths = new Map<string, string>()
+  private readonly workspaces = new Map<string, string>()
+
+  constructor(private readonly memoryRoot: string) {}
+
+  registerWorkspace(workspaceRoot: string): string {
+    const scopeId = computeWorkspaceHash(workspaceRoot)
+    this.workspaces.set(scopeId, workspaceRoot)
+    this.paths.delete(scopeId)
+    return scopeId
+  }
+
+  resolve(scopeId: string): string {
+    const cached = this.paths.get(scopeId)
+    // lstat 不跟随链接：符号链接或 junction 不会被识别为目录，需要重新解析。
+    if (cached && lstatSync(cached, { throwIfNoEntry: false })?.isDirectory()) return cached
+    const path = getProjectMemoryDir(this.memoryRoot, scopeId, this.workspaces.get(scopeId))
+    if (existsSync(path)) this.paths.set(scopeId, path)
+    return path
+  }
+
+  clear(): void {
+    this.paths.clear()
+    this.workspaces.clear()
+  }
+
+  getWorkspaceRoot(scopeId: string): string | undefined { return this.workspaces.get(scopeId) }
 }
 
 /**
@@ -78,21 +147,18 @@ export function parseScopeIdFromMemoryMdPath(memoryMdPath: string, memoryRoot: s
   if (!absMd.toLowerCase().startsWith(prefix.toLowerCase())) {
     return null
   }
-  const relative = absMd.slice(prefix.length)
-  const parts = relative.split(/[/\\]/).filter(Boolean)
-  if (parts.length !== 2 || parts[1] !== 'MEMORY.md') {
-    return null
-  }
-  const scopeId = parts[0]
-  return SCOPE_ID_RE.test(scopeId) ? scopeId : null
+  const parts = relative(absRoot, absMd).split(/[/\\]/)
+  if (parts.length === 2 && parts[0] === 'global' && parts[1] === 'MEMORY.md') return GLOBAL_SCOPE_ID
+  if (parts.length !== 3 || parts[0] !== 'projects' || parts[2] !== 'MEMORY.md') return null
+  return parseScopeIdFromDirName(parts[1])
 }
 
 /**
- * 从 scope 目录名反解 scopeId；非 16 位十六进制时返回 null
+ * 从项目目录名反解 scopeId。
  * @param dirName 目录 basename（非完整路径）
  */
 export function parseScopeIdFromDirName(dirName: string): string | null {
-  return SCOPE_ID_RE.test(dirName) ? dirName : null
+  return /^[a-z0-9._-]+-([0-9a-f]{16})$/.exec(dirName)?.[1] ?? null
 }
 
 /**
@@ -105,6 +171,7 @@ export function resolveSafeScopeRelPath(scopeDir: string, relPath: string): stri
   }
 
   const normalizedRel = relPath.replace(/\\/g, '/')
+  if (normalizedRel.includes(':') || normalizedRel.includes('\0')) throw new Error('非法路径：禁止流名称或空字符')
   if (normalizedRel.startsWith('/') || /^[a-zA-Z]:/.test(normalizedRel)) {
     throw new Error('relPath 必须是相对路径')
   }

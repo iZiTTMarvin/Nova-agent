@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
-import { getMemoryRoot, computeWorkspaceHash } from '@runtime/memory/MemoryPaths'
+import { getMemoryRoot, computeWorkspaceHash, getProjectMemoryDir } from '@runtime/memory/MemoryPaths'
 import { MemoryService } from '@runtime/memory/MemoryService'
 
 describe('MemoryService FTS 集成', () => {
@@ -34,16 +34,18 @@ describe('MemoryService FTS 集成', () => {
     return { scopeId, memoryRoot }
   }
 
-  it('中文 query trigram 召回 MEMORY.md', () => {
+  it('中文两字词召回普通文档，托管视图不进入文档索引', () => {
     const { scopeId } = setup()
     service!.upsertMarkdown(
       scopeId,
-      'MEMORY.md',
+      'notes.md',
       '# 偏好\n用户要求注释一律使用中文。'
     )
-    const hits = service!.search(scopeId, '使用中文')
+    service!.upsertMarkdown(scopeId, 'MEMORY.md', '使用中文')
+    const hits = service!.search(scopeId, '中文')
     expect(hits.length).toBeGreaterThan(0)
-    expect(hits[0].relPath).toBe('MEMORY.md')
+    expect(hits[0].relPath).toBe('notes.md')
+    expect(hits.every(hit => hit.relPath !== 'MEMORY.md')).toBe(true)
   })
 
   it('英文 query unicode61 风格 OR 路径可召回', () => {
@@ -60,7 +62,7 @@ describe('MemoryService FTS 集成', () => {
 
   it('reconcile 同步磁盘新增/修改/删除', () => {
     const { scopeId, memoryRoot } = setup()
-    const scopeDir = join(memoryRoot, scopeId)
+    const scopeDir = getProjectMemoryDir(memoryRoot, scopeId)
     mkdirSync(scopeDir, { recursive: true })
     writeFileSync(join(scopeDir, 'a.md'), 'version one', 'utf8')
 
@@ -81,9 +83,10 @@ describe('MemoryService FTS 集成', () => {
     expect(third.removed).toBe(1)
   })
 
-  it('query 不足 3 字符返回空（由 L1 兜底）', () => {
+  it('查询无匹配词项时返回空，短词按新分词契约检索', () => {
     const { scopeId } = setup()
-    service!.upsertMarkdown(scopeId, 'MEMORY.md', 'hello world content')
-    expect(service!.search(scopeId, 'ab')).toEqual([])
+    service!.upsertMarkdown(scopeId, 'notes.md', 'hello world content ab')
+    expect(service!.search(scopeId, 'xy')).toEqual([])
+    expect(service!.search(scopeId, 'ab')[0].relPath).toBe('notes.md')
   })
 })

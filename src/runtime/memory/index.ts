@@ -27,15 +27,11 @@ export {
 export { extractMemorySnippet } from './memorySnippet'
 export { truncateAtLineOrHeaderBoundary } from './truncateEssence'
 export {
-  buildMatchQuery,
-  buildTrigramMatchQuery,
-  buildUnicode61MatchQuery,
   applyScoreFloor,
   computeOverFetchLimit,
   computeFingerprint,
   DEFAULT_SEARCH_LIMIT,
-  DEFAULT_SCORE_FLOOR,
-  TRIGRAM_MIN_QUERY_LEN
+  DEFAULT_SCORE_FLOOR
 } from './FtsQueryBuilder'
 export {
   planReconcileDiff,
@@ -67,7 +63,7 @@ export { subscribeObservationCapture } from './MemoryObservationBridge'
 export {
   consolidateObservations,
   consolidateFallback,
-  EPISODIC_SUMMARY_REL_PATH
+  episodicSummaryRelPath
 } from './MemoryConsolidator'
 export { initMemorySchema, listMemorySchemaObjects, MEMORY_FILES_SCOPE_PATH_IDX } from './MemorySchema'
 export type {
@@ -79,8 +75,6 @@ export type {
   MemoryScopeFileEntry,
   MemoryDocumentStats,
   MemoryScopeStats,
-  BuiltMatchQuery,
-  FtsQueryPath
 } from './types'
 export { MemoryExtractor, EXTRACT_REASONING_EFFORT } from './extraction/MemoryExtractor'
 export type { MemoryExtractorDeps, MemoryExtractionInput } from './extraction/MemoryExtractor'

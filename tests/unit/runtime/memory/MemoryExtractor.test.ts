@@ -3,11 +3,13 @@
  * 输入投影与 fail-soft。chat 依赖全部用 fake。
  */
 import { describe, it, expect, vi } from 'vitest'
+import { FAKE_MEMORY_SECRETS } from '../../../fixtures/memory/privacyExamples'
 import {
   MemoryExtractor,
   parseMemoryCandidateResponse,
   projectExtractionMessages,
-  buildEvidenceProvenance
+  buildEvidenceProvenance,
+  filterExtractCandidates
 } from '../../../../src/runtime/memory/extraction/MemoryExtractor'
 import type { ChatMessage } from '../../../../src/runtime/model/types'
 
@@ -22,6 +24,13 @@ const MESSAGES: ChatMessage[] = [
 ]
 
 const PROVENANCE = buildEvidenceProvenance(MESSAGES, [])
+
+it.each(FAKE_MEMORY_SECRETS)('后台候选的正文或证据包含敏感格式时整条丢弃 %#', secret => {
+  const provenance = buildEvidenceProvenance([{ role: 'user', content: `${USER_TEXT}\n${secret}` }], [])
+  for (const candidate of [{ content: `长期信息 ${secret}` }, { evidence: [{ type: 'user_message', excerpt: secret }] }]) {
+    expect(parseMemoryCandidateResponse(candidateJson(candidate), provenance)).toMatchObject({ candidates: [], droppedCount: 1 })
+  }
+})
 
 function candidateJson(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify([
@@ -122,6 +131,7 @@ describe('parseMemoryCandidateResponse', () => {
       sensitiveProvenance
     )
     expect(result?.candidates).toHaveLength(0)
+    expect(parseMemoryCandidateResponse(candidateJson({ evidence: [{ type: 'user_message', excerpt: USER_TEXT }, { type: 'user_message', excerpt: SENSITIVE_TEXT }] }), { userTexts: [USER_TEXT, SENSITIVE_TEXT], toolTexts: [] })?.candidates).toHaveLength(0)
   })
 
   it('excerpt 未逐字命中同角色原文即丢弃（助手复述无法冒充用户证据）', () => {
@@ -155,7 +165,7 @@ describe('parseMemoryCandidateResponse', () => {
     expect(excerpt!.length).toBeLessThanOrEqual(240)
   })
 
-  it('content 过隐私过滤后保留 [REDACTED]，不再含原文密钥', () => {
+  it('content 含敏感内容时整条拒绝，即使证据正文安全', () => {
     const provenance = buildEvidenceProvenance(
       [{ role: 'user', content: `${USER_TEXT} 我的 api_key=sk-abcdefghijklmnop1234` }],
       []
@@ -164,9 +174,8 @@ describe('parseMemoryCandidateResponse', () => {
       candidateJson({ content: '用户的 api_key=sk-abcdefghijklmnop1234 属于敏感信息需要轮换' }),
       provenance
     )
-    expect(result?.candidates).toHaveLength(1)
-    expect(result?.candidates[0]?.content).toContain('[REDACTED]')
-    expect(result?.candidates[0]?.content).not.toContain('sk-abcdefghijklmnop1234')
+    expect(result?.candidates).toHaveLength(0)
+    expect(result?.droppedCount).toBe(1)
   })
 
   it('空数组、非 JSON、非数组：分别返回空候选 / null / null', () => {
@@ -193,6 +202,36 @@ describe('MemoryExtractor.extract（fail-soft）', () => {
     const candidates = await extractor.extract(INPUT)
     expect(candidates).toHaveLength(1)
     expect(candidates?.[0].memoryKey).toBe('commit.style')
+  })
+
+  it('硬闸拒绝偏好类工具证据、短正文/摘录、低置信推断；有效工具事实固定 project', async () => {
+    const base = JSON.parse(candidateJson())[0]
+    const chat = vi.fn().mockResolvedValue(JSON.stringify([
+      { ...base, aliases: ['commit', '提交'] },
+      { ...base, kind: 'preference', evidence: [{ type: 'tool_result', excerpt: TOOL_TEXT }] },
+      { ...base, kind: 'workflow', evidence: [{ type: 'tool_result', excerpt: TOOL_TEXT }] },
+      { ...base, content: '短句' },
+      { ...base, evidence: [{ type: 'user_message', excerpt: '以后' }] },
+      { ...base, explicitness: 'inferred', confidence: 0.39 },
+      { ...base, kind: 'gotcha', scopeHint: 'global', evidence: [{ type: 'tool_result', excerpt: TOOL_TEXT }] }
+    ]))
+    const result = await new MemoryExtractor({ chat }).extract(INPUT)
+    expect(result).toHaveLength(2)
+    expect(result?.[0].aliases).toEqual(['commit', '提交'])
+    expect(result?.[1]).toMatchObject({ kind: 'gotcha', scopeHint: 'project' })
+    expect(filterExtractCandidates(Array(10).fill(result![0]))).toHaveLength(8)
+    expect(chat.mock.calls[0][0][0].content).toContain('untrusted data')
+  })
+
+  it('证据逐字核验保留大小写，aliases 长度超限拒绝；memory_read/管理结果均排除', () => {
+    expect(parseMemoryCandidateResponse(candidateJson({ evidence: [{ type: 'user_message', excerpt: USER_TEXT.toUpperCase() }] }), PROVENANCE)?.candidates).toHaveLength(0)
+    expect(parseMemoryCandidateResponse(candidateJson({ aliases: ['x'.repeat(33)] }), PROVENANCE)?.candidates).toHaveLength(0)
+    for (const name of ['memory_read', 'memory_manage']) {
+      expect(projectExtractionMessages([
+        { role: 'assistant', content: '', toolCalls: [{ id: 'm', name, arguments: '{}' }] },
+        { role: 'tool', toolCallId: 'm', content: '旧记忆结果' }
+      ])).toEqual([])
+    }
   })
 
   it('网络异常返回 null；输入投影后为空返回 null 且不调用模型', async () => {

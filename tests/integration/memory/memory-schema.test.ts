@@ -42,7 +42,7 @@ describe('memory schema 集成', () => {
     db = openBetterSqliteMemoryDb(join(tempDir, 'memory.db'))
 
     upsertIndexedFile(db, 'scope1', {
-      relPath: 'MEMORY.md',
+      relPath: 'notes.md',
       body: '跨会话记忆需要中文检索与子串召回能力。',
       fingerprint: '100-1',
       mtimeMs: 1,

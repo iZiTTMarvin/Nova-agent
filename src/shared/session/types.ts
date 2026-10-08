@@ -213,6 +213,8 @@ interface SessionBase {
   title?: string
   /** 置顶标记：置顶会话在侧边栏独立分区展示；旧会话缺省视为未置顶 */
   pinned?: boolean
+  memoryOptOut?: boolean
+  memorySnapshot?: import('../memory/types').MemorySnapshotSummary
 }
 
 /** 普通会话摘要不携带 child lineage。 */

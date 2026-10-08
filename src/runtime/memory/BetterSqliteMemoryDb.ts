@@ -61,6 +61,8 @@ export class BetterSqliteMemoryDb implements MemoryDb {
 export function openBetterSqliteMemoryDb(dbPath: string): BetterSqliteMemoryDb {
   const db = new BetterSqliteMemoryDb(dbPath)
   try {
+    // secure_delete 是连接级开关：删除行时用零覆写数据，避免已遗忘正文残留在空闲页
+    db.exec('PRAGMA secure_delete=ON')
     migrateMemorySchema(db)
   } catch (err) {
     // 失败路径必须释放句柄，宿主拿不到实例无法自行 close

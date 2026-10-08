@@ -32,6 +32,28 @@ export {
 /** 会话标题来源：占位名 → 自动截取 → 用户手动改名 */
 export type SessionTitleSource = 'placeholder' | 'generated' | 'manual'
 
+export interface MemorySnapshotRecord {
+  formatVersion: 1
+  capturedAt: number
+  text: string | null
+  reason: 'captured' | 'empty' | 'disabled' | 'excluded' | 'opt-out' | 'legacy-session'
+  globalCoreCount: number
+  projectCoreCount: number
+  omittedCoreCount: number
+}
+
+/**
+ * 彻底遗忘时由记忆侧提供的快照改写器；sessions 不依赖 memory 类型，
+ * 由调用方把遗忘闭包翻译成这套最小接口。
+ */
+export interface MemorySnapshotRedactor {
+  /** 无法解析的元数据文件靠原文判断是否可能含被遗忘快照行，含则 fail closed */
+  matchesRaw(raw: string): boolean
+  /** 没有可解码快照时，冻结 prompt 是否仍含任一被遗忘快照行 */
+  matchesPrompt(prompt: string): boolean
+  redact(current: { memorySnapshot: MemorySnapshotRecord; frozenSystemPrompt?: string }): { memorySnapshot: MemorySnapshotRecord; frozenSystemPrompt?: string } | null
+}
+
 interface SessionSummaryBase {
   id: string
   workspaceRoot: string
@@ -44,6 +66,8 @@ interface SessionSummaryBase {
   titleSource?: SessionTitleSource
   /** 置顶标记（与 SessionData.pinned 同源），供侧边栏置顶分区展示 */
   pinned?: boolean
+  memoryOptOut?: boolean
+  memorySnapshot?: import('../../shared/memory/types').MemorySnapshotSummary
   /**
    * 会话级思考强度覆盖（与 SessionData.reasoningEffortOverride 同源）。
    * 只作用于主会话；子代理的有效值记录在自身 header 中。
@@ -168,6 +192,8 @@ interface SessionDataBase {
    * 旧会话可能没有此字段，回退到 getStableSystemPrompt() 重新生成。
    */
   frozenSystemPrompt?: string
+  memorySnapshot?: MemorySnapshotRecord
+  memoryOptOut?: boolean
   /**
    * 会话级 todo 列表（任务外显计划）。
    * 由 todo_write 工具维护，独立于对话历史：上下文压缩对 todo 完全透明。

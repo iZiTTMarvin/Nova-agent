@@ -4,6 +4,8 @@
 import type { MemoryDb } from './MemoryDb'
 import type { MemorySearchHit, ScannedMemoryFile } from './types'
 import { negateBm25 } from './FtsQueryBuilder'
+import { isManagedMemoryFile } from './MemoryPaths'
+import { buildIndexTerms, buildMemoryIndexQuery, mergeLexicalHits, type LexicalHit } from './index/indexTerms'
 
 const UPSERT_SQL = `
 INSERT INTO memory_files (scope_id, rel_path, fingerprint, body, mtime_ms, size)
@@ -39,6 +41,11 @@ export function upsertIndexedFile(
   scopeId: string,
   file: Pick<ScannedMemoryFile, 'relPath' | 'body' | 'fingerprint' | 'mtimeMs' | 'size'>
 ): void {
+  if (isManagedMemoryFile(file.relPath, scopeId === 'user' ? 'global' : 'project')) return
+  const previous = db.prepare('SELECT id, body FROM memory_files WHERE scope_id=? AND rel_path=?').get<{ id: number; body: string }>(scopeId, file.relPath)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+  if (previous) db.prepare("INSERT INTO memory_files_terms(memory_files_terms,rowid,terms) VALUES ('delete',?,?)").run(previous.id, buildIndexTerms(previous.body))
   db.prepare(UPSERT_SQL).run(
     scopeId,
     file.relPath,
@@ -47,11 +54,35 @@ export function upsertIndexedFile(
     file.mtimeMs,
     file.size
   )
+  const current = db.prepare('SELECT id FROM memory_files WHERE scope_id=? AND rel_path=?').get<{ id: number }>(scopeId, file.relPath)
+  if (!current) throw new Error('Memory document index insert did not produce a row')
+  db.prepare('INSERT INTO memory_files_terms(rowid,terms) VALUES (?,?)').run(current.id, buildIndexTerms(file.body))
+  db.exec('COMMIT')
+  } catch (error) { db.exec('ROLLBACK'); throw error }
 }
 
 /** 删除单条索引 */
 export function deleteIndexedFile(db: MemoryDb, scopeId: string, relPath: string): void {
+  const previous = db.prepare('SELECT id, body FROM memory_files WHERE scope_id=? AND rel_path=?').get<{ id: number; body: string }>(scopeId, relPath)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+  if (previous) db.prepare("INSERT INTO memory_files_terms(memory_files_terms,rowid,terms) VALUES ('delete',?,?)").run(previous.id, buildIndexTerms(previous.body))
   db.prepare(`DELETE FROM memory_files WHERE scope_id = ? AND rel_path = ?`).run(scopeId, relPath)
+  db.exec('COMMIT')
+  } catch (error) { db.exec('ROLLBACK'); throw error }
+}
+
+export function searchIndexedDocuments(db: MemoryDb, scopeId: string, query: string, fetchLimit: number): MemorySearchHit[] {
+  const built = buildMemoryIndexQuery(query)
+  const rows = new Map<string, MemorySearchHit>()
+  const fetch = (table: 'memory_files_terms' | 'memory_fts', match: string | null): LexicalHit[] => {
+    if (!match) return []
+    return db.prepare(`SELECT mf.rel_path AS relPath,mf.body,-bm25(${table}) AS score FROM ${table} JOIN memory_files mf ON mf.id=${table}.rowid WHERE ${table} MATCH ? AND mf.scope_id=? ORDER BY bm25(${table}) LIMIT ?`).all<{ relPath: string; body: string; score: number }>(match,scopeId,fetchLimit).filter(row => !isManagedMemoryFile(row.relPath, scopeId === 'user' ? 'global' : 'project')).map(row => {
+      rows.set(row.relPath, { scopeId, ...row })
+      return { id: row.relPath, score: row.score }
+    })
+  }
+  return mergeLexicalHits(fetch('memory_files_terms',built.terms),fetch('memory_fts',built.literal)).map(hit => ({ ...rows.get(hit.id)!, score: hit.score }))
 }
 
 /**

@@ -3,7 +3,7 @@
  * 策略判断全部来自 MemoryPolicy，本层只做查询、执行与计数；单条候选失败 fail-soft，
  * 不影响同批其余候选，也不向上抛出（宿主日志只输出计数，不含正文）。
  */
-import { randomUUID } from 'node:crypto'
+import { generateMemoryEntryId } from '../markdown/entryFormat'
 import { MEMORY_KEYLESS_RECALL_LIMIT } from '../memoryConfig'
 import type {
   MemoryCandidate,
@@ -27,6 +27,7 @@ export interface MemoryCandidateProcessInput {
   projectScopeId: string
   workspaceRoot?: string | null
   candidates: readonly MemoryCandidate[]
+  via?: 'tool' | 'extract'
 }
 
 /** 供宿主日志的计数汇总；不含任何记忆正文 */
@@ -61,7 +62,7 @@ export class MemoryCandidateProcessor {
 
   constructor(private readonly deps: MemoryCandidateProcessorDeps) {
     this.nowFn = deps.now ?? Date.now
-    this.generateRecordIdFn = deps.generateRecordId ?? (() => `mem_${randomUUID()}`)
+    this.generateRecordIdFn = deps.generateRecordId ?? generateMemoryEntryId
     this.sourceFingerprintFn = deps.sourceFingerprint ?? computeMemorySourceFingerprint
   }
 
@@ -139,12 +140,21 @@ export class MemoryCandidateProcessor {
         return
       }
       case 'MERGE': {
+        const current = repo.findById(decision.targetId)
+        let sourceBinding: { path: string; fingerprint: string } | null | undefined
+        if (current?.status === 'needs_verification' && current.sourcePath) {
+          if (input.workspaceRoot && decision.evidence.some(evidence => evidence.type === 'workspace' && evidence.sourcePath === current.sourcePath)) {
+            const fingerprint = this.sourceFingerprintFn(input.workspaceRoot, current.sourcePath)
+            if (fingerprint) sourceBinding = { path: current.sourcePath, fingerprint }
+          } else if (decision.evidence.some(evidence => evidence.type === 'user_message')) sourceBinding = null
+        }
         repo.mergeEvidence(decision.targetId, {
           evidence: decision.evidence.map((evidence) => this.toEvidenceDraft(evidence, input)),
           confidence: decision.confidence,
           distinctSessionCount: decision.distinctSessionCount,
           distinctProjectCount: decision.distinctProjectCount,
-          lastSeenAt: this.nowFn()
+          lastSeenAt: this.nowFn(),
+          sourceBinding
         })
         if (decision.promote) {
           repo.updateStatus(decision.targetId, 'active')
@@ -165,7 +175,8 @@ export class MemoryCandidateProcessor {
         return
       }
       case 'RETRACT': {
-        repo.retract(decision.targetId)
+        if (decision.disposal === 'purge') repo.purge(decision.targetId)
+        else repo.retract(decision.targetId)
         counts.retracted += 1
         return
       }
@@ -192,6 +203,8 @@ export class MemoryCandidateProcessor {
       sourceType: draft.sourceType,
       sourcePath: draft.sourcePath,
       sourceFingerprint: this.resolveSourceFingerprint(draft, input),
+      aliases: draft.aliases,
+      via: input.via ?? 'tool',
       evidence: draft.evidence.map((evidence) => this.toEvidenceDraft(evidence, input))
     }
   }

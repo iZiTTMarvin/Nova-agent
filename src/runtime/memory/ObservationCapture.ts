@@ -4,6 +4,7 @@
  * 默认由 memoryCaptureEnabled 门控；仅缓冲不落盘。
  */
 import { createHash } from 'node:crypto'
+import { MEMORY_TOOL_NAMES } from './memoryTools'
 import { resolveToolArg } from '../tools/toolArgResolver'
 import {
   filterPrivacyText,
@@ -205,7 +206,7 @@ export class ObservationCapture {
     args: Record<string, unknown>
   }): void {
     // 检索旧记忆不是新的工作区证据。
-    if (params.toolName === 'memory_search') return
+    if (MEMORY_TOOL_NAMES.has(params.toolName)) return
     const pathArg = resolveToolArg(params.args, 'path')
     if (pathArg && isSensitiveFilePath(pathArg)) {
       return

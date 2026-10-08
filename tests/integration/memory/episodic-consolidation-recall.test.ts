@@ -17,7 +17,7 @@ import { MemoryService } from '@runtime/memory/MemoryService'
 import { ObservationCapture } from '@runtime/memory/ObservationCapture'
 import {
   consolidateObservations,
-  EPISODIC_SUMMARY_REL_PATH
+  episodicSummaryRelPath
 } from '@runtime/memory/MemoryConsolidator'
 
 /** episodic 块内可检索的独特标记（中文 trigram） */
@@ -78,7 +78,7 @@ describe('episodic 巩固闭环集成', () => {
 
     const episodicPath = join(
       getProjectMemoryDir(memoryRoot, scopeId),
-      ...EPISODIC_SUMMARY_REL_PATH.split('/')
+      ...episodicSummaryRelPath().split('/')
     )
     expect(existsSync(episodicPath)).toBe(true)
     const diskBody = readFileSync(episodicPath, 'utf8')
@@ -90,7 +90,7 @@ describe('episodic 巩固闭环集成', () => {
 
     const hits = service!.search(scopeId, EPISODIC_MARKER)
     expect(hits.length).toBeGreaterThan(0)
-    expect(hits.some((h) => h.relPath === EPISODIC_SUMMARY_REL_PATH)).toBe(true)
+    expect(hits.some((h) => h.relPath === episodicSummaryRelPath())).toBe(true)
     expect(hits[0].body).toContain(EPISODIC_MARKER)
   })
 
@@ -122,7 +122,7 @@ describe('episodic 巩固闭环集成', () => {
 
     const hitsA = service!.search(scopeId, '第一次巩固')
     const hitsB = service!.search(scopeId, '第二次巩固')
-    expect(hitsA.some((h) => h.relPath === EPISODIC_SUMMARY_REL_PATH)).toBe(true)
-    expect(hitsB.some((h) => h.relPath === EPISODIC_SUMMARY_REL_PATH)).toBe(true)
+    expect(hitsA.some((h) => h.relPath === episodicSummaryRelPath())).toBe(true)
+    expect(hitsB.some((h) => h.relPath === episodicSummaryRelPath())).toBe(true)
   })
 })

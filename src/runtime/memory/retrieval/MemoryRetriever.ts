@@ -16,7 +16,7 @@ interface MemoryResultBase {
   historicalNote: MemoryHistoricalNote | null
 }
 
-/** 结构化记忆命中（memory_records） */
+/** 结构化记忆条目命中 */
 export interface StructuredMemoryResult extends MemoryResultBase {
   group: 'structured-project' | 'structured-global'
   kind: MemoryKind
@@ -26,6 +26,7 @@ export interface StructuredMemoryResult extends MemoryResultBase {
   confidence: number
   memoryKey: string | null
   lastSeenAt: number
+  relPath?: string
   /** 懒校验所需的来源绑定；仅供 lifecycle 消费，禁止渲染 */
   source: { path: string; fingerprint: string } | null
 }
@@ -33,6 +34,7 @@ export interface StructuredMemoryResult extends MemoryResultBase {
 /** 文档记忆命中（MEMORY.md / 手写 .md / episodic） */
 export interface DocumentMemoryResult extends MemoryResultBase {
   group: 'document'
+  scopeKind?: 'project' | 'global'
   kind: 'document'
   relPath: string
   /** 完整正文；渲染前经 excerpt 提取 */
