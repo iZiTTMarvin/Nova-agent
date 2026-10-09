@@ -19,7 +19,7 @@ import {
   resolveModelReasoningEffort,
   type ReasoningEffort
 } from '../../../shared/config/llmRegistry'
-import { BrainIcon, ChevronIcon, ThinkIcon } from '../../components/Icons'
+import { ChevronIcon, InfoIcon, ThinkIcon } from '../../components/Icons'
 import './ReasoningEffortControl.css'
 
 /** 档位标签：统一首字母大写英文，跨模型可辨且不随界面语言漂移。 */
@@ -85,45 +85,34 @@ interface ReasoningEffortSliderProps {
   setReasoningEffortOverride: (effort: ReasoningEffort | null) => Promise<void>
 }
 
-/** A small, deterministic constellation: CSS only, no timers or particle loop. */
-const SPARKS = [
-  [7, 24], [12, 78], [19, 46], [27, 15], [32, 69], [39, 39],
-  [44, 82], [51, 25], [57, 61], [63, 15], [68, 76], [73, 45],
-  [79, 20], [83, 72], [89, 34], [94, 58]
-] as const
-
 const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
   tiers, effectiveTier, defaultEffort, setReasoningEffortOverride
 }) => {
-  // Preview follows the pointer continuously. Only the nearest supported tier is persisted.
-  const [dragProgress, setDragProgress] = useState<number | null>(null)
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const [dragging, setDragging] = useState(false)
   const [pendingIndex, setPendingIndex] = useState<number | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
   const railRef = useRef<HTMLDivElement | null>(null)
   const draggingRef = useRef(false)
+  const dragRatioRef = useRef(0)
   const requestVersion = useRef(0)
 
   useEffect(() => () => { requestVersion.current += 1 }, [])
 
   const activeIndex = Math.max(0, tiers.indexOf(effectiveTier))
-  const selectedIndex = pendingIndex ?? activeIndex
-  const shownIndex = dragProgress === null
-    ? selectedIndex
-    : Math.round(dragProgress * (tiers.length - 1))
+  const defaultIndex = tiers.indexOf(defaultEffort as ConcreteEffort)
+  const shownIndex = previewIndex ?? pendingIndex ?? activeIndex
   const shownTier = tiers[shownIndex] ?? effectiveTier
   const shownLabel = EFFORT_LABELS[shownTier]
-  const triggerLabel = EFFORT_LABELS[tiers[selectedIndex] ?? effectiveTier]
-  const progress = (dragProgress ?? shownIndex / (tiers.length - 1)) * 100
+  const triggerLabel = EFFORT_LABELS[tiers[pendingIndex ?? activeIndex] ?? effectiveTier]
   const isHighest = shownIndex === tiers.length - 1
-  const defaultLabel = defaultEffort !== 'auto' && tiers.includes(defaultEffort)
-    ? EFFORT_LABELS[defaultEffort]
-    : null
+  const defaultLabel = defaultIndex >= 0 ? EFFORT_LABELS[tiers[defaultIndex] as ConcreteEffort] : null
 
   const commitTier = useCallback((tier: ConcreteEffort) => {
     const version = ++requestVersion.current
     setPendingIndex(tiers.indexOf(tier))
     setSaveError(null)
-    // 保留预览直到写回完成，迟到的旧请求不可覆盖下一次选择。
+    // 保存确认前保留选择，旧请求不能清掉较新的预览。
     void setReasoningEffortOverride(tier === defaultEffort ? null : tier)
       .catch(() => {
         if (requestVersion.current === version) setSaveError('思考强度保存失败，请重试。')
@@ -133,42 +122,55 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
       })
   }, [defaultEffort, setReasoningEffortOverride, tiers])
 
-  const progressFromClientX = useCallback((clientX: number): number => {
+  const ratioFromClientX = useCallback((clientX: number): number => {
     const rect = railRef.current?.getBoundingClientRect()
     if (!rect || rect.width <= 0) return 0
     return Math.min(1, Math.max(0, (clientX - rect.left) / rect.width))
   }, [])
 
-  const indexFromClientX = useCallback((clientX: number): number => {
-    return Math.round(progressFromClientX(clientX) * (tiers.length - 1))
-  }, [progressFromClientX, tiers.length])
+  // 连续跟随直接写 CSS 变量，不经过 React；只有跨档才更新预览索引触发重渲染。
+  // 拖动中渲染期的 ratio 取自同一 ref，避免 React 重渲染覆盖指针位置。
+  const paintDrag = useCallback((clientX: number) => {
+    const ratio = ratioFromClientX(clientX)
+    dragRatioRef.current = ratio
+    railRef.current?.style.setProperty('--effort-ratio', ratio.toFixed(4))
+    setPreviewIndex(Math.round(ratio * (tiers.length - 1)))
+  }, [ratioFromClientX, tiers.length])
+
+  const releaseDrag = useCallback(() => {
+    draggingRef.current = false
+    railRef.current?.style.removeProperty('--effort-ratio')
+    setDragging(false)
+  }, [])
 
   const handlePointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.currentTarget.setPointerCapture?.(event.pointerId)
     draggingRef.current = true
-    setDragProgress(progressFromClientX(event.clientX))
-  }, [progressFromClientX])
+    setDragging(true)
+    paintDrag(event.clientX)
+  }, [paintDrag])
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return
-    setDragProgress(progressFromClientX(event.clientX))
-  }, [progressFromClientX])
+    paintDrag(event.clientX)
+  }, [paintDrag])
 
   const handlePointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (!draggingRef.current) return
-    draggingRef.current = false
+    const tier = tiers[Math.round(ratioFromClientX(event.clientX) * (tiers.length - 1))]
     event.currentTarget.releasePointerCapture?.(event.pointerId)
-    const tier = tiers[indexFromClientX(event.clientX)]
-    setDragProgress(null)
+    releaseDrag()
+    setPreviewIndex(null)
     if (tier && (tier !== effectiveTier || pendingIndex !== null)) commitTier(tier)
-  }, [commitTier, effectiveTier, indexFromClientX, pendingIndex, tiers])
+  }, [commitTier, effectiveTier, pendingIndex, ratioFromClientX, releaseDrag, tiers])
 
   const handlePointerCancel = useCallback(() => {
-    draggingRef.current = false
-    setDragProgress(null)
-  }, [])
+    if (!draggingRef.current) return
+    releaseDrag()
+    setPreviewIndex(null)
+  }, [releaseDrag])
 
   const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     const lastIndex = tiers.length - 1
@@ -183,31 +185,32 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
     if (tier) commitTier(tier)
   }, [shownIndex, commitTier, tiers])
 
+  const sliderStyle: React.CSSProperties & { '--effort-ratio': number } = {
+    '--effort-ratio': previewIndex === null ? shownIndex / (tiers.length - 1) : dragRatioRef.current
+  }
+
   const panel = (
     <div className="effort-panel">
       <div className="effort-panel__header">
         <div className="effort-panel__heading" aria-live="polite">
-          <span className="effort-panel__eyebrow">Effort</span>
-          <span className={'effort-panel__value' + (isHighest ? ' effort-panel__value--highest' : '')} key={shownTier}>
+          <span className="effort-panel__eyebrow">思考强度</span>
+          <span className={`effort-panel__value${isHighest ? ' effort-panel__value--highest' : ''}`} key={shownTier}>
             {shownLabel}
           </span>
         </div>
         <span
           className="effort-panel__info"
-          title="越高的思考强度可能获得更充分的推理，也可能增加等待时间。具体效果取决于模型。"
-          aria-label="思考强度越高，模型可能推理更久"
-        >i</span>
+          tabIndex={0}
+          title="思考强度越高，模型可能推理越充分，等待也越久；具体效果取决于模型。"
+          aria-label="思考强度越高，模型可能推理越充分，等待也越久"
+        >
+          <InfoIcon size={13} />
+        </span>
       </div>
-
-      <div className="effort-panel__scale" aria-hidden="true">
-        <span>Faster</span>
-        <span>Smarter</span>
-      </div>
-
       <div
         ref={railRef}
-        className={'effort-slider' + (dragProgress !== null ? ' effort-slider--dragging' : '') + (isHighest ? ' effort-slider--stellar' : '')}
-        style={{ '--effort-progress': progress + '%' } as React.CSSProperties}
+        className={`effort-slider${dragging ? ' effort-slider--dragging' : ''}${isHighest ? ' effort-slider--stellar' : ''}`}
+        style={sliderStyle}
         role="slider"
         tabIndex={0}
         aria-label="思考强度"
@@ -225,38 +228,27 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
       >
         <div className="effort-slider__track" aria-hidden="true" />
         <div className="effort-slider__fill" aria-hidden="true" />
-        <div className="effort-slider__cosmos" aria-hidden="true">
-          {SPARKS.map(([x, y], index) => (
-            <span
-              key={index}
-              className="effort-slider__spark"
-              style={{
-                left: x + '%',
-                top: y + '%',
-                animationDelay: (-0.19 * (index % 7)) + 's'
-              }}
-            />
-          ))}
-        </div>
+        <div className="effort-slider__flow" aria-hidden="true" />
         {tiers.map((tier, index) => (
           <span
             key={tier}
-            className={'effort-slider__stop' + (index <= shownIndex ? ' effort-slider__stop--active' : '')}
-            style={{ left: (100 * index / (tiers.length - 1)) + '%' }}
+            className={`effort-slider__stop${index <= shownIndex ? ' effort-slider__stop--active' : ''}${index === defaultIndex ? ' effort-slider__stop--default' : ''}`}
+            style={{ left: `${(index / (tiers.length - 1)) * 100}%` }}
             aria-hidden="true"
           />
         ))}
-        <div className="effort-slider__thumb" aria-hidden="true">
-          <span className="effort-slider__thumb-halo" />
-          <BrainIcon size={20} />
-          <svg className="effort-slider__nova-star" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0.5c1.4 6.6 4.9 10.1 11.5 11.5-6.6 1.4-10.1 4.9-11.5 11.5C10.6 17.4 7.1 13.9.5 12 7.1 10.6 10.6 7.1 12 .5Z" />
+        <div className="effort-slider__knob" aria-hidden="true">
+          <svg className="effort-slider__brain" viewBox="0 0 24 24">
+            <path d="M11 3.5C8.2 2.6 5.6 4 5.2 6.4 3 7.2 2.4 10 3.6 11.8 2.4 13.6 3 16.4 5.2 17.2 5.6 19.6 8.2 21 11 20.1Z" />
+            <path d="M13 3.5c2.8-.9 5.4.5 5.8 2.9 2.2.8 2.8 3.6 1.6 5.4 1.2 1.8.6 4.6-1.6 5.4-.4 2.4-3 3.8-5.8 2.9Z" />
+          </svg>
+          <svg className="effort-slider__star" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 1.5c1.2 5.6 4.2 8.6 9.8 9.8-5.6 1.2-8.6 4.2-9.8 9.8-1.2-5.6-4.2-8.6-9.8-9.8 5.6-1.2 8.6-4.2 9.8-9.8Z" />
           </svg>
         </div>
       </div>
-
       <div className="effort-panel__footer">
-        <span>Model default</span>
+        <span>模型默认</span>
         <span>{defaultLabel ?? 'Auto'}</span>
       </div>
       {saveError && <div className="effort-panel__error" role="alert">{saveError}</div>}
@@ -273,7 +265,7 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
       content={panel}
     >
       <Button
-        label={'思考强度：' + triggerLabel}
+        label={`思考强度：${triggerLabel}`}
         variant="ghost"
         size="sm"
         tooltip="思考强度"

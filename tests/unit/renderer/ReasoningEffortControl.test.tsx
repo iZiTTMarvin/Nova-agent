@@ -210,7 +210,7 @@ describe('ReasoningEffortControl', () => {
     withoutSession.unmount()
   })
 
-  it('拖动时图标连续跟随指针，只有松开才写入离散档位', async () => {
+  it('拖动过程只写 CSS 变量不写回，松手才提交并交还过渡', async () => {
     const request = deferred()
     setReasoningEffortOverride.mockReturnValueOnce(request.promise)
     const { renderer, slider } = mountMiniMax()
@@ -218,12 +218,16 @@ describe('ReasoningEffortControl', () => {
     act(() => pointer(slider, 'pointerdown', 0))
     act(() => pointer(slider, 'pointermove', 58))
 
-    expect(Number.parseFloat(slider.style.getPropertyValue('--effort-progress'))).toBeCloseTo(58)
+    expect(Number.parseFloat(slider.style.getPropertyValue('--effort-ratio'))).toBeCloseTo(0.58)
+    expect(slider.classList.contains('effort-slider--dragging')).toBe(true)
     expect(slider.getAttribute('aria-valuetext')).toBe('Max')
     expect(setReasoningEffortOverride).not.toHaveBeenCalled()
 
     act(() => pointer(slider, 'pointerup', 58))
     expect(setReasoningEffortOverride).toHaveBeenCalledWith('max')
+    // 松手后交还给 React：变量回到落档值，回弹过渡由此触发。
+    expect(Number.parseFloat(slider.style.getPropertyValue('--effort-ratio'))).toBe(1)
+    expect(slider.classList.contains('effort-slider--dragging')).toBe(false)
 
     await act(async () => {
       useWorkspaceStore.setState({ reasoningEffortOverride: 'max' })
@@ -233,18 +237,20 @@ describe('ReasoningEffortControl', () => {
     renderer.unmount()
   })
 
-  it('只在最高可用档展示 Nova 星光，仍使用模型真实的档位名称', async () => {
+  it('默认档在轨道上有竖标，星光态只属于最高可用档', async () => {
     const request = deferred()
     setReasoningEffortOverride.mockReturnValueOnce(request.promise)
     const { renderer, slider } = mountMiniMax()
 
+    const stops = renderer.container.querySelectorAll('.effort-slider__stop')
+    expect(stops).toHaveLength(2)
+    expect(stops[0].classList.contains('effort-slider__stop--default')).toBe(true)
+    expect(stops[1].classList.contains('effort-slider__stop--default')).toBe(false)
     expect(slider.classList.contains('effort-slider--stellar')).toBe(false)
-    expect(renderer.container.querySelectorAll('.effort-slider__spark')).toHaveLength(16)
 
     act(() => slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true })))
     expect(slider.classList.contains('effort-slider--stellar')).toBe(true)
     expect(slider.getAttribute('aria-valuetext')).toBe('Max')
-    expect(renderer.container.querySelector('.effort-panel__value')?.textContent).toBe('Max')
 
     await act(async () => {
       useWorkspaceStore.setState({ reasoningEffortOverride: 'max' })
@@ -256,5 +262,4 @@ describe('ReasoningEffortControl', () => {
     expect(slider.classList.contains('effort-slider--stellar')).toBe(false)
     renderer.unmount()
   })
-
 })

@@ -1,281 +1,251 @@
 /*
- * Compact effort slider: the rail follows the pointer continuously, then settles on a
- * supported model tier. The last tier gets a small Nova constellation, all CSS-driven.
+ * 思考强度浮层：连续拖动、离散落档的档位滑杆。
+ * 旋钮半宽与轨道外边距必须相等（15px），端点停靠时旋钮才与轨道两端齐平。
+ * 最高档的粒子层只跑 transform 动画（合成器线程），且仅在最高档解除 paused。
  */
 .effort-control {
   display: inline-flex;
 }
 
-.effort-control__content {
+.effort-control__trigger .effort-control__content {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.effort-control__label {
+  gap: 5px;
   font-variant-numeric: tabular-nums;
 }
 
-.effort-control__trigger:hover .effort-control__content,
-.effort-control__trigger:focus-visible .effort-control__content {
-  color: var(--color-brand);
-}
-
 .effort-panel {
-  --effort-lilac: light-dark(#8961d0, #b19aff);
-  --effort-purple: light-dark(#9c5fda, #ac7af7);
-  --effort-pink: light-dark(#d16ec2, #eda2e5);
+  --effort-knob-fill: light-dark(#d95f9c, #f472b6);
+  --effort-knob-ring: light-dark(#8e2a5f, #9f1239);
+  --effort-top-fill: light-dark(#7c5cf0, #a78bfa);
+  --effort-top-ring: light-dark(#4c2fb8, #6d28d9);
+  --effort-dot-a: light-dark(#ffffff, #e9d5ff);
+  --effort-dot-b: light-dark(#f5f3ff, #a5b4fc);
+  --effort-dot-c: light-dark(#fdf2f8, #f9a8d4);
+  --effort-fill-lo: color-mix(in srgb, var(--effort-knob-ring) 34%, transparent);
+  --effort-fill-mid: color-mix(in srgb, var(--effort-knob-fill) 62%, transparent);
+  --effort-fill-hi: color-mix(in srgb, var(--effort-knob-fill) 86%, transparent);
+  --effort-top-lo: color-mix(in srgb, var(--effort-top-ring) 58%, transparent);
+  --effort-top-mid: color-mix(in srgb, var(--effort-top-fill) 72%, transparent);
+  --effort-top-hi: color-mix(in srgb, var(--effort-top-fill) 95%, transparent);
   display: flex;
   flex-direction: column;
-  width: 254px;
-  padding: 4px 5px 2px;
-  gap: 0;
+  width: 248px;
+  padding: 6px 6px 4px;
   user-select: none;
   color: var(--text-primary);
 }
 
-.effort-panel__header,
-.effort-panel__heading,
-.effort-panel__scale,
-.effort-panel__footer {
+.effort-panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.effort-panel__header {
-  min-height: 28px;
-  margin-bottom: 12px;
+  min-height: 26px;
+  margin-bottom: 10px;
 }
 
 .effort-panel__heading {
-  justify-content: flex-start;
-  gap: 7px;
-  font-size: 13px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .effort-panel__eyebrow {
+  font-size: 12px;
   color: var(--text-muted);
-  font-weight: 450;
 }
 
 .effort-panel__value {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 650;
-  letter-spacing: -0.015em;
-  color: var(--text-primary);
-  animation: effort-value-enter 180ms ease-out both;
+  letter-spacing: -0.01em;
 }
 
 .effort-panel__value--highest {
-  color: var(--effort-lilac);
+  color: light-dark(#6d28d9, #c4b5fd);
 }
 
 .effort-panel__info {
   display: grid;
   place-items: center;
-  width: 15px;
-  height: 15px;
-  flex: none;
-  border: 1px solid color-mix(in srgb, var(--text-muted) 55%, transparent);
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  font-size: 10px;
-  font-family: Georgia, serif;
-  font-style: italic;
-  line-height: 1;
   color: var(--text-muted);
   cursor: help;
+  outline: none;
 }
 
-.effort-panel__scale {
-  padding: 0 1px;
-  margin-bottom: 7px;
-  font-size: 10px;
-  font-weight: 450;
-  letter-spacing: 0.005em;
-  color: var(--text-muted);
+.effort-panel__info:focus-visible {
+  box-shadow: var(--ring-focus);
 }
 
 .effort-slider {
   position: relative;
-  height: 31px;
-  margin: 0 9px;
-  touch-action: none;
+  height: 32px;
+  margin: 0 16px;
   cursor: pointer;
-  border-radius: 7px;
+  touch-action: none;
   outline: none;
 }
 
 .effort-slider:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--color-focus) 75%, transparent);
-  outline-offset: 4px;
+  outline: 2px solid color-mix(in srgb, var(--color-focus) 70%, transparent);
+  outline-offset: 3px;
+  border-radius: 10px;
 }
 
 .effort-slider__track,
 .effort-slider__fill,
-.effort-slider__cosmos {
+.effort-slider__flow {
   position: absolute;
-  top: 4px;
-  bottom: 4px;
-  left: -9px;
-  right: -9px;
-  border-radius: 6px;
+  top: 2px;
+  bottom: 2px;
+  left: -16px;
+  right: -16px;
+  border-radius: 8px;
   pointer-events: none;
 }
 
 .effort-slider__track {
   border: 1px solid color-mix(in srgb, var(--border-strong) 26%, transparent);
-  background: color-mix(in srgb, var(--text-muted) 11%, var(--bg-card));
+  background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-card));
   box-shadow: inset 0 1px 3px color-mix(in srgb, #000 8%, transparent);
 }
 
+/* 渐变铺满整条轨道，裁切边停在旋钮中心：16px 是旋钮半宽伸进轨道的部分。 */
 .effort-slider__fill {
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--effort-lilac) 50%, transparent) 0%,
-    color-mix(in srgb, var(--effort-purple) 63%, transparent) 52%,
-    color-mix(in srgb, var(--effort-pink) 73%, transparent) 100%
-  );
-  clip-path: inset(0 calc(100% - var(--effort-progress)) 0 0);
-  transition: clip-path 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  background: linear-gradient(90deg, var(--effort-fill-lo), var(--effort-fill-mid) 52%, var(--effort-fill-hi));
+  clip-path: inset(0 calc(100% - 16px - (100% - 32px) * var(--effort-ratio)) 0 0);
+  transition: clip-path 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.effort-slider--stellar .effort-slider__fill {
+  background: linear-gradient(90deg, var(--effort-top-lo), var(--effort-top-mid) 58%, var(--effort-top-hi));
+}
+
+/* 粒子层：点阵以 240px 为周期无缝漂移，位移等于周期；仅最高档解除 paused。 */
+.effort-slider__flow {
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+.effort-slider--stellar .effort-slider__flow {
+  opacity: 1;
+}
+
+.effort-slider__flow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(100% + 240px);
+  background-repeat: repeat;
+  background-size: 240px 100%;
+  background-image:
+    radial-gradient(circle 1.7px at 16px 7px, var(--effort-dot-a) 97%, transparent),
+    radial-gradient(circle 1.3px at 58px 18px, var(--effort-dot-b) 97%, transparent),
+    radial-gradient(circle 1.5px at 104px 9px, var(--effort-dot-c) 97%, transparent),
+    radial-gradient(circle 1.2px at 150px 20px, var(--effort-dot-a) 97%, transparent),
+    radial-gradient(circle 2px at 196px 12px, var(--effort-dot-b) 97%, transparent),
+    radial-gradient(circle 1.1px at 224px 16px, var(--effort-dot-c) 97%, transparent);
+  animation: effort-flow 11s linear infinite paused;
+}
+
+.effort-slider--stellar .effort-slider__flow::before {
+  animation-play-state: running;
 }
 
 .effort-slider__stop {
   position: absolute;
   top: 50%;
-  width: 2px;
+  width: 4px;
   height: 4px;
-  border-radius: 2px;
+  border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: color-mix(in srgb, var(--text-muted) 62%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
   pointer-events: none;
   transition: background-color 180ms ease;
 }
 
 .effort-slider__stop--active {
-  background: color-mix(in srgb, #fff 76%, transparent);
+  background: color-mix(in srgb, #ffffff 78%, transparent);
 }
 
-.effort-slider__thumb {
+/* 模型默认档用竖标，与圆点档位区分：它不是已选位置，而是"回这里即清除覆盖"。 */
+.effort-slider__stop--default {
+  width: 4px;
+  height: 13px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 82%, transparent);
+}
+
+.effort-slider__stop--default.effort-slider__stop--active {
+  background: color-mix(in srgb, #ffffff 86%, transparent);
+}
+
+.effort-slider__knob {
   position: absolute;
   top: 50%;
-  left: var(--effort-progress);
-  z-index: 2;
+  left: calc(var(--effort-ratio) * 100%);
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   transform: translate(-50%, -50%);
-  color: light-dark(#b541a3, #f0a5e2);
-  filter: drop-shadow(0 1px 2px color-mix(in srgb, #25132b 40%, transparent));
   pointer-events: none;
-  transition: left 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: left 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.effort-slider__thumb > svg:not(.effort-slider__nova-star) {
-  position: relative;
-  z-index: 1;
-  stroke-width: 2.5;
-  fill: color-mix(in srgb, var(--effort-pink) 25%, transparent);
-  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--effort-pink) 48%, transparent));
+.effort-slider__brain {
+  fill: var(--effort-knob-fill);
+  stroke: var(--effort-knob-ring);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #000 28%, transparent));
+  transition: fill 240ms ease, stroke 240ms ease, filter 240ms ease;
 }
 
-.effort-slider__thumb-halo {
+.effort-slider--stellar .effort-slider__brain {
+  fill: var(--effort-top-fill);
+  stroke: var(--effort-top-ring);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--effort-top-fill) 55%, transparent));
+}
+
+.effort-slider__star {
   position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: radial-gradient(circle,
-    color-mix(in srgb, var(--effort-pink) 40%, transparent),
-    transparent 75%);
-  opacity: .5;
-  transition: opacity 240ms ease, transform 380ms ease;
+  top: -5px;
+  right: -4px;
+  width: 13px;
+  height: 13px;
+  color: light-dark(#6d28d9, #c4b5fd);
+  opacity: 0;
+  transform: scale(0.4) rotate(-25deg);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 60%, transparent));
 }
 
-.effort-slider:hover .effort-slider__thumb-halo,
-.effort-slider:focus-visible .effort-slider__thumb-halo {
-  opacity: .9;
+.effort-slider--stellar .effort-slider__star {
+  animation: effort-star-in 520ms cubic-bezier(0.2, 1.35, 0.3, 1) both;
 }
 
 .effort-slider--dragging .effort-slider__fill,
-.effort-slider--dragging .effort-slider__thumb {
+.effort-slider--dragging .effort-slider__knob {
   transition: none;
 }
 
-.effort-slider__cosmos {
-  z-index: 1;
-  overflow: hidden;
-  opacity: 0;
-  background:
-    radial-gradient(ellipse at 100% 50%, color-mix(in srgb, #8576ff 34%, transparent), transparent 62%),
-    linear-gradient(90deg, transparent 12%, #4b2f7f30 55%, #6246b744 100%);
-  transition: opacity 350ms ease;
-  -webkit-mask-image: linear-gradient(to right, transparent 3%, #000 35%);
-  mask-image: linear-gradient(to right, transparent 3%, #000 35%);
-}
-
-.effort-slider--stellar .effort-slider__cosmos {
-  opacity: 1;
-}
-
-.effort-slider__spark {
-  position: absolute;
-  display: block;
-  width: 3px;
-  height: 3px;
-  border-radius: 1px;
-  background: #ecc5ff;
-  box-shadow: 0 0 5px 1px color-mix(in srgb, #dba7ff 34%, transparent);
-  opacity: .65;
-  animation: effort-spark-twinkle 2.2s ease-in-out infinite paused;
-}
-
-.effort-slider__spark:nth-child(3n) {
-  background: #a5c8ff;
-  box-shadow: 0 0 5px 1px #7f96ff55;
-}
-
-.effort-slider__spark:nth-child(4n) {
-  width: 2px;
-  height: 5px;
-  border-radius: 2px;
-}
-
-.effort-slider--stellar .effort-slider__spark {
-  animation-play-state: running;
-}
-
-.effort-slider__nova-star {
-  position: absolute;
-  z-index: 3;
-  top: -3px;
-  left: 18px;
-  width: 16px;
-  height: 16px;
-  overflow: visible;
-  color: #b9a4ff;
-  opacity: 0;
-  transform: scale(.6) rotate(-30deg);
-  filter: drop-shadow(0 0 7px #9375e5);
-}
-
-.effort-slider--stellar .effort-slider__nova-star {
-  animation: effort-star-appear 650ms cubic-bezier(.16, 1, .3, 1) both;
-}
-
-.effort-slider--stellar .effort-slider__thumb-halo {
-  opacity: 1;
-  transform: scale(1.55);
-  background: radial-gradient(circle, #c39fff60, #9189ff32 40%, transparent 72%);
-}
-
 .effort-panel__footer {
-  margin-top: 7px;
+  display: flex;
+  justify-content: space-between;
+  margin-top: 9px;
   padding: 0 1px;
+  font-size: 11px;
   color: var(--text-muted);
-  font-size: 10px;
 }
 
 .effort-panel__footer span:last-child {
-  color: color-mix(in srgb, var(--text-primary) 72%, var(--text-muted));
+  color: color-mix(in srgb, var(--text-primary) 70%, var(--text-muted));
 }
 
 .effort-panel__error {
@@ -285,36 +255,31 @@
   color: var(--color-error);
 }
 
-@keyframes effort-value-enter {
-  from { opacity: .4; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes effort-flow {
+  to { transform: translateX(-240px); }
 }
 
-@keyframes effort-spark-twinkle {
-  0%, 100% { opacity: .35; transform: translateY(1px) scale(.7); }
-  50% { opacity: 1; transform: translateY(-1px) scale(1.15); }
-}
-
-@keyframes effort-star-appear {
-  0% { opacity: 0; transform: scale(.5) rotate(-35deg); }
-  45% { opacity: .85; transform: scale(1.2) rotate(8deg); }
-  100% { opacity: .7; transform: scale(1) rotate(0); }
+@keyframes effort-star-in {
+  0% { opacity: 0; transform: scale(0.4) rotate(-25deg); }
+  60% { opacity: 1; transform: scale(1.12) rotate(6deg); }
+  100% { opacity: 0.95; transform: scale(1) rotate(0deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .effort-panel__value,
   .effort-slider__fill,
   .effort-slider__stop,
-  .effort-slider__thumb,
-  .effort-slider__thumb-halo,
-  .effort-slider__cosmos,
-  .effort-slider__spark,
-  .effort-slider__nova-star {
+  .effort-slider__knob,
+  .effort-slider__brain,
+  .effort-slider__flow {
     transition: none;
     animation: none;
   }
-  .effort-slider--stellar .effort-slider__nova-star {
-    opacity: .7;
+  .effort-slider__flow::before,
+  .effort-slider__star {
+    animation: none;
+  }
+  .effort-slider--stellar .effort-slider__star {
+    opacity: 0.95;
     transform: none;
   }
 }
