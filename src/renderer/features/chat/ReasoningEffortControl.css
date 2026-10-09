@@ -200,18 +200,31 @@
 }
 
 .effort-slider__brain {
-  fill: var(--effort-knob-fill);
   stroke: var(--effort-knob-ring);
-  stroke-width: 1.5;
+  stroke-width: 1.6;
   stroke-linejoin: round;
+  stroke-linecap: round;
   filter: drop-shadow(0 1px 2px color-mix(in srgb, #000 28%, transparent));
-  transition: fill 240ms ease, stroke 240ms ease, filter 240ms ease;
+  transition: stroke 240ms ease, filter 240ms ease;
+}
+
+/* 轮廓与中缝共用描边色；填充只给外轮廓，中缝保持镂空线条。 */
+.effort-slider__brain path:first-child {
+  fill: var(--effort-knob-fill);
+  transition: fill 240ms ease;
+}
+
+.effort-slider__brain path:last-child {
+  fill: none;
 }
 
 .effort-slider--stellar .effort-slider__brain {
-  fill: var(--effort-top-fill);
   stroke: var(--effort-top-ring);
   filter: drop-shadow(0 0 6px color-mix(in srgb, var(--effort-top-fill) 55%, transparent));
+}
+
+.effort-slider--stellar .effort-slider__brain path:first-child {
+  fill: var(--effort-top-fill);
 }
 
 .effort-slider__star {
