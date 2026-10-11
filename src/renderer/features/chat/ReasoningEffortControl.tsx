@@ -194,7 +194,8 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
       <div className="effort-panel__header">
         <div className="effort-panel__heading" aria-live="polite">
           <span className="effort-panel__eyebrow">思考强度</span>
-          <span className={`effort-panel__value${isHighest ? ' effort-panel__value--highest' : ''}`} key={shownTier}>
+          {/* 标签节点必须保持稳定：E2E 靠观察它的原地文本变更验证不闪回，重挂会断开观察。 */}
+          <span className={`effort-panel__value${isHighest ? ' effort-panel__value--highest' : ''}`}>
             {shownLabel}
           </span>
         </div>
