@@ -1,134 +1,300 @@
-/* 思考强度浮层：档位名 + 离散档位滑杆。参考 Codex 桌面端的紧凑滑杆形态，
-   表面与 composer 同族（bg-card / border-warm / shadow-popup），深浅色一致。 */
-
+/*
+ * 思考强度浮层：连续拖动、离散落档的档位滑杆。
+ * 旋钮半宽与轨道外边距必须相等（15px），端点停靠时旋钮才与轨道两端齐平。
+ * 最高档的粒子层只跑 transform 动画（合成器线程），且仅在最高档解除 paused。
+ */
 .effort-control {
   display: inline-flex;
 }
 
-.effort-control__content {
+.effort-control__trigger .effort-control__content {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.effort-control__label {
+  gap: 5px;
   font-variant-numeric: tabular-nums;
 }
 
 .effort-panel {
+  --effort-knob-fill: light-dark(#d95f9c, #f472b6);
+  --effort-knob-ring: light-dark(#8e2a5f, #9f1239);
+  --effort-top-fill: light-dark(#7c5cf0, #a78bfa);
+  --effort-top-ring: light-dark(#4c2fb8, #6d28d9);
+  --effort-dot-a: light-dark(#ffffff, #e9d5ff);
+  --effort-dot-b: light-dark(#f5f3ff, #a5b4fc);
+  --effort-dot-c: light-dark(#fdf2f8, #f9a8d4);
+  --effort-fill-lo: color-mix(in srgb, var(--effort-knob-ring) 34%, transparent);
+  --effort-fill-mid: color-mix(in srgb, var(--effort-knob-fill) 62%, transparent);
+  --effort-fill-hi: color-mix(in srgb, var(--effort-knob-fill) 86%, transparent);
+  --effort-top-lo: color-mix(in srgb, var(--effort-top-ring) 58%, transparent);
+  --effort-top-mid: color-mix(in srgb, var(--effort-top-fill) 72%, transparent);
+  --effort-top-hi: color-mix(in srgb, var(--effort-top-fill) 95%, transparent);
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: 240px;
-  padding: 4px 3px 4px;
+  width: 248px;
+  padding: 6px 6px 4px;
   user-select: none;
+  color: var(--text-primary);
+}
+
+.effort-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 26px;
+  margin-bottom: 10px;
+}
+
+.effort-panel__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.effort-panel__eyebrow {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .effort-panel__value {
-  text-align: center;
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-primary);
-  text-shadow: 0 1px 0 color-mix(in srgb, var(--bg-card) 75%, transparent);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
 }
 
-.effort-panel__error {
-  color: var(--color-error);
-  font-size: 12px;
-  line-height: 1.5;
+.effort-panel__value--highest {
+  color: light-dark(#6d28d9, #c4b5fd);
 }
 
-/* 轨道容器：左右各留出半个 thumb 的边距，端点停靠时不越界 */
+.effort-panel__info {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: help;
+  outline: none;
+}
+
+.effort-panel__info:focus-visible {
+  box-shadow: var(--ring-focus);
+}
+
 .effort-slider {
-  --effort-start: light-dark(#369dcf, #67c8f5);
-  --effort-blue: light-dark(#5279e8, #648bfa);
-  --effort-violet: light-dark(#7e63dc, #8b75f5);
-  --effort-end: light-dark(#a16be0, #b080f5);
   position: relative;
   height: 36px;
-  margin: 0 16px;
+  margin: 0 18px;
   cursor: pointer;
   touch-action: none;
-  border-radius: 999px;
   outline: none;
 }
 
 .effort-slider:focus-visible {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-focus) 48%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--color-focus) 70%, transparent);
+  outline-offset: 3px;
+  border-radius: 10px;
+}
+
+.effort-slider__track,
+.effort-slider__fill,
+.effort-slider__flow {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: -18px;
+  right: -18px;
+  border-radius: 8px;
+  pointer-events: none;
 }
 
 .effort-slider__track {
-  position: absolute;
-  left: -16px;
-  right: -16px;
-  top: 5px;
-  height: 26px;
-  border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--border-strong) 30%, transparent);
-  background: color-mix(in srgb, var(--text-muted) 20%, transparent);
-  box-shadow: inset 0 1px 2px color-mix(in srgb, #000000 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 26%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 10%, var(--bg-card));
+  box-shadow: inset 0 1px 3px color-mix(in srgb, #000 8%, transparent);
 }
 
+/* 渐变铺满整条轨道，裁切边停在旋钮中心：18px 是旋钮半宽伸进轨道的部分。 */
 .effort-slider__fill {
+  background: linear-gradient(90deg, var(--effort-fill-lo), var(--effort-fill-mid) 52%, var(--effort-fill-hi));
+  clip-path: inset(0 calc(100% - 18px - (100% - 36px) * var(--effort-ratio)) 0 0);
+  transition: clip-path 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.effort-slider--stellar .effort-slider__fill {
+  background: linear-gradient(90deg, var(--effort-top-lo), var(--effort-top-mid) 58%, var(--effort-top-hi));
+}
+
+/* 粒子层：点阵以 240px 为周期无缝漂移，位移等于周期；仅最高档解除 paused。 */
+.effort-slider__flow {
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 320ms ease;
+}
+
+.effort-slider--stellar .effort-slider__flow {
+  opacity: 1;
+}
+
+.effort-slider__flow::before {
+  content: '';
   position: absolute;
-  left: -16px;
-  right: -16px;
-  top: 5px;
-  height: 26px;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    var(--effort-start) 0%,
-    var(--effort-blue) 35%,
-    var(--effort-violet) 70%,
-    var(--effort-end) 100%
-  );
-  /* 渐变固定在整条轨道上，裁切边缘停在滑块中心。 */
-  clip-path: inset(0 calc((100% - 32px) * (1 - var(--effort-position)) + 16px) 0 0);
-  transition: clip-path 130ms cubic-bezier(0.2, 0.75, 0.25, 1);
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: calc(100% + 240px);
+  background-repeat: repeat;
+  background-size: 240px 100%;
+  background-image:
+    radial-gradient(circle 1.7px at 16px 7px, var(--effort-dot-a) 97%, transparent),
+    radial-gradient(circle 1.3px at 58px 18px, var(--effort-dot-b) 97%, transparent),
+    radial-gradient(circle 1.5px at 104px 9px, var(--effort-dot-c) 97%, transparent),
+    radial-gradient(circle 1.2px at 150px 20px, var(--effort-dot-a) 97%, transparent),
+    radial-gradient(circle 2px at 196px 12px, var(--effort-dot-b) 97%, transparent),
+    radial-gradient(circle 1.1px at 224px 16px, var(--effort-dot-c) 97%, transparent);
+  animation: effort-flow 11s linear infinite paused;
+}
+
+.effort-slider--stellar .effort-slider__flow::before {
+  animation-play-state: running;
 }
 
 .effort-slider__stop {
   position: absolute;
   top: 50%;
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   transform: translate(-50%, -50%);
-  background: color-mix(in srgb, var(--text-muted) 70%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
   pointer-events: none;
+  transition: background-color 180ms ease;
 }
 
 .effort-slider__stop--active {
-  background: color-mix(in srgb, #ffffff 72%, transparent);
+  background: color-mix(in srgb, #ffffff 78%, transparent);
 }
 
-.effort-slider__thumb {
+/* 模型默认档用竖标，与圆点档位区分：它不是已选位置，而是"回这里即清除覆盖"。 */
+.effort-slider__stop--default {
+  width: 4px;
+  height: 13px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 82%, transparent);
+}
+
+.effort-slider__stop--default.effort-slider__stop--active {
+  background: color-mix(in srgb, #ffffff 86%, transparent);
+}
+
+.effort-slider__knob {
   position: absolute;
   top: 50%;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  left: calc(var(--effort-ratio) * 100%);
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
   transform: translate(-50%, -50%);
-  background: #ffffff;
-  box-shadow:
-    0 2px 7px color-mix(in srgb, #000000 28%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--border-strong) 18%, transparent);
-  transition: left 130ms cubic-bezier(0.2, 0.75, 0.25, 1), box-shadow 130ms ease;
   pointer-events: none;
+  transition: left 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.effort-slider:hover .effort-slider__thumb,
-.effort-slider:focus-visible .effort-slider__thumb {
-  box-shadow:
-    0 3px 9px color-mix(in srgb, #000000 30%, transparent),
-    0 0 0 3px color-mix(in srgb, var(--color-brand) 13%, transparent);
+.effort-slider__brain {
+  width: 46px;
+  height: 46px;
+  stroke: var(--effort-knob-ring);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  filter: drop-shadow(0 1px 2px color-mix(in srgb, #000 28%, transparent));
+  transition: stroke 240ms ease, filter 240ms ease;
+}
+
+/* 轮廓与中缝共用描边色；填充只给外轮廓，中缝保持镂空线条。 */
+.effort-slider__brain path:first-child {
+  fill: var(--effort-knob-fill);
+  transition: fill 240ms ease;
+}
+
+.effort-slider__brain path:last-child {
+  fill: none;
+}
+
+.effort-slider--stellar .effort-slider__brain {
+  stroke: var(--effort-top-ring);
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--effort-top-fill) 55%, transparent));
+}
+
+.effort-slider--stellar .effort-slider__brain path:first-child {
+  fill: var(--effort-top-fill);
+}
+
+.effort-slider__star {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  color: light-dark(#6d28d9, #c4b5fd);
+  opacity: 0;
+  transform: scale(0.4) rotate(-25deg);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, currentColor 60%, transparent));
+}
+
+.effort-slider--stellar .effort-slider__star {
+  animation: effort-star-in 520ms cubic-bezier(0.2, 1.35, 0.3, 1) both;
+}
+
+.effort-slider--dragging .effort-slider__fill,
+.effort-slider--dragging .effort-slider__knob {
+  transition: none;
+}
+
+.effort-panel__footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 9px;
+  padding: 0 1px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.effort-panel__footer span:last-child {
+  color: color-mix(in srgb, var(--text-primary) 70%, var(--text-muted));
+}
+
+.effort-panel__error {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--color-error);
+}
+
+@keyframes effort-flow {
+  to { transform: translateX(-240px); }
+}
+
+@keyframes effort-star-in {
+  0% { opacity: 0; transform: scale(0.4) rotate(-25deg); }
+  60% { opacity: 1; transform: scale(1.12) rotate(6deg); }
+  100% { opacity: 0.95; transform: scale(1) rotate(0deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .effort-slider__fill,
-  .effort-slider__thumb {
+  .effort-slider__stop,
+  .effort-slider__knob,
+  .effort-slider__brain,
+  .effort-slider__flow {
     transition: none;
+    animation: none;
+  }
+  .effort-slider__flow::before,
+  .effort-slider__star {
+    animation: none;
+  }
+  .effort-slider--stellar .effort-slider__star {
+    opacity: 0.95;
+    transform: none;
   }
 }

@@ -37,9 +37,11 @@ const manifestFile = join(rendererOut, '.vite/manifest.json')
  * 详见 src/renderer/features/browser/BrowserWorkspaceBody.tsx 顶部说明。
  * 若将来要重新做，必须先给这些契约补「就绪」信号，而不是直接 lazy。
  *
- * 当前留约 3% 余量给依赖补丁的小幅浮动。
+ * 思考强度浮层重设计（连续拖拽、默认档竖标、最高档粒子与星光）是一方 CSS/JSX，
+ * 无新依赖：粒子为合成器 transform 动画，拖动不触发 React 重渲染。实测 1498.4 KB，
+ * 预算自 1495 上调到 1500；余量已薄，后续首屏增长必须先偿还或给出同等说明。
  */
-const BUDGET_KB = Number(process.env.NOVA_BUNDLE_ENTRY_KB ?? 1495)
+const BUDGET_KB = Number(process.env.NOVA_BUNDLE_ENTRY_KB ?? 1500)
 
 interface ManifestChunk {
   file: string
