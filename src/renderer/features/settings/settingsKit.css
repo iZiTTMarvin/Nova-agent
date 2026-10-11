@@ -1,5 +1,5 @@
-/* 设置页原语样式：页面栈、分组、行组、行右槽。
-   行组为边到边开放行：hairline 分隔、无卡片壳，仅首尾行带外圆角。 */
+/* 设置页原语样式：页面栈、分组、行组、行图标与行右槽。
+   分组标题是卡片上方的弱化小标签；行组为圆角卡片、hairline 分隔。 */
 
 .settings-page {
   display: grid;
@@ -12,7 +12,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   align-content: start;
-  gap: 10px;
+  gap: 8px;
 }
 
 .settings-section__header {
@@ -27,13 +27,16 @@
   display: grid;
   gap: 3px;
   min-width: 0;
+  padding-inline: 4px;
 }
 
 .settings-section__title-stack h3 {
   margin: 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
 }
 
 .settings-section__action {
@@ -59,7 +62,22 @@
 
 /* Item 默认带圆角卡片观感；行组内拉直，hairline 才能读成一条直线 */
 .settings-rows > .astryx-item {
+  gap: 12px;
+  padding: 12px 16px;
   border-radius: 0;
+}
+
+.settings-row-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-cream);
+  border-radius: var(--radius-md);
+  background: var(--bg-sand);
+  color: var(--text-secondary);
 }
 
 /* 只对首尾行还外圆角：不用 overflow 裁剪，避免切掉焦点环 */

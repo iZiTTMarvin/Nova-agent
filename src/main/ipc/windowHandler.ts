@@ -17,13 +17,16 @@ import {
 /**
  * 注册窗口控制相关的 IPC handler
  * @param getMainWindow 获取主窗口实例的函数
+ * @param onRendererReady 渲染进程首屏就绪且窗口揭开后回调（reload 时会再次触发）
  */
 export function registerWindowHandler(
-  getMainWindow: () => BrowserWindow | null
+  getMainWindow: () => BrowserWindow | null,
+  onRendererReady: () => void
 ): void {
   handle(WINDOW_RENDERER_READY, async () => {
     const win = getMainWindow()
     if (win) await renderAndShowWindow(win)
+    onRendererReady()
   })
 
   handle(WINDOW_BRAND_FRAME_READY, async () => {

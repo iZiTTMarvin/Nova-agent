@@ -34,6 +34,19 @@ body
     expect(getYamlString(result!.data, 'occupation')).toContain('Software Engineer')
   })
 
+  it('需 fallback 的同一内容重复解析结果一致（目录重扫不得污染技能描述）', () => {
+    const raw = `---
+name: repeat-scan
+description: Design guide: landing pages and dashboards
+---
+body
+`
+    const first = parseYamlFrontmatter(raw)
+    const second = parseYamlFrontmatter(raw)
+    expect(second).toEqual(first)
+    expect(getYamlString(second!.data, 'description')).toBe('Design guide: landing pages and dashboards')
+  })
+
   it('无 frontmatter 时返回空 data', () => {
     const result = parseYamlFrontmatter('# title\n\npara')
     expect(Object.keys(result!.data)).toHaveLength(0)

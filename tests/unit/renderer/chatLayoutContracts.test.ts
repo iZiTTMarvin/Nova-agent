@@ -63,13 +63,8 @@ describe('chat panel layout contracts', () => {
     expect(tier1Notice).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
   })
 
-  it('freezes reading column widths via per-container variables while inspector drags', () => {
+  it('clips overflow while reading column widths are frozen', () => {
     // 根容器裁剪溢出：冻结宽度超出收缩后的主区时不产生横向滚动
     expect(rule('.chat-panel--reading-width-frozen')).toMatch(/overflow:\s*hidden/)
-    // 阅读柱与 Composer 冻结到各自容器的实际渲染宽度，而非单一 max-width
-    expect(rule('.chat-panel--reading-width-frozen .chat-messages__flow-inner'))
-      .toMatch(/width:\s*var\(--chat-frozen-flow-width,\s*100%\)/)
-    expect(rule('.chat-panel--reading-width-frozen .chat-panel__composer-inner'))
-      .toMatch(/width:\s*var\(--chat-frozen-composer-width,\s*100%\)/)
   })
 })

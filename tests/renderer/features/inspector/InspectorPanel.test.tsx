@@ -128,6 +128,57 @@ describe('InspectorPanel', () => {
     }
   })
 
+  it('宽度过渡开始/结束成对通知：播完、反向打断与卸载都会结束会话', async () => {
+    let finish: () => void = () => {}
+    let finished = Promise.resolve()
+    const nextTransition = (): void => {
+      finished = new Promise<void>(resolve => { finish = resolve })
+    }
+    const original = HTMLElement.prototype.getAnimations
+    HTMLElement.prototype.getAnimations = () => [{ finished } as unknown as Animation]
+    try {
+      const events: Array<number | null> = []
+      const renderer = renderDom(<InspectorPanel onSlideChange={delta => events.push(delta)} />)
+      const aside = renderer.container.querySelector<HTMLElement>('.inspector-panel')!
+      let renderedWidth = 0
+      vi.spyOn(aside, 'getBoundingClientRect').mockImplementation(() => ({ width: renderedWidth }) as DOMRect)
+      const width = useLayoutStore.getState().inspectorWidth
+
+      nextTransition()
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      expect(events).toEqual([-width])
+      await act(async () => {
+        finish()
+        await finished
+      })
+      expect(events).toEqual([-width, null])
+
+      // 收起途中反向展开：先结束旧会话，再按当前帧宽度开启新会话
+      renderedWidth = width
+      nextTransition()
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      renderedWidth = width / 2
+      act(() => {
+        useLayoutStore.getState().toggleInspector()
+      })
+      expect(events).toEqual([-width, null, width, null, -width / 2])
+
+      // 卸载结束进行中的会话；之后过渡完成不再重复通知
+      renderer.unmount()
+      await act(async () => {
+        finish()
+        await finished
+      })
+      expect(events).toEqual([-width, null, width, null, -width / 2, null])
+    } finally {
+      HTMLElement.prototype.getAnimations = original
+    }
+  })
+
   it('顶栏标签：首页只有启动器，打开视图出现标签，× 关闭后切到邻近标签，全部关闭回启动器', () => {
     const renderer = renderDom(<InspectorPanel />)
     act(() => {

@@ -274,6 +274,24 @@ button {
   }
 }
 
+@keyframes settings-shell-exit {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes settings-pane-exit {
+  0% {
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    transform: scale(0.99) translateY(4px);
+  }
+}
+
 @keyframes settings-tab-in {
   0% {
     opacity: 0;

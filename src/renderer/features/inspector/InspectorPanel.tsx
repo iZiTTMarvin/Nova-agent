@@ -21,14 +21,15 @@ import { InspectorTabStrip } from './InspectorTabStrip'
 import { InspectorToggleButton } from './InspectorToggleButton'
 import { VIEW_META } from './inspectorViewMeta'
 import { useInspectorResize } from './useInspectorResize'
+import { useInspectorSlide } from './useInspectorSlide'
 import { useInspectorTabs } from './useInspectorTabs'
-import { usePanelPresence } from './usePanelPresence'
+import { usePanelPresence } from '../../hooks/usePanelPresence'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import './InspectorPanel.css'
 
 /**
- * 开合用宽度过渡：内层固定宽度并靠右，外壳只做裁剪，所以动画期间面板内容不重排，
- * 只有相邻聊天区随宽度变化。
+ * 开合用宽度过渡：内层固定宽度并靠右，外壳只做裁剪，所以动画期间面板内容不重排；
+ * 相邻聊天区经过渡会话通知提前排到终态宽度。
  * 拖拽期间：宽度只写 DOM（ref），过渡关闭、不触发 store / localStorage，松手一次性提交。
  */
 const SLIDE_TRANSITION = 'width var(--transition-normal), opacity var(--transition-normal)'
@@ -36,9 +37,11 @@ const SLIDE_TRANSITION = 'width var(--transition-normal), opacity var(--transiti
 export interface InspectorPanelProps {
   /** 拖拽会话开始/结束成对通知；连接方负责冻结/恢复相邻布局，Inspector 自身不持有外部状态 */
   onDragSessionChange?: (active: boolean) => void
+  /** 宽度过渡开始（主区宽度变化量）/结束（null）成对通知，语义同上 */
+  onSlideChange?: (mainWidthDelta: number | null) => void
 }
 
-export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionChange }) => {
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionChange, onSlideChange }) => {
   const learnSessionId = useWorkspaceStore(s => s.currentMode === 'learn' ? s.currentSessionId : null)
   const isLearn = learnSessionId !== null
   const devOpen = useLayoutStore(s => s.inspectorOpen)
@@ -101,6 +104,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     ? Math.max(inspectorWidth, BROWSER_PANE_WIDTH_MIN)
     : inspectorWidth
   const width = inspectorOpen ? effectiveWidth : 0
+  useInspectorSlide({ shellRef: asideRef, width, dragging, onSlideChange })
 
   const renderPane = (key: InspectorViewKey): React.ReactNode => {
     switch (key) {

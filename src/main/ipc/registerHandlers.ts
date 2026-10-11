@@ -49,6 +49,7 @@ import {
   isMemoryExtractEnabled
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
+import { alignSkillsToWorkspace } from '../services/SkillServiceHost'
 import { recoverInterruptedTurnDraftsOnStartup } from '../../runtime/sessions/turnDraftRecovery'
 import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
 import { getMainWindow } from '../mainWindowRef'
@@ -134,6 +135,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   })
   initializeMemoryMaintenanceHost()
   workspaceService.subscribeWorkspaceRootChanges(({ previousRoot, nextRoot }) => {
+    alignSkillsToWorkspace(nextRoot)
     scheduleMemoryReconcileForWorkspace(nextRoot)
     if (previousRoot && previousRoot !== nextRoot) {
       void closeCodeGraphForWorkspace(previousRoot).catch((error) => {

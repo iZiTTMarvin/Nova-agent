@@ -1,5 +1,6 @@
 import { app } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { createRequire } from 'node:module'
+import type { AppUpdater } from 'electron-updater'
 import type { BrowserWindow } from 'electron'
 import type {
   AppUpdateInfo,
@@ -107,8 +108,33 @@ function cloneSnapshot(snapshot: AppUpdateSnapshot): AppUpdateSnapshot {
   return structuredClone(snapshot)
 }
 
+// electron-updater 依赖链求值约 100ms，首次检查时才载入，不占启动关键路径。
+// 用 require 而非 import()：它的 autoUpdater 是 getter 导出，ESM 互操作拿不到命名导出。
 class ElectronAppUpdaterAdapter implements AppUpdaterPort {
+  private listeners: AppUpdaterListeners | null = null
+  private updater: AppUpdater | null = null
+
   initialize(listeners: AppUpdaterListeners): void {
+    this.listeners = listeners
+  }
+
+  async checkForUpdates(): Promise<void> {
+    await this.load().checkForUpdates()
+  }
+
+  async downloadUpdate(): Promise<void> {
+    await this.load().downloadUpdate()
+  }
+
+  quitAndInstall(): void {
+    this.load().quitAndInstall(true, true)
+  }
+
+  private load(): AppUpdater {
+    if (this.updater) return this.updater
+    const listeners = this.listeners
+    if (!listeners) throw new Error('自动更新尚未初始化')
+    const { autoUpdater }: typeof import('electron-updater') = createRequire(__filename)('electron-updater')
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.logger = mainLog
@@ -118,18 +144,8 @@ class ElectronAppUpdaterAdapter implements AppUpdaterPort {
     autoUpdater.on('download-progress', listeners.progress)
     autoUpdater.on('update-downloaded', listeners.downloaded)
     autoUpdater.on('error', listeners.error)
-  }
-
-  async checkForUpdates(): Promise<void> {
-    await autoUpdater.checkForUpdates()
-  }
-
-  async downloadUpdate(): Promise<void> {
-    await autoUpdater.downloadUpdate()
-  }
-
-  quitAndInstall(): void {
-    autoUpdater.quitAndInstall(true, true)
+    this.updater = autoUpdater
+    return autoUpdater
   }
 }
 

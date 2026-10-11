@@ -63,20 +63,25 @@ describe('主窗口首次内容帧生命周期', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('等待实际内容帧时保持隐藏，并合并 StrictMode 的重复提交通知', async () => {
+  it('等待实际内容帧时保持隐藏，合并重复通知且后到者在揭开后才返回', async () => {
     let finish: ((image: { isEmpty: () => boolean }) => void) | undefined
     win.frame = new Promise(resolve => { finish = resolve })
     const rendered = renderAndShowWindow(win.asWindow())
-    await renderAndShowWindow(win.asWindow())
+    let visibleWhenDuplicateSettled: boolean | undefined
+    const duplicate = renderAndShowWindow(win.asWindow()).then(() => {
+      visibleWhenDuplicateSettled = win.visible
+    })
+    await vi.advanceTimersByTimeAsync(0)
     expect(win.visible).toBe(false)
+    expect(visibleWhenDuplicateSettled).toBeUndefined()
     if (process.platform === 'win32') {
       expect(win.nativeShown).toBe(true)
       expect(win.opacity).toBe(0)
       expect(win.throttled).toBe(false)
     }
     finish?.({ isEmpty: () => false })
-    await rendered
-    expect(win.visible).toBe(true)
+    await Promise.all([rendered, duplicate])
+    expect(visibleWhenDuplicateSettled).toBe(true)
     expect(win.shows).toBe(1)
   })
 

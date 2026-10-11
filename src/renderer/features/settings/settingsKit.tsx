@@ -1,6 +1,6 @@
 /**
  * 设置页原语 —— 页面 = 命名分组列表；分组 = 行列表（rows）或裸块（bare）；
- * 行 = 左侧 label/描述 + 右侧限宽控件。行组无边到边、hairline 分隔。
+ * 行 = 可选图标块 + label/描述 + 右侧限宽控件。行组为圆角卡片、hairline 分隔。
  */
 import type { ComponentProps, ReactNode } from 'react'
 import { Heading } from '@astryxdesign/core/Heading'
@@ -61,6 +61,8 @@ export function SettingsSection(props: {
 export function SettingsRow(props: {
   label: ReactNode
   description?: ReactNode
+  /** 行首图标，渲染在统一的图标块内 */
+  icon?: ReactNode
   /** 行右侧控件簇，限宽并可换行，避免压扁 label 列 */
   end?: ReactNode
   align?: 'center' | 'start'
@@ -69,6 +71,13 @@ export function SettingsRow(props: {
     <Item
       density="balanced"
       align={props.align}
+      startContent={
+        props.icon == null ? undefined : (
+          <span className="settings-row-icon" aria-hidden="true">
+            {props.icon}
+          </span>
+        )
+      }
       label={props.label}
       description={props.description == null ? undefined : <>{props.description}</>}
       endContent={

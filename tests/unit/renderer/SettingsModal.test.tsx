@@ -174,6 +174,38 @@ describe('SettingsModal 设置导航与视觉样式', () => {
     unmount()
   })
 
+  it('侧栏搜索按名称、描述与关键词过滤分区，回车进入首个结果', async () => {
+    useSettingsStore.setState({ isConfigModalOpen: true })
+    const { container, unmount } = renderDom(<SettingsModal />)
+    const search = container.querySelector<HTMLInputElement>('.settings-search__input')!
+    const type = async (value: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, value)
+        search.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    const labels = () => [...container.querySelectorAll('.settings-nav__item-label')].map(el => el.textContent)
+
+    await type('THEME')
+    expect(labels()).toEqual(['通用'])
+
+    await type('Tavily')
+    expect(labels()).toEqual(['联网搜索'])
+    expect(container.querySelectorAll('.settings-nav__group-title')).toHaveLength(1)
+    // 当前分区被过滤掉时，Tab 落点交给首个可见项
+    expect(container.querySelector('.settings-nav__item')?.getAttribute('tabindex')).toBe('0')
+
+    await act(async () => {
+      search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(container.querySelector('.settings-shell__title')?.textContent).toBe('联网搜索')
+
+    await type('不存在的设置项')
+    expect(labels()).toEqual([])
+    expect(container.textContent).toContain('没有匹配的设置')
+    unmount()
+  })
+
   it('点击「返回应用」按钮触发关闭设置', async () => {
     useSettingsStore.setState({ isConfigModalOpen: true })
     const { container, unmount } = renderDom(<SettingsModal />)

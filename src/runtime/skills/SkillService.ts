@@ -135,6 +135,13 @@ export class SkillService {
     this.loadSkillState()
   }
 
+  /** 切换工作区但推迟扫描，下次读取目录时按新工作区加载 */
+  selectWorkspace(workspaceRoot: string | null): void {
+    if (workspaceRoot === this.workspaceRoot) return
+    this.workspaceRoot = workspaceRoot
+    this.registry = null
+  }
+
   /** 加载或切换工作区 */
   load(workspaceRoot?: string | null): SkillRegistry {
     if (workspaceRoot !== undefined) {

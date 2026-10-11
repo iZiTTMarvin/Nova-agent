@@ -101,16 +101,30 @@ const MaybeProfiler: React.FC<{
 /** 距列表顶部小于此像素时触发向更早方向补载历史 */
 const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
 
-/** Inspector 拖拽期间冻结阅读宽度的根节点标记 class（与 CSS 冻结规则成对） */
+/** Inspector 拖拽与开合过渡期间冻结阅读宽度的根节点标记 class（与 CSS 冻结规则成对） */
 const READING_FROZEN_CLASS = 'chat-panel--reading-width-frozen'
 
 /**
- * ChatPanel 命令式布局接口：由 App 在 Inspector 拖拽会话期间调用，
- * 冻结消息阅读柱与 Composer 的实际渲染宽度，从源头消除逐帧文字重排。
+ * ChatPanel 命令式布局接口：由 App 在 Inspector 拖拽会话或宽度过渡期间调用，
+ * 冻结消息阅读柱与 Composer 的宽度，从源头消除逐帧文字重排。
+ * 传入主区宽度变化量时冻结到终态宽度，过渡一开始就完成唯一一次折行。
  */
 export interface ChatPanelHandle {
-  freezeReadingWidth: () => void
+  freezeReadingWidth: (mainWidthDelta?: number) => void
   restoreReadingWidth: () => void
+}
+
+/** 阅读柱宽度为 min(max-width, 父容器内容宽)；按主区宽度变化量投影终态 */
+function projectReadingWidth(el: HTMLElement, mainWidthDelta: number): number {
+  const parent = el.parentElement
+  if (!parent) return el.getBoundingClientRect().width
+  const parentStyle = getComputedStyle(parent)
+  const available = parent.clientWidth
+    - parseFloat(parentStyle.paddingLeft)
+    - parseFloat(parentStyle.paddingRight)
+    + mainWidthDelta
+  const maxWidth = parseFloat(getComputedStyle(el).maxWidth)
+  return Math.max(0, Number.isNaN(maxWidth) ? available : Math.min(maxWidth, available))
 }
 
 export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref }) => {
@@ -316,19 +330,12 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     [skillTrigger, fileTrigger]
   )
 
-  // 应用启动即可加载技能列表；工作区切换时 reload，并订阅 skill:changed
+  // 技能目录随工作区切换由主进程对齐并推送 skill:changed，这里只拉首帧并订阅
   useEffect(() => {
     void refreshSkills()
     const unsub = window.nova.skill.onChange(snapshot => setSnapshot(snapshot))
     return unsub
   }, [refreshSkills, setSnapshot])
-
-  useEffect(() => {
-    if (currentProject) {
-      // 失败由 skill:changed 错误快照广播，这里只避免未处理拒绝
-      void window.nova.skill.reload(currentProject).catch(() => {})
-    }
-  }, [currentProject])
 
   // 设置页「使用技能」预填 composer：纯 slash 插入芯片，其余仍写明文
   useEffect(() => {
@@ -390,19 +397,20 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   /** composer 阅读柱容器：Inspector 拖拽时冻结其实际渲染宽度 */
   const composerInnerRef = useRef<HTMLDivElement | null>(null)
 
-  // 冻结值取两个容器各自的实际渲染宽度（窄窗口、滚动条和响应式 padding 下互不相同），
-  // 不能用主区宽度或单一 max-width 代替；已冻结时重复调用保持首次测量值不变
-  const freezeReadingWidth = useCallback(() => {
+  // 冻结值按两个容器各自的几何计算（窄窗口、滚动条和响应式 padding 下互不相同），
+  // 不能用主区宽度或单一 max-width 代替。拖拽冻结取当前渲染宽度，重复调用保持首次测量值；
+  // 过渡冻结每次按新的变化量重算（过渡可被反向打断）。
+  // 宽度直接写在两个容器上：写根节点自定义属性会让整棵聊天子树重算样式
+  const freezeReadingWidth = useCallback((mainWidthDelta?: number) => {
     const root = rootRef.current
-    if (!root || root.classList.contains(READING_FROZEN_CLASS)) return
-    const flow = messagesContentRef.current
-    const composer = composerInnerRef.current
-    if (flow) {
-      root.style.setProperty('--chat-frozen-flow-width', `${flow.getBoundingClientRect().width}px`)
-    }
-    if (composer) {
-      root.style.setProperty('--chat-frozen-composer-width', `${composer.getBoundingClientRect().width}px`)
-    }
+    if (!root) return
+    if (mainWidthDelta === undefined && root.classList.contains(READING_FROZEN_CLASS)) return
+    const columns = [messagesContentRef.current, composerInnerRef.current]
+      .filter((el): el is HTMLDivElement => el !== null)
+    const widths = columns.map(el => mainWidthDelta === undefined
+      ? el.getBoundingClientRect().width
+      : projectReadingWidth(el, mainWidthDelta))
+    columns.forEach((el, index) => { el.style.width = `${widths[index]}px` })
     root.classList.add(READING_FROZEN_CLASS)
   }, [])
 
@@ -410,8 +418,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     const root = rootRef.current
     if (!root) return
     root.classList.remove(READING_FROZEN_CLASS)
-    root.style.removeProperty('--chat-frozen-flow-width')
-    root.style.removeProperty('--chat-frozen-composer-width')
+    messagesContentRef.current?.style.removeProperty('width')
+    composerInnerRef.current?.style.removeProperty('width')
   }, [])
 
   useImperativeHandle(ref, () => ({ freezeReadingWidth, restoreReadingWidth }), [

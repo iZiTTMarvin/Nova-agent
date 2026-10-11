@@ -18,7 +18,7 @@ import { loadModelConfig, loadLlmRegistry } from '../runtime/model/config'
 import { resolveActiveModelConfig } from '../shared/config/llmRegistry'
 import { resolveCacheProfile } from '../runtime/model/cacheProfile'
 import { findRipgrep, setRgAvailable } from '../runtime/tools/find-rg'
-import { bindSkillServiceWindow, getSkillService } from './services/SkillServiceHost'
+import { bindSkillServiceWindow, warmSkillCatalog } from './services/SkillServiceHost'
 import { getModelClient, setModelClient } from './services/ModelClientHost'
 import { closeMemoryService } from './services/MemoryServiceHost'
 import { closeAllCodeGraphs } from './services/CodeGraphHost'
@@ -116,6 +116,28 @@ async function probeRipgrep(): Promise<void> {
     setRgAvailable(false)
     console.warn('[nova-agent] ripgrep 未就绪，grep 将降级为 Node.js 基础搜索')
   }
+}
+
+let deferredStartupTasksDone = false
+
+/**
+ * 首屏就绪后的后台维护，只跑一次。放在页面加载期间会与渲染进程的启动 IPC 争抢主线程。
+ * - probeRipgrep：rgAvailable 默认 false，grep 工具自动降级 Node 搜索；
+ * - syncTavilyApiKeyFromSettings：仅设置 web_search 环境变量；
+ * - 临时文件清理与存储 GC：对账已在窗口诞生前完成；
+ * - warmSkillCatalog：扫描启动工作区的技能目录，此前 skill:list 只返回 loading 快照。
+ */
+function runDeferredStartupTasks(): void {
+  if (deferredStartupTasksDone) return
+  deferredStartupTasksDone = true
+  // 让出一轮事件循环：揭开时排队的 IPC 回复（品牌帧）先发出，再跑同步重活
+  setImmediate(() => {
+    void probeRipgrep()
+    syncTavilyApiKeyFromSettings()
+    cleanupStaleAtomicTmpFiles(app.getPath('userData'))
+    runStartupStorageGc()
+    warmSkillCatalog()
+  })
 }
 
 /**
@@ -263,8 +285,8 @@ async function bootstrap(): Promise<void> {
   // 4.4. 学习表面 IPC（投影、节点材料与学习命令）；学习数据库按需懒启动
   registerLearningHandler(getMainWindow, getModelClient, () => imageStore)
 
-  // 4.5. 注册窗口控制的 IPC 处理器
-  registerWindowHandler(getMainWindow)
+  // 4.5. 注册窗口控制的 IPC 处理器；首屏就绪后再跑后台维护
+  registerWindowHandler(getMainWindow, runDeferredStartupTasks)
 
   // 4.6. 注册 nova-image:// 协议 handler（必须在 createMainWindow 之前；
   //      scheme 属性已在模块顶层通过 registerSchemesAsPrivileged 注册）
@@ -274,21 +296,6 @@ async function bootstrap(): Promise<void> {
   createMainWindow()
 
   initAutoUpdater(getMainWindow)
-
-  // ── 6. 窗口已开始加载，把不阻塞首屏的重活推迟到下一个事件循环 tick ──
-  //    这些步骤均有降级或非首屏路径依赖：
-  //    - probeRipgrep：rgAvailable 默认 false，grep 工具自动降级 Node 搜索（不崩）；
-  //      原 await spawn(timeout:5000) 是首屏 LCP 5.57s 的主因，改后台执行后不再阻塞窗口诞生。
-  //    - getSkillService().load(null)：builtin 技能预热，send-message/selectSession 有 load(projectPath) 兜底。
-  //    - syncTavilyApiKeyFromSettings：仅设置环境变量供 web_search，非首屏路径。
-  //    - 临时文件清理与存储 GC：不阻塞首屏，对账已在窗口诞生前完成。
-  setImmediate(() => {
-    void probeRipgrep()
-    getSkillService().load(null)
-    syncTavilyApiKeyFromSettings()
-    cleanupStaleAtomicTmpFiles(app.getPath('userData'))
-    runStartupStorageGc()
-  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -38,6 +38,10 @@ export function BrowserWorkspaceBody(props: {
           if (active) chatPanelRef.current?.freezeReadingWidth()
           else chatPanelRef.current?.restoreReadingWidth()
         }}
+        onSlideChange={(mainWidthDelta) => {
+          if (mainWidthDelta === null) chatPanelRef.current?.restoreReadingWidth()
+          else chatPanelRef.current?.freezeReadingWidth(mainWidthDelta)
+        }}
       />
     </div>
   )

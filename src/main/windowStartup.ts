@@ -71,7 +71,11 @@ export function bindWindowStartup(win: BrowserWindow): void {
   }
 
   pendingWindows.set(win, async () => {
-    if (capture) return
+    // 品牌帧与首屏就绪并发调用时，后到者等同一次揭开收尾（失败由先到者报告），保证返回即已揭开
+    if (capture) {
+      await capture.catch(() => undefined)
+      return
+    }
     // 确认提交后的合成帧已完成，避免揭开提交前的空白表面。
     const attempt = frameReady.then(() => {
       if (!pendingWindows.has(win)) throw new Error('窗口已关闭。')

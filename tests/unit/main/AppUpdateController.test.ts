@@ -4,15 +4,6 @@ vi.mock('electron', () => ({
   app: { getVersion: () => '1.0.0', isPackaged: false },
 }))
 
-vi.mock('electron-updater', () => ({
-  autoUpdater: {
-    on: vi.fn(),
-    checkForUpdates: vi.fn(),
-    downloadUpdate: vi.fn(),
-    quitAndInstall: vi.fn(),
-  },
-}))
-
 vi.mock('../../../src/main/logger', () => ({
   mainLog: { info: vi.fn(), error: vi.fn(), warn: vi.fn() },
 }))

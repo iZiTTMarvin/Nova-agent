@@ -25,13 +25,16 @@ test('隔离新 profile 下窗口、preload 与基础 UI 可冷启动', async ({
     )).toBe(1)
     const startup = await nova.page.evaluate(() => ({
       brand: performance.getEntriesByName('nova-brand-visible', 'mark')[0]?.startTime,
-      complete: performance.getEntriesByName('nova-startup-complete', 'mark')[0]?.startTime,
-      reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches
+      ready: performance.getEntriesByName('nova-renderer-ready', 'mark')[0]?.startTime,
+      complete: performance.getEntriesByName('nova-startup-complete', 'mark')[0]?.startTime
     }))
     expect(startup.brand).toBeDefined()
+    expect(startup.ready).toBeDefined()
     expect(startup.complete).toBeDefined()
-    expect(startup.complete!).toBeGreaterThanOrEqual(startup.brand!)
-    if (!startup.reducedMotion) expect(startup.complete! - startup.brand!).toBeGreaterThanOrEqual(400)
+    // 揭幕只等窗口可见与首屏就绪中较晚者，品牌动画不再额外拖住启动
+    const gate = Math.max(startup.brand!, startup.ready!)
+    expect(startup.complete!).toBeGreaterThanOrEqual(gate)
+    expect(startup.complete! - gate).toBeLessThan(50)
     expect(await nova.app.evaluate(({ BrowserWindow }) =>
       BrowserWindow.getAllWindows()[0].webContents.getBackgroundThrottling()
     )).toBe(true)

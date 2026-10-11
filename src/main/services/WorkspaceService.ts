@@ -293,9 +293,6 @@ export class WorkspaceService {
       activeModelRef: this.resolveEffectiveModelRef(selectedDetail ?? undefined),
       availableSessions: sessions
     }
-    if (selected) {
-      reloadSkillsForWorkspace(selected.workspaceRoot)
-    }
     hydrateSessionWhitelistFromSession(selectedDetail)
     this.notifyWorkspaceRootChanged(previousRoot, selected?.workspaceRoot ?? null)
   }

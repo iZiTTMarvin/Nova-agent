@@ -1,4 +1,11 @@
-import sharp from 'sharp'
+import type { Metadata, Sharp } from 'sharp'
+
+type SharpFactory = (input: Buffer) => Sharp
+
+// sharp 原生库加载约 35ms，只在真正处理图片时载入。
+async function loadSharp(): Promise<SharpFactory> {
+  return (await import('sharp')).default
+}
 
 /** 入库前触发缩图的原始图片字节上限。 */
 export const MAX_IMAGE_INGEST_BYTES = 5 * 1024 * 1024
@@ -65,6 +72,7 @@ function outputMimeType(inputMimeType: string): 'image/png' | 'image/jpeg' {
 }
 
 async function encodeImage(
+  sharp: SharpFactory,
   input: Buffer,
   mimeType: 'image/png' | 'image/jpeg',
   width: number,
@@ -86,8 +94,9 @@ export async function prepareImageForStorage(
   fallbackMime: string
 ): Promise<PreparedImage> {
   const decoded = decodeDataUrl(dataUrl, fallbackMime)
+  const sharp = await loadSharp()
 
-  let metadata: sharp.Metadata
+  let metadata: Metadata
   try {
     metadata = await sharp(decoded.buffer).metadata()
   } catch {
@@ -128,7 +137,7 @@ export async function prepareImageForStorage(
 
   while (true) {
     try {
-      const encoded = await encodeImage(decoded.buffer, mimeType, targetWidth, targetHeight)
+      const encoded = await encodeImage(sharp, decoded.buffer, mimeType, targetWidth, targetHeight)
       if (encoded.length <= MAX_IMAGE_INGEST_BYTES) {
         return {
           dataUrl: `data:${mimeType};base64,${encoded.toString('base64')}`,

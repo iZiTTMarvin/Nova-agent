@@ -9,6 +9,25 @@
   animation: settings-backdrop-in 180ms ease-out both;
 }
 
+/* 全屏壳层不透明，遮罩只在开合淡入淡出时透出，须与壳层同步渐变，否则会突然出现或消失 */
+.settings-shell::backdrop {
+  animation: settings-backdrop-in 180ms ease-out both;
+}
+
+/* 退场：整层淡出露出下方应用，内容板同步微缩下沉；时长不得短于内容板动画，卸载以壳层动画结束为准 */
+.settings-shell--closing {
+  pointer-events: none;
+  animation: settings-shell-exit 160ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.settings-shell--closing::backdrop {
+  animation: settings-shell-exit 160ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+.settings-shell--closing .settings-shell__pane {
+  animation: settings-pane-exit 160ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
 .settings-shell__titlebar {
   position: relative;
   display: flex;
@@ -69,7 +88,7 @@
   gap: 8px;
   align-self: flex-start;
   padding: 6px 10px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   border: none;
   background: transparent;
   color: var(--text-secondary);
@@ -104,6 +123,59 @@
 
 .settings-shell__back-label {
   letter-spacing: 0.01em;
+}
+
+.settings-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin: 0 4px 18px 0;
+  padding: 0 10px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-app);
+  color: var(--text-placeholder);
+  cursor: text;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.settings-search:focus-within {
+  border-color: var(--border-warm);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand) 14%, transparent);
+}
+
+.settings-search__icon {
+  flex-shrink: 0;
+}
+
+.settings-search__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.84rem;
+}
+
+.settings-search__input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.settings-search__input::-webkit-search-cancel-button {
+  cursor: pointer;
+}
+
+.settings-nav__empty {
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
 }
 
 /* ── 导航列表 ── */
@@ -1209,19 +1281,6 @@
   }
 }
 
-/* 开关行 / 卡片共用的图标方块 */
-.memory-settings-panel__icon-tile {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-cream);
-  background: var(--bg-sand);
-  color: var(--text-secondary);
-}
 .memory-settings-panel__scope-list {
   display: flex;
   flex-direction: column;
@@ -1247,7 +1306,7 @@
   border-color: var(--color-brand);
 }
 
-.memory-settings-panel__scope-card--active .memory-settings-panel__icon-tile {
+.memory-settings-panel__scope-card--active .settings-row-icon {
   color: var(--color-brand);
   border-color: color-mix(in srgb, var(--color-brand) 40%, var(--border-cream));
   background: var(--color-brand-dim);
@@ -1401,61 +1460,15 @@
   font: inherit;
 }
 
+/* 与设置原语的分组小标签同一观感 */
 .memory-settings-panel__section-title {
-  margin: 0 0 6px;
-  color: var(--text-primary);
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
-.memory-settings-panel__toggle-group {
-  border: 1px solid var(--border-warm);
-  border-radius: var(--radius-lg);
-  background: var(--bg-card);
-  overflow: hidden;
-}
-
-.memory-settings-panel__toggle-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-bottom: 1px solid var(--border-cream);
-  text-align: left;
-}
-
-.memory-settings-panel__toggle-row:last-child {
-  border-bottom: none;
-}
-
-.memory-settings-panel__toggle-copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.memory-settings-panel__toggle-label {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.86rem;
-  font-weight: 600;
-  color: var(--text-primary);
-  line-height: 1.35;
-}
-
-
-.memory-settings-panel__toggle-hint {
-  margin: 4px 0 0;
-  font-size: 0.72rem;
-  line-height: 1.4;
+  margin: 0 0 8px;
+  padding-inline: 4px;
   color: var(--text-muted);
-}
-
-.memory-settings-panel__toggle-input {
-  flex-shrink: 0;
-  margin-top: 2px;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
 }
 
 
@@ -2012,7 +2025,11 @@
   .settings-shell__pane,
   .settings-shell__content,
   .settings-shell__tab,
-  .settings-shell__tab--enter {
+  .settings-shell__tab--enter,
+  .settings-shell--closing,
+  .settings-shell--closing .settings-shell__pane,
+  .settings-shell::backdrop,
+  .settings-shell--closing::backdrop {
     animation: none;
   }
   .settings-shell__back {

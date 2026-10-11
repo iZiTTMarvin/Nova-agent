@@ -28,9 +28,9 @@
         overflow: hidden;
       }
 
+      /* 揭幕只由上层遮罩淡出完成；两层同时半透明会露出画布底色 */
       #root {
         opacity: 0;
-        transition: opacity 0.16s ease;
       }
 
       body.nova-startup-ready #root {
@@ -76,7 +76,7 @@
         align-items: center;
         justify-content: center;
         background: var(--startup-bg);
-        transition: opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+        transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1);
         user-select: none;
         -webkit-app-region: drag;
       }
@@ -106,6 +106,12 @@
 
       body.nova-startup-visible .startup-logo-shell {
         animation-play-state: running;
+      }
+
+      /* 退场用独立的 scale 属性，与可能仍在播放的弹出 transform 叠加，不打断它 */
+      body.nova-startup-ready .startup-logo-shell {
+        scale: 1.06;
+        transition: scale 0.22s cubic-bezier(0.16, 1, 0.3, 1);
       }
 
       #startup-recovery {
@@ -150,8 +156,10 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .startup-logo-shell {
+        .startup-logo-shell,
+        body.nova-startup-ready .startup-logo-shell {
           transform: scale(1);
+          scale: none;
           animation: none;
         }
       }
@@ -168,30 +176,24 @@
     <script>
       (function() {
         var startupLoading = document.getElementById('loading');
-        var startupLogo = document.querySelector('.startup-logo-shell');
         var recoveryButton = document.getElementById('startup-recovery');
-        var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
         var finished = false;
-        var animationDone = false;
         var reactReady = false;
         var windowVisible = false;
 
+        // 品牌弹出动画不设下限：界面一就绪即退场，动画在淡出中自然收尾
         function tryFinishStartupAnimation() {
-          if (finished || !windowVisible || !animationDone || !reactReady) return;
+          if (finished || !windowVisible || !reactReady) return;
           finished = true;
           performance.mark('nova-startup-complete');
+          window.dispatchEvent(new Event('nova-startup-complete'));
           document.body.classList.add('nova-startup-ready');
           window.setTimeout(function() {
             if (startupLoading && startupLoading.parentNode) {
               startupLoading.parentNode.removeChild(startupLoading);
             }
           }, 400);
-        }
-
-        function markAnimationDone() {
-          animationDone = true;
-          tryFinishStartupAnimation();
         }
 
         function markReactReady() {
@@ -207,12 +209,6 @@
               windowVisible = true;
               performance.mark('nova-brand-visible');
               document.body.classList.add('nova-startup-visible');
-              if (reduceMotion || !startupLogo) {
-                markAnimationDone();
-              } else {
-                startupLogo.addEventListener('animationend', markAnimationDone, { once: true });
-                window.setTimeout(markAnimationDone, 650);
-              }
               tryFinishStartupAnimation();
             });
           }).catch(function(error) {

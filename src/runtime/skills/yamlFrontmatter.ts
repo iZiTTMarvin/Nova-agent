@@ -3,7 +3,18 @@
  * gray-matter + js-yaml 主路径；失败时用 fallbackSanitization 宽松重试
  * 注：gray-matter v4 维护较少，短期够用；若生态 YAML 需求变化再评估替换方案
  */
-import matter from 'gray-matter'
+import { createRequire } from 'node:module'
+import type GrayMatter from 'gray-matter'
+
+// gray-matter 连同 js-yaml、esprima 求值约 30ms；解析是同步 API，故首次解析时再同步载入，
+// 不让它进入主进程启动关键路径。
+let grayMatter: typeof GrayMatter | undefined
+function loadGrayMatter(): typeof GrayMatter {
+  if (grayMatter) return grayMatter
+  const loaded: typeof GrayMatter = createRequire(__filename)('gray-matter')
+  grayMatter = loaded
+  return loaded
+}
 
 export type YamlFrontmatterData = Record<string, unknown>
 
@@ -75,7 +86,8 @@ export function fallbackSanitization(content: string): string {
 }
 
 function matterParse(content: string): YamlFrontmatterResult {
-  const md = matter(content)
+  // 传 options 以绕开 gray-matter 的内容缓存：它在解析前写缓存，解析抛错后再解析同一内容会拿到未解析结果
+  const md = loadGrayMatter()(content, {})
   return {
     data: (md.data ?? {}) as YamlFrontmatterData,
     body: md.content ?? '',

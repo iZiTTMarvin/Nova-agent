@@ -14,6 +14,7 @@ import { TextArea } from '@astryxdesign/core/TextArea'
 import { BrainIcon, CloseIcon, EditIcon, FolderIcon, GlobeIcon, SparklesIcon } from '../../components/Icons'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { formatSettingsDateTime } from './formatDateTime'
+import { SettingsRow, SettingsSection } from './settingsKit'
 import { containsSensitiveMemoryText } from '../../../shared/memory/sensitiveText'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type {
@@ -446,42 +447,36 @@ export const MemorySettingsPanel: React.FC = () => {
         )}
 
         {settings && (
-          <section aria-label="记忆行为">
-            <h4 className="memory-settings-panel__section-title">记忆行为</h4>
-            <div className="memory-settings-panel__toggle-group">
-              <div className="memory-settings-panel__toggle-row">
-                <span className="memory-settings-panel__icon-tile" aria-hidden>
-                  <BrainIcon size={16} />
-                </span>
-                <div className="memory-settings-panel__toggle-copy">
-                  <span className="memory-settings-panel__toggle-label">
-                    启用跨会话记忆
-                  </span>
-                  <p className="memory-settings-panel__toggle-hint">
-                    开启后，新会话带上核心记忆，并可按需检索约定、偏好和经验。自动学习需另行开启；关闭记忆后停止采集、学习和检索。
-                  </p>
-                </div>
+          <SettingsSection title="记忆行为">
+            <SettingsRow
+              icon={<BrainIcon size={16} />}
+              label="启用跨会话记忆"
+              description="开启后，新会话带上核心记忆，并可按需检索约定、偏好和经验。自动学习需另行开启；关闭记忆后停止采集、学习和检索。"
+              end={
                 <Switch
                   label="启用跨会话记忆"
                   isLabelHidden
-                  className="memory-settings-panel__toggle-input"
                   value={settings.memoryEnabled}
                   onChange={checked => void updateSetting('memoryEnabled', checked)}
                   isDisabled={settingSaving}
                 />
-              </div>
-              <div className="memory-settings-panel__toggle-row">
-                <span className="memory-settings-panel__icon-tile" aria-hidden>
-                  <SparklesIcon size={16} />
-                </span>
-                <div className="memory-settings-panel__toggle-copy">
-                  <span className="memory-settings-panel__toggle-label">自动从对话中学习</span>
-                  <p className="memory-settings-panel__toggle-hint">默认关闭。开启后后台提炼和整理会调用模型，可能产生 API 费用。</p>
-                </div>
-                <Switch label="自动从对话中学习" isLabelHidden value={settings.memoryAutoExtractEnabled} onChange={checked => void updateSetting('memoryAutoExtractEnabled', checked)} isDisabled={settingSaving || !settings.memoryEnabled} />
-              </div>
-            </div>
-          </section>
+              }
+            />
+            <SettingsRow
+              icon={<SparklesIcon size={16} />}
+              label="自动从对话中学习"
+              description="默认关闭。开启后后台提炼和整理会调用模型，可能产生 API 费用。"
+              end={
+                <Switch
+                  label="自动从对话中学习"
+                  isLabelHidden
+                  value={settings.memoryAutoExtractEnabled}
+                  onChange={checked => void updateSetting('memoryAutoExtractEnabled', checked)}
+                  isDisabled={settingSaving || !settings.memoryEnabled}
+                />
+              }
+            />
+          </SettingsSection>
         )}
 
         <section aria-label="记忆范围">
@@ -501,7 +496,7 @@ export const MemorySettingsPanel: React.FC = () => {
                     disabled={scope.unavailable}
                     onClick={() => void handleSwitchRecordScope(scope.scopeKind)}
                   >
-                    <span className="memory-settings-panel__icon-tile" aria-hidden>{scope.icon}</span>
+                    <span className="settings-row-icon" aria-hidden>{scope.icon}</span>
                     <span className="memory-settings-panel__scope-copy">
                       <span className="memory-settings-panel__scope-title">{scope.title}</span>
                       <span className="memory-settings-panel__scope-meta">

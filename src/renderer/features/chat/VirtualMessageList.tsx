@@ -7,9 +7,9 @@
  * - 配合外层 scroll 容器的 prepend 锚点修正（由 ChatPanel 负责 scrollTop 补偿）
  * - 分页仍由 useChatStore.loadOlderMessages 负责；本组件只管 DOM 上限
  *
- * 测试环境（无真实 layout / clientHeight=0）退化为全量渲染，保证接线单测可用。
+ * 测试环境（无真实 layout / clientHeight=0）退化为尾部窗口渲染，保证接线单测可用。
  */
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useLayoutEffect, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ExtendedMessage } from '../../stores/types'
 import type { MessageDiffCache } from '../../stores/types'
@@ -139,9 +139,13 @@ function renderMessageRow(
   )
 }
 
+/** 滚动容器是否有真实布局：pending = 尚未测量（挂载首个提交内），none = 无布局环境 */
+type ViewportState = 'pending' | 'ready' | 'none'
+
 export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => {
   const { messages, scrollElement, isGenerating } = props
-  const [viewportReady, setViewportReady] = useState(false)
+  const [viewport, setViewport] = useState<ViewportState>('pending')
+  const viewportReady = viewport === 'ready'
   const [turnProcessOpenByMessageId, setTurnProcessOpenByMessageId] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
@@ -156,14 +160,14 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
     ))
   }, [])
 
-  // 检测滚动容器是否有真实布局尺寸（jsdom / TestRenderer 通常为 0）
-  useEffect(() => {
-    if (!scrollElement) {
-      setViewportReady(false)
-      return
-    }
+  // 检测滚动容器是否有真实布局尺寸（jsdom / TestRenderer 通常为 0）。
+  // 在布局阶段、消息行挂载前测量：此时只需排版空容器，测得结果后同一提交内直接进入
+  // 虚拟或回退模式，消息行只渲染、排版一次。滚动容器是父级节点，挂载首个提交内
+  // 尚未经 ref 回传，保持 pending 等它到达。
+  useLayoutEffect(() => {
+    if (!scrollElement) return
     const check = (): void => {
-      setViewportReady(scrollElement.clientHeight > 0)
+      setViewport(scrollElement.clientHeight > 0 ? 'ready' : 'none')
     }
     check()
     if (typeof ResizeObserver === 'undefined') return
@@ -197,6 +201,17 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
     getItemKey: useCallback((index: number) => messages[index]?.id ?? index, [messages]),
     enabled: viewportReady && messages.length > 0
   })
+
+  if (viewport === 'pending') {
+    return (
+      <div
+        className="chat-messages__virtual"
+        data-virtual="pending"
+        data-mounted-count={0}
+        data-total-count={messages.length}
+      />
+    )
+  }
 
   // 无真实视口：只挂载尾部窗口，禁止全量 messages.map（2000 条时首帧必须常数级）
   if (!viewportReady) {

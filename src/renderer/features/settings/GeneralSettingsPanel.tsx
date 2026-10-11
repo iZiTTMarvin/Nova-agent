@@ -10,6 +10,18 @@ import { NumberInput } from '@astryxdesign/core/NumberInput'
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextInput } from '@astryxdesign/core/TextInput'
+import {
+  BellIcon,
+  ClockIcon,
+  CompassIcon,
+  ContrastIcon,
+  DownloadIcon,
+  EyeOffIcon,
+  FolderIcon,
+  ShieldIcon,
+  SlidersIcon,
+  TerminalIcon
+} from '../../components/Icons'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import {
   APP_UPDATE_STATE_CHANGED,
@@ -222,6 +234,7 @@ export const GeneralSettingsPanel: React.FC = () => {
         <SettingsPage>
           <SettingsSection title="行为">
             <SettingsRow
+              icon={<CompassIcon size={16} />}
               label="默认运行模式"
               description="新建会话时使用的默认行为模式。"
               end={
@@ -237,6 +250,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               }
             />
             <SettingsRow
+              icon={<ShieldIcon size={16} />}
               label="默认权限模式"
               description="新建会话使用；已有会话保留自己的权限模式。"
               end={
@@ -252,6 +266,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               }
             />
             <SettingsRow
+              icon={<FolderIcon size={16} />}
               label="默认工作区"
               description="未选择项目时，新会话在这个目录下创建并使用；留空使用 ~/.nova/workspace。"
               end={
@@ -283,6 +298,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               }
             />
             <SettingsRow
+              icon={<SlidersIcon size={16} />}
               label="最大工具调用轮数"
               description="单条消息内 Agent 连续调用工具的上限，达到后会停下并提示。默认 100，范围 1~1000，长任务可调大。"
               end={
@@ -303,6 +319,7 @@ export const GeneralSettingsPanel: React.FC = () => {
 
           <SettingsSection title="外观">
             <SettingsRow
+              icon={<ContrastIcon size={16} />}
               label="主题"
               description="界面主题外观。"
               end={
@@ -322,6 +339,7 @@ export const GeneralSettingsPanel: React.FC = () => {
 
           <SettingsSection title="终端">
             <SettingsRow
+              icon={<TerminalIcon size={16} />}
               label="默认 Shell"
               description="bash 工具使用的 shell，留空时使用系统默认。修改后按回车或移开焦点保存。"
               end={
@@ -341,6 +359,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               }
             />
             <SettingsRow
+              icon={<ClockIcon size={16} />}
               label="持久终端会话"
               description="开启后，长时间运行的命令超时不再被强制终止，而是转为可继续交互的终端会话；关闭后退回超时即终止的行为。"
               end={
@@ -357,6 +376,7 @@ export const GeneralSettingsPanel: React.FC = () => {
 
           <SettingsSection title="系统通知">
             <SettingsRow
+              icon={<BellIcon size={16} />}
               label="任务完成时通知我"
               description="任务到达完成或失败、以及等待你批准（授权/提问/计划）时弹系统通知。"
               end={
@@ -370,6 +390,7 @@ export const GeneralSettingsPanel: React.FC = () => {
               }
             />
             <SettingsRow
+              icon={<EyeOffIcon size={16} />}
               label="仅在窗口失焦时通知"
               description="你正看着窗口时不打扰；切到别的应用后才弹通知。"
               end={
@@ -386,6 +407,7 @@ export const GeneralSettingsPanel: React.FC = () => {
 
           <SettingsSection title="应用更新">
             <SettingsRow
+              icon={<DownloadIcon size={16} />}
               label="应用版本"
               description={describeUpdateState(updateSnapshot)}
               end={

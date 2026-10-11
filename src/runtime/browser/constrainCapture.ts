@@ -1,4 +1,4 @@
-import sharp from 'sharp'
+import type { Sharp } from 'sharp'
 import {
   BROWSER_CAPTURE_DEVICE_SCALE,
   BROWSER_CAPTURE_MAX_BYTES,
@@ -32,14 +32,16 @@ function targetSize(width: number, height: number): { width: number; height: num
   return { width: nextWidth, height: nextHeight }
 }
 
-async function encodePng(input: Buffer, width: number, height: number): Promise<Buffer> {
+type SharpFactory = (input: Buffer) => Sharp
+
+async function encodePng(sharp: SharpFactory, input: Buffer, width: number, height: number): Promise<Buffer> {
   return sharp(input)
     .resize(width, height, { kernel: 'lanczos3' })
     .png()
     .toBuffer()
 }
 
-async function encodeJpeg(input: Buffer, width: number, height: number): Promise<Buffer> {
+async function encodeJpeg(sharp: SharpFactory, input: Buffer, width: number, height: number): Promise<Buffer> {
   return sharp(input)
     .resize(width, height, { kernel: 'lanczos3' })
     .jpeg({ quality: 70 })
@@ -54,13 +56,15 @@ export async function constrainBrowserCapture(
   pngBase64: string
 ): Promise<ConstrainedCapture | null> {
   try {
+    // 原生库按需载入，不进入主进程启动关键路径。
+    const sharp: SharpFactory = (await import('sharp')).default
     const input = Buffer.from(pngBase64, 'base64')
     const metadata = await sharp(input).metadata()
     const width = metadata.width ?? 0
     const height = metadata.height ?? 0
     if (width < 1 || height < 1) return null
     const size = targetSize(width, height)
-    const png = await encodePng(input, size.width, size.height)
+    const png = await encodePng(sharp, input, size.width, size.height)
     if (png.byteLength <= BROWSER_CAPTURE_MAX_BYTES) {
       return {
         mimeType: 'image/png',
@@ -70,7 +74,7 @@ export async function constrainBrowserCapture(
         bytes: png.byteLength
       }
     }
-    const jpeg = await encodeJpeg(input, size.width, size.height)
+    const jpeg = await encodeJpeg(sharp, input, size.width, size.height)
     if (jpeg.byteLength <= BROWSER_CAPTURE_MAX_BYTES) {
       return {
         mimeType: 'image/jpeg',

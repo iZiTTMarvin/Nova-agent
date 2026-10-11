@@ -803,28 +803,59 @@ describe('ChatPanel → 阅读宽度冻结接口', () => {
       handleRef.current!.freezeReadingWidth()
     })
     expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(true)
-    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('700px')
-    expect(root!.style.getPropertyValue('--chat-frozen-composer-width')).toBe('640px')
+    expect(flow!.style.width).toBe('700px')
+    expect(composer!.style.width).toBe('640px')
 
     // 幂等：已冻结时重复调用保持首次测量值
     stubWidth(flow!, 900)
     act(() => {
       handleRef.current!.freezeReadingWidth()
     })
-    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('700px')
+    expect(flow!.style.width).toBe('700px')
 
     act(() => {
       handleRef.current!.restoreReadingWidth()
     })
     expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(false)
-    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('')
-    expect(root!.style.getPropertyValue('--chat-frozen-composer-width')).toBe('')
+    expect(flow!.style.width).toBe('')
+    expect(composer!.style.width).toBe('')
 
     // 恢复幂等：重复恢复无副作用
     act(() => {
       handleRef.current!.restoreReadingWidth()
     })
     expect(root!.className).not.toContain('chat-panel--reading-width-frozen')
+    renderer.unmount()
+  })
+
+  it('过渡冻结按主区宽度变化量投影终态宽度，受 max-width 约束且每次重算', () => {
+    act(() => {
+      useChatStore.setState({
+        currentSessionId: 'sess_1',
+        messages: [makeAssistantMessage('msg_1')]
+      })
+    })
+    const handleRef = React.createRef<ChatPanelHandle>()
+    const renderer = renderDom(React.createElement(ChatPanel, { ref: handleRef }))
+    const root = renderer.container.querySelector<HTMLElement>('.chat-panel')!
+    const flow = renderer.container.querySelector<HTMLElement>('.chat-messages__flow-inner')!
+    const flowParent = flow.parentElement!
+    flowParent.style.padding = '0 16px'
+    flow.style.maxWidth = '768px'
+    Object.defineProperty(flowParent, 'clientWidth', { configurable: true, value: 1000 })
+
+    // 打开面板：主区收窄 400px，终态 1000 - 32 - 400 = 568
+    act(() => {
+      handleRef.current!.freezeReadingWidth(-400)
+    })
+    expect(root.classList.contains('chat-panel--reading-width-frozen')).toBe(true)
+    expect(flow.style.width).toBe('568px')
+
+    // 反向打断：已冻结时仍按新变化量重算，变宽后受 max-width 约束
+    act(() => {
+      handleRef.current!.freezeReadingWidth(400)
+    })
+    expect(flow.style.width).toBe('768px')
     renderer.unmount()
   })
 
@@ -842,8 +873,7 @@ describe('ChatPanel → 阅读宽度冻结接口', () => {
       handleRef.current!.freezeReadingWidth()
     })
     expect(root!.classList.contains('chat-panel--reading-width-frozen')).toBe(true)
-    expect(root!.style.getPropertyValue('--chat-frozen-flow-width')).toBe('')
-    expect(root!.style.getPropertyValue('--chat-frozen-composer-width')).toBe('660px')
+    expect(composer!.style.width).toBe('660px')
 
     act(() => {
       handleRef.current!.restoreReadingWidth()
