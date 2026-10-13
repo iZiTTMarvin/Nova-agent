@@ -228,10 +228,16 @@
   transition: background-color var(--transition-fast);
 }
 
+/* 侧栏行悬停色只在侧栏作用域内定义：深色下比选中行低一档，相邻行不糊成一块；
+   全局 --surface-hover 更亮，供顶栏等共用，不用于行级 hover */
+.sidebar-astryx-nav {
+  --sidebar-row-hover: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+}
+
 .sidebar-project-header:hover,
 .sidebar-project-header:focus-within,
 .sidebar-project-header--menu-open {
-  background-color: var(--surface-hover);
+  background-color: var(--sidebar-row-hover);
 }
 
 .sidebar-project-header__actions {
@@ -346,7 +352,8 @@
 
 /*
  * 单条会话行（ThreadItem）：
- * 固定 30px~32px 高度，激活卡片纯白/纯深灰底色，带微弱细线边框。
+ * 固定 30px~32px 高度，激活卡片纯白/纯深灰底色，描边走 inset 不外扩，
+ * 保证所有行的可视盒严格等大；行距统一由父容器 gap 提供，行自身不带 margin。
  */
 .sidebar-session-row {
   position: relative;
@@ -354,22 +361,21 @@
   display: flex;
   align-items: center;
   border-radius: 6px;
-  margin-bottom: 1px;
   transition: background-color var(--transition-fast);
 }
 
 .sidebar-session-row:hover,
 .sidebar-session-row:focus-within {
-  background-color: var(--surface-hover);
+  background-color: var(--sidebar-row-hover);
 }
 
 .sidebar-session-row--active {
   background-color: var(--surface-sidebar-active) !important;
-  box-shadow: var(--ring-shadow-subtle);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .sidebar-session-row--menu-open {
-  background-color: var(--surface-hover);
+  background-color: var(--sidebar-row-hover);
 }
 
 .sidebar-session-row__meta {
@@ -497,11 +503,20 @@
 }
 
 /*
- * 会话标题与项目名左对齐：项目名缩进 = 标题行内边距 8px + 折叠箭头 13px + 间距 6px，
- * 会话行容器已缩进 8px，故行内条目再补 19px。StyleX 原子类带 :not() 提权，需 !important。
+ * 项目内会话列表：行距与 SideNavSection 自带的 2px gap 一致，项目头到首行同样 2px。
+ * 高亮盒与项目头同宽同边距，层级关系只通过行内文字缩进表达——
+ * 项目名缩进 = 标题行内边距 8px + 折叠箭头 13px + 间距 6px = 27px，由行内条目补齐。
+ * StyleX 原子类带 :not() 提权，需 !important。
  */
+.sidebar-project-children {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 2px;
+}
+
 .sidebar-project-children .sidebar-session-row :is(button, a).astryx-side-nav-item {
-  padding-inline-start: 19px !important;
+  padding-inline-start: 27px !important;
 }
 
 /* 底部操作区：无顶部分隔线，避免侧栏被横线切开 */

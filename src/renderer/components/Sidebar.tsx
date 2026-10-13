@@ -860,7 +860,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
               <div key={projectPath} className="sidebar-project-group mb-0.5">
                 {/* 项目标题行：加粗字体，hover 显示操作（三个点与新建会话按钮） */}
                 <div
-                  className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-surface-hover group transition-colors select-none ${
+                  className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer group transition-colors select-none ${
                     isMenuOpen ? 'sidebar-project-header--menu-open' : ''
                   }`}
                   onClick={() => toggleProjectExpand(projectPath)}
@@ -984,7 +984,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
 
                 {/* 项目内会话列表 */}
                 {isExpanded && (
-                  <div className="sidebar-project-children pl-2">
+                  <div className="sidebar-project-children">
                     {visibleSessions.map((session) => renderSessionRow(session))}
                     {showMoreToggle && (
                       <Button
@@ -993,7 +993,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                         size="sm"
                         width="100%"
                         type="button"
-                        className="w-full text-left pl-[19px] pr-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+                        className="w-full text-left pl-[27px] pr-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
                         onClick={(e) => {
                           e.stopPropagation()
                           setExpandedSessionLists(prev => ({
@@ -1038,7 +1038,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                     return (
                       <div key={projectPath} className="sidebar-project-group mb-0.5 opacity-80 hover:opacity-100 transition-opacity">
                         <div
-                          className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer hover:bg-surface-hover group transition-colors select-none ${
+                          className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer group transition-colors select-none ${
                             isMenuOpen ? 'sidebar-project-header--menu-open' : ''
                           }`}
                           onClick={() => toggleProjectExpand(projectPath)}
@@ -1099,7 +1099,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                         </div>
 
                         {isExpanded && (
-                          <div className="sidebar-project-children pl-2">
+                          <div className="sidebar-project-children">
                             {filteredProjectSessions.map((session) => renderSessionRow(session))}
                           </div>
                         )}

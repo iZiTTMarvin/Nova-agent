@@ -23,7 +23,9 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   FilterIcon: () => null,
   PuzzleIcon: () => null,
   ChevronDownIcon: () => null,
-  TerminalIcon: () => null
+  TerminalIcon: () => null,
+  CodeIcon: () => null,
+  BookIcon: () => null
 }))
 
 vi.mock('@astryxdesign/core/SideNav', () => ({

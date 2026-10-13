@@ -25,7 +25,9 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   FilterIcon: () => null,
   PuzzleIcon: () => null,
   ChevronDownIcon: () => null,
-  TerminalIcon: () => null
+  TerminalIcon: () => null,
+  CodeIcon: () => null,
+  BookIcon: () => null
 }))
 
 function findSessionButton(container: HTMLElement, title: string): HTMLButtonElement | undefined {
