@@ -8,6 +8,7 @@ import {
   LEARNING_CHECKPOINT_TOOL_NAME,
   parseCheckpointToolResult
 } from '../../../shared/learning/checkpointToolResult'
+import { formatFullTimestamp } from '../../lib/time'
 import { TurnProcessTree } from '../chat/TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from '../chat/turnProcessModel'
 import { AssistantPendingIndicator } from '../chat/AssistantPendingIndicator'
@@ -209,13 +210,21 @@ export function LearningConversation({
         const rows = rowsByMessageId.get(message.id) ?? []
         return (
           <Fragment key={message.id}>
-            <ChatMessage sender="assistant">
-              <div className="chat-msg chat-msg--assistant">
-                {!isGenerating && (
-                  <div className="chat-msg__actions">
+            <ChatMessage
+              sender="assistant"
+              className="chat-msg-row"
+              metadata={
+                !isGenerating ? (
+                  <div className="chat-msg__footer chat-msg__footer--assistant">
                     <CopyMessageButton message={message} />
+                    <span className="chat-msg__timestamp">
+                      {formatFullTimestamp(message.timestamp)}
+                    </span>
                   </div>
-                )}
+                ) : undefined
+              }
+            >
+              <div className="chat-msg chat-msg--assistant">
                 <LearningAssistantMessage
                   message={message}
                   sessionId={sessionId}

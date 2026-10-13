@@ -24,6 +24,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon, BookIcon } from '../../components/Icons'
 import { extractChangedFilePaths } from '../../../shared/learning/devChangeFiles'
+import { formatFullTimestamp } from '../../lib/time'
 import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
@@ -402,61 +403,7 @@ function MessageItemInner({
     )
   }
 
-  /* 悬浮操作栏：须在 static-body 之外，避免 content-visibility 的 contain:paint 裁切 top:-12px 溢出。
-     按钮几何全部交给 Astryx（IconButton size/variant），不再有 .astryx-* 几何覆盖。 */
-  const actionsBar =
-    isAssistant && !isGenerating && !branchForkInProgress ? (
-      <div className="chat-msg__actions">
-        <IconButton
-          label="重新生成此回答"
-          icon={<RegenerateIcon size={13} />}
-          variant="ghost"
-          size="sm"
-          onClick={() => onRegenerate(msg.id)}
-          isDisabled={!!rollbackError || regenerateBlocked}
-          tooltip={
-            rollbackError
-              ? `无法重新生成：${rollbackError}`
-              : regenerateBlocked
-                ? '重新生成暂不支持含图片的消息'
-                : '重新生成此回答（保留原分支）'
-          }
-        />
-        {copyButton}
-        {onLearnChange && !msg.isError && !msg.interrupted && extractChangedFilePaths(msg.blocks).length > 0 && (
-          <IconButton
-            label="学懂这次改动"
-            icon={<BookIcon size={13} />}
-            variant="ghost"
-            size="sm"
-            onClick={() => onLearnChange(msg.id)}
-            tooltip="学懂这次改动"
-          />
-        )}
-      </div>
-    ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && onEditResend && userImageBlocks.length === 0 ? (
-      /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
-      <div className="chat-msg__actions">
-        <IconButton
-          label="编辑并重发"
-          icon={<EditIcon size={13} />}
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setEditText(typeof textContent === 'string' ? textContent : '')
-            setIsEditing(true)
-          }}
-          isDisabled={!!rollbackError}
-          tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
-        />
-        {copyButton}
-      </div>
-    ) : isUser && !isGenerating && !branchForkInProgress && !isEditing && (userImageBlocks.length > 0 || !onEditResend) ? (
-      /* 含图片或不可编辑的用户消息：只给复制 */
-      <div className="chat-msg__actions">{copyButton}</div>
-    ) : null
-
-  /* 兄弟分支翻页器：‹ k/n › */
+  /* 兄弟分支翻页器：‹ k/n ›，随操作按钮一起落在消息末尾的 footer 里 */
   const branchFlipper =
     msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating && !branchForkInProgress ? (
       <div className="chat-msg__branch-flipper">
@@ -483,6 +430,69 @@ function MessageItemInner({
         />
       </div>
     ) : null
+
+  /* 消息 footer：落在消息末尾的 metadata 槽（ChatMessage/ChatMessageBubble 的
+     metadata prop），不再悬浮覆盖正文。assistant 常显操作按钮、hover 才浮出时间戳；
+     user 整条 footer 默认隐藏，hover 消息行才浮现。
+     按钮几何全部交给 Astryx（IconButton size/variant），无 .astryx-* 几何覆盖。 */
+  const timestampEl = (
+    <span className="chat-msg__timestamp">{formatFullTimestamp(msg.timestamp)}</span>
+  )
+  const showMessageFooter =
+    (isAssistant || isUser) && !isGenerating && !branchForkInProgress && !isEditing
+  const messageFooter = showMessageFooter ? (
+    <div className={`chat-msg__footer ${isUser ? 'chat-msg__footer--user' : 'chat-msg__footer--assistant'}`}>
+      {isUser && timestampEl}
+      {isAssistant && (
+        <>
+          <IconButton
+            label="重新生成此回答"
+            icon={<RegenerateIcon size={13} />}
+            variant="ghost"
+            size="sm"
+            onClick={() => onRegenerate(msg.id)}
+            isDisabled={!!rollbackError || regenerateBlocked}
+            tooltip={
+              rollbackError
+                ? `无法重新生成：${rollbackError}`
+                : regenerateBlocked
+                  ? '重新生成暂不支持含图片的消息'
+                  : '重新生成此回答（保留原分支）'
+            }
+          />
+          {copyButton}
+          {onLearnChange && !msg.isError && !msg.interrupted && extractChangedFilePaths(msg.blocks).length > 0 && (
+            <IconButton
+              label="学懂这次改动"
+              icon={<BookIcon size={13} />}
+              variant="ghost"
+              size="sm"
+              onClick={() => onLearnChange(msg.id)}
+              tooltip="学懂这次改动"
+            />
+          )}
+        </>
+      )}
+      {isUser && onEditResend && userImageBlocks.length === 0 && (
+        /* 用户消息编辑入口：仅纯文本消息可编辑重发（含图片的消息本期不支持，避免重发丢图） */
+        <IconButton
+          label="编辑并重发"
+          icon={<EditIcon size={13} />}
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setEditText(typeof textContent === 'string' ? textContent : '')
+            setIsEditing(true)
+          }}
+          isDisabled={!!rollbackError}
+          tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
+        />
+      )}
+      {isUser && copyButton}
+      {branchFlipper}
+      {isAssistant && timestampEl}
+    </div>
+  ) : null
 
   const messageBody = (
     <>
@@ -625,12 +635,10 @@ function MessageItemInner({
   /* 消息结构交回 Astryx：ChatMessage 负责 sender 对齐/头像 slot，
      用户气泡几何（radius/padding/max-width/背景）交给 ChatMessageBubble + theme hook，
      assistant 平铺正文保留为 Nova 自有 body 区域（定位上下文 + 全宽）。
-     约定：Nova 当前不渲染逐条消息的时间/模型/用量元数据行；未来若新增，
-     必须走 ChatMessage/ChatMessageBubble 的 metadata 槽，禁止手写 flex 元数据行。 */
-  const bodyWithChrome = (
+     消息级 chrome（操作按钮/时间戳/分支翻页）统一走 metadata 槽：
+     user 挂在气泡的 metadata（落在气泡下方右侧），assistant 挂在消息的 metadata（平铺正文之后）。 */
+  const messageContent = (
     <>
-      {actionsBar}
-      {branchFlipper}
       <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>{messageBody}</div>
       {msg.isError && msg.errorActions && msg.errorActions.length > 0 ? (
         <ErrorActionRow message={msg} onRegenerate={onRegenerate} />
@@ -639,18 +647,24 @@ function MessageItemInner({
   )
 
   return (
-    /* 产品决策：assistant 不渲染头像（平铺正文即身份），仅保留 sender 对齐语义 */
-    <ChatMessage sender={isUser ? 'user' : 'assistant'}>
+    /* 产品决策：assistant 不渲染头像（平铺正文即身份），仅保留 sender 对齐语义。
+       chat-msg-row 是 footer hover 显隐的作用域钩子。 */
+    <ChatMessage
+      sender={isUser ? 'user' : 'assistant'}
+      className="chat-msg-row"
+      metadata={isAssistant ? messageFooter : undefined}
+    >
       {isUser ? (
         <ChatMessageBubble
           variant="filled"
           className={`chat-msg chat-msg--user${msg.isError ? ' chat-msg--error' : ''}`}
+          metadata={messageFooter}
         >
-          {bodyWithChrome}
+          {messageContent}
         </ChatMessageBubble>
       ) : (
         <div className={`chat-msg chat-msg--assistant${msg.isError ? ' chat-msg--error' : ''}`}>
-          {bodyWithChrome}
+          {messageContent}
         </div>
       )}
     </ChatMessage>

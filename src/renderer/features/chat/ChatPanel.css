@@ -228,12 +228,6 @@
   border-radius: var(--radius-md);
 }
 
-/* 平铺后悬浮操作按钮不再依附卡片上沿，改为贴消息右上角 */
-.chat-msg--assistant .chat-msg__actions {
-  top: 0;
-  right: 0;
-}
-
 .chat-msg--error {
   border-color: var(--color-error);
   background-color: var(--surface-danger-subtle);
@@ -601,32 +595,78 @@
 
 
 
-/* 消息悬浮操作栏 */
-.chat-msg__actions {
-  position: absolute;
-  top: -12px;
-  right: 12px;
+/*
+ * 消息 footer（操作按钮 + 时间戳）：位于消息末尾的 metadata 槽，流内排版不悬浮。
+ * assistant 按钮常显、时间戳 hover 消息行才浮现；user 整条默认隐藏、hover 浮现。
+ */
+.chat-msg__footer {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-msg__footer--assistant {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* metadata 槽外层是组件库无 class 的裸 div（flex item 会缩成内容宽），
+   拉满整行后内部 margin-inline-start:auto 才能把右侧时间戳推到消息右缘 */
+.chat-msg-row div:has(> .chat-msg__footer--assistant) {
+  align-self: stretch;
+}
+
+/* 气泡 metadata 槽自带的 16px 内边距会把按钮簇从气泡右缘内推，去掉以对齐气泡边缘 */
+.chat-msg-row div:has(> .chat-msg__footer--user) {
+  padding-inline: 0;
+}
+
+/* 隐藏只挡指针不挡 Tab：opacity 隐藏时按钮仍在焦点序里，
+   键盘聚焦后 focus-within 会触发浮现（visibility:hidden 会把它们踢出焦点序） */
+.chat-msg__footer--user {
+  justify-content: flex-end;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--transition-fast) ease, transform var(--transition-fast) ease;
-  transform: translateY(4px);
-  z-index: 10;
+  transition: opacity var(--transition-fast) ease;
 }
 
-.chat-msg:hover .chat-msg__actions,
-.chat-msg:focus-within .chat-msg__actions,
-.chat-msg:has(.chat-msg__actions [aria-expanded='true']) .chat-msg__actions,
-.chat-msg:has(.chat-msg__actions [data-state='open']) .chat-msg__actions {
+.chat-msg-row:hover .chat-msg__footer--user,
+.chat-msg-row:focus-within .chat-msg__footer--user {
   opacity: 1;
   pointer-events: auto;
-  transform: translateY(0);
 }
 
-.chat-msg__actions :is(button, a):focus-visible {
+.chat-msg__timestamp {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.chat-msg__footer--assistant .chat-msg__timestamp {
+  margin-inline-start: auto;
+  align-self: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast) ease;
+}
+
+.chat-msg-row:hover .chat-msg__footer--assistant .chat-msg__timestamp,
+.chat-msg-row:focus-within .chat-msg__footer--assistant .chat-msg__timestamp {
+  opacity: 1;
+}
+
+.chat-msg__footer :is(button, a):focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-msg__footer--user,
+  .chat-msg__footer--assistant .chat-msg__timestamp {
+    transition: none;
+  }
 }
 
 /* 动作按钮（重新生成/编辑/分支翻页）几何交给 Astryx IconButton size/variant，
@@ -656,12 +696,11 @@
 
 /* 编辑确认/取消按钮几何交给 Astryx Button size="sm"，无 .astryx-* 覆盖 */
 
-/* ── 兄弟分支翻页器 ‹ k/n › ─────────────────────────────── */
+/* ── 兄弟分支翻页器 ‹ k/n ›：位于消息 footer 内，与操作按钮同行 ── */
 .chat-msg__branch-flipper {
   display: flex;
   align-items: center;
   gap: 4px;
-  margin-top: 6px;
   font-size: 0.75rem;
   color: var(--text-muted);
   user-select: none;

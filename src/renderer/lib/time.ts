@@ -26,3 +26,10 @@ export function formatCompactRelativeTime(timestamp: number, now = Date.now()): 
   const days = Math.floor(hours / 24)
   return `${days}d`
 }
+
+/** 消息 footer 用的完整绝对时间：YYYY-MM-DD HH:mm */
+export function formatFullTimestamp(timestamp: number): string {
+  const d = new Date(timestamp)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
