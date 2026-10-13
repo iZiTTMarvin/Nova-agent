@@ -60,6 +60,8 @@
 .chat-session-breadcrumb__sep {
   color: var(--text-muted);
   flex-shrink: 0;
+  /* 分隔符两侧在 trigger gap 之上再加间距，路径层级更松 */
+  margin: 0 8px;
 }
 
 .chat-session-breadcrumb__session {

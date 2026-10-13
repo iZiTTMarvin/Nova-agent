@@ -1278,7 +1278,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
           <div className="sidebar-topbar__brand">
             <NovaLogo size={24} />
           </div>
-          <div className="sidebar-topbar__actions ml-auto flex items-center gap-1">
+          <div className="sidebar-topbar__actions flex items-center gap-1">
             <IconButton
               label="会话检索 (Ctrl+P)"
               icon={<SearchIcon size={15} />}
