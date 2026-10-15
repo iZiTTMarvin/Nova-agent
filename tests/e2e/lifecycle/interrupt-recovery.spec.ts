@@ -10,7 +10,9 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import sharp from 'sharp'
 import path from 'node:path'
+import { UNCERTAIN_DISPATCH_REPLAY_BUDGET } from '../../../src/runtime/agent/recovery/AttemptController'
 import type { ElectronApplication } from '@playwright/test'
+import type { FakeTurn } from '../fixtures/fake-runtime'
 import {
   RUN_LIST_WAITING,
   SAVE_MODEL_CONFIG,
@@ -224,38 +226,38 @@ test('工具调用流中途失败后重载：工具块保持终态不转圈', as
   const sessionId = state.currentSessionId
   if (!sessionId) throw new Error('session id missing')
 
-  // 不完整工具流的远端结果未知，必须直接失败而不是再次请求供应商。
-  nova.provider.enqueue(
-    {
-      kind: 'raw',
-      events: [
-        {
-          payload: {
-            choices: [
-              {
-                index: 0,
-                delta: {
-                  tool_calls: [
-                    {
-                      index: 0,
-                      id: 'call_partial_write',
-                      type: 'function',
-                      function: {
-                        name: 'write',
-                        arguments: '{"path":'
-                      }
+  // 不完整工具流远端结果未知：步骤内有界重放，预算耗尽后以失败收敛，绝不执行半截工具。
+  const partialToolTurn: FakeTurn = {
+    kind: 'raw',
+    events: [
+      {
+        payload: {
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_partial_write',
+                    type: 'function',
+                    function: {
+                      name: 'write',
+                      arguments: '{"path":'
                     }
-                  ]
-                },
-                finish_reason: null
-              }
-            ]
-          }
-        },
-        { payload: '[DONE]' }
-      ]
-    }
-  )
+                  }
+                ]
+              },
+              finish_reason: null
+            }
+          ]
+        }
+      },
+      { payload: '[DONE]' }
+    ]
+  }
+  const maxRequests = 1 + UNCERTAIN_DISPATCH_REPLAY_BUDGET
+  nova.provider.enqueue(...Array.from({ length: maxRequests }, () => partialToolTurn))
 
   await nova.sendPrompt('触发工具调用中断')
   await expect.poll(async () => (await nova.getRunSnapshot(sessionId))?.status, { timeout: 15_000 })
@@ -264,7 +266,7 @@ test('工具调用流中途失败后重载：工具块保持终态不转圈', as
 
   // 轮次以失败收敛：错误文案可见，对话不残留 live 转圈行
   await expect(nova.page.getByText('远端结果与费用未知，已停止自动重试。', { exact: false })).toBeVisible()
-  expect(nova.provider.requests).toHaveLength(1)
+  expect(nova.provider.requests).toHaveLength(maxRequests)
   await expect(nova.page.locator('.tool-trace-row--live')).toHaveCount(0)
 
   // 重载后：错误终态保持，无 live 转圈行、无「中断生成」，会话可继续输入
@@ -274,7 +276,7 @@ test('工具调用流中途失败后重载：工具块保持终态不转圈', as
   await expect(nova.page.getByRole('button', { name: '中断生成' })).toHaveCount(0)
   await expect(nova.page.getByLabel('消息输入')).toBeEditable()
   await expect(nova.page.getByText('远端结果与费用未知，已停止自动重试。', { exact: false })).toBeVisible()
-  expect(nova.provider.requests).toHaveLength(1)
+  expect(nova.provider.requests).toHaveLength(maxRequests)
 
   expect(nova.pageErrors).toEqual([])
 })

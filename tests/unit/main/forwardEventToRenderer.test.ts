@@ -51,24 +51,6 @@ describe('forwardEventToRenderer（recovery / hook IPC）', () => {
     })
   })
 
-  it('recovery_hint → agent:recovery-hint', () => {
-    const win = makeMainWindow()
-    const event: AgentEvent = {
-      type: 'recovery_hint',
-      messageId: 'msg_2',
-      hint: '[系统恢复提示] 正在重试',
-      attempt: 2
-    }
-
-    forwardEventToRenderer(win as never, event)
-
-    expect(win._send).toHaveBeenCalledWith('agent:recovery-hint', {
-      messageId: 'msg_2',
-      hint: '[系统恢复提示] 正在重试',
-      attempt: 2
-    })
-  })
-
   it('recovery_state → agent:recovery-state（retrying 原样转发 UI 字段）', () => {
     const win = makeMainWindow()
     const event: AgentEvent = {

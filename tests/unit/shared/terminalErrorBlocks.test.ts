@@ -9,7 +9,10 @@ import {
   formatTerminalErrorNotice,
   formatTerminalErrorMessage,
   appendTerminalErrorToBlocks,
-  resolveTerminalErrorActions
+  extractTerminalErrorNotice,
+  isTerminalErrorNoticeText,
+  resolveTerminalErrorActions,
+  resolveTerminalErrorActionsForNotice
 } from '../../../src/shared/session/terminalErrorBlocks'
 import {
   encodeModelFailureError,
@@ -130,6 +133,19 @@ describe('ModelFailure 前缀协议', () => {
     expect(resolveTerminalErrorActions('ContextBudgetExceeded: estimatedTokens=1')).toEqual(['new-session'])
   })
 
+  it('落盘文案取回的动作与实时解析一致：重载历史后按钮不消失', () => {
+    for (const kind of MODEL_FAILURE_KINDS) {
+      const error = encodeModelFailureError(kind, 'raw provider text')
+      expect(resolveTerminalErrorActionsForNotice(formatTerminalErrorMessage(error)))
+        .toEqual(resolveTerminalErrorActions(error))
+    }
+    expect(resolveTerminalErrorActionsForNotice(REMOTE_RESULT_UNKNOWN_NOTICE)).toEqual([])
+    expect(resolveTerminalErrorActionsForNotice(
+      formatTerminalErrorMessage('ContextRecoveryFailed: invalid-summary')
+    )).toEqual([])
+    expect(resolveTerminalErrorActionsForNotice('随便一段正文')).toEqual([])
+  })
+
   it('无分类前缀的错误没有动作按钮，文案原样保留（旧会话兼容）', () => {
     expect(resolveTerminalErrorActions('API 超时')).toEqual([])
     expect(formatTerminalErrorMessage('API 超时')).toBe('API 超时')
@@ -149,5 +165,50 @@ describe('ModelFailure 前缀协议', () => {
     expect(textBlock.type).toBe('text')
     expect(textBlock.content).not.toContain('ModelFailure:')
     expect(textBlock.content).toContain('API Key')
+  })
+})
+
+describe('extractTerminalErrorNotice：落盘提示的读侧', () => {
+  it('写读往返：正文原样留下，提示单独取出', () => {
+    const error = encodeModelFailureError('rate_limit', '429')
+    const blocks: MessageBlock[] = [
+      { type: 'tool', toolCallId: 'tc1', toolName: 'ls', arguments: {}, status: 'success', result: 'ok' },
+      { type: 'text', content: '已经写出来的回答' }
+    ]
+    const written = appendTerminalErrorToBlocks(blocks, error)
+    const split = extractTerminalErrorNotice(written)
+    expect(split?.notice).toBe(formatTerminalErrorMessage(error))
+    expect(split?.blocks).toEqual([written[0], { type: 'text', content: '已经写出来的回答' }])
+  })
+
+  it('提示独占末尾块时整块移除，不留下空文本块', () => {
+    const blocks: MessageBlock[] = [
+      { type: 'tool', toolCallId: 'tc1', toolName: 'ls', arguments: {}, status: 'running' }
+    ]
+    const split = extractTerminalErrorNotice(
+      appendTerminalErrorToBlocks(blocks, encodeModelFailureError('auth', '401'))
+    )
+    expect(split?.blocks).toHaveLength(1)
+    expect(split?.notice).toContain('API Key')
+  })
+
+  it('每类失败的提示都认得出来，含上下文恢复与接管家族', () => {
+    for (const kind of MODEL_FAILURE_KINDS) {
+      const error = encodeModelFailureError(kind, 'raw provider text')
+      expect(extractTerminalErrorNotice(appendTerminalErrorToBlocks([], error))?.notice)
+        .toBe(formatTerminalErrorMessage(error))
+    }
+    expect(isTerminalErrorNoticeText(
+      formatTerminalErrorMessage('ContextRecoveryFailed: invalid-summary')
+    )).toBe(true)
+    expect(isTerminalErrorNoticeText(
+      formatTerminalErrorMessage('ContextRecoveryFailed: authority-expired')
+    )).toBe(true)
+  })
+
+  it('普通正文不误判为提示，未命中时返回 null 让调用方保持原引用', () => {
+    const blocks: MessageBlock[] = [{ type: 'text', content: '部署完成\n\n⚠️ 注意端口冲突' }]
+    expect(extractTerminalErrorNotice(blocks)).toBeNull()
+    expect(isTerminalErrorNoticeText('部署完成')).toBe(false)
   })
 })

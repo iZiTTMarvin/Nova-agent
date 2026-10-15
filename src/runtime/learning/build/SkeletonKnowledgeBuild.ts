@@ -22,6 +22,7 @@ import {
   type CompileOutput
 } from './compileOutputSchema'
 import { validateCompileCandidate } from '../knowledge/validation/validateCompileCandidate'
+import type { CompileValidationResult } from '../knowledge/validation/validateCompileCandidate'
 import { serializeNodeBody, type PublishedNodeBody } from '../knowledge/nodeBody'
 import type { ProjectKnowledge } from '../knowledge/ProjectKnowledgeRepository'
 import type { ProjectKnowledgeReader } from '../knowledge/ProjectKnowledgeReader'
@@ -187,6 +188,7 @@ export class SkeletonKnowledgeBuild {
     let modelCallCount = 0
     const messages: ChatMessage[] = [{ role: 'user', content: packed.prompt }]
     let output: CompileOutput | null = null
+    let validation: CompileValidationResult | null = null
     let lastError = 'schema 无效'
 
     for (let attempt = 0; attempt <= LEARNING_SCHEMA_REPAIR_MAX_EXTRA_CALLS; attempt++) {
@@ -206,7 +208,16 @@ export class SkeletonKnowledgeBuild {
         return { ok: false, code: reason === '大纲输出超出上限' ? 'invalid_output' : 'provider_error', reason, modelCallCount }
       }
       try {
-        output = parseCompileOutputText(text)
+        const candidate = parseCompileOutputText(text)
+        params.onProgress?.('validating')
+        validation = await validateCompileCandidate({ workspaceRoot: params.workspaceRoot, evidence, output: candidate })
+        if (!validation.ok) {
+          if (validation.failure.code === 'stale_source') {
+            return { ok: false, code: 'source_changed', reason: validation.message, modelCallCount }
+          }
+          throw new Error(validation.message)
+        }
+        output = candidate
         break
       } catch (e) {
         lastError = e instanceof Error ? e.message : String(e)
@@ -219,27 +230,14 @@ export class SkeletonKnowledgeBuild {
         // 修复请求带着上次输出，超预算就放弃修复，不硬发
         if (measureSkeletonRequest(model, repair) > budget) break
         messages.splice(0, messages.length, ...repair)
+        params.onProgress?.('analyzing')
       }
     }
 
-    if (!output) {
+    if (!output || !validation?.ok) {
       return { ok: false, code: 'invalid_output', reason: lastError, modelCallCount }
     }
 
-    params.onProgress?.('validating')
-    const validation = await validateCompileCandidate({
-      workspaceRoot: params.workspaceRoot,
-      evidence,
-      output
-    })
-    if (!validation.ok) {
-      return {
-        ok: false,
-        code: validation.failure.code === 'stale_source' ? 'source_changed' : 'invalid_output',
-        reason: validation.message,
-        modelCallCount
-      }
-    }
 
     const knowledgeRevision = randomUUID()
     const nodePayloads = output.nodes.map(node => {
@@ -306,9 +304,11 @@ export class SkeletonKnowledgeBuild {
         )
       })
     } catch (e) {
+      // 约束冲突是这一版大纲自身的问题，与真正的存储故障分开上报
+      const isConstraint = (e as { code?: unknown } | null)?.code === 'constraint'
       return {
         ok: false,
-        code: 'storage_unavailable',
+        code: isConstraint ? 'invalid_output' : 'storage_unavailable',
         reason: e instanceof Error ? e.message : String(e),
         modelCallCount
       }

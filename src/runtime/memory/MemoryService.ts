@@ -1,6 +1,6 @@
 /**
  * MemoryService — 跨会话记忆业务入口
- * 文档检索：search 只查 FTS 索引（热路径默认不 reconcile）；手写 .md 与 episodic 落盘走本服务。
+ * 文档检索：指纹变化时同步 FTS 索引；手写 .md 与 episodic 落盘走本服务。
  */
 import {
   existsSync,
@@ -23,7 +23,14 @@ import {
   DEFAULT_SCORE_FLOOR,
   DEFAULT_SEARCH_LIMIT
 } from './FtsQueryBuilder'
-import { searchIndexedDocuments, upsertIndexedFile, countIndexedFiles } from './MemoryIndexer'
+import {
+  isSearchableMemoryFile,
+  isStructuralIndexError,
+  listIndexedFingerprints,
+  searchIndexedDocuments,
+  upsertIndexedFile,
+  countIndexedFiles
+} from './MemoryIndexer'
 import { reconcileScope, scanScopeMarkdownFiles, listScopeMarkdownFileMeta } from './MemoryReconciler'
 import type {
   MemorySearchHit,
@@ -34,7 +41,7 @@ import type {
 } from './types'
 
 export interface MemoryServiceOptions {
-  /** 热路径默认 false：search 不触发 reconcile */
+  /** 每次检索全量同步；默认仅在文件指纹变化时同步 */
   reconcileOnSearch?: boolean
   searchLimit?: number
   scoreFloor?: number
@@ -67,34 +74,58 @@ export class MemoryService {
     return this.scopeDirectories.registerWorkspace(workspaceRoot)
   }
 
-  /**
-   * FTS 检索（热路径只查索引；默认不 reconcile）
-   */
+  /** 检索前同步外部编辑；索引故障时从同一范围的文件检索。 */
   search(scopeId: string, query: string, options?: MemorySearchOptions): MemorySearchHit[] {
     if (this.closed || !query.trim()) {
       return []
-    }
-
-    if (this.reconcileOnSearch) {
-      this.reconcile(scopeId)
     }
 
     const limit = options?.limit ?? this.searchLimit
     const floor = options?.scoreFloor ?? this.scoreFloor
     const fetchLimit = computeOverFetchLimit(limit)
     let raw: MemorySearchHit[]
-    if (!this.db || this.indexUnavailable) raw = this.scanDocuments(scopeId, query, fetchLimit)
-    else {
-      try { raw = searchIndexedDocuments(this.db, scopeId, query, fetchLimit) }
-      catch { this.indexUnavailable = true; raw = this.scanDocuments(scopeId, query, fetchLimit) }
+    try {
+      if (this.reconcileOnSearch) this.reconcile(scopeId)
+      else this.syncExternalEdits(scopeId)
+      raw = !this.db || this.indexUnavailable
+        ? this.scanDocuments(scopeId, query, fetchLimit)
+        : searchIndexedDocuments(this.db, scopeId, query, fetchLimit)
+    } catch (error) {
+      if (isStructuralIndexError(error)) this.indexUnavailable = true
+      raw = this.scanDocuments(scopeId, query, fetchLimit)
     }
     return applyScoreFloor(raw, limit, floor)
   }
 
+  /**
+   * 检索前用 stat 比对指纹，发现外部改动才增量重建。
+   *
+   * 用户在应用运行期间用编辑器改了手写记忆文档时，索引不会自动知道——以前要等到
+   * 重启或手动重建，检索一直返回旧内容。这里只读元信息（size + mtime），不读正文，
+   * 只有指纹真的对不上才走一次 reconcile。
+   */
+  private syncExternalEdits(scopeId: string): void {
+    if (!this.db || this.closed || this.indexUnavailable) return
+    const scopeKind = scopeId === 'user' ? 'global' : 'project'
+    const scopeDir = this.scopeDirectories.resolve(scopeId)
+    const onDisk = new Map(
+      listScopeMarkdownFileMeta(scopeDir)
+        .filter(file => isSearchableMemoryFile(file.relPath, scopeKind))
+        .map(file => [file.relPath, computeFingerprint(file.size, file.mtimeMs)])
+    )
+    const indexed = listIndexedFingerprints(this.db, scopeId)
+    if (onDisk.size === indexed.size && [...onDisk].every(([relPath, fp]) => indexed.get(relPath) === fp)) {
+      return
+    }
+    this.reconcile(scopeId)
+  }
+
   private scanDocuments(scopeId: string, query: string, limit: number): MemorySearchHit[] {
     const terms = buildQueryTerms(query)
-    const hits = scanScopeMarkdownFiles(this.scopeDirectories.resolve(scopeId), scopeId === 'user' ? 'global' : 'project')
-      .filter(file => !file.relPath.startsWith('episodic/')).map(file => {
+    // 降级路径与索引路径共用同一个范围判定：不能因为走了扫描就丢掉操作摘要
+    const scopeKind = scopeId === 'user' ? 'global' : 'project'
+    const hits = scanScopeMarkdownFiles(this.scopeDirectories.resolve(scopeId), scopeKind)
+      .filter(file => isSearchableMemoryFile(file.relPath, scopeKind)).map(file => {
         const text = file.body.normalize('NFKC').toLowerCase()
         return { scopeId, relPath: file.relPath, body: file.body, score: terms.filter(term => text.includes(term)).length }
       }).filter(hit => hit.score > 0).sort((a, b) => b.score - a.score || a.relPath.localeCompare(b.relPath)).slice(0, limit)

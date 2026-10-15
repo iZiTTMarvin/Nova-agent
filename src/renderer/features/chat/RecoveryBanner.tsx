@@ -13,7 +13,6 @@ interface ModelSwitchInfo {
   messageId: string
   modelId: string
   fallbackIndex: number
-  reason: string
 }
 
 /** 旋转加载指示器（retrying / recovering 共用） */
@@ -60,9 +59,6 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
   const recoveryState = useChatStore(state =>
     messageId ? state.recoveryState[messageId] : undefined
   )
-  const recoveryHints = useChatStore(state =>
-    messageId ? state.recoveryHints[messageId] : undefined
-  )
   const hookErrors = useChatStore(state =>
     messageId ? state.hookErrors[messageId] : undefined
   )
@@ -79,24 +75,22 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
         setModelSwitch({
           messageId: data.messageId,
           modelId: data.modelId,
-          fallbackIndex: data.fallbackIndex,
-          reason: data.reason
+          fallbackIndex: data.fallbackIndex
         })
       }
     })
     return unsub
   }, [messageId])
 
-  const latestHint = recoveryHints?.[recoveryHints.length - 1]
-
   const recoveryBanner = useMemo(() => {
     if (!messageId || !recoveryState) return null
 
+    // 状态行只说人话：恢复提示与失败原文是给模型/诊断用的，不进用户界面
     if (recoveryState.kind === 'retrying') {
       return {
         variant: 'retrying' as const,
         title: `正在重试（${recoveryState.attempt}/${recoveryState.maxAttempts}）`,
-        detail: latestHint?.hint ?? recoveryState.lastError
+        detail: '上次请求没有成功，稍等会自动继续。'
       }
     }
 
@@ -104,7 +98,7 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
       return {
         variant: 'recovering' as const,
         title: '正在压缩上下文',
-        detail: latestHint?.hint
+        detail: '压缩完成后继续本轮。'
       }
     }
 
@@ -112,12 +106,12 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
       return {
         variant: 'failed' as const,
         title: 'Agent 已停止',
-        detail: latestHint?.hint ?? recoveryState.error
+        detail: undefined
       }
     }
 
     return null
-  }, [messageId, recoveryState, latestHint])
+  }, [messageId, recoveryState])
 
   const hasHookErrors = (hookErrors?.length ?? 0) > 0
   const visible = Boolean(recoveryBanner || hasHookErrors || modelSwitch)
@@ -190,7 +184,7 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
               <span className="recovery-banner__title">
                 已切换至备用模型：{modelSwitch.modelId}
               </span>
-              <span className="recovery-banner__detail">{modelSwitch.reason}</span>
+              <span className="recovery-banner__detail">原模型暂时不可用，已自动切换。</span>
             </span>
           </motion.div>
         )}

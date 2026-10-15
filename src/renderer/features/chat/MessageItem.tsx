@@ -20,17 +20,21 @@ import { buildBlockRenderUnits, type RenderUnit } from './toolCallGrouping'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
 import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
+import { TerminalErrorNotice } from './TerminalErrorNotice'
 import { useChatStore } from '../../stores/useChatStore'
-import { useSettingsStore } from '../../stores/useSettingsStore'
 import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon, BookIcon } from '../../components/Icons'
 import { extractChangedFilePaths } from '../../../shared/learning/devChangeFiles'
+import {
+  extractTerminalErrorNotice,
+  isTerminalErrorNoticeText,
+  resolveTerminalErrorActionsForNotice
+} from '../../../shared/session/terminalErrorBlocks'
 import { formatFullTimestamp } from '../../lib/time'
 import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
 import type { ExtendedMessage, MessageDiffCache, RendererMessageBlock } from '../../stores/types'
-import type { TerminalErrorAction } from '../../../shared/session/terminalErrorBlocks'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageRenderMode } from './messageRenderTier'
 
@@ -268,13 +272,29 @@ function MessageItemInner({
     }
   }, [msg.id, isAssistant, currentSessionId, onLoadDiffs, diffCache, isDiffLoading])
 
+  // 落盘的终态提示从正文里拆出来：正文保持正常配色，提示单独成卡。
+  // 未命中时 extractTerminalErrorNotice 返回 null，blocks 引用不变，流式增量缓存照旧生效。
+  const terminalNotice = useMemo(
+    () => (isAssistant ? extractTerminalErrorNotice(msg.blocks ?? []) : null),
+    [isAssistant, msg.blocks]
+  )
+  const renderBlocks = terminalNotice ? terminalNotice.blocks : msg.blocks
+
   // blocks 渲染路径：按流式事件顺序展示 thinking → text → tool → text → ...
-  const hasBlocks = isAssistant && msg.blocks && msg.blocks.length > 0
+  const hasBlocks = isAssistant && !!renderBlocks && renderBlocks.length > 0
 
   // 旧路径兼容：无 blocks 时走 parseThinking 正则兜底
   const { thinkingContent, textContent, isThinkingActive } = isAssistant && !hasBlocks
     ? parseThinking(msg, streamingActive, currentGeneratingMessageId)
     : { thinkingContent: '', textContent: msg.content, isThinkingActive: false }
+  // 整条正文就是提示（无 blocks 的终态错误）时不再当回答渲染，避免与提示卡重复
+  const noticeFromContent =
+    isAssistant && !terminalNotice && !hasBlocks && isTerminalErrorNoticeText(msg.content)
+  const noticeText = terminalNotice?.notice ?? (noticeFromContent ? msg.content.trim() : null)
+  // 提示卡承载了这段文案：没有剩余正文块时不再把同一段当回答渲染一遍
+  const bodyText = noticeText && !hasBlocks ? '' : textContent
+  // 动作从落盘文案取回：重载历史后按钮仍在，不依赖只存在于运行期的字段
+  const noticeActions = noticeText ? resolveTerminalErrorActionsForNotice(noticeText) : undefined
   const isCurrentAssistantGenerating = isAssistant && streamingActive && msg.id === currentGeneratingMessageId
   // 「轮次是否进行中」：与 streamingActive 不同，它**不**受 isPausedForInput 影响。
   // 专门用于控制 StreamingTextBlock 的终态高亮时机——等待 bash 权限 / askQuestion
@@ -302,28 +322,28 @@ function MessageItemInner({
     () =>
       isAssistant
         ? buildTurnRenderModel({
-            blocks: hasBlocks ? msg.blocks : undefined,
+            blocks: hasBlocks ? renderBlocks : undefined,
             toolCalls: msg.toolCalls,
             mode: currentMode,
             phase: turnPhase,
             turnStartedAt: msg.turnStartedAt,
             turnEndedAt: msg.turnEndedAt,
             thinking: thinkingContent || undefined,
-            content: textContent || undefined,
+            content: bodyText || undefined,
             cache: turnBuildCacheRef.current
           })
         : null,
     [
       isAssistant,
       hasBlocks,
-      msg.blocks,
+      renderBlocks,
       msg.toolCalls,
       msg.turnStartedAt,
       msg.turnEndedAt,
       currentMode,
       turnPhase,
       thinkingContent,
-      textContent
+      bodyText
     ]
   )
 
@@ -347,7 +367,7 @@ function MessageItemInner({
       onRenderPoolTick={handleRenderPoolTick}
       isTurnActiveForThisMsg={isTurnActiveForThisMsg}
       isPausedForInput={isPausedForInput}
-      blocks={msg.blocks ?? []}
+      blocks={renderBlocks ?? []}
       sessionId={currentSessionId}
       pendingPlanReview={pendingPlanReview ?? null}
       persistedUserOpen={turnProcessOpen}
@@ -518,8 +538,8 @@ function MessageItemInner({
                     blockIndex={0}
                   />
                 )}
-                {textContent && !(isUser && isEditing) && (
-                  <MarkdownRenderer content={textContent} isStreaming={isTurnActiveForThisMsg} />
+                {bodyText && !(isUser && isEditing) && (
+                  <MarkdownRenderer content={bodyText} isStreaming={isTurnActiveForThisMsg} />
                 )}
               </>
             )}
@@ -640,8 +660,13 @@ function MessageItemInner({
   const messageContent = (
     <>
       <div className={isStaticRow ? 'chat-msg__static-body' : undefined}>{messageBody}</div>
-      {msg.isError && msg.errorActions && msg.errorActions.length > 0 ? (
-        <ErrorActionRow message={msg} onRegenerate={onRegenerate} />
+      {noticeText ? (
+        <TerminalErrorNotice
+          notice={noticeText}
+          actions={noticeActions}
+          messageId={msg.id}
+          onRegenerate={onRegenerate}
+        />
       ) : null}
     </>
   )
@@ -657,68 +682,17 @@ function MessageItemInner({
       {isUser ? (
         <ChatMessageBubble
           variant="filled"
-          className={`chat-msg chat-msg--user${msg.isError ? ' chat-msg--error' : ''}`}
+          className="chat-msg chat-msg--user"
           metadata={messageFooter}
         >
           {messageContent}
         </ChatMessageBubble>
       ) : (
-        <div className={`chat-msg chat-msg--assistant${msg.isError ? ' chat-msg--error' : ''}`}>
+        <div className="chat-msg chat-msg--assistant">
           {messageContent}
         </div>
       )}
     </ChatMessage>
-  )
-}
-
-// ── 终态错误动作按钮：把分类错误翻译成用户能点的下一步 ──────────────────
-
-const ERROR_ACTION_LABELS: Record<TerminalErrorAction, string> = {
-  'open-settings': '去设置检查',
-  'switch-model': '换模型',
-  retry: '重试',
-  'new-session': '开新会话',
-  'export-diagnostics': '导出诊断包'
-}
-
-function ErrorActionRow({
-  message,
-  onRegenerate
-}: {
-  message: ExtendedMessage
-  onRegenerate: (messageId: string) => void
-}) {
-  const handleAction = (action: TerminalErrorAction) => {
-    switch (action) {
-      case 'retry':
-        onRegenerate(message.id)
-        break
-      case 'open-settings':
-      case 'switch-model':
-        useSettingsStore.getState().setConfigModalOpen(true)
-        break
-      case 'new-session':
-        void useChatStore.getState().createNewSession(useSettingsStore.getState().currentProject ?? undefined)
-        break
-      case 'export-diagnostics':
-        void window.api.invoke('diagnostics:export')
-        break
-    }
-  }
-  return (
-    <div className="chat-msg__error-actions">
-      {message.errorActions!.map(action => (
-        <Button
-          key={action}
-          label={ERROR_ACTION_LABELS[action]}
-          size="sm"
-          variant="secondary"
-          onClick={() => handleAction(action)}
-        >
-          {ERROR_ACTION_LABELS[action]}
-        </Button>
-      ))}
-    </div>
   )
 }
 

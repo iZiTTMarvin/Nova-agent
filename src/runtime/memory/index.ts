@@ -76,7 +76,7 @@ export type {
   MemoryDocumentStats,
   MemoryScopeStats,
 } from './types'
-export { MemoryExtractor, EXTRACT_REASONING_EFFORT } from './extraction/MemoryExtractor'
+export { MemoryExtractor } from './extraction/MemoryExtractor'
 export type { MemoryExtractorDeps, MemoryExtractionInput } from './extraction/MemoryExtractor'
 export {
   projectExtractionMessages,

@@ -35,16 +35,6 @@ describe('useChatStore recovery / hookError handlers', () => {
     })
   })
 
-  it('handleRecoveryHint 应累积多条提示', () => {
-    useChatStore.getState().handleRecoveryHint('msg_1', 'hint A', 1)
-    useChatStore.getState().handleRecoveryHint('msg_1', 'hint B', 2)
-
-    expect(useChatStore.getState().recoveryHints.msg_1).toEqual([
-      { hint: 'hint A', attempt: 1 },
-      { hint: 'hint B', attempt: 2 }
-    ])
-  })
-
   it('handleHookError 应累积 Hook 异常记录', () => {
     useChatStore.getState().handleHookError('msg_1', 'postToolUse', 'timeout')
     useChatStore.getState().handleHookError('msg_1', 'onError', 'crash')
@@ -72,13 +62,11 @@ describe('useChatStore recovery / hookError handlers', () => {
       kind: 'failed',
       error: 'network error'
     })
-    useChatStore.getState().handleRecoveryHint('msg_err', 'hint', 3)
 
     useChatStore.getState().handleError('msg_err', 'network error')
 
     const state = useChatStore.getState()
     expect(state.recoveryState.msg_err).toBeUndefined()
-    expect(state.recoveryHints.msg_err).toBeUndefined()
     expect(state.currentGeneratingMessageId).toBeNull()
   })
 
@@ -135,7 +123,6 @@ describe('useChatStore recovery / hookError handlers', () => {
       kind: 'recovering',
       fromMessageId: ''
     })
-    useChatStore.getState().handleRecoveryHint('msg_end', 'compressing', 0)
     useChatStore.getState().handleHookError('msg_end', 'context', 'warn')
 
     mockInvoke.mockResolvedValue({ diffs: [], reviews: {} })
@@ -143,7 +130,6 @@ describe('useChatStore recovery / hookError handlers', () => {
 
     const state = useChatStore.getState()
     expect(state.recoveryState.msg_end).toBeUndefined()
-    expect(state.recoveryHints.msg_end).toBeUndefined()
     expect(state.hookErrors.msg_end).toBeUndefined()
     expect(state.currentGeneratingMessageId).toBeNull()
   })

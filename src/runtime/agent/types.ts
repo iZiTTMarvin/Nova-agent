@@ -181,8 +181,8 @@ export interface AgentLoopConfig {
    * 单独算一桶，而不是从 frozenSystemPrompt 字符串里反向正则切分（脆弱）。
    */
   skillsTokenEstimate?: number
-  /** 最大连续工具调用轮数，防止无限循环 */
-  maxToolRounds?: number
+  /** 最大连续工具调用轮数，防止无限循环；null 表示不限制，由循环检测兜底 */
+  maxToolRounds?: number | null
   /** 模型最大上下文窗口（tokens），用于计算动态压缩阈值（上限的 80%） */
   contextWindow?: number
   /** 当前模型是否支持图片输入（vision），用于 readTool 决定是否发送图片 */

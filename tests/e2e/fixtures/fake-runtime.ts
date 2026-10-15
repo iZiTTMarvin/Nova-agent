@@ -33,6 +33,11 @@ export type FakeTurn =
       kind: 'raw'
       events: Array<{ payload: JsonObject | '[DONE]'; delayMs?: number }>
     }
+  | {
+      /** 已回 200 并吐出部分正文后直接断开连接，模拟中途断流 */
+      kind: 'drop'
+      chunks: string[]
+    }
 
 export interface RecordedRequest {
   path: string
@@ -308,6 +313,13 @@ export class FakeRuntime {
         writeSse(res, '[DONE]')
         finished = true
         res.end()
+        return
+      }
+
+      if (turn.kind === 'drop') {
+        for (const chunk of turn.chunks) writeSse(res, contentChunk(chunk))
+        await delay(50)
+        res.destroy()
         return
       }
 

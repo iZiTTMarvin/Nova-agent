@@ -616,12 +616,13 @@ export function thrownToFailure(
   // cancelled 不应进入失败路径（调用方已先行返回 cancelled 事件）
   const kind = thrownFailureKind(cls)
   const headersReceived = opts?.headersReceived ?? true
-  // 未拿到响应头：请求未确认送达，允许重试。已拿到响应头后断流：远端可能已计费，禁止自动重放。
+  // 未拿到响应头：请求未确认送达，允许重试。已拿到响应头后断流：远端可能已计费，
+  // 由 AttemptController 用独立的小额预算有限重放（模型请求无本地副作用）。
   if (!headersReceived) {
     return { kind, retryable: true, message }
   }
   return { kind, retryable: false, dispatchOutcome: 'unknown',
-    message: `${message}；请求可能已送达，远端结果与费用未知，已停止自动重试。` }
+    message: `${message}；请求可能已送达` }
 }
 
 /**

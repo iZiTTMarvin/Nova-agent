@@ -1,8 +1,10 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import {
   StopPolicyExtension,
   EMPTY_ARGS_LIMIT,
-  REPEATED_FAILURE_LIMIT
+  NO_PROGRESS_ROUND_LIMIT,
+  REPEATED_FAILURE_LIMIT,
+  REPEATED_SUCCESS_LIMIT
 } from '../../../../src/runtime/agent/extensions/stopPolicyExtension'
 import type { ShouldStopArgs } from '../../../../src/runtime/agent/core/loopTypes'
 
@@ -303,6 +305,174 @@ describe('StopPolicyExtension — 重复失败恢复', () => {
     )
 
     expect(result).toMatchObject({ stop: true, reason: 'max_rounds' })
+  })
+})
+
+describe('StopPolicyExtension — 循环检测', () => {
+  /** 主会话没有轮数上限，断言的是循环检测本身而不是硬上限 */
+  const unlimited = { maxToolRounds: null }
+
+  const successRound = (name: string, args: Record<string, unknown>) => ({
+    toolCallsThisRound: [{ name, args }],
+    outcomes: [{
+      toolCall: { id: `tc-${name}-${JSON.stringify(args)}`, name },
+      args,
+      resultText: 'ok',
+      failed: false
+    }]
+  })
+
+  /** 连续跑同一成功签名直到首次命中循环检测，返回最后一条决定 */
+  async function repeatUntilHit(policy: StopPolicyExtension, rounds = REPEATED_SUCCESS_LIMIT + 6) {
+    let last: Awaited<ReturnType<StopPolicyExtension['shouldStopAfterTurn']>>
+    for (let round = 1; round <= rounds; round += 1) {
+      last = await policy.shouldStopAfterTurn(
+        makeArgs({ ...successRound('read', { path: 'same.ts' }), toolRound: round, ...unlimited })
+      )
+      if (last) return { decision: last, round }
+    }
+    throw new Error('循环检测未命中')
+  }
+
+  it('反复重复同一成功调用：先注入换路径指令，再命中才请用户裁决', async () => {
+    const adjudicate = vi.fn().mockResolvedValue('redirect' as const)
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: adjudicate })
+
+    const { decision } = await repeatUntilHit(policy)
+    expect(decision).toMatchObject({ stop: false })
+    expect(decision?.instruction).toContain('different step')
+    expect(adjudicate).not.toHaveBeenCalled()
+
+    const second = await policy.shouldStopAfterTurn(
+      makeArgs({ ...successRound('read', { path: 'same.ts' }), toolRound: 99, ...unlimited })
+    )
+    expect(adjudicate).toHaveBeenCalledTimes(1)
+    expect(second).toMatchObject({ stop: false })
+    expect(second?.instruction).toContain('different step')
+  })
+
+  it('没有裁决通道时（子代理 / headless）命中两次即 no_progress 停止', async () => {
+    const policy = new StopPolicyExtension({ audience: 'subagent' })
+    await repeatUntilHit(policy)
+
+    const stopped = await policy.shouldStopAfterTurn(
+      makeArgs({ ...successRound('read', { path: 'same.ts' }), toolRound: 99, ...unlimited })
+    )
+    expect(stopped).toMatchObject({ stop: true, reason: 'no_progress' })
+    expect(stopped?.notice).not.toContain('发送「继续」')
+  })
+
+  it(`连续 ${NO_PROGRESS_ROUND_LIMIT} 轮没有新进展才判定停滞`, async () => {
+    const adjudicate = vi.fn().mockResolvedValue('redirect' as const)
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: adjudicate })
+    // 两个已知签名轮流提交：既不是新进展，也不会累积成单一签名重复
+    const alternating = (round: number) => successRound(round % 2 === 0 ? 'read' : 'grep', { path: 'a.ts' })
+    const feed = (round: number) => policy.shouldStopAfterTurn(makeArgs({ ...alternating(round), toolRound: round, ...unlimited }))
+
+    await feed(1)
+    await feed(2)
+    for (let round = 3; round <= NO_PROGRESS_ROUND_LIMIT + 1; round += 1) {
+      const decision = await feed(round)
+      expect(decision, `第 ${round} 轮不应判定停滞`).toBeUndefined()
+    }
+
+    const stalled = await feed(NO_PROGRESS_ROUND_LIMIT + 2)
+    expect(stalled).toMatchObject({ stop: false })
+    expect(stalled?.instruction).toContain('no new')
+  })
+
+  it('不同参数的失败调用计入停滞窗口，先引导再由用户停止', async () => {
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: async () => 'stop' })
+    const feed = (round: number) => {
+      const failed = successRound('read', { path: `missing-${round}.ts` })
+      failed.outcomes[0].failed = true
+      return policy.shouldStopAfterTurn(makeArgs({ ...failed, toolRound: round, ...unlimited }))
+    }
+    for (let round = 1; round < NO_PROGRESS_ROUND_LIMIT; round++) {
+      expect(await feed(round)).toBeUndefined()
+    }
+    expect(await feed(NO_PROGRESS_ROUND_LIMIT)).toMatchObject({ stop: false, instruction: expect.stringContaining('no new') })
+    expect(await feed(NO_PROGRESS_ROUND_LIMIT + 1)).toMatchObject({ stop: true, reason: 'no_progress' })
+  })
+
+  it('等待失败不推进窗口，随后新的成功调用重置此前失败窗口', async () => {
+    const policy = new StopPolicyExtension({ isProgressNeutralTool: name => name === 'task_wait' })
+    for (let round = 1; round < NO_PROGRESS_ROUND_LIMIT; round++) {
+      const failed = successRound('read', { path: `missing-${round}.ts` })
+      failed.outcomes[0].failed = true
+      expect(await policy.shouldStopAfterTurn(makeArgs({ ...failed, toolRound: round, ...unlimited }))).toBeUndefined()
+    }
+    const waiting = successRound('task_wait', { all_unfinished: true })
+    waiting.outcomes[0].failed = true
+    expect(await policy.shouldStopAfterTurn(makeArgs({ ...waiting, ...unlimited }))).toBeUndefined()
+    expect(await policy.shouldStopAfterTurn(makeArgs({ ...successRound('read', { path: 'exists.ts' }), ...unlimited }))).toBeUndefined()
+    const failed = successRound('read', { path: 'still-missing.ts' })
+    failed.outcomes[0].failed = true
+    expect(await policy.shouldStopAfterTurn(makeArgs({ ...failed, ...unlimited }))).toBeUndefined()
+  })
+
+  it('等待类调用既不推进无进展窗口，也不算作进展', async () => {
+    const adjudicate = vi.fn().mockResolvedValue('redirect' as const)
+    const policy = new StopPolicyExtension({
+      adjudicateNoProgress: adjudicate,
+      isProgressNeutralTool: name => name === 'task_wait'
+    })
+    // 先做出一次真实进展，之后整轮都是等待：窗口不应推进
+    await policy.shouldStopAfterTurn(makeArgs({ ...successRound('grep', { pattern: 'x' }), toolRound: 1, ...unlimited }))
+    for (let round = 2; round <= NO_PROGRESS_ROUND_LIMIT + 10; round += 1) {
+      const decision = await policy.shouldStopAfterTurn(
+        makeArgs({ ...successRound('task_wait', { all_unfinished: true }), toolRound: round, ...unlimited })
+      )
+      expect(decision, `等待第 ${round} 轮不应命中检测`).toBeUndefined()
+    }
+    expect(adjudicate).not.toHaveBeenCalled()
+  })
+
+  it('用户选「本轮不再提醒」后不再打断', async () => {
+    const adjudicate = vi.fn().mockResolvedValue('silence' as const)
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: adjudicate })
+    await repeatUntilHit(policy)
+
+    expect(
+      await policy.shouldStopAfterTurn(makeArgs({ ...successRound('read', { path: 'same.ts' }), toolRound: 99, ...unlimited }))
+    ).toBeUndefined()
+
+    // 之后继续重复 30 轮也不再命中
+    for (let round = 100; round < 130; round += 1) {
+      const decision = await policy.shouldStopAfterTurn(
+        makeArgs({ ...successRound('read', { path: 'same.ts' }), toolRound: round, ...unlimited })
+      )
+      expect(decision?.stop).not.toBe(true)
+    }
+    expect(adjudicate).toHaveBeenCalledTimes(1)
+  })
+
+  it('用户选停止时以 no_progress 结束', async () => {
+    const adjudicate = vi.fn().mockResolvedValue('stop' as const)
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: adjudicate })
+    await repeatUntilHit(policy)
+
+    const stopped = await policy.shouldStopAfterTurn(
+      makeArgs({ ...successRound('read', { path: 'same.ts' }), toolRound: 99, ...unlimited })
+    )
+    expect(stopped).toMatchObject({ stop: true, reason: 'no_progress' })
+    expect(stopped?.notice).toContain('发送「继续」')
+  })
+
+  it('有真实进展时不触发循环检测，长期任务得以继续', async () => {
+    const policy = new StopPolicyExtension()
+    for (let round = 1; round <= 130; round += 1) {
+      const decision = await policy.shouldStopAfterTurn(
+        makeArgs({ ...successRound('read', { path: `file-${round}.ts` }), toolRound: round, ...unlimited })
+      )
+      // 第 100 轮只注入自检指令，不停止
+      if (round === 100) {
+        expect(decision).toMatchObject({ stop: false })
+        expect(decision?.instruction).toContain('100 tool rounds')
+        continue
+      }
+      expect(decision, `第 ${round} 轮不应被循环检测拦下`).toBeUndefined()
+    }
   })
 })
 

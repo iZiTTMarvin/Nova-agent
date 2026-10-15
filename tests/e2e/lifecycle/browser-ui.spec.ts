@@ -31,7 +31,8 @@ test('可从地址栏打开、后退前进刷新停止并关闭，聊天仍可�
   const fixture = await startBrowseFixture()
   try {
     await nova.page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
-    await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
+    await nova.page.getByTestId('inspector-launcher-browser').click()
+    await expect(nova.page.getByTestId('inspector-tab-browser')).toHaveAttribute('aria-selected', 'true')
     const address = nova.page.getByTestId('browser-address')
     await expect(address).toBeVisible()
     await address.fill(`${fixture.origin}/`)
@@ -60,7 +61,7 @@ test('可从地址栏打开、后退前进刷新停止并关闭，聊天仍可�
     await nova.page.getByRole('button', { name: '关闭页面' }).click()
     await expect(guest).toHaveCount(0)
     await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
-    await expect(nova.page.getByText('在地址栏输入网址开始浏览')).toBeVisible()
+    await expect(nova.page.getByText('输入网址并点击访问')).toBeVisible()
     await composer.click()
     await expect(composer).toBeFocused()
   } finally {
@@ -79,7 +80,7 @@ test('无项目与会话时，裸地址在输入法结束后可回车访问，�
     await panelButton.click()
     await expect(panelButton).toHaveAttribute('aria-expanded', 'true')
     await expect(nova.page.getByRole('button', { name: '在 Nova 中打开', exact: true })).toHaveCount(0)
-    await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
+    await nova.page.getByTestId('inspector-launcher-browser').click()
     const address = nova.page.getByTestId('browser-address')
     await address.focus()
     await address.dispatchEvent('compositionstart')
@@ -108,7 +109,8 @@ test('无项目与会话时，裸地址在输入法结束后可回车访问，�
       await nova.page.reload()
       await expect(nova.page.locator('html')).toHaveAttribute('data-theme', theme)
       await panelButton.click()
-      await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
+      // 面板页签不随 reload 保留，经启动器重开；网页由主进程持有，仍应挂回
+      await nova.page.getByTestId('inspector-launcher-browser').click()
       await expect(guest.filter({ visible: true })).toBeVisible()
       for (const width of [900, 1280]) {
         await nova.app.evaluate(({ BrowserWindow }, nextWidth) => {
@@ -154,7 +156,7 @@ test('切会话只展示当前会话页面，连续 reload 后仍能挂上', asy
     const guest = nova.page.locator('webview[data-browser-id]')
     await expect(guest).toBeVisible()
 
-    const next = await nova.createSession()
+    const next = await nova.createFreshSession()
     expect(next.currentSessionId).not.toBe(sessionA)
     await expect(guest).toBeHidden()
 
@@ -246,7 +248,7 @@ test('用户页跨会话存活，AI 页随会话隔离，用户页没有接管�
     await expect(nova.page.getByTestId('browser-tab')).toHaveCount(2)
     await expect(nova.page.getByTestId('browser-takeover')).toHaveCount(0)
 
-    const next = await nova.createSession()
+    const next = await nova.createFreshSession()
     expect(next.currentSessionId).not.toBe(sessionA)
     // 换会话后：AI 会话页隐藏，用户页仍可见
     await expect(nova.page.getByTestId('browser-tab')).toHaveCount(1)
@@ -273,9 +275,11 @@ test('面板页签切走再切回，webview 隐藏后恢复且与舞台对齐', 
     const guest = nova.page.locator('webview[data-browser-id]')
     await expect(guest).toBeVisible()
 
-    await nova.page.getByRole('tab', { name: '文件' }).click()
+    await nova.page.getByRole('button', { name: '打开视图' }).click()
+    await nova.page.getByRole('menuitem', { name: '打开工作区文件' }).click()
+    await expect(nova.page.getByTestId('inspector-tab-files')).toHaveAttribute('aria-selected', 'true')
     await expect(guest).toBeHidden()
-    await nova.page.getByRole('tab', { name: '浏览' }).click()
+    await nova.page.getByTestId('inspector-tab-browser').click()
     await expect(guest).toBeVisible()
 
     // 页签切换不重挂 webview，且舞台对齐（历史坑：晚挂载后 0×0）

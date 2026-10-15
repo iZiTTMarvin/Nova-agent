@@ -28,6 +28,7 @@ import { metricUsageAdoption } from '../../../shared/diagnostics/metrics'
 import { encodeModelFailureError } from '../../../shared/model/failureKinds'
 import type { ChatMessage, ChatToolCall, ContentBlock } from '../../model/types'
 import { resolveCacheProfile } from '../../model/cacheProfile'
+import { thrownToFailure } from '../../model/ModelTransport'
 import { recordMetric } from '../../../shared/diagnostics/metrics'
 import { XmlToolScanner, stripMinimaxArtifacts, parseXmlToolCalls, type XmlScanEvent } from './xmlToolScanner'
 import { parseTextToolCalls, stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
@@ -148,8 +149,10 @@ export class StreamProcessor {
     const { messageId, chatMessages, nativeTools, context, signal } = params
 
     // 每次模型尝试分配唯一 attemptId；恢复预算只由模型错误路径消耗。
-    const attemptId = this.attemptController.beginAttempt()
+    // logicalRequestId 标识一次模型步骤（retry 沿用），AttemptController 据此
+    // 给每个步骤独立的「费用不确定」重放预算。
     this.logicalRequestId ??= randomUUID()
+    const attemptId = this.attemptController.beginAttempt(this.logicalRequestId)
     let usageSource: UsageSource | undefined
     let requestBudget: import('../../model/requestBudget').RequestBudgetMeasurement | undefined
     const attemptStartedAt = Date.now()
@@ -472,6 +475,7 @@ export class StreamProcessor {
               rawContent = ''
               reasoningContent = ''
               toolCalls.length = 0
+              sawToolDelta = false
               finishReason = ''
             }
             switch (decision.action) {
@@ -566,18 +570,17 @@ export class StreamProcessor {
       }
       const errMsg = `network_reset: ${(streamErr as Error)?.message ?? String(streamErr)}`
       // 流读取异常也走门闩：已产生可观察输出则不重试。
+      // 与 transport 共用同一个 failure 生产者，避免两处各写一遍派发语义。
+      const failure = thrownToFailure('network_reset', errMsg, { headersReceived: true })
       const hasNoObservableOutput =
         !sawToolDelta &&
         toolCalls.length === 0 &&
         assistantContent.length === 0 &&
         rawContent.length === 0 &&
         reasoningContent.length === 0
-      const errState = this.attemptController.classifyForEmit(errMsg)
+      const errState = this.attemptController.classifyForEmit(errMsg, failure)
       await this.hookManager.trigger({ event: 'onError', messageId, error: errMsg })
-      const decision = this.attemptController.onError(errMsg, {
-        kind: 'network', retryable: false, dispatchOutcome: 'unknown',
-        message: `${errMsg}；远端结果与费用未知，已停止自动重试。`
-      }, hasNoObservableOutput)
+      const decision = this.attemptController.onError(errMsg, failure, hasNoObservableOutput)
       const willRetry = decision.action === 'retry' || decision.action === 'fallback'
       if (willRetry) {
         if (decision.action === 'retry') {
@@ -589,6 +592,7 @@ export class StreamProcessor {
         rawContent = ''
         reasoningContent = ''
         toolCalls.length = 0
+        sawToolDelta = false
       }
       switch (decision.action) {
         case 'retry': {
@@ -622,14 +626,13 @@ export class StreamProcessor {
     }
 
     if (params.isCancelled()) return finish({ kind: 'cancelled' })
+    if (shouldRetryChat) return finish({ kind: 'retry' })
 
     if (scanner) {
       for (const scanEvent of scanner.flush()) {
         processScanEvent(scanEvent)
       }
     }
-
-    if (shouldRetryChat) return finish({ kind: 'retry' })
 
     // ── 三层兜底解析（逐分支对标 sendMessage L1081-1205）──
     this.applyFallbackParse({

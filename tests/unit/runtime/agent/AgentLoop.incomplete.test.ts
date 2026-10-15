@@ -152,6 +152,49 @@ describe('终态诚实：empty_args', () => {
   })
 })
 
+describe('终态诚实：no_progress', () => {
+  it('反复同一成功调用且无裁决通道 → incomplete/no_progress，message_end 无 interrupted', async () => {
+    const client = new MockModelClient()
+    // 前 6 轮同一签名成功触发恢复指令，第 7 轮仍重复 → 无 askQuestion 通道时停止
+    for (let i = 0; i < 7; i += 1) {
+      client.addResponse(toolCallResponse(`t${i}`, 'read', '{"path":"a.ts"}'))
+    }
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', () => ({ success: true, output: 'same content' }))
+    const { loop, events } = createLoop(client, { maxToolRounds: null })
+    loop.setToolRegistry(registry)
+
+    const outcome = await loop.sendMessage('读文件', agentRoute())
+
+    expect(outcome).toEqual({ status: 'incomplete', reason: 'no_progress' })
+    expectCleanMessageEnd(events)
+    expect(loop.getState()).toBe('idle')
+  })
+
+  it('恢复指令后模型换了新调用 → 不停止，轮次继续推进', async () => {
+    const client = new MockModelClient()
+    for (let i = 0; i < 6; i += 1) {
+      client.addResponse(toolCallResponse(`t${i}`, 'read', '{"path":"a.ts"}'))
+    }
+    client.addResponse(toolCallResponse('t6', 'read', '{"path":"b.ts"}'))
+    client.addResponse({
+      events: [
+        { type: 'message_start' },
+        { type: 'text_delta', delta: '已完成' },
+        { type: 'message_end', finishReason: 'stop' }
+      ]
+    })
+    const registry = new ToolRegistry()
+    registerTool(registry, 'read', () => ({ success: true, output: 'same content' }))
+    const { loop } = createLoop(client, { maxToolRounds: null })
+    loop.setToolRegistry(registry)
+
+    const outcome = await loop.sendMessage('读文件', agentRoute())
+
+    expect(outcome).toEqual({ status: 'completed' })
+  })
+})
+
 describe('终态诚实：自然收工与后续轮次', () => {
   it('模型不调用工具自然收工 → completed，不带 stopReason', async () => {
     const client = new MockModelClient()

@@ -7,7 +7,8 @@ import type { ToolControlSignal } from '../../tools/types'
 export interface ShouldStopArgs {
   messageId: string
   toolRound: number
-  maxToolRounds: number
+  /** null 表示不限制轮数（主会话默认）；子代理与 headless 显式设置 */
+  maxToolRounds: number | null
   /** 本轮工具执行结果（供熔断判定读取 failed 标记） */
   outcomes: Array<{
     toolCall: { id: string; name: string }
@@ -64,8 +65,8 @@ export type AssistantCompletionPolicy = (
 ) => AssistantContinuationDecision | void | Promise<AssistantContinuationDecision | void>
 
 export interface AgentLoopConfig {
-  /** 轮数上限 */
-  maxToolRounds: number
+  /** 轮数上限；null 表示不限制，由循环检测兜底 */
+  maxToolRounds: number | null
   /** 工具执行模式 */
   toolExecution: 'parallel' | 'sequential'
   maxParallelToolCalls: number

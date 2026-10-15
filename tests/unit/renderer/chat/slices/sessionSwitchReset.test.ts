@@ -76,7 +76,6 @@ describe('chat workspace sync reset ownership', () => {
       oldestLoadedMessageId: 'message-a',
       suspendHeadTrim: true,
       recoveryState: { 'message-a': 'recovering' },
-      recoveryHints: { 'message-a': [{ hint: 'retry', attempt: 1 }] },
       hookErrors: { 'message-a': [{ hookEvent: 'tool_before', error: 'hook failed' }] }
     })
     let notifications = 0
@@ -121,7 +120,6 @@ describe('chat workspace sync reset ownership', () => {
     expect(state.oldestLoadedMessageId).toBeNull()
     expect(state.suspendHeadTrim).toBe(false)
     expect(state.recoveryState['message-a']).toBe('recovering')
-    expect(state.recoveryHints['message-a']).toEqual([{ hint: 'retry', attempt: 1 }])
     expect(state.hookErrors['message-a']).toEqual([{ hookEvent: 'tool_before', error: 'hook failed' }])
   })
 

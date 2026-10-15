@@ -221,7 +221,6 @@ export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const
 export const AGENT_USAGE = 'agent:usage' as const
 export const AGENT_CONTEXT_BREAKDOWN = 'agent:context-breakdown' as const
 export const AGENT_HOOK_ERROR = 'agent:hook-error' as const
-export const AGENT_RECOVERY_HINT = 'agent:recovery-hint' as const
 export const AGENT_RECOVERY_STATE = 'agent:recovery-state' as const
 export const AGENT_MODEL_SWITCHED = 'agent:model-switched' as const
 /** 某次模型 attempt 失败（将重试/切 fallback）；renderer 应丢弃该 attempt 临时流式块 */

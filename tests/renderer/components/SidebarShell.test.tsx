@@ -12,20 +12,13 @@ import { resetChatStoreForTests } from '../../../src/renderer/stores/useChatStor
 import { resetSettingsStoreForTests } from '../../../src/renderer/stores/useSettingsStore'
 import { act, renderDom } from '../../unit/renderer/renderDom'
 
-vi.mock('../../../src/renderer/components/Icons', () => ({
-  NovaLogo: () => null,
-  FolderIcon: () => null,
-  SettingsIcon: () => null,
-  PlusIcon: () => null,
-  PinIcon: () => null,
-  PanelLeftIcon: () => null,
-  SearchIcon: () => null,
-  ClockIcon: () => null,
-  FilterIcon: () => null,
-  PuzzleIcon: () => null,
-  ChevronDownIcon: () => null,
-  TerminalIcon: () => null
-}))
+// 整体替换成空渲染，但保留真实导出清单：侧栏新增图标时 mock 不会漏掉而炸掉渲染。
+vi.mock('../../../src/renderer/components/Icons', async importOriginal => {
+  const actual = await importOriginal<Record<string, unknown>>()
+  const stubs: Record<string, () => null> = {}
+  for (const name of Object.keys(actual)) stubs[name] = () => null
+  return stubs
+})
 
 vi.mock('@astryxdesign/core/SideNav', () => ({
   SideNav: ({ children }: { children?: React.ReactNode }) => (

@@ -219,6 +219,49 @@ describe('knowledge skeleton build', () => {
     await harness.close()
   })
 
+  it.each([false, true])('重复节点进入有界修复，持续重复=%s 时保留最后可用版本', async persistent => {
+    const { harness, workspace } = await openHarness()
+    try {
+      const builder = new SkeletonKnowledgeBuild()
+      const baseline = new EvidenceAwareMockModelClient(evidence => compileJsonFromEvidence(evidence))
+      expect(await builder.run({ workspaceRoot: workspace, modelClient: baseline, knowledge: harness.knowledge, reader: harness.reader })).toMatchObject({ ok: true })
+      const before = await harness.reader.getCurrentKnowledgeRevision(workspace)
+      let attempts = 0
+      const model = new EvidenceAwareMockModelClient(evidence => compileJsonFromEvidence(evidence, nodes => {
+        if (++attempts === 1 || persistent) nodes.push({ ...nodes[0]! })
+      }))
+
+      const result = await builder.run({ workspaceRoot: workspace, modelClient: model, knowledge: harness.knowledge, reader: harness.reader })
+      expect(result).toMatchObject({ ok: !persistent, modelCallCount: 2 })
+      expect(model.calls[1]?.messages).toContainEqual({ role: 'user', content: expect.stringContaining('nodeId 重复') })
+      const after = await harness.reader.getCurrentKnowledgeRevision(workspace)
+      if (persistent) {
+        expect(result).toMatchObject({ code: 'invalid_output' })
+        expect(after).toBe(before)
+      } else {
+        expect(after).not.toBe(before)
+      }
+      expect((await harness.reader.getTreeProjection(workspace)).nodes.map(node => node.nodeId)).toEqual(['flow-save'])
+    } finally {
+      await harness.close()
+    }
+  })
+
+  it('模型生成期间出处变化直接返回 source_changed，不请求输出修复', async () => {
+    const { harness, workspace } = await openHarness()
+    try {
+      const model = new EvidenceAwareMockModelClient(evidence => {
+        writeFileSync(join(workspace, 'src', 'save.ts'), 'export const changed = true\n', 'utf8')
+        return compileJsonFromEvidence(evidence)
+      })
+      const result = await new SkeletonKnowledgeBuild().run({ workspaceRoot: workspace, modelClient: model, knowledge: harness.knowledge, reader: harness.reader })
+      expect(result).toMatchObject({ ok: false, code: 'source_changed', modelCallCount: 1 })
+      expect(await harness.reader.getCurrentKnowledgeRevision(workspace)).toBeNull()
+    } finally {
+      await harness.close()
+    }
+  })
+
   it('未知 sourceId 拒绝发布', async () => {
     const { harness, workspace } = await openHarness()
     const evidence = await new WorkspaceEvidencePort().collectSkeletonEvidence({

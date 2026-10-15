@@ -1,7 +1,6 @@
 import {
   appendTerminalErrorToBlocks,
-  formatTerminalErrorMessage,
-  resolveTerminalErrorActions
+  formatTerminalErrorMessage
 } from '../../../../shared/session/terminalErrorBlocks'
 import { markThinkingEndedForMessage } from '../../../lib/thinkingTimingMemory'
 import type { ChatState, ExtendedMessage, RendererToolBlock } from '../types'
@@ -203,7 +202,6 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
   handleError: async (messageId: string, error: string, opts?: { skipReconcile?: boolean }) => {
     const epoch = getHydrationEpoch()
     const displayError = formatTerminalErrorMessage(error)
-    const errorActions = resolveTerminalErrorActions(error)
     const { currentSessionId } = get()
     const activeSessionId = currentSessionId || 'session_default'
     let applied = false
@@ -245,7 +243,6 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           thinking: prev.thinking,
           blocks: nextBlocks,
           toolCalls: prev.toolCalls,
-          ...(errorActions.length > 0 ? { errorActions } : {}),
           turnEndedAt: Date.now()
         })
         return {
@@ -264,7 +261,6 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
         role: 'assistant',
         content: displayError,
         isError: true,
-        ...(errorActions.length > 0 ? { errorActions } : {}),
         timestamp: now,
         turnStartedAt: now,
         turnEndedAt: now,

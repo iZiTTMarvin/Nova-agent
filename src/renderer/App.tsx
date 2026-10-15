@@ -276,11 +276,6 @@ function App(): React.ReactNode {
       useChatStore.getState().handleHookError(data.messageId, data.hookEvent, data.error)
     }))
 
-    // 监听：恢复提示（重试 / 压缩上下文等）
-    const unsubRecoveryHint = window.api.on('agent:recovery-hint', gateAgentEvent('recovery-hint', (data) => {
-      useChatStore.getState().handleRecoveryHint(data.messageId, data.hint, data.attempt)
-    }))
-
     // 监听：恢复状态机切换（retrying / recovering 等）
     const unsubRecoveryState = window.api.on('agent:recovery-state', gateAgentEvent('recovery-state', (data) => {
       useChatStore.getState().handleRecoveryState(data.messageId, data.state)
@@ -322,7 +317,6 @@ function App(): React.ReactNode {
       unsubCacheDiagnostic()
       unsubContextBreakdown()
       unsubHookError()
-      unsubRecoveryHint()
       unsubRecoveryState()
       unsubAttemptFailed()
       buffer.flushNow()

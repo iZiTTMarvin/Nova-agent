@@ -8,7 +8,7 @@
 export type RunKind = 'agent'
 
 /** 停止策略截断原因（runtime AgentTurnOutcome.incomplete 的类型唯一来源） */
-export type StopPolicyReason = 'breaker' | 'max_rounds' | 'empty_args'
+export type StopPolicyReason = 'breaker' | 'max_rounds' | 'empty_args' | 'no_progress'
 
 /** 轮次被截断的完整原因：停止策略截断，或宿主 deadline 到期 */
 export type TurnTruncationReason = StopPolicyReason | 'deadline'
@@ -19,6 +19,7 @@ export function isTurnTruncationReason(value: unknown): value is TurnTruncationR
     value === 'breaker' ||
     value === 'max_rounds' ||
     value === 'empty_args' ||
+    value === 'no_progress' ||
     value === 'deadline'
   )
 }

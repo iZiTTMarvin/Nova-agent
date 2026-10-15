@@ -16,6 +16,7 @@ import { useSettingsStore } from '../../stores/useSettingsStore'
 import { formatSettingsDateTime } from './formatDateTime'
 import { SettingsRow, SettingsSection } from './settingsKit'
 import { containsSensitiveMemoryText } from '../../../shared/memory/sensitiveText'
+import { getModelDisplayName, resolveBackgroundModelRef } from '../../../shared/config/llmRegistry'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type {
   MemoryFileDto,
@@ -55,6 +56,10 @@ const RECORD_EXPLICITNESS_LABELS: Record<MemoryExplicitnessDto, string> = {
 
 export const MemorySettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
+  const llmRegistry = useSettingsStore(state => state.llmRegistry)
+  const backgroundModelName = llmRegistry
+    ? getModelDisplayName(llmRegistry, resolveBackgroundModelRef(llmRegistry))
+    : null
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
   const [files, setFiles] = useState<MemoryFileDto[]>([])
   /** 两个记忆范围的摘要统计：卡片概览用，活动范围的技术信息也取自这里 */
@@ -465,7 +470,11 @@ export const MemorySettingsPanel: React.FC = () => {
             <SettingsRow
               icon={<SparklesIcon size={16} />}
               label="自动从对话中学习"
-              description="默认关闭。开启后后台提炼和整理会调用模型，可能产生 API 费用。"
+              description={
+                backgroundModelName
+                  ? `默认关闭。开启后后台提炼和整理会调用模型（${backgroundModelName}），可能产生 API 费用。`
+                  : '默认关闭。开启后后台提炼和整理会调用模型，可能产生 API 费用。'
+              }
               end={
                 <Switch
                   label="自动从对话中学习"

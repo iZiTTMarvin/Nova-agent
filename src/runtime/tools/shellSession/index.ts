@@ -31,6 +31,8 @@ export const shellSessionTool: ToolExecutor = {
     'Work with the persistent process session bash hands off for long-running commands: read reads new output (advancing the cursor); write writes input to the process stdin (content must carry its own trailing newline); interrupt sends an interrupt signal on a best-effort basis (returns an explicit notice when unsupported on Windows); stop terminates the process and collects the final output.',
   executionMode: 'sequential',
   maxResultSizeChars: 50_000,
+  // 只有 read 是「取后台进程的新输出」；write/interrupt/stop 都是实质动作
+  isProgressNeutral: args => args.action === 'read',
   parameters: {
     type: 'object',
     properties: {

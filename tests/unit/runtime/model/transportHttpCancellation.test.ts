@@ -8,6 +8,7 @@ import { AgentLoop } from '../../../../src/runtime/agent/AgentLoop'
 import { EventBus } from '../../../../src/runtime/agent/EventBus'
 import { agentRoute } from '../../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { UNCERTAIN_DISPATCH_REPLAY_BUDGET } from '../../../../src/runtime/agent/recovery/AttemptController'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 
 async function withServer(handler: (res: ServerResponse) => void, run: (url: string) => Promise<void>): Promise<void> {
@@ -54,7 +55,7 @@ describe('真实 HTTP 取消与未知结果', () => {
     })
   })
 
-  it.each(['partial-tool', 'backoff'] as const)('%s 不产生第二次派发或工具副作用', async scenario => {
+  it.each(['partial-tool', 'backoff'] as const)('%s 派发次数有界且不产生工具副作用', async scenario => {
     let requests = 0
     await withServer(res => {
       requests++
@@ -76,11 +77,12 @@ describe('真实 HTTP 取消与未知结果', () => {
       })
       try {
         await loop.sendMessage('验证取消', agentRoute())
-        expect(requests).toBe(1)
+        // 远端结果未知的半截工具流按步骤预算重放；429 退避中被取消则只派发一次
+        expect(requests).toBe(scenario === 'partial-tool' ? 1 + UNCERTAIN_DISPATCH_REPLAY_BUDGET : 1)
         expect(events.filter(event => event.type === 'tool_call')).toHaveLength(0)
         expect(loop.getState()).toBe(scenario === 'backoff' ? 'cancelled' : 'error')
         if (scenario === 'partial-tool') {
-          expect(events.filter(event => event.type === 'attempt_failed')).toHaveLength(0)
+          expect(events.filter(event => event.type === 'attempt_failed')).toHaveLength(UNCERTAIN_DISPATCH_REPLAY_BUDGET)
           expect(events.some(event => event.type === 'error' && event.error.includes('远端结果'))).toBe(true)
         }
       } finally { loop.dispose() }

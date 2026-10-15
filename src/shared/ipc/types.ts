@@ -985,11 +985,6 @@ export interface IpcEvents {
     hookEvent: HookEvent
     error: string
   }
-  'agent:recovery-hint': {
-    messageId: string
-    hint: string
-    attempt: number
-  }
   'agent:recovery-state': {
     messageId: string
     state: RendererRecoveryState

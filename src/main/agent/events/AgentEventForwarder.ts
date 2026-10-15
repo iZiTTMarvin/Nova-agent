@@ -190,14 +190,6 @@ export function forwardEventToRenderer(
         sessionId: event.sessionId
       })
       break
-    case 'recovery_hint':
-      webContents.send('agent:recovery-hint', {
-        messageId: event.messageId,
-        hint: event.hint,
-        attempt: event.attempt,
-        sessionId: event.sessionId
-      })
-      break
     case 'recovery_state':
       webContents.send('agent:recovery-state', {
         messageId: event.messageId,

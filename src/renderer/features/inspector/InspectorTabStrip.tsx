@@ -31,6 +31,7 @@ export const InspectorTabStrip: React.FC<InspectorTabStripProps> = ({ tabs, acti
             role="tab"
             aria-selected={active}
             title={name}
+            data-testid={`inspector-tab-${key}`}
             className="inspector-tab__main"
             onClick={() => onActivate(key)}
             onAuxClick={e => {

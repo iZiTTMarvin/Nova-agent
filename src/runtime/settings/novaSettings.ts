@@ -10,9 +10,10 @@
  * - 保存时做 schema 校验：非法值拒绝（如负数字号、未知 theme）。
  * - 迁移函数独立，失败不阻塞启动（回退默认值）。
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { isAbsolute, join } from 'path'
 import { homedir } from 'os'
+import { atomicWriteFileSync } from '../storage/atomicFile'
 import type { Mode, PermissionMode } from '../../shared/session/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 
@@ -20,7 +21,7 @@ import type { NovaSettingsDto } from '../../shared/settings/types'
 export type NovaSettings = NovaSettingsDto
 
 /** 当前 settings schema 版本（用于未来迁移） */
-const CURRENT_SETTINGS_VERSION = 3
+const CURRENT_SETTINGS_VERSION = 4
 
 /** 默认值：所有字段的兜底 */
 export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
@@ -29,7 +30,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   defaultPermissionMode: 'auto',
   defaultShell: '',
   persistentShellSessions: true,
-  maxToolRounds: 100,
+  maxToolRounds: null,
   editorFontSize: 13,
   editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
   theme: 'system',
@@ -79,6 +80,7 @@ function getSettingsPath(): string {
 function migrateAndFill(raw: unknown): NovaSettings {
   const obj = (raw ?? {}) as Record<string, unknown>
   const result: NovaSettings = { ...DEFAULT_NOVA_SETTINGS }
+  const version = typeof obj.settingsVersion === 'number' ? obj.settingsVersion : 0
 
   // 逐字段安全填充：只在类型合法时采用磁盘值，否则用默认值
   if (typeof obj.loadThirdPartySkills === 'boolean') {
@@ -111,13 +113,19 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (typeof obj.persistentShellSessions === 'boolean') {
     result.persistentShellSessions = obj.persistentShellSessions
   }
-  if (
-    typeof obj.maxToolRounds === 'number' &&
-    Number.isInteger(obj.maxToolRounds) &&
-    obj.maxToolRounds >= 1 &&
-    obj.maxToolRounds <= 1000
-  ) {
-    result.maxToolRounds = obj.maxToolRounds
+  // v3 → v4：maxToolRounds 从「够数就停」改为「默认不限制，死循环由循环检测兜底」。
+  // 磁盘上的 v3 旧值（绝大多数是默认 100）一律迁为 null；v4 起用户显式设置才保留。
+  if (version >= CURRENT_SETTINGS_VERSION) {
+    if (obj.maxToolRounds === null) {
+      result.maxToolRounds = null
+    } else if (
+      typeof obj.maxToolRounds === 'number' &&
+      Number.isInteger(obj.maxToolRounds) &&
+      obj.maxToolRounds >= 1 &&
+      obj.maxToolRounds <= 1000
+    ) {
+      result.maxToolRounds = obj.maxToolRounds
+    }
   }
   if (typeof obj.editorFontSize === 'number' && Number.isInteger(obj.editorFontSize) && obj.editorFontSize >= 8 && obj.editorFontSize <= 32) {
     result.editorFontSize = obj.editorFontSize
@@ -189,6 +197,11 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   // memoryAutoMergeEnabled 已从 schema 移除；旧 settings.json 中的该字段
   // 在此被显式忽略（migrateAndFill 只按已知字段名填充，未知字段自然丢弃）。
+  // v3 → v4：自动提炼开关从 memoryExtractEnabled 改名为 memoryAutoExtractEnabled。
+  // 0.1.4 老用户开过这项的话，升级后沿用原值，避免自动提炼静默停止。
+  if (version < CURRENT_SETTINGS_VERSION && typeof obj.memoryExtractEnabled === 'boolean') {
+    result.memoryAutoExtractEnabled = obj.memoryExtractEnabled
+  }
   if (typeof obj.memoryAutoExtractEnabled === 'boolean') {
     result.memoryAutoExtractEnabled = obj.memoryAutoExtractEnabled
   }
@@ -217,14 +230,14 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
       errors.push('persistentShellSessions 必须是布尔值')
     }
   }
-  if ('maxToolRounds' in patch && patch.maxToolRounds !== undefined) {
+  if ('maxToolRounds' in patch && patch.maxToolRounds !== undefined && patch.maxToolRounds !== null) {
     if (
       typeof patch.maxToolRounds !== 'number' ||
       !Number.isInteger(patch.maxToolRounds) ||
       patch.maxToolRounds < 1 ||
       patch.maxToolRounds > 1000
     ) {
-      errors.push('maxToolRounds 必须是 1~1000 之间的整数')
+      errors.push('maxToolRounds 必须是 null（不限制）或 1~1000 之间的整数')
     }
   }
   if ('editorFontSize' in patch && patch.editorFontSize !== undefined) {
@@ -337,6 +350,16 @@ export function loadNovaSettings(): NovaSettings {
 }
 
 /**
+ * 首次运行初始化：全新安装（无设置文件且无历史会话）落盘一份开启记忆的设置。
+ * 无设置文件但有历史会话的是从未改过设置的老用户，保持默认关闭，升级不改变其行为。
+ */
+export function initializeNovaSettingsForFirstRun(options: { hasHistorySessions: () => boolean }): void {
+  // 先查设置文件：常规启动到此即返回，不触发会话目录扫描
+  if (existsSync(getSettingsPath()) || options.hasHistorySessions()) return
+  saveNovaSettings({ memoryEnabled: true })
+}
+
+/**
  * 合并写入设置。
  * 保存前校验 patch 字段合法性，非法值抛错（含具体字段提示）。
  * 写盘时附带 settingsVersion，供未来迁移识别。
@@ -357,7 +380,8 @@ export function saveNovaSettings(patch: Partial<NovaSettings>): NovaSettings {
     ...patch,
     settingsVersion: CURRENT_SETTINGS_VERSION
   }
-  writeFileSync(getSettingsPath(), JSON.stringify(next, null, 2), 'utf-8')
+  // 与会话、模型配置一致走原子写：写一半崩溃不该让用户的全部设置静默消失
+  atomicWriteFileSync(getSettingsPath(), JSON.stringify(next, null, 2), 'utf-8')
   // 返回不含 settingsVersion 的纯净 dto
   const { settingsVersion: _drop, ...dto } = next
   return dto as NovaSettings

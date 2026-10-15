@@ -3,7 +3,7 @@
  * （开发会话：审阅 / 文件 / 浏览；学习会话：大纲 / 文件 / 浏览），没有标签时显示启动器。
  * 浏览器标签承载内置浏览器（用户页与 AI 页）。
  */
-import React, { useEffect, useRef } from 'react'
+import React, { lazy, Suspense, useEffect, useRef } from 'react'
 import {
   useLayoutStore,
   INSPECTOR_WIDTH_MIN,
@@ -13,7 +13,6 @@ import {
 import { ReviewTab } from './ReviewTab'
 import { FilesTab } from './FilesTab'
 import { PlanInspectorView } from './PlanInspectorView'
-import { LearningOutlinePane } from '../learning/outline/LearningOutlinePane'
 import { BrowserPanel } from '../browser/BrowserPanel'
 import { InspectorLauncher, InspectorOpenMenu } from './InspectorLauncher'
 import { InspectorResizeHandle } from './InspectorResizeHandle'
@@ -26,6 +25,11 @@ import { useInspectorTabs } from './useInspectorTabs'
 import { usePanelPresence } from '../../hooks/usePanelPresence'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import './InspectorPanel.css'
+
+// 大纲只属于学习会话：开发会话首屏不加载这一整套学习交互面。
+const LearningOutlinePane = lazy(() =>
+  import('../learning/outline/LearningOutlinePane').then(m => ({ default: m.LearningOutlinePane }))
+)
 
 /**
  * 开合用宽度过渡：内层固定宽度并靠右，外壳只做裁剪，所以动画期间面板内容不重排；
@@ -115,7 +119,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
       case 'browser':
         return <BrowserPanel />
       case 'outline':
-        return learnSessionId ? <LearningOutlinePane sessionId={learnSessionId} /> : null
+        return learnSessionId ? (
+          <Suspense fallback={null}>
+            <LearningOutlinePane sessionId={learnSessionId} />
+          </Suspense>
+        ) : null
     }
   }
 

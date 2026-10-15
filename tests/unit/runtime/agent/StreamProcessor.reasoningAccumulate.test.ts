@@ -363,7 +363,7 @@ second\tline"}`
 })
 
 describe('StreamProcessor：重试横幅与 attempt_failed 门闩', () => {
-  it('无可观察输出但远端结果未知的流读取失败不自动重试', async () => {
+  it('远端结果未知的流读取失败在步骤预算内重放，并显示重试中', async () => {
     const client = new MockModelClient()
     client.chat = async function* () {
       throw new Error('fetch failed')
@@ -371,14 +371,13 @@ describe('StreamProcessor：重试横幅与 attempt_failed 门闩', () => {
     const { processor, emitted } = createProcessor(client)
     const result = await runOnce(processor)
 
-    expect(result.kind).toBe('error')
-    expect(emitted.some(e => e.type === 'attempt_failed')).toBe(false)
+    expect(result.kind).toBe('retry')
     expect(
       emitted.some(e => e.type === 'recovery_state' && e.state.kind === 'retrying')
-    ).toBe(false)
+    ).toBe(true)
   })
 
-  it('已有思考后的流读取失败不重试，也不发出 attempt_failed / retrying', async () => {
+  it('已有思考后的流读取失败重放前发出 attempt_failed，丢弃半截输出', async () => {
     const client = new MockModelClient()
     const origChat = client.chat.bind(client)
     client.addResponse({
@@ -396,11 +395,8 @@ describe('StreamProcessor：重试横幅与 attempt_failed 门闩', () => {
     const { processor, emitted } = createProcessor(client)
     const result = await runOnce(processor)
 
-    expect(result.kind).toBe('error')
-    expect(emitted.some(e => e.type === 'attempt_failed')).toBe(false)
-    expect(
-      emitted.some(e => e.type === 'recovery_state' && e.state.kind === 'retrying')
-    ).toBe(false)
+    expect(result.kind).toBe('retry')
+    expect(emitted.filter(e => e.type === 'attempt_failed')).toHaveLength(1)
   })
 
   it('重试成功后的下一次 run 发出 continuing，收回重试横幅', async () => {

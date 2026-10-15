@@ -83,7 +83,7 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   expect(original.activeModelRef).toEqual(gptRef)
   expect(original.reasoningEffortOverride).toBe('xhigh')
 
-  const inherited = await nova.createSession('default')
+  const inherited = await nova.createFreshSession('default')
   expect(inherited.activeModelRef).toEqual(gptRef)
   expect(inherited.reasoningEffortOverride).toBe('xhigh')
 

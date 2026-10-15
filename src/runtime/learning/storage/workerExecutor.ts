@@ -604,8 +604,35 @@ function executePublishVersion(
     ).run(op.knowledgeRevision, now, projectId)
   })
 
-  publish()
+  // 约束冲突是输入问题而非存储不可用，单独标记供上层区分
+  try {
+    publish()
+  } catch (error) {
+    if (isSqliteConstraintError(error)) {
+      throw new KnowledgeConstraintError(
+        `大纲数据违反存储约束：${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+    throw error
+  }
   return { knowledgeRevision: op.knowledgeRevision }
+}
+
+/** better-sqlite3 的约束冲突错误（主键/唯一/外键/非空）。 */
+export function isSqliteConstraintError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code
+  return typeof code === 'string' && code.startsWith('SQLITE_CONSTRAINT')
+}
+
+/**
+ * 发布时的约束冲突。与「数据库打不开 / Worker 挂了」区分开：
+ * 前者重试重新生成即可，后者才需要用户介入。
+ */
+export class KnowledgeConstraintError extends Error {
+  override readonly name = 'KnowledgeConstraintError'
+  constructor(message: string) {
+    super(message)
+  }
 }
 
 function executeGetCurrentRevision(

@@ -9,6 +9,16 @@ type Pending = {
   reject: (e: Error) => void
 }
 
+/**
+ * 把 worker 的错误分类挂到 Error.code 上（Node 的既有习惯）。
+ * 调用方据此区分性质不同的失败，不靠错误消息文本猜。
+ */
+function withCode(message: string, code?: string): Error {
+  const error = new Error(message) as Error & { code?: string }
+  if (code) error.code = code
+  return error
+}
+
 export class LearningDbWorkerClient {
   private worker: Worker | null = null
   private nextRequestId = 1
@@ -50,7 +60,7 @@ export class LearningDbWorkerClient {
       if (!pending) return
       this.pending.delete(msg.requestId)
       if (msg.kind === 'ok') pending.resolve(msg.result)
-      else pending.reject(new Error(msg.message))
+      else pending.reject(withCode(msg.message, msg.code))
     })
     this.worker.on('error', err => {
       this.crashed = true

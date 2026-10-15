@@ -1,13 +1,15 @@
 /**
  * FTS 检索与 reconcile 集成（better-sqlite3 @ Node ABI）
  */
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { openBetterSqliteMemoryDb } from '@runtime/memory/BetterSqliteMemoryDb'
 import { getMemoryRoot, computeWorkspaceHash, getProjectMemoryDir } from '@runtime/memory/MemoryPaths'
 import { MemoryService } from '@runtime/memory/MemoryService'
+import type { MemoryDb } from '@runtime/memory/MemoryDb'
+import { searchIndexedDocuments } from '@runtime/memory/MemoryIndexer'
 
 describe('MemoryService FTS 集成', () => {
   let tempDir: string | null = null
@@ -22,7 +24,7 @@ describe('MemoryService FTS 集成', () => {
     }
   })
 
-  function setup(): { scopeId: string; memoryRoot: string } {
+  function setup(): { scopeId: string; memoryRoot: string; db: MemoryDb } {
     tempDir = mkdtempSync(join(tmpdir(), 'nova-mem-search-'))
     const workspace = join(tempDir, 'ws')
     mkdirSync(workspace, { recursive: true })
@@ -31,7 +33,7 @@ describe('MemoryService FTS 集成', () => {
     const scopeId = computeWorkspaceHash(workspace)
     const db = openBetterSqliteMemoryDb(join(memoryRoot, 'memory.db'))
     service = new MemoryService(memoryRoot, db, { reconcileOnSearch: false })
-    return { scopeId, memoryRoot }
+    return { scopeId, memoryRoot, db }
   }
 
   it('中文两字词召回普通文档，托管视图不进入文档索引', () => {
@@ -81,6 +83,51 @@ describe('MemoryService FTS 集成', () => {
     rmSync(join(scopeDir, 'b.md'))
     const third = service!.reconcile(scopeId)
     expect(third.removed).toBe(1)
+  })
+
+  it('外部新增、编辑和删除直接反映在下一次检索与实际索引中', () => {
+    const { scopeId, memoryRoot, db } = setup()
+    const scopeDir = getProjectMemoryDir(memoryRoot, scopeId)
+    mkdirSync(scopeDir, { recursive: true })
+    const file = join(scopeDir, 'manual.md')
+    writeFileSync(file, 'originalneedle document', 'utf8')
+    expect(service!.search(scopeId, 'originalneedle').map(hit => hit.relPath)).toEqual(['manual.md'])
+
+    writeFileSync(file, 'replacementneedle edited externally', 'utf8')
+    expect(service!.search(scopeId, 'replacementneedle')[0].body).toBe('replacementneedle edited externally')
+    expect(searchIndexedDocuments(db, scopeId, 'originalneedle', 10)).toEqual([])
+    expect(searchIndexedDocuments(db, scopeId, 'replacementneedle', 10)[0].relPath).toBe('manual.md')
+
+    rmSync(file)
+    expect(service!.search(scopeId, 'replacementneedle')).toEqual([])
+    expect(searchIndexedDocuments(db, scopeId, 'replacementneedle', 10)).toEqual([])
+  })
+
+  it.each(['busy', 'corrupt'] as const)('同步索引遇到 %s 时扫描当前文件，只有损坏才永久降级', kind => {
+    const { scopeId, memoryRoot, db } = setup()
+    service!.upsertMarkdown(scopeId, 'manual.md', 'previousneedle document')
+    service!.appendEpisodicSummary(scopeId, 'episodicneedle summary')
+    writeFileSync(join(getProjectMemoryDir(memoryRoot, scopeId), 'manual.md'), 'replacementneedle external edit', 'utf8')
+    const execute = db.exec.bind(db)
+    const failure = Object.assign(new Error(kind === 'busy' ? 'database is locked' : 'database disk image is malformed'), {
+      code: kind === 'busy' ? 'SQLITE_BUSY' : 'SQLITE_CORRUPT'
+    })
+    const fault = vi.spyOn(db, 'exec').mockImplementation(sql => {
+      if (sql === 'BEGIN IMMEDIATE') throw failure
+      execute(sql)
+    })
+    expect(service!.search(scopeId, 'replacementneedle')[0].body).toBe('replacementneedle external edit')
+    expect(service!.hasIndex()).toBe(kind === 'busy')
+    expect(service!.search(scopeId, 'episodicneedle')[0].body).toContain('episodicneedle summary')
+    fault.mockRestore()
+
+    expect(service!.search(scopeId, 'replacementneedle')[0].body).toBe('replacementneedle external edit')
+    if (kind === 'busy') {
+      expect(searchIndexedDocuments(db, scopeId, 'replacementneedle', 10)[0].relPath).toBe('manual.md')
+      expect(searchIndexedDocuments(db, scopeId, 'previousneedle', 10)).toEqual([])
+    } else {
+      expect(searchIndexedDocuments(db, scopeId, 'previousneedle', 10)[0].relPath).toBe('manual.md')
+    }
   })
 
   it('查询无匹配词项时返回空，短词按新分词契约检索', () => {

@@ -21,6 +21,9 @@ import { resolveRequestReasoningEffort } from './reasoningDialect'
 import type { ChatMessage, ChatEvent, ToolDefinition } from '../model/types'
 import type { ModelClient, ChatOptions } from './ModelClient'
 import type { ModelConfig } from '../../shared/config'
+import { resolveCacheProfile } from './cacheProfile'
+import { resolveTransportTimeouts } from './transportTimeouts'
+import type { ModelTransportTimeouts } from './ModelTransport'
 
 /** 单个 provider 槽位：config + 已创建的 client */
 interface ProviderSlot {
@@ -83,9 +86,26 @@ export class ModelClientPool implements ModelClient {
     return measureRequestBudget({ model: slot.config.modelId, messages, tools }, route.routeId, resolveContextWindow(slot.config.modelId, slot.config.contextWindow))
   }
 
-  /** 实现 ModelClient.chat：委托给当前 active client */
+  /** 超时只在这里计算：pool 是唯一同时知道服务商档案与本次思考强度的地方 */
+  private resolveTransportTimeouts(options?: ChatOptions): ModelTransportTimeouts {
+    const { config } = this.slots[this.activeIndex]
+    const reasoningEffort = resolveRequestReasoningEffort(
+      config.modelId,
+      config.reasoningEffort,
+      options?.reasoningEffort,
+      config.baseUrl
+    )
+    const profile = resolveCacheProfile(config.baseUrl, config.modelId, {
+      cacheProfile: config.cacheProfile,
+      cacheStrategy: config.cacheStrategy
+    })
+    return resolveTransportTimeouts(reasoningEffort, profile.id)
+  }
+
+  /** 实现 ModelClient.chat：委托给当前 active client；显式给定的超时（诊断探针）不覆盖 */
   chat(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): AsyncIterable<ChatEvent> {
-    return this.slots[this.activeIndex].client.chat(messages, tools, options)
+    const transportTimeouts = options?.transportTimeouts ?? this.resolveTransportTimeouts(options)
+    return this.slots[this.activeIndex].client.chat(messages, tools, { ...options, transportTimeouts })
   }
 
   /** 实现 ModelClient.updateConfig：只更新主模型配置（fallback 配置在创建时固定） */

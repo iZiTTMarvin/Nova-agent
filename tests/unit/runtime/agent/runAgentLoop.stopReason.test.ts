@@ -7,8 +7,9 @@
  * - 模型无工具调用 break → 不设 stopReason
  * - 批次后 signal 置位 → cancelled，不设 stopReason
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { runAgentLoop } from '../../../../src/runtime/agent/core/runAgentLoop'
+import { StopPolicyExtension } from '../../../../src/runtime/agent/extensions/stopPolicyExtension'
 import { StreamProcessor } from '../../../../src/runtime/agent/stream/StreamProcessor'
 import { ModelClientPool } from '../../../../src/runtime/model/ModelClientPool'
 import { RecoveryStateMachine } from '../../../../src/runtime/agent/recovery/RecoveryStateMachine'
@@ -67,12 +68,15 @@ function reasoningOnlyResponse(): { events: ChatEvent[] } {
 /** 直测内核：不接停止策略（AgentLoop 门面才接线），暴露循环条件自身的退出路径 */
 async function runKernel(
   client: MockModelClient,
-  maxToolRounds: number,
+  maxToolRounds: number | null,
   opts: {
     signal?: () => boolean
     executeBatch?: () => Promise<ToolBatchExecutionResult>
     onToolResultCommitted?: () => void
     assistantCompletionPolicy?: LoopConfig['assistantCompletionPolicy']
+    shouldStopAfterTurn?: LoopConfig['shouldStopAfterTurn']
+    emit?: (event: AgentEvent) => void
+    getModeTransitionInstruction?: LoopConfig['getModeTransitionInstruction']
     receiveRuntimeInputs?: (input: { messageId: string; afterStep: number }) => Promise<readonly ChatMessage[]>
   } = {}
 ) {
@@ -111,13 +115,15 @@ async function runKernel(
       toolExecution: 'parallel',
       maxParallelToolCalls: 4,
       supportsVision: false,
+      ...(opts.shouldStopAfterTurn ? { shouldStopAfterTurn: opts.shouldStopAfterTurn } : {}),
+      ...(opts.getModeTransitionInstruction ? { getModeTransitionInstruction: opts.getModeTransitionInstruction } : {}),
       ...(opts.assistantCompletionPolicy
         ? { assistantCompletionPolicy: opts.assistantCompletionPolicy }
         : {})
     },
     streamProcessor: processor,
     hookManager: new HookManager(),
-    emit: (event: AgentEvent) => {},
+    emit: opts.emit ?? ((event: AgentEvent) => {}),
     emitContextBreakdown: () => {},
     signal,
     abortSignal: () => undefined,
@@ -185,6 +191,37 @@ describe('runAgentLoop 停止原因', () => {
 
     expect(committed).toBe(1)
     expect(endResult).toEqual({ ended: 'normal' })
+  })
+
+  it('反复模式切换不消耗工具轮数，仍经过无进展检测并暂停', async () => {
+    const client = new MockModelClient()
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: async () => 'stop' })
+    let batches = 0
+    for (let index = 0; index < 30; index++) client.addResponse(toolCallResponse(`mode-${index}`))
+    const result = await runKernel(client, 1, {
+      getModeTransitionInstruction: () => 'Continue in the selected mode.',
+      shouldStopAfterTurn: args => {
+        expect(args.toolRound).toBe(0)
+        return policy.shouldStopAfterTurn(args)
+      },
+      executeBatch: async () => {
+        const enteringPlan = batches++ % 2 === 0
+        return {
+          aborted: false,
+          outcomes: [{
+            index: 0,
+            toolCall: { id: `mode-${batches}`, name: 'switch_mode', arguments: '{}' },
+            args: { mode: enteringPlan ? 'plan' : 'default' },
+            resultText: 'Mode changed',
+            failed: false,
+            control: { type: 'mode_transition', previousMode: enteringPlan ? 'default' : 'plan', currentMode: enteringPlan ? 'plan' : 'default' }
+          }]
+        }
+      }
+    })
+    expect(result).toEqual({ ended: 'normal', stopReason: 'no_progress' })
+    expect(batches).toBe(23)
+    expect(client.getCalls()).toHaveLength(23)
   })
 
   it('批次后 signal 置位 → cancelled，且不设 stopReason', async () => {
@@ -303,5 +340,63 @@ describe('runAgentLoop 停止原因', () => {
 
     expect(endResult).toEqual({ ended: 'error' })
     expect(client.getCalls()).toHaveLength(0)
+  })
+
+  /** 每轮成功执行一个带 args 的调用；args 决定循环检测眼里算不算新进展 */
+  function progressiveBatch(getArgs: (round: number) => Record<string, unknown>) {
+    let round = 0
+    return async (): Promise<ToolBatchExecutionResult> => {
+      round += 1
+      return {
+        aborted: false,
+        outcomes: [{
+          index: 0,
+          toolCall: { id: `tc-${round}`, name: 'read', arguments: '{}' },
+          args: getArgs(round),
+          resultText: 'ok',
+          failed: false
+        }]
+      }
+    }
+  }
+
+  it('不设轮数上限时：持续有进展可以超过 100 轮，中途只注入自检指令', async () => {
+    const client = new MockModelClient()
+    for (let index = 0; index < 120; index += 1) client.addResponse(toolCallResponse(`t${index}`))
+    client.addResponse(textResponse())
+    const policy = new StopPolicyExtension()
+    const instructions: string[] = []
+
+    const endResult = await runKernel(client, null, {
+      emit: event => {
+        if (event.type === 'context_instruction') instructions.push(event.content)
+      },
+      executeBatch: progressiveBatch(round => ({ path: `file-${round}.ts` })),
+      shouldStopAfterTurn: args => policy.shouldStopAfterTurn(args)
+    })
+
+    expect(endResult.stopReason).toBeUndefined()
+    expect(client.getCalls()).toHaveLength(121)
+    expect(instructions.filter(text => text.includes('100 tool rounds'))).toHaveLength(1)
+  })
+
+  it('不设轮数上限时：无进展先注入换路径指令，再犯才请用户裁决', async () => {
+    const client = new MockModelClient()
+    for (let index = 0; index < 40; index += 1) client.addResponse(toolCallResponse(`t${index}`))
+    const adjudicate = vi.fn().mockResolvedValue('stop')
+    const policy = new StopPolicyExtension({ adjudicateNoProgress: adjudicate })
+    const instructions: string[] = []
+
+    const endResult = await runKernel(client, null, {
+      emit: event => {
+        if (event.type === 'context_instruction') instructions.push(event.content)
+      },
+      executeBatch: progressiveBatch(() => ({ path: 'same.ts' })),
+      shouldStopAfterTurn: args => policy.shouldStopAfterTurn(args)
+    })
+
+    expect(endResult.stopReason).toBe('no_progress')
+    expect(instructions.some(text => text.includes('different step'))).toBe(true)
+    expect(adjudicate).toHaveBeenCalledTimes(1)
   })
 })

@@ -5,7 +5,7 @@ import { parseLearningDbHostMessage, type LearningDbWorkerMessage } from './prot
 import { assertLearningDbPathAllowed } from './dbPathPolicy'
 import { migrateLearningDatabase, assertLearningDatabaseWritable } from './migrations'
 import { parseLearningDbWorkerOp } from './workerCommand'
-import { executeLearningDbWorkerOp } from './workerExecutor'
+import { executeLearningDbWorkerOp, isSqliteConstraintError } from './workerExecutor'
 
 const port = parentPort
 if (!port) {
@@ -79,10 +79,13 @@ port.on('message', (value: unknown) => {
     }
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
+    // 分类随错误一起回传：调用方据此区分「数据有问题」与「存储不可用」
     const code =
       error instanceof Error && error.name === 'LearningSchemaFutureError'
         ? 'future_schema'
-        : 'error'
+        : error instanceof Error && (error.name === 'KnowledgeConstraintError' || isSqliteConstraintError(error))
+          ? 'constraint'
+          : 'error'
     post({ kind: 'error', requestId: message.requestId, message: msg, code })
   }
 })

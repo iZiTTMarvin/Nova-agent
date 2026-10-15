@@ -19,7 +19,7 @@ async function configureProviderKey(
   baseUrl: string,
   apiKey: string
 ): Promise<void> {
-  await page.getByRole('button', { name: '设置' }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('tab', { name: '模型' }).click()
   const customCard = page.locator('.settings-split__item').filter({ hasText: '自定义服务商' })
   if (await customCard.count() === 0) {
@@ -41,7 +41,7 @@ async function configureProviderKey(
 
 /** 重开设置确认自定义服务商卡片显示「已配置」 */
 async function expectProviderConfigured(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '设置' }).click()
+  await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('tab', { name: '模型' }).click()
   const card = page
     .locator('.settings-split__item')

@@ -54,6 +54,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Production build
+        run: npm run build
+
       - name: Unit tests
         run: npm test
 
@@ -63,13 +66,12 @@ jobs:
       - name: Typecheck Electron E2E harness
         run: npm run test:e2e:typecheck
 
-      - name: Build and verify desktop lifecycle
-        run: npm run test:e2e
+      - name: Verify desktop lifecycle
+        run: npm --prefix tests/e2e run test:main
 
       - name: Build Windows release
         shell: pwsh
         run: |
-          npm run build
           npm run sync:icon
           npx electron-builder --config electron-builder.yml --win nsis --publish never
 

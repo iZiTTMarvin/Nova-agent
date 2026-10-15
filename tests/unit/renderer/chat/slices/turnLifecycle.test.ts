@@ -178,7 +178,6 @@ describe('turnLifecycleSlice', () => {
     useChatStore.getState().handleMessageStart('msg_err')
     useChatStore.getState().handleTextDelta('msg_err', '部分输出')
     useChatStore.getState().handleRecoveryState('msg_err', 'recovering')
-    useChatStore.getState().handleRecoveryHint('msg_err', '重试中', 1)
     useChatStore.getState().handleHookError('msg_err', 'tool_before', 'hook 崩了')
     useChatStore.setState({
       activeAgentSessionId: 'sess-1',
@@ -202,7 +201,6 @@ describe('turnLifecycleSlice', () => {
     expect(state.sendInFlight).toBe(true)
     expect(state.branchForkInProgress).toBe(true)
     expect(state.recoveryState).toEqual({})
-    expect(state.recoveryHints).toEqual({})
     expect(state.hookErrors).toEqual({})
   })
 

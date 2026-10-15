@@ -725,6 +725,9 @@ export async function sendAgentMessage(
   // 同会话的「未 settled 执行」已在入口锁 isSessionTurnInProgress 中拦截（进入 steering queue）；
   // 不同会话允许并发持有各自执行句柄，此处不再做全局互斥。
 
+  // 执行前销毁上一轮 idle loop：否则其空闲压缩计时器会在本轮执行中提交，抢跑压缩版本号
+  retireIdleLoopForSession(params.sessionId)
+
   try {
     // @ 文件引用：模型侧任务注入提示行（用户消息落盘保持纯净）
     let modelTask: string | ContentBlock[] = sendContent
@@ -768,9 +771,7 @@ export async function sendAgentMessage(
       }
     })
   } finally {
-    // 主 loop 进入 idle 托管：turn 结束后保留存活以驱动空闲压缩计时器。
-    // 同会话若已有上一轮残留的 idle loop，先 dispose 接替（执行期索引此时已无重叠）。
-    retireIdleLoopForSession(params.sessionId)
+    // 主 loop 进入 idle 托管：turn 结束后保留存活以驱动空闲压缩计时器
     idleLoopsBySession.set(params.sessionId, loopForRun)
     // 同会话排队消息：当前 turn 终态后，取出队首发起新 turn（递归，FIFO）
     const dequeued = drainSteeringQueue(params.sessionId, deps)

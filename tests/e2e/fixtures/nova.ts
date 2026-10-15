@@ -62,6 +62,11 @@ export interface NovaHarness {
   getWorkspace: () => Promise<IpcCommands['workspace:get']['result']>
   getRunSnapshot: (sessionId?: string) => Promise<RunSnapshot | null>
   createSession: (mode?: Mode) => Promise<IpcCommands['workspace:create-session']['result']>
+  /**
+   * 新建会话并保证拿到的是**另一个**会话：新会话先作为草稿存在，空草稿会被
+   * createSession 复用，所以先在当前会话发一条消息把它转正式再新建。
+   */
+  createFreshSession: (mode?: Mode) => Promise<IpcCommands['workspace:create-session']['result']>
   selectSession: (sessionId: string) => Promise<IpcCommands['workspace:select-session']['result']>
   sendPrompt: (text: string) => Promise<void>
   waitUntilIdle: () => Promise<void>
@@ -293,6 +298,13 @@ export async function launchNova(
         workspaceRoot: workspacePath,
         ...(mode ? { mode } : {})
       }),
+    createFreshSession: async (mode?: Mode) => {
+      await runTurnToCompletion({ text: 'DRAFT_PROMOTED', prompt: '占用当前草稿会话' })
+      return invoke(WORKSPACE_CREATE_SESSION, {
+        workspaceRoot: workspacePath,
+        ...(mode ? { mode } : {})
+      })
+    },
     selectSession: (sessionId: string) =>
       invoke(WORKSPACE_SELECT_SESSION, { sessionId }),
     sendPrompt,

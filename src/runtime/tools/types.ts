@@ -252,4 +252,9 @@ export interface ToolExecutor {
   isConcurrencySafe?: (args: Record<string, unknown>, context: ToolContext) => boolean
   /** 执行工具 */
   execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
+  /**
+   * 等待类调用（等子代理、读后台进程输出等）不产生新信息：既不推进循环检测的
+   * 无进展窗口，也不算作进展。由工具自己按入参声明，kernel 不认识具体工具名。
+   */
+  isProgressNeutral?: (args: Record<string, unknown>) => boolean
 }

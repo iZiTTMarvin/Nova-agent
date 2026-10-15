@@ -299,14 +299,15 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsRow
               icon={<SlidersIcon size={16} />}
-              label="最大工具调用轮数"
-              description="单条消息内 Agent 连续调用工具的上限，达到后会停下并提示。默认 100，范围 1~1000，长任务可调大。"
+              label="单次任务工具轮数上限"
+              description="默认不限制：长任务不会因轮数被截断，死循环由自动检测处理并交给你裁决。想限制花销时填一个 1~1000 的上限，留空即恢复不限制。"
               end={
                 <NumberInput
-                  label="最大工具调用轮数"
+                  label="单次任务工具轮数上限"
                   isLabelHidden
+                  hasClear
                   value={settings.maxToolRounds}
-                  onChange={value => void update('maxToolRounds', value)}
+                  onChange={value => void update('maxToolRounds', value ?? null)}
                   min={1}
                   max={1000}
                   step={10}

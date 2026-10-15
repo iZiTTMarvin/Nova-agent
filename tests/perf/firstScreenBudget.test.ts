@@ -39,7 +39,10 @@ const manifestFile = join(rendererOut, '.vite/manifest.json')
  *
  * 思考强度浮层重设计（连续拖拽、默认档竖标、最高档粒子与星光）是一方 CSS/JSX，
  * 无新依赖：粒子为合成器 transform 动画，拖动不触发 React 重渲染。实测 1498.4 KB，
- * 预算自 1495 上调到 1500；余量已薄，后续首屏增长必须先偿还或给出同等说明。
+ * 预算自 1495 上调到 1500。
+ * 之后侧栏 / 顶栏观感重做使首屏涨到 1509.0 KB（超预算 9 KB）。偿还方式是把学习表面
+ * 与大纲面板改为按需加载（两者只在 learn 会话出现，开发会话首屏用不到），
+ * 实测回落到 1470.3 KB，余量约 30 KB。后续首屏增长仍须先偿还或给出同等说明。
  */
 const BUDGET_KB = Number(process.env.NOVA_BUNDLE_ENTRY_KB ?? 1500)
 

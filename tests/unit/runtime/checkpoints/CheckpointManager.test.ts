@@ -1,13 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
+import { tmpdir } from 'os'
 import { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 import { readManifest } from '../../../../src/runtime/checkpoints/manifest'
 import type { CheckpointConfig } from '../../../../src/runtime/checkpoints/types'
 
-/** 临时测试目录 */
-const TMP = join(process.cwd(), '.test-checkpoint-workspace')
-const CHECKPOINT_ROOT = join(process.cwd(), '.test-checkpoints')
+let testRoot: string
+let TMP: string
+let CHECKPOINT_ROOT: string
 const SESSION_ID = 'test-session'
 const MESSAGE_ID = 'msg-001'
 
@@ -22,19 +23,19 @@ function createManager(overrides?: Partial<CheckpointConfig>): CheckpointManager
 
 describe('CheckpointManager', () => {
   beforeEach(() => {
+    testRoot = mkdtempSync(join(tmpdir(), 'nova-checkpoint-'))
+    TMP = join(testRoot, 'workspace')
+    CHECKPOINT_ROOT = join(testRoot, 'checkpoints')
     // 创建工作区
     mkdirSync(TMP, { recursive: true })
     writeFileSync(join(TMP, 'existing.txt'), '原始内容\n')
     mkdirSync(join(TMP, 'src'), { recursive: true })
     writeFileSync(join(TMP, 'src', 'main.ts'), 'const x = 1\n')
 
-    // 确保 checkpoint 根目录干净
-    rmSync(CHECKPOINT_ROOT, { recursive: true, force: true })
   })
 
   afterEach(() => {
-    rmSync(TMP, { recursive: true, force: true })
-    rmSync(CHECKPOINT_ROOT, { recursive: true, force: true })
+    rmSync(testRoot, { recursive: true, force: true })
   })
 
   // ── beginMessage / endMessage 事务边界 ─────────────────────

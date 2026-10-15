@@ -63,7 +63,7 @@ test('批准计划后在同一 run 继续实施，计划与审批按源顺序显
   await expect(guest).toBeHidden()
   await expect(nova.page.locator('.inspector-plan__document')).toContainText('验证倒计时')
   await nova.page.getByRole('button', { name: '关闭计划' }).click()
-  await expect(nova.page.getByRole('tab', { name: '浏览', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(nova.page.getByTestId('inspector-tab-browser')).toHaveAttribute('aria-selected', 'true')
   await expect(guest).toBeVisible()
 
   await approvalCard.getByRole('button', { name: '批准', exact: true }).click()

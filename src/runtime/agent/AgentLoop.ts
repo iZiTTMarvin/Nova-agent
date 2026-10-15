@@ -53,7 +53,12 @@ import { resolveRequestProjectionPolicy } from '../request-projection'
 import { StreamProcessor } from './stream/StreamProcessor'
 import { createSummaryProjection, runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
 import { CompactionService } from './compaction/CompactionService'
-import { StopPolicyExtension } from './extensions/stopPolicyExtension'
+import {
+  NO_PROGRESS_ROUND_LIMIT,
+  StopPolicyExtension,
+  type NoProgressAdjudicator,
+  type NoProgressChoice
+} from './extensions/stopPolicyExtension'
 import type {
   AgentLoopConfig as LoopConfig,
   AssistantCompletionPolicy
@@ -77,8 +82,8 @@ export class AgentLoop {
   /** 权限交互协调器：规则判定委托 PermissionManager，pending resolver 的唯一 owner */
   private readonly permissionCoordinator: PermissionCoordinator
 
-  /** 最大工具调用轮数（可动态调整） */
-  private maxToolRounds: number
+  /** 轮数上限；null = 不限制（主会话），由停止策略的循环检测兜底 */
+  private maxToolRounds: number | null
 
   /** 生产路径上下文硬预算（按 contextWindow 配置） */
   private contextBudgetManager: ContextBudgetManager
@@ -218,7 +223,14 @@ export class AgentLoop {
         }
       })
     this.eventBus = eventBus
-    this.stopPolicy = new StopPolicyExtension({ audience: config?.stopNoticeAudience })
+    // 循环检测命中两次后请用户裁决，走与 askQuestion 工具同一套界面；
+    // 没有裁决通道时（子代理 / headless）才直接停止。
+    this.stopPolicy = new StopPolicyExtension({
+      audience: config?.stopNoticeAudience,
+      adjudicateNoProgress: request => this.adjudicateNoProgress(request),
+      isProgressNeutralTool: (name, args) =>
+        this.ctx.toolRegistry?.getTool(name)?.isProgressNeutral?.(args) === true
+    })
     this.permissionCoordinator = new PermissionCoordinator({
       permissionManager: config.permissionManager,
       emit: (event) => this.eventBus.emit(event),
@@ -238,7 +250,8 @@ export class AgentLoop {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       systemPromptLayers: config?.systemPromptLayers,
       toolSummaryRenderer: config?.toolSummaryRenderer,
-      maxToolRounds: config?.maxToolRounds ?? 20,
+      // 不传即不限制：主会话的轮次边界由循环检测兜底，上限只来自显式配置
+      maxToolRounds: config?.maxToolRounds ?? null,
       contextWindow: config?.contextWindow,
       supportsVision: config?.supportsVision ?? true,
       toolExecution: config?.toolExecution ?? 'parallel',
@@ -259,7 +272,7 @@ export class AgentLoop {
     this.ctx.skillsTokenBudget = Math.max(0, config?.skillsTokenEstimate ?? 0)
     this.ctx.permissionMode = config?.permissionMode ?? 'request_approval'
     this.ctx.permissionCeiling = config?.permissionCeiling ?? null
-    this.maxToolRounds = this.config.maxToolRounds ?? 20
+    this.maxToolRounds = this.config.maxToolRounds ?? null
     this.contextBudgetManager = createProductionContextBudgetManager({
       contextWindow: this.config.contextWindow ?? 200_000,
       resolveModelId: () => this.modelPool.getActiveProvider().modelId
@@ -569,8 +582,8 @@ export class AgentLoop {
     this.ctx.artifactStore = store
   }
 
-  /** 动态调整最大工具调用轮数 */
-  setMaxToolRounds(n: number): void {
+  /** 动态调整最大工具调用轮数；null 表示不限制 */
+  setMaxToolRounds(n: number | null): void {
     this.maxToolRounds = n
   }
 
@@ -639,6 +652,37 @@ export class AgentLoop {
     handler: (requestId: string, questions: AskQuestionItem[]) => Promise<AskQuestionAnswer[]>
   ): void {
     this.askQuestionHandler = handler
+  }
+
+  /**
+   * 循环检测请用户裁决：复用 askQuestion 通道，用户没选就按停止处理。
+   * 等待答案期间本轮挂起，不算失败。
+   */
+  private async adjudicateNoProgress(
+    request: Parameters<NoProgressAdjudicator>[0]
+  ): Promise<NoProgressChoice> {
+    const handler = this.askQuestionHandler
+    if (!handler) return 'stop'
+    const subject = request.kind === 'repeated_call'
+      ? `「${request.toolName ?? '当前工具'}」被反复重复调用`
+      : `连续 ${NO_PROGRESS_ROUND_LIMIT} 轮没有新的进展`
+    const answers = await handler(`no-progress-${this.currentMessageId ?? 'turn'}-${request.rounds}`, [
+      {
+        question: `${subject}。要怎么继续？`,
+        header: '循环检测',
+        options: [
+          { label: '换个思路继续', description: '让模型换一种做法再试', recommended: true },
+          { label: '继续，本轮不再提醒', description: '保持当前做法，本轮不再打断' },
+          { label: '停止', description: '结束本轮，保留已有进展' }
+        ],
+        custom: false
+      }
+    ])
+    const selected = answers[0]?.selectedLabels[0]
+    if (selected === '继续，本轮不再提醒') return 'silence'
+    if (selected === '停止') return 'stop'
+    // 关闭 / 自定义回答都按换思路继续处理，不擅自替用户结束任务
+    return 'redirect'
   }
 
   setPlanReviewHandler(handler: NonNullable<ToolContext['requestPlanReview']>): void {

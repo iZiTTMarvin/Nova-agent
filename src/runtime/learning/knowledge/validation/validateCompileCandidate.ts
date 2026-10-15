@@ -14,6 +14,7 @@ export type CompileValidationFailure =
   | { code: 'stale_source' }
   | { code: 'invalid_edge' }
   | { code: 'invalid_parent' }
+  | { code: 'duplicate_node_id' }
 
 export type CompileValidationResult =
   | { ok: true; edges: readonly CandidateEdge[]; nodeSources: ReadonlyMap<string, readonly string[]> }
@@ -64,7 +65,18 @@ export async function validateCompileCandidate(params: {
 }): Promise<CompileValidationResult> {
   const byId = fragmentById(params.evidence)
   const allowedIds = new Set(byId.keys())
-  const nodeIds = new Set(params.output.nodes.map(n => n.nodeId))
+  // 重复 nodeId 必须在校验阶段暴露，否则发布时才撞主键
+  const nodeIds = new Set<string>()
+  for (const node of params.output.nodes) {
+    if (nodeIds.has(node.nodeId)) {
+      return {
+        ok: false,
+        failure: { code: 'duplicate_node_id' },
+        message: `nodeId 重复：${node.nodeId}`
+      }
+    }
+    nodeIds.add(node.nodeId)
+  }
 
   if (detectParentCycle(params.output.nodes)) {
     return { ok: false, failure: { code: 'tree_cycle' }, message: '教学父节点形成环' }

@@ -10,9 +10,11 @@ import {
   groupSelectableModels,
   resolveActiveModelAfterSave,
   getActiveModelReasoningEffort,
+  resolveBackgroundModelConfig,
+  resolveBackgroundModelRef,
   PRESET_PROVIDERS
 } from '../../../../src/shared/config/llmRegistry'
-import type { ModelConfig, ProviderConfig } from '../../../../src/shared/config'
+import type { LlmRegistry, ModelConfig, ProviderConfig } from '../../../../src/shared/config'
 
 describe('llmRegistry', () => {
   const v1: ModelConfig = {
@@ -329,5 +331,46 @@ describe('resolveActiveModelAfterSave', () => {
       nextProviders
     )
     expect(result).toEqual({ providerId: 'preset-glm', modelEntryId: saving.models[0]!.id })
+  })
+})
+
+describe('backgroundModel', () => {
+  function provider(id: string, models: Array<{ id: string; modelId: string; retired?: boolean }>, enabled = true): ProviderConfig {
+    return { id, name: id, baseUrl: 'https://api.example.com/v1', apiKey: 'key', enabled, models }
+  }
+  const main = provider('p-main', [{ id: 'm-main', modelId: 'gpt-5.2' }])
+  const cheap = provider('p-cheap', [{ id: 'm-cheap', modelId: 'minimax-m2.5' }])
+  const base: LlmRegistry = {
+    version: 2,
+    providers: [main, cheap],
+    activeModel: { providerId: 'p-main', modelEntryId: 'm-main' }
+  }
+
+  it('未设置时跟随当前模型，思考强度取该模型最低档', () => {
+    const config = resolveBackgroundModelConfig(base)
+    expect(config?.modelId).toBe('gpt-5.2')
+    expect(config?.reasoningEffort).toBe('low')
+  })
+
+  it('设置且可用时使用后台模型；不支持 low 时取其最低档', () => {
+    const registry = { ...base, backgroundModel: { providerId: 'p-cheap', modelEntryId: 'm-cheap' } }
+    expect(resolveBackgroundModelRef(registry)).toEqual(registry.backgroundModel)
+    const config = resolveBackgroundModelConfig(registry)
+    expect(config?.modelId).toBe('minimax-m2.5')
+    expect(config?.reasoningEffort).toBe('high')
+  })
+
+  it('后台模型被停用或退役时回落当前模型', () => {
+    const disabled = { ...base, providers: [main, { ...cheap, enabled: false }], backgroundModel: { providerId: 'p-cheap', modelEntryId: 'm-cheap' } }
+    expect(resolveBackgroundModelConfig(disabled)?.modelId).toBe('gpt-5.2')
+    const retired = { ...base, providers: [main, provider('p-cheap', [{ id: 'm-cheap', modelId: 'minimax-m2.5', retired: true }])], backgroundModel: { providerId: 'p-cheap', modelEntryId: 'm-cheap' } }
+    expect(resolveBackgroundModelConfig(retired)?.modelId).toBe('gpt-5.2')
+  })
+
+  it('校验保留有效后台模型，丢弃指向已删除模型的引用', () => {
+    const kept = validateLlmRegistry({ ...base, backgroundModel: { providerId: 'p-cheap', modelEntryId: 'm-cheap' } })
+    expect(kept.valid && kept.registry.backgroundModel).toEqual({ providerId: 'p-cheap', modelEntryId: 'm-cheap' })
+    const dropped = validateLlmRegistry({ ...base, backgroundModel: { providerId: 'p-gone', modelEntryId: 'm-gone' } })
+    expect(dropped.valid && 'backgroundModel' in dropped.registry).toBe(false)
   })
 })

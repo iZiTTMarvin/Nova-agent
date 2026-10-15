@@ -79,8 +79,11 @@ export interface NovaSettingsDto {
    * 关闭后退回旧的边界强制终止语义。删除条件见方案文档回滚节。
    */
   persistentShellSessions: boolean
-  /** 主 Agent 单条消息内最大连续工具调用轮数，防止长任务静默截断；范围 1~1000 */
-  maxToolRounds: number
+  /**
+   * 主 Agent 单条消息内最大连续工具调用轮数；null 表示不限制（默认），
+   * 死循环由循环检测兜底。显式设置时范围 1~1000。
+   */
+  maxToolRounds: number | null
   /** 编辑器字体大小（px） */
   editorFontSize: number
   /** 编辑器字体族 */

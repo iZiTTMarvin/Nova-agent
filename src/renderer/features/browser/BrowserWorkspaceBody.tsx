@@ -1,9 +1,13 @@
-import { type ReactNode, type RefObject } from 'react'
+import { lazy, Suspense, type ReactNode, type RefObject } from 'react'
 import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
 import { InspectorPanel } from '../inspector/InspectorPanel'
-import { LearningSurface } from '../learning/LearningSurface'
 import { GlassSessionHeader } from '../../components/ContentTopBar'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+
+// 学习表面是另一套完整交互面，开发会话首屏用不到：按需加载，不进首屏包。
+const LearningSurface = lazy(() =>
+  import('../learning/LearningSurface').then(m => ({ default: m.LearningSurface }))
+)
 
 /**
  * 主区表面切换器：决定显示聊天还是学习表面；右侧面板（审阅/文件/浏览器）常驻。
@@ -27,7 +31,9 @@ export function BrowserWorkspaceBody(props: {
         <GlassSessionHeader />
         <div className="app-workspace__stage">
           {isLearnSurface && currentSessionId ? (
-            <LearningSurface sessionId={currentSessionId} />
+            <Suspense fallback={null}>
+              <LearningSurface sessionId={currentSessionId} />
+            </Suspense>
           ) : (
             <ChatPanel ref={chatPanelRef} />
           )}

@@ -120,15 +120,11 @@ export interface StreamSliceState {
 export interface RecoverySliceState {
   /** 每条消息当前的恢复状态（retrying / recovering 等） */
   recoveryState: Record<string, RendererRecoveryState>
-  /** 每条消息累积的恢复提示（按到达顺序追加） */
-  recoveryHints: Record<string, Array<{ hint: string; attempt: number }>>
   /** 每条消息累积的 Hook 执行异常 */
   hookErrors: Record<string, Array<{ hookEvent: HookEvent; error: string }>>
 
   /** 主进程 recovery_state 事件：更新当前消息的恢复状态机 */
   handleRecoveryState: (messageId: string, state: RendererRecoveryState) => void
-  /** 主进程 recovery_hint 事件：追加一条恢复提示 */
-  handleRecoveryHint: (messageId: string, hint: string, attempt: number) => void
   /** 主进程 hook_error 事件：记录 Hook 执行异常（不中断 Agent） */
   handleHookError: (messageId: string, hookEvent: HookEvent, error: string) => void
 }

@@ -118,13 +118,13 @@ describe('httpStatusToFailure', () => {
 // ── thrownToFailure ───────────────────────────────────────
 
 describe('thrownToFailure', () => {
-  it('已拿到响应头后的 timeout 保留远端未知状态并禁止重放', () => {
+  it('已拿到响应头后的 timeout 标记为远端结果未知，不走普通重试', () => {
     const msg = formatTransportError('timeout_idle', '模型语义事件空闲超时')
     const f = thrownToFailure('timeout_idle', msg, { headersReceived: true })
     expect(f.kind).toBe('timeout')
     expect(f.retryable).toBe(false)
     expect(f.dispatchOutcome).toBe('unknown')
-    expect(f.message).toMatch(/已停止自动重试/)
+    expect(f.message).toMatch(/请求可能已送达/)
   })
 
   it('未拿到响应头的 timeout_connect 可重试，不宣称远端未知', () => {

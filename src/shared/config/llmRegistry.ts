@@ -52,6 +52,8 @@ export interface LlmRegistry {
   activeModel: ActiveModelRef
   /** 备用模型引用链（错误降级用） */
   fallbacks?: ActiveModelRef[]
+  /** 后台任务（记忆提炼、主题整理）模型；未设时跟随 activeModel */
+  backgroundModel?: ActiveModelRef
 }
 
 /** 预设服务商元数据 */
@@ -305,6 +307,22 @@ export function resolveSessionModelRef(
     if (resolved.status === 'available') return override
   }
   return registry.activeModel
+}
+
+/** 后台模型引用：设置且可用时生效，未设、已删除、停用或退役都回落当前活跃模型。 */
+export function resolveBackgroundModelRef(registry: LlmRegistry): ActiveModelRef {
+  return resolveSessionModelRef(registry, registry.backgroundModel)
+}
+
+/**
+ * 后台任务的运行时配置，思考强度固定为模型支持的最低档（通常 low）。
+ * 上下文压缩不走这里：压缩复用主请求前缀命中缓存，换模型会让缓存失效。
+ */
+export function resolveBackgroundModelConfig(registry: LlmRegistry): ModelConfig | null {
+  const resolved = resolveModelReference(registry, resolveBackgroundModelRef(registry))
+  if (resolved.status !== 'available') return null
+  const lowest = lookupModelCapability(resolved.entry.modelId)?.reasoningEfforts?.[0] ?? 'low'
+  return { ...resolved.config, reasoningEffort: lowest }
 }
 
 /** 解析 fallback 链为 ModelConfig 数组 */
@@ -947,6 +965,11 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
     }
   }
 
+  const bg = raw.backgroundModel
+  const backgroundModel = bg && providers.find(p => p.id === bg.providerId)?.models.some(m => m.id === bg.modelEntryId)
+    ? { providerId: bg.providerId, modelEntryId: bg.modelEntryId }
+    : undefined
+
   return {
     valid: true,
     registry: {
@@ -956,7 +979,8 @@ export function validateLlmRegistry(raw: unknown): LlmRegistryValidationResult {
         providerId: raw.activeModel.providerId,
         modelEntryId: raw.activeModel.modelEntryId
       },
-      ...(fallbacks.length > 0 ? { fallbacks } : {})
+      ...(fallbacks.length > 0 ? { fallbacks } : {}),
+      ...(backgroundModel ? { backgroundModel } : {})
     }
   }
 }

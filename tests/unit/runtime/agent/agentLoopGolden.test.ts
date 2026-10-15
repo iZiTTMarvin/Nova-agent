@@ -842,7 +842,7 @@ describe('恢复预算与正常工具续轮隔离', () => {
         events: [
           { type: 'message_start' },
           { type: 'tool_call_start', toolCallId: callId, toolName: 'read', index: 0 },
-          { type: 'tool_call', toolCall: { id: callId, name: 'read', arguments: '{"path":"README.md"}' } },
+          { type: 'tool_call', toolCall: { id: callId, name: 'read', arguments: `{"path":"doc-${i + 1}.md"}` } },
           { type: 'message_end', finishReason: 'tool_calls' }
         ]
       })

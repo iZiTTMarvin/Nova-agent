@@ -317,10 +317,22 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
   it('预览、默认关闭的自动学习、置顶与 inbox 决策走同一条目契约并刷新显示', async () => {
     setupInvokeMock({ projectRecords: [recordDto(), recordDto({ id: 'pending', location: 'inbox', relPath: 'inbox.md', text: '待批准的新约定', explicitness: 'observed' }), recordDto({ id: 'rejected', location: 'inbox', relPath: 'inbox.md', text: '应拒绝的候选' })] })
     const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
-    useSettingsStore.setState({ currentProject: '/tmp/project' })
+    useSettingsStore.setState({
+      currentProject: '/tmp/project',
+      llmRegistry: {
+        version: 2,
+        providers: [{ id: 'p', name: 'p', baseUrl: 'https://p.example/v1', apiKey: 'k', enabled: true, models: [
+          { id: 'main', modelId: 'main-model' },
+          { id: 'bg', modelId: 'bg-model', displayName: '后台小模型' }
+        ] }],
+        activeModel: { providerId: 'p', modelEntryId: 'main' },
+        backgroundModel: { providerId: 'p', modelEntryId: 'bg' }
+      }
+    })
     const renderer = renderDom(<MemorySettingsPanel />); await flushAsync()
     expect(renderer.container.textContent).toContain('preview fixture')
     expect(renderer.container.textContent).toContain('全局 1 条 · 项目 2 条')
+    expect(renderer.container.textContent).toContain('后台小模型')
     const switches = [...renderer.container.querySelectorAll<HTMLInputElement>('input[role="switch"]')]
     expect(switches).toHaveLength(2)
     const auto = switches[1]

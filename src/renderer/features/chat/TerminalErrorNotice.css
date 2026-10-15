@@ -1,0 +1,40 @@
+/**
+ * 终态错误提示卡：与 RecoveryBanner 同一视觉语言（语义色描边 + 轻底 + whisper 阴影），
+ * 但作为记录留在消息流里，不加动效——历史消息重挂载时不应反复闪。
+ */
+
+.terminal-error-notice {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 9px 12px;
+  border: 1px solid var(--border-danger);
+  border-radius: 10px;
+  background: var(--surface-danger-subtle);
+  box-shadow: var(--shadow-whisper);
+  font-size: 12.5px;
+  line-height: 1.5;
+  /* 正文用主文字色：整片红字既刺眼也难读，语义色只留给图标 */
+  color: var(--text-primary);
+}
+
+.terminal-error-notice__icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--color-error);
+}
+
+.terminal-error-notice__text {
+  flex: 1 1 220px;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.terminal-error-notice__actions {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}

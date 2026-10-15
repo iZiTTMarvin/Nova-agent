@@ -222,18 +222,6 @@
   padding: 4px 0;
 }
 
-/* 错误态仍是独立反馈面：保留浅色底与圆角，但不回到卡片边框 */
-.chat-msg--assistant.chat-msg--error {
-  padding: 12px 16px;
-  border-radius: var(--radius-md);
-}
-
-.chat-msg--error {
-  border-color: var(--color-error);
-  background-color: var(--surface-danger-subtle);
-  color: var(--color-error);
-}
-
 /* 子代理接力系统事件行：居中、轻量、羊皮纸色调药丸 */
 .chat-msg--relay-event {
   display: flex;
@@ -265,13 +253,6 @@
   background-color: var(--color-brand);
   opacity: 0.8;
   flex-shrink: 0;
-}
-
-/* 终态错误的动作按钮行：紧贴错误文案下方 */
-.chat-msg__error-actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
 }
 
 /* ── 过程轨与正文间距：工具行之间紧凑，与 Markdown 文字之间留白 ── */

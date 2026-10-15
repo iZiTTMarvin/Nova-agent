@@ -24,13 +24,20 @@ import {
   resolveActiveModelAfterSave,
   getSupportedReasoningEfforts,
   resolveModelReasoningEffort,
-  generateLocalId
+  generateLocalId,
+  listSelectableModels
 } from '../../../shared/config/llmRegistry'
 import { ChevronIcon } from '../../components/Icons'
 
 type Selection =
   | { kind: 'preset'; presetId: PresetProviderId }
   | { kind: 'custom'; providerId: string }
+
+const FOLLOW_ACTIVE_MODEL = 'follow-active'
+
+function toModelOptionValue(ref: { providerId: string; modelEntryId: string }): string {
+  return `${ref.providerId}::${ref.modelEntryId}`
+}
 
 const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
   auto: '自动',
@@ -103,6 +110,27 @@ export const LlmSettingsPanel: React.FC = () => {
     () => draft.providers.filter(p => !p.presetId),
     [draft.providers]
   )
+
+  const backgroundModelOptions = useMemo(() => {
+    const options = [{ value: FOLLOW_ACTIVE_MODEL, label: '跟随当前模型' }]
+    for (const model of listSelectableModels(draft)) {
+      options.push({
+        value: toModelOptionValue(model),
+        label: `${model.providerName} / ${model.displayName}`
+      })
+    }
+    return options
+  }, [draft])
+
+  const handleBackgroundModelChange = (value: string) => {
+    setDraft(prev => {
+      const next: LlmRegistry = { ...prev }
+      const picked = listSelectableModels(prev).find(m => toModelOptionValue(m) === value)
+      if (picked) next.backgroundModel = { providerId: picked.providerId, modelEntryId: picked.modelEntryId }
+      else delete next.backgroundModel
+      return next
+    })
+  }
 
   const updateProviderInDraft = useCallback((updated: ProviderConfig) => {
     setDraft(prev => {
@@ -530,6 +558,28 @@ export const LlmSettingsPanel: React.FC = () => {
                     </Button>
                   </div>
                 </SettingsField>
+              </SettingsSection>
+
+              <SettingsSection title="后台任务">
+                <SettingsRow
+                  label="后台任务模型"
+                  description="用于记忆提炼与主题整理；上下文压缩始终使用当前对话模型。"
+                  end={
+                    <SettingsSelect
+                      label="后台任务模型"
+                      isLabelHidden
+                      options={backgroundModelOptions}
+                      value={
+                        draft.backgroundModel
+                          ? toModelOptionValue(draft.backgroundModel)
+                          : FOLLOW_ACTIVE_MODEL
+                      }
+                      onChange={handleBackgroundModelChange}
+                      isDisabled={saving}
+                      width={220}
+                    />
+                  }
+                />
               </SettingsSection>
 
               {submitError && (

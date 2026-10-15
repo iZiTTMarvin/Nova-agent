@@ -35,11 +35,8 @@ import { buildExtractMessages } from './memoryPrompts'
 
 /** 提炼模块依赖口子：chat 由宿主装配（独立 ModelClient，不复用主对话 pool） */
 export interface MemoryExtractorDeps {
-  chat: (messages: ChatMessage[], opts?: { reasoningEffort?: 'low'; abortSignal?: AbortSignal }) => Promise<string>
+  chat: (messages: ChatMessage[], opts?: { abortSignal?: AbortSignal }) => Promise<string>
 }
-
-/** 硬编码：覆盖主模型 thinking 强度 */
-export const EXTRACT_REASONING_EFFORT = 'low' as const
 
 export interface MemoryExtractionInput {
   sessionId: string
@@ -78,7 +75,7 @@ export class MemoryExtractor {
         observations,
         existingEntries: input.existingEntries
       })
-      const raw = await this.deps.chat(messages, { reasoningEffort: EXTRACT_REASONING_EFFORT, ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}) })
+      const raw = await this.deps.chat(messages, input.abortSignal ? { abortSignal: input.abortSignal } : undefined)
       const provenance = buildEvidenceProvenance(projected, observations)
       const parsed = parseMemoryCandidateResponse(raw, provenance)
       return parsed === null ? null : filterExtractCandidates(parsed.candidates)

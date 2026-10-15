@@ -253,7 +253,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   }
 
   try {
-    while (toolRound < config.maxToolRounds) {
+    // null 表示不限制：主会话靠停止策略的循环检测兜底，不再按轮数硬停。
+    while (config.maxToolRounds === null || toolRound < config.maxToolRounds) {
       if (p.signal()) break
 
       // 只在请求投影与预算许可之前接收；已发出的 HTTP 请求永不被中途改写。
@@ -479,10 +480,8 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
         if (instruction) {
           appendContinuation(instruction)
         }
-        // 模式切换是控制面动作，不消耗任务工具轮数；即使发生在上限边界，
-        // 也必须保证新模式至少获得一次模型调用来继续当前任务。
+        // 模式切换不消耗任务工具轮数，仍须经过循环检测。
         toolRound = Math.max(0, toolRound - 1)
-        continue
       }
 
       // 停止策略在整个 batch 完成后按源顺序判定。
@@ -530,6 +529,7 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
   if (
     !turnCompletedByControl &&
     stopReason === undefined &&
+    config.maxToolRounds !== null &&
     toolRound > 0 &&
     toolRound >= config.maxToolRounds
   ) {

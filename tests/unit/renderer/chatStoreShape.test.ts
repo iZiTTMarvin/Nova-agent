@@ -6,7 +6,7 @@ const CHAT_STATE_KEYS = [
   'pendingBranchMetaReload', 'branchForkInProgress', 'tier1BranchContext', 'tier1StaleDiffMessageIds',
   'currentGeneratingMessageId', 'activeAgentSessionId', 'sendInFlight', 'sendRequestId', 'streamingToolArgs',
   'messageDiffs', 'loadingDiffs', 'loadingDiffPlaceholders', 'pendingUserMessages',
-  'recoveryState', 'recoveryHints', 'hookErrors', 'rollbackErrors', 'hasMoreMessagesAbove',
+  'recoveryState', 'hookErrors', 'rollbackErrors', 'hasMoreMessagesAbove',
   'isLoadingOlderMessages', 'oldestLoadedMessageId', 'suspendHeadTrim', 'liveTurn',
   'loadSessions', 'selectSession', 'deleteSession', 'renameSession', 'setSessionPinned', 'createNewSession',
   'sendMessage', 'sendNextPendingMessage', 'regenerateAssistant', 'switchBranch', 'editResend', 'acceptFile',
@@ -15,7 +15,7 @@ const CHAT_STATE_KEYS = [
   'handleMessageStart', 'handleAttemptFailed', 'handleThinkingDelta', 'handleTextDelta',
   'handleToolCallStart', 'handleToolCallDelta', 'handleToolCall', 'handleToolResult',
   'handleRunTerminal', 'handleRunActive', 'handleDiffUpdate', 'handleMessageEnd', 'handleError', 'handleRecoveryState',
-  'handleRecoveryHint', 'handleHookError', 'enqueuePendingMessage',
+  'handleHookError', 'enqueuePendingMessage',
   'removePendingMessage', 'clearPendingMessages', 'syncFromWorkspace'
 ] as const
 
@@ -50,7 +50,6 @@ describe('chat store shape baseline', () => {
       loadingDiffPlaceholders: { m1: [{ filePath: 'a.ts', status: 'modified' }] },
       pendingUserMessages: [{ text: 'q', images: [] }],
       recoveryState: { m1: 'recovering' },
-      recoveryHints: { m1: [{ hint: 'h', attempt: 1 }] },
       hookErrors: { m1: [{ hookEvent: 'tool_before' as const, error: 'err' }] },
       rollbackErrors: { m1: 'err' },
       hasMoreMessagesAbove: true,
@@ -84,7 +83,6 @@ describe('chat store shape baseline', () => {
     expect(state.loadingDiffPlaceholders).toEqual({})
     expect(state.pendingUserMessages).toEqual([])
     expect(state.recoveryState).toEqual({})
-    expect(state.recoveryHints).toEqual({})
     expect(state.hookErrors).toEqual({})
     expect(state.rollbackErrors).toEqual({})
     expect(state.hasMoreMessagesAbove).toBe(false)

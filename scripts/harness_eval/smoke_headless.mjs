@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { createHash } from 'node:crypto'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -11,7 +12,9 @@ let holdResponse = false
 let toolCallsMode = false
 let artifactPruningMode = false
 let artifactPruningStep = 0
-let archivedToolResult
+let largeToolResult
+let artifactReference
+let artifactReadResult
 let environmentScrubMode = false
 let environmentScrubStep = 0
 let environmentToolResult
@@ -77,18 +80,29 @@ const server = createServer((request, response) => {
     if (artifactPruningMode) {
       if (artifactPruningStep === 0) {
         artifactPruningStep += 1
-        response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'artifact-tc', type: 'function', function: { name: 'read', arguments: '{"path":"large-output.txt"}' } }] }, finish_reason: null }] })}\n\n`)
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'artifact-tc', type: 'function', function: { name: 'read', arguments: '{"path":"large-output.txt","full":true}' } }] }, finish_reason: null }] })}\n\n`)
         response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
         response.end('data: [DONE]\n\n')
         return
       }
 
       const toolMessage = requestBody.messages?.find(
-        message => message.role === 'tool' && message.tool_call_id === 'artifact-tc'
+        message => message.role === 'tool' && message.tool_call_id === (artifactPruningStep === 1 ? 'artifact-tc' : 'artifact-read-tc')
       )
-      archivedToolResult = typeof toolMessage?.content === 'string'
-        ? JSON.parse(toolMessage.content)
-        : undefined
+      if (artifactPruningStep === 1) {
+        largeToolResult = toolMessage?.content
+        artifactReference = typeof largeToolResult === 'string' ? largeToolResult.match(/artifact:\/\/[^\s"]+/)?.[0] : undefined
+        if (artifactReference) {
+          artifactPruningStep++
+          const argumentsJson = JSON.stringify({ path: artifactReference, offset: 0, limit: 3 })
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'artifact-read-tc', type: 'function', function: { name: 'read', arguments: argumentsJson } }] }, finish_reason: null }] })}\n\n`)
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'tool_calls' }] })}\n\n`)
+          response.end('data: [DONE]\n\n')
+          return
+        }
+      } else {
+        artifactReadResult = toolMessage?.content
+      }
       response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'artifact pruning complete' }, finish_reason: null }] })}\n\n`)
       response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 17, prompt_cache_hit_tokens: 10, prompt_cache_miss_tokens: 7, completion_tokens: 3 } })}\n\n`)
       response.end('data: [DONE]\n\n')
@@ -290,15 +304,18 @@ try {
       '--base-url', `http://127.0.0.1:${address.port}`,
       '--model', 'deepseek-v4-flash',
       '--reasoning-effort', 'max',
-      '--max-tool-rounds', '2'
+      '--max-tool-rounds', '3'
     ],
     'Read the large fixture and then finish.'
   )
   if (artifactRun.exitCode !== 0) {
     throw new Error(`artifact run exited ${artifactRun.exitCode}: ${artifactRun.stderr || artifactRun.stdout}`)
   }
-  if (archivedToolResult?.kind !== 'nova.archived_tool_result') {
-    throw new Error(`large tool result was not projected: ${JSON.stringify(archivedToolResult)}`)
+  if (typeof largeToolResult !== 'string' || !largeToolResult.includes('line-1 contains enough content')) {
+    throw new Error('the newly read result was removed from the next model request')
+  }
+  if (!artifactReference || typeof artifactReadResult !== 'string' || !artifactReadResult.includes('line-3 contains enough content')) {
+    throw new Error('the model could not read back the large output artifact')
   }
   const runDirectories = readdirSync(artifactLogs, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
@@ -306,13 +323,12 @@ try {
   if (runDirectories.length !== 1) {
     throw new Error(`unexpected artifact namespaces: ${JSON.stringify(runDirectories)}`)
   }
-  const archivedContent = readFileSync(
-    join(artifactLogs, runDirectories[0], 'artifacts', archivedToolResult.artifactId),
-    'utf8'
-  )
+  const reference = new URL(artifactReference)
+  const archivedContent = readFileSync(join(artifactLogs, runDirectories[0], 'artifacts', reference.hostname), 'utf8')
   if (
     !archivedContent.includes('line-1 contains enough content') ||
-    Buffer.byteLength(archivedContent, 'utf8') !== archivedToolResult.originalBytes
+    Buffer.byteLength(archivedContent, 'utf8') !== Number(reference.searchParams.get('bytes')) ||
+    createHash('sha256').update(archivedContent).digest('hex') !== reference.searchParams.get('sha256')
   ) {
     throw new Error('archived tool result is incomplete')
   }

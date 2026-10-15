@@ -186,6 +186,8 @@ export function createTaskWaitTool(deps: TaskWaitToolDeps): ToolExecutor {
       additionalProperties: false
     },
     executionMode: 'sequential',
+    // 等待本身不产生新信息：等子代理时不应被判成无进展
+    isProgressNeutral: () => true,
 
     async execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult> {
       const store = context.sessionStore

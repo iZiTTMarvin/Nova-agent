@@ -77,6 +77,7 @@ export const InspectorLauncher: React.FC = () => {
           type="button"
           className="inspector-launcher__card"
           title={item.desc}
+          data-testid={`inspector-launcher-${item.key}`}
           onClick={item.open}
         >
           <span className="inspector-launcher__ico" aria-hidden>{item.icon}</span>

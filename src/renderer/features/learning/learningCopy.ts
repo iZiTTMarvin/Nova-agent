@@ -178,7 +178,8 @@ export function learningBuildFailureCopy(
     case 'busy_other_project':
       return { title: '另一个项目正在生成大纲，稍后再试', action: 'retry' }
     case 'storage_unavailable':
-      return { title: '学习数据读取失败，重启应用后再试', action: null }
+      // 这类失败大多是瞬时的（数据库正忙、Worker 刚崩），重启应用不是唯一出路
+      return { title: '学习数据暂时读不了，再试一次', action: 'retry' }
   }
 }
 

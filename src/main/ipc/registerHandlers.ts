@@ -55,7 +55,7 @@ import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
 import { getMainWindow } from '../mainWindowRef'
 import { registerDevDiagnosticsHandlers } from './devDiagnosticsHandler'
 import { registerDiagnosticsHandler } from './diagnosticsHandler'
-import { loadNovaSettings } from '../../runtime/settings/novaSettings'
+import { initializeNovaSettingsForFirstRun, loadNovaSettings } from '../../runtime/settings/novaSettings'
 import { initializeMemoryMaintenanceHost } from '../services/MemoryMaintenanceHost'
 
 /**
@@ -88,6 +88,8 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
 
   // 注册会话管理与回退操作 IPC（必须在 workspaceHandler 之前，初始化 SessionStore）
   registerSessionHandler()
+  // 须在任何会话创建前判定，否则全新安装首个会话会让自己被当成老用户
+  initializeNovaSettingsForFirstRun({ hasHistorySessions: () => getSessionStore().list().length > 0 })
   initializeMemoryExtractHost()
 
   // compose 阶段条手动推进/回退（依赖 SessionStore，须在 registerSessionHandler 之后）

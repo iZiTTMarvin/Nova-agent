@@ -72,6 +72,31 @@ export function deleteIndexedFile(db: MemoryDb, scopeId: string, relPath: string
   } catch (error) { db.exec('ROLLBACK'); throw error }
 }
 
+/** 检索范围：两条路径（索引 / 全量扫描）必须一致，否则降级检索会漏掉操作摘要 */
+export function isSearchableMemoryFile(relPath: string, scopeKind: 'project' | 'global'): boolean {
+  return !isManagedMemoryFile(relPath, scopeKind)
+}
+
+/**
+ * 索引错误是否为结构性错误：表/列缺失、库损坏这类再试也是同样的错，
+ * 才值得把整条检索路径永久降级。锁竞争、瞬时 IO 错误只影响这一次查询。
+ */
+export function isStructuralIndexError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return STRUCTURAL_INDEX_ERROR_PATTERNS.some(pattern => pattern.test(message))
+}
+
+const STRUCTURAL_INDEX_ERROR_PATTERNS = [
+  /no such table/i,
+  /no such column/i,
+  /no such index/i,
+  /no such function/i,
+  /not a database/i,
+  /malformed/i,
+  /fts5/i,
+  /syntax error/i
+]
+
 export function searchIndexedDocuments(db: MemoryDb, scopeId: string, query: string, fetchLimit: number): MemorySearchHit[] {
   const built = buildMemoryIndexQuery(query)
   const rows = new Map<string, MemorySearchHit>()
