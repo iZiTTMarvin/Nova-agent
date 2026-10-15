@@ -255,7 +255,7 @@ describe('ProcessRegistry', () => {
     const h = slow.register(makeInput({
       child,
       seedOutput: 'large output',
-      checkpointBaseline: new Map(),
+      checkpointBaseline: { files: new Map(), unreadable: new Set() },
       killTree: () => kind === 'pending' && !confirmTree ? new Promise<void>(() => {}) : Promise.resolve()
     }))
     await expect(slow.terminateForSession('sess-A')).rejects.toMatchObject({ errors: [{ code: 'termination-timeout' }] })
@@ -433,7 +433,7 @@ describe('ProcessRegistry', () => {
   it('checkpoint 基线可读取与更新，且受会话围栏保护', () => {
     const h = registry.register(makeInput())
     expect(registry.getCheckpointBaseline(h.ref, 'sess-A')).toBeNull()
-    const baseline = new Map()
+    const baseline = { files: new Map(), unreadable: new Set<string>() }
     registry.updateCheckpointBaseline(h.ref, 'sess-A', baseline)
     expect(registry.getCheckpointBaseline(h.ref, 'sess-A')).toBe(baseline)
     registry.updateCheckpointBaseline(h.ref, 'sess-A', null)

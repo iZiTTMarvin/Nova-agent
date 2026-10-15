@@ -4,6 +4,7 @@
  * 默认由 memoryCaptureEnabled 门控；仅缓冲不落盘。
  */
 import { createHash } from 'node:crypto'
+import { homedir, tmpdir } from 'node:os'
 import { MEMORY_TOOL_NAMES } from './memoryTools'
 import { resolveToolArg } from '../tools/toolArgResolver'
 import {
@@ -12,6 +13,7 @@ import {
   isSensitiveFilePath,
   type PrivacyFilterOptions
 } from './PrivacyFilter'
+import { createLocalPathNormalizer, type LocalPathRoots } from './localPathNormalizer'
 
 /** 单条 observation（working 缓冲条目） */
 export interface MemoryObservation {
@@ -43,6 +45,8 @@ export interface ObservationCaptureOptions {
   onBufferOverflow?: (sessionId: string) => void
   /** 注入时钟（单测用） */
   now?: () => number
+  /** 注入本机临时目录与主目录（单测用），默认取 os.tmpdir() / os.homedir() */
+  localRoots?: Omit<LocalPathRoots, 'workspaceRoot'>
 }
 
 interface PendingToolCall {
@@ -133,26 +137,31 @@ export interface FilteredObservationTitle {
 export function buildFilteredObservationTitle(
   toolName: string,
   args: Record<string, unknown>,
-  privacyOptions?: PrivacyFilterOptions
+  privacyOptions?: PrivacyFilterOptions,
+  normalizePaths: (text: string) => string = text => text
 ): FilteredObservationTitle {
   const rawTitle = buildObservationTitle(toolName, args)
   const filtered = filterPrivacyText(rawTitle, privacyOptions)
   if (filtered.shouldDiscard) {
     return { title: toolName, hadSensitive: filtered.hadSensitive }
   }
-  const text = filtered.text || toolName
+  // 路径归一须在截断前：截断可能切掉半个根路径导致无法识别
+  const text = normalizePaths(filtered.text) || toolName
   return {
     title: truncateObservationTitle(text),
     hadSensitive: filtered.hadSensitive
   }
 }
 
+/** 文件类工具输出的 `[workspace: <root>]` 标头，不携带信息 */
+const WORKSPACE_HEADER = /^\[workspace: [^\]]*\]$/
+
 /** 取 output 前 3 行非空作为 facts */
 export function extractObservationFacts(output: string): string[] {
   return output
     .split('\n')
     .map((line) => line.trim())
-    .filter((line) => line.length > 0)
+    .filter((line) => line.length > 0 && !WORKSPACE_HEADER.test(line))
     .slice(0, 3)
 }
 
@@ -181,6 +190,8 @@ export class ObservationCapture {
   private onBufferOverflow: ((sessionId: string) => void) | undefined
   private readonly privacyOptions: PrivacyFilterOptions | undefined
   private readonly now: () => number
+  private readonly localRoots: Omit<LocalPathRoots, 'workspaceRoot'>
+  private normalizePaths: (text: string) => string
 
   /** sessionId → working buffer */
   private readonly buffers = new Map<string, MemoryObservation[]>()
@@ -196,6 +207,13 @@ export class ObservationCapture {
     this.onBufferOverflow = options.onBufferOverflow
     this.privacyOptions = options.privacyFilter
     this.now = options.now ?? (() => Date.now())
+    this.localRoots = options.localRoots ?? { tempDir: tmpdir(), homeDir: homedir() }
+    this.normalizePaths = createLocalPathNormalizer(this.localRoots)
+  }
+
+  /** 主进程：绑定会话工作区，之后采集的标题、事实与文件路径中的工作区根归一为 <workspace> */
+  setWorkspaceRoot(workspaceRoot: string | undefined): void {
+    this.normalizePaths = createLocalPathNormalizer({ ...this.localRoots, workspaceRoot })
   }
 
   onToolCall(params: {
@@ -213,7 +231,7 @@ export class ObservationCapture {
     }
 
     const rawInput = JSON.stringify(params.args ?? {})
-    const filesTouched = extractFilesTouched(params.toolName, params.args)
+    const filesTouched = extractFilesTouched(params.toolName, params.args).map(this.normalizePaths)
 
     const filtered = filterToolPayload(rawInput, '', filesTouched, this.privacyOptions)
     if (filtered.shouldDiscard) {
@@ -227,7 +245,7 @@ export class ObservationCapture {
       toolName: params.toolName,
       args: params.args,
       filesTouched,
-      filteredInput: filtered.filteredInput,
+      filteredInput: this.normalizePaths(filtered.filteredInput),
       startedAt: this.now()
     })
   }
@@ -254,11 +272,12 @@ export class ObservationCapture {
     if (filtered.shouldDiscard) {
       return
     }
+    const filteredOutput = this.normalizePaths(filtered.filteredOutput)
 
     const fingerprint = computeObservationFingerprint(
       params.toolName,
       filtered.filteredInput,
-      filtered.filteredOutput,
+      filteredOutput,
       pending.filesTouched
     )
 
@@ -269,7 +288,8 @@ export class ObservationCapture {
     const { title, hadSensitive: titleHadSensitive } = buildFilteredObservationTitle(
       params.toolName,
       pending.args,
-      this.privacyOptions
+      this.privacyOptions,
+      this.normalizePaths
     )
 
     const observation: MemoryObservation = {
@@ -279,7 +299,7 @@ export class ObservationCapture {
       toolCallId: params.toolCallId,
       toolName: params.toolName,
       title,
-      facts: extractObservationFacts(filtered.filteredOutput),
+      facts: extractObservationFacts(filteredOutput),
       filesTouched: pending.filesTouched,
       fingerprint,
       capturedAt: this.now(),

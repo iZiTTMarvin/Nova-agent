@@ -83,4 +83,18 @@ describe('renderBashDescription', () => {
       expect(text).toContain('stop')
     }
   })
+
+  it('三个 shell family 都把临时文件引向各自的系统临时目录，并禁止写盘符根与工作区外', () => {
+    const cases = [
+      [renderBashDescription('bash', 'linux'), '${TMPDIR:-/tmp}'],
+      [renderBashDescription('pwsh', 'win32'), '$env:TEMP'],
+      [renderBashDescription('cmd', 'win32'), '%TEMP%']
+    ] as const
+    for (const [text, tempDir] of cases) {
+      expect(text).toContain(tempDir)
+      expect(text).toContain('drive roots')
+      expect(text).toContain('cannot be undone')
+      expect(text).toContain('checkpoint')
+    }
+  })
 })

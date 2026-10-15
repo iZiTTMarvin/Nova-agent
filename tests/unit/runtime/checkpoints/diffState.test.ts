@@ -95,4 +95,30 @@ describe('buildMessageDiffState', () => {
       'src/rejected.ts': 'rejected'
     })
   })
+
+  it('与备份字节一致且未审查的条目不计入变更；已审查的仍展示审查结果', () => {
+    const messageId = 'msg_noop'
+    for (const relPath of ['same-mod.ts', 'same-del.ts', 'rejected.ts']) {
+      writeBackupFile(messageId, relPath, 'SAME')
+      writeWorkspaceFile(relPath, 'SAME')
+    }
+    writeBackupFile(messageId, 'changed.ts', 'OLD')
+    writeWorkspaceFile('changed.ts', 'NEW')
+    writeManifest(checkpointRoot, {
+      sessionId,
+      messageId,
+      workspaceRoot,
+      createdFiles: [],
+      modifiedFiles: ['same-mod.ts', 'changed.ts', 'rejected.ts'],
+      deletedFiles: ['same-del.ts'],
+      status: 'active',
+      createdAt: Date.now(),
+      fileReviews: { 'rejected.ts': 'rejected' }
+    })
+
+    const result = buildMessageDiffState(checkpointRoot, workspaceRoot, sessionId, messageId)
+
+    expect(result.diffs.map(diff => diff.filePath)).toEqual(['changed.ts', 'rejected.ts'])
+    expect(result.reviews).toEqual({ 'rejected.ts': 'rejected' })
+  })
 })

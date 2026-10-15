@@ -26,6 +26,7 @@ export function buildMessageDiffState(
 
   const filesDir = getFilesDir(checkpointRoot, sessionId, messageId)
   const diffs: DiffEntry[] = []
+  const reviews = manifest.fileReviews ?? {}
 
   /** 工作区文件单次读取：返回字节，缺返回 null */
   const readCurrentOnce = (relPath: string): Buffer | null => {
@@ -33,14 +34,19 @@ export function buildMessageDiffState(
     return existsSync(currentPath) ? readFileSync(currentPath) : null
   }
 
+  /** 备份与当前字节一致且未经审查：净变化为零，不产生 diff（审查过的保留以展示审查结果） */
+  const isUnchanged = (relPath: string, backup: Buffer, current: Buffer | null): boolean =>
+    current !== null && reviews[relPath] === undefined && backup.equals(current)
+
   for (const relPath of manifest.modifiedFiles) {
     const backupPath = join(filesDir, relPath)
 
     if (!existsSync(backupPath)) continue
-    const oldContent = readFileSync(backupPath, 'utf-8')
+    const backup = readFileSync(backupPath)
     const currentBytes = readCurrentOnce(relPath)
+    if (isUnchanged(relPath, backup, currentBytes)) continue
     diffs.push({
-      ...computeFileDiff(relPath, oldContent, currentBytes?.toString('utf-8') ?? '', 'modified'),
+      ...computeFileDiff(relPath, backup.toString('utf-8'), currentBytes?.toString('utf-8') ?? '', 'modified'),
       currentDigest: currentBytes === null ? null : digestFileBytes(currentBytes)
     })
   }
@@ -57,16 +63,16 @@ export function buildMessageDiffState(
   for (const relPath of manifest.deletedFiles) {
     const backupPath = join(filesDir, relPath)
     if (!existsSync(backupPath)) continue
-    const oldContent = readFileSync(backupPath, 'utf-8')
+    const backup = readFileSync(backupPath)
     const currentBytes = readCurrentOnce(relPath)
+    if (isUnchanged(relPath, backup, currentBytes)) continue
     const status = currentBytes === null ? 'deleted' : 'modified'
     diffs.push({
-      ...computeFileDiff(relPath, oldContent, currentBytes?.toString('utf-8') ?? '', status),
+      ...computeFileDiff(relPath, backup.toString('utf-8'), currentBytes?.toString('utf-8') ?? '', status),
       currentDigest: currentBytes === null ? null : digestFileBytes(currentBytes)
     })
   }
 
-  const reviews = manifest.fileReviews ?? {}
   const visiblePaths = new Set(diffs.map(diff => diff.filePath))
   const filteredReviews: Record<string, DiffReviewStatus> = {}
 

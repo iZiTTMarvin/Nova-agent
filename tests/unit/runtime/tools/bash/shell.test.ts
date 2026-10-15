@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { spawn } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import {
   getShellConfig,
   getShellEnv,
@@ -87,6 +87,41 @@ describe('shell', () => {
       } finally {
         child.kill()
         await waitForChildProcess(child)
+      }
+    })
+  })
+
+  describe('waitForChildProcess', () => {
+    it('运行超过兜底时长的进程不被提前判定为已退出', async () => {
+      vi.useFakeTimers()
+      try {
+        const child = new ChildProcess()
+        let settled: number | null | undefined
+        void waitForChildProcess(child).then(code => { settled = code })
+        await vi.advanceTimersByTimeAsync(120_000)
+        expect(settled).toBeUndefined()
+        child.emit('exit', 0)
+        child.emit('close', 0)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(settled).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('exit 后管道迟迟不 close 时按 exit code 兜底收尾', async () => {
+      vi.useFakeTimers()
+      try {
+        const child = new ChildProcess()
+        let settled: number | null | undefined
+        void waitForChildProcess(child).then(code => { settled = code })
+        child.emit('exit', 3)
+        await vi.advanceTimersByTimeAsync(29_000)
+        expect(settled).toBeUndefined()
+        await vi.advanceTimersByTimeAsync(1_000)
+        expect(settled).toBe(3)
+      } finally {
+        vi.useRealTimers()
       }
     })
   })

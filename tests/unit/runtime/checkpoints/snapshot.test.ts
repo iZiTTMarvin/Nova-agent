@@ -48,10 +48,10 @@ describe('snapshot', () => {
 
     const result = await snapshotWorkspace(tempDir)
 
-    expect(result.has('src/main.ts')).toBe(true)
-    expect(result.has('README.md')).toBe(true)
+    expect(result.files.has('src/main.ts')).toBe(true)
+    expect(result.files.has('README.md')).toBe(true)
 
-    const main = result.get('src/main.ts')!
+    const main = result.files.get('src/main.ts')!
     expect(main.content?.toString('utf8')).toBe('const x = 1')
     expect(main.size).toBe(11)
     expect(main.mtimeMs).toBeGreaterThan(0)
@@ -64,11 +64,11 @@ describe('snapshot', () => {
     })
 
     const result = await snapshotWorkspace(tempDir, { includeContent: false })
-    const main = result.get('src/main.ts')!
+    const main = result.files.get('src/main.ts')!
     expect(main.content).toBeUndefined()
     expect(main.size).toBe(11)
     expect(main.mtimeMs).toBeGreaterThan(0)
-    expect(result.get('README.md')?.content).toBeUndefined()
+    expect(result.files.get('README.md')?.content).toBeUndefined()
   })
 
   it('snapshotMtimes 只采集 mtime', async () => {
@@ -79,9 +79,9 @@ describe('snapshot', () => {
 
     const result = await snapshotMtimes(tempDir)
 
-    expect(result.size).toBe(2)
-    expect(result.get('a.txt')).toBeGreaterThan(0)
-    expect(result.get('b.txt')).toBeGreaterThan(0)
+    expect(result.mtimes.size).toBe(2)
+    expect(result.mtimes.get('a.txt')).toBeGreaterThan(0)
+    expect(result.mtimes.get('b.txt')).toBeGreaterThan(0)
   })
 
   it.each([{ maxFiles: 1, maxBytes: 2 }, { maxFiles: 0, maxBytes: 0 }])(
@@ -97,55 +97,59 @@ describe('snapshot', () => {
         return original(...args)
       })
       const after = await snapshotMtimes(tempDir, options)
-      expect([...after]).toEqual([...before].map(([path, file]) => [path, file.mtimeMs]))
-      expect([...after.keys()].filter(path => path !== '.gitignore'))
+      expect([...after.mtimes]).toEqual([...before.files].map(([path, file]) => [path, file.mtimeMs]))
+      expect([...after.mtimes.keys()].filter(path => path !== '.gitignore'))
         .toEqual(['a.txt', 'b/nested.txt', 'b/sub/deep.txt', 'c.txt'])
     }
   )
 
-  it.each(['ENOENT', 'EACCES'])('单文件 %s 不影响其余文件', async code => {
+  it.each([
+    { code: 'ENOENT', unreadable: [] },
+    { code: 'EACCES', unreadable: ['b.txt'] }
+  ])('单文件 $code：不存在直接缺席，其余错误记为未知', async ({ code, unreadable }) => {
     tempDir = createTempWorkspace({ 'a.txt': 'a', 'b.txt': 'b', 'c.txt': 'c' })
     const original = fsp.stat
     vi.spyOn(fsp, 'stat').mockImplementation(async (...args) => {
       if (String(args[0]).endsWith('b.txt')) throw Object.assign(new Error(code), { code })
       return original(...args)
     })
-    expect([...await snapshotMtimes(tempDir)].map(([path]) => path)).toEqual(['a.txt', 'c.txt'])
+    const after = await snapshotMtimes(tempDir)
+    expect([...after.mtimes.keys()]).toEqual(['a.txt', 'c.txt'])
+    expect([...after.unreadable]).toEqual(unreadable)
+    const before = await snapshotWorkspace(tempDir)
+    expect([...before.files.keys()]).toEqual(['a.txt', 'c.txt'])
+    expect([...before.unreadable]).toEqual(unreadable)
   })
 
-  it('取消停止派发并等待所有在途 stat，返回后 Map 不再变化', async () => {
-    tempDir = createTempWorkspace(Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`f${i}.txt`, 'x'])))
-    const controller = new AbortController()
-    const original = fsp.stat
-    const releases: (() => void)[] = []
-    let ready!: () => void
-    const started = new Promise<void>(resolve => { ready = resolve })
-    let inFlight = 0
-    const stat = vi.spyOn(fsp, 'stat').mockImplementation(async (...args) => {
-      inFlight++
-      await new Promise<void>(resolve => {
-        releases.push(resolve)
-        if (releases.length === 8) ready()
-      })
-      try { return await original(...args) } finally { inFlight-- }
-    })
-    let settled = false
-    const scan = snapshotMtimes(tempDir, { abortSignal: controller.signal }).then(result => {
-      settled = true
-      return result
-    })
-    await started
-    controller.abort()
-    expect(settled).toBe(false)
-    expect(inFlight).toBe(8)
-    releases.forEach(release => release())
-    const result = await scan
-    expect(stat).toHaveBeenCalledTimes(8)
-    expect(inFlight).toBe(0)
-    expect(result.size).toBe(8)
-    const entries = [...result]
-    await new Promise(resolve => setImmediate(resolve))
-    expect([...result]).toEqual(entries)
+  it('目录不可读时整棵子树记为未知，diff 不据此推断新增或删除', async () => {
+    tempDir = createTempWorkspace({ 'a.txt': 'a', 'locked/x.txt': 'x', 'locked/deep/y.txt': 'y' })
+    const before = await snapshotWorkspace(tempDir)
+    const original = fsp.readdir
+    vi.spyOn(fsp, 'readdir').mockImplementation((async (...args: Parameters<typeof fsp.readdir>) => {
+      if (String(args[0]).endsWith('locked')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+      return original(...args)
+    }) as typeof fsp.readdir)
+    const after = await snapshotMtimes(tempDir)
+    expect([...after.unreadable]).toEqual(['locked'])
+    expect(diffSnapshots(before, after)).toEqual({ modified: [], added: [], deleted: [] })
+
+    const lockedBefore = await snapshotWorkspace(tempDir)
+    vi.mocked(fsp.readdir).mockRestore()
+    expect(diffSnapshots(lockedBefore, await snapshotMtimes(tempDir)))
+      .toEqual({ modified: [], added: [], deleted: [] })
+  })
+
+  it('正文读取失败的文件仍记为存在（mtime-only），不会被误判为新增', async () => {
+    tempDir = createTempWorkspace({ 'a.txt': 'a', 'busy.db': 'db' })
+    const original = fsp.readFile
+    vi.spyOn(fsp, 'readFile').mockImplementation((async (...args: Parameters<typeof fsp.readFile>) => {
+      if (String(args[0]).endsWith('busy.db')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' })
+      return original(...args)
+    }) as typeof fsp.readFile)
+    const before = await snapshotWorkspace(tempDir)
+    expect(before.files.get('busy.db')).toMatchObject({ size: 2 })
+    expect(before.files.get('busy.db')?.content).toBeUndefined()
+    expect(diffSnapshots(before, await snapshotMtimes(tempDir)).added).toEqual([])
   })
 
   it('真实文件变更仍识别新增、修改、删除并保留二进制原文', async () => {
@@ -159,20 +163,26 @@ describe('snapshot', () => {
     expect(diffSnapshots(before, await snapshotMtimes(tempDir))).toEqual({
       modified: ['a.bin'], added: ['new.txt'], deleted: ['deleted.txt']
     })
-    expect(before.get('a.bin')?.content).toEqual(bytes)
+    expect(before.files.get('a.bin')?.content).toEqual(bytes)
   })
 
   it('diffSnapshots 识别新增、修改、删除', async () => {
-    const before = new Map([
-      ['a.txt', { content: Buffer.from('a'), mtimeMs: 1000, size: 1 }],
-      ['b.txt', { content: Buffer.from('b'), mtimeMs: 2000, size: 1 }],
-      ['c.txt', { content: Buffer.from('c'), mtimeMs: 3000, size: 1 }]
-    ])
-    const after = new Map([
-      ['a.txt', 1000],              // 未变
-      ['b.txt', 2500],              // 修改
-      ['d.txt', 4000]               // 新增
-    ])
+    const before = {
+      files: new Map([
+        ['a.txt', { content: Buffer.from('a'), mtimeMs: 1000, size: 1 }],
+        ['b.txt', { content: Buffer.from('b'), mtimeMs: 2000, size: 1 }],
+        ['c.txt', { content: Buffer.from('c'), mtimeMs: 3000, size: 1 }]
+      ]),
+      unreadable: new Set<string>()
+    }
+    const after = {
+      mtimes: new Map([
+        ['a.txt', 1000],              // 未变
+        ['b.txt', 2500],              // 修改
+        ['d.txt', 4000]               // 新增
+      ]),
+      unreadable: new Set<string>()
+    }
     // c.txt 被删除
 
     const diff = diffSnapshots(before, after)
@@ -211,7 +221,7 @@ describe('snapshot', () => {
     })
 
     const result = await snapshotWorkspace(tempDir)
-    const paths = Array.from(result.keys())
+    const paths = Array.from(result.files.keys())
 
     expect(paths).toContain('src/main.ts')
     expect(paths).not.toContain('node_modules/pkg/index.js')
@@ -228,7 +238,7 @@ describe('snapshot', () => {
     })
 
     const result = await snapshotWorkspace(tempDir)
-    const paths = Array.from(result.keys())
+    const paths = Array.from(result.files.keys())
 
     expect(paths).not.toContain('dist/bundle.js')
     expect(paths).toContain('src/main.ts')
@@ -245,9 +255,9 @@ describe('snapshot', () => {
 
     const result = await snapshotWorkspace(tempDir, { maxFiles: 2 })
 
-    expect(result.size).toBe(5)
+    expect(result.files.size).toBe(5)
     let contentCount = 0
-    for (const entry of result.values()) {
+    for (const entry of result.files.values()) {
       if (entry.content !== undefined) contentCount++
     }
     expect(contentCount).toBe(2)
@@ -262,9 +272,9 @@ describe('snapshot', () => {
 
     const result = await snapshotWorkspace(tempDir, { maxBytes: 3 })
 
-    expect(result.size).toBe(3)
+    expect(result.files.size).toBe(3)
     let contentCount = 0
-    for (const entry of result.values()) {
+    for (const entry of result.files.values()) {
       if (entry.content !== undefined) contentCount++
     }
     // a.txt 2 字节，累计 2 ≤ 3；读 content
@@ -282,8 +292,8 @@ describe('snapshot', () => {
     const before = await snapshotWorkspace(tempDir, { maxFiles: 2 })
     const after = await snapshotMtimes(tempDir, { maxFiles: 2 })
 
-    expect(before.size).toBe(5)
-    expect(after.size).toBe(5)
+    expect(before.files.size).toBe(5)
+    expect(after.mtimes.size).toBe(5)
     expect(diffSnapshots(before, after)).toEqual({ modified: [], added: [], deleted: [] })
   })
 
@@ -295,14 +305,14 @@ describe('snapshot', () => {
 
     const result = await snapshotWorkspace(tempDir)
 
-    expect(result.get('big.bin')?.content).toBeUndefined()
-    expect(result.get('big.bin')?.mtimeMs).toBeGreaterThan(0)
-    expect(result.get('small.txt')?.content?.toString()).toBe('hi')
+    expect(result.files.get('big.bin')?.content).toBeUndefined()
+    expect(result.files.get('big.bin')?.mtimeMs).toBeGreaterThan(0)
+    expect(result.files.get('small.txt')?.content?.toString()).toBe('hi')
   })
 
   // ── abortSignal ─────────────────────────────────────────────
 
-  it('abortSignal 可中断 snapshotWorkspace', async () => {
+  it('取消的执行前快照整体记为未知，不会把未扫到的文件误判为新增', async () => {
     const files: Record<string, string> = {}
     for (let i = 0; i < 100; i++) {
       files[`f${i}.txt`] = String(i)
@@ -314,22 +324,8 @@ describe('snapshot', () => {
     controller.abort()
     const result = await promise
 
-    // 中断后结果应不完整，但不会抛错
-    expect(result.size).toBeLessThan(100)
-  })
-
-  it('abortSignal 可中断 snapshotMtimes', async () => {
-    const files: Record<string, string> = {}
-    for (let i = 0; i < 100; i++) {
-      files[`f${i}.txt`] = String(i)
-    }
-    tempDir = createTempWorkspace(files)
-
-    const controller = new AbortController()
-    const promise = snapshotMtimes(tempDir, { abortSignal: controller.signal })
-    controller.abort()
-    const result = await promise
-
-    expect(result.size).toBeLessThan(100)
+    expect(result.files.size).toBeLessThan(100)
+    expect(result.unreadable.has('')).toBe(true)
+    expect(diffSnapshots(result, await snapshotMtimes(tempDir)).added).toEqual([])
   })
 })

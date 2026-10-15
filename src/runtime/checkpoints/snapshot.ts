@@ -13,7 +13,8 @@
  * - 已异步化（fs/promises），每层 await 让出事件循环，避免 Electron 主进程假死
  * - 已接入 pathExclusions 排除清单和 .gitignore 二次过滤
  * - 已增加文件数 / 总字节预算保护，超预算时降级为 mtime-only
- * - 已支持 abortSignal，用户取消时中断遍历
+ * - 执行前快照可被取消（取消后整体标记为未知）；执行后快照必须完整，不响应取消
+ * - 读取失败但非"不存在"的路径记为未知，diff 不据此推断新增或删除
  */
 import { readdir, stat, readFile } from 'fs/promises'
 import { join, relative } from 'path'
@@ -57,13 +58,9 @@ const DEFAULT_MAX_FILES = 10_000
 /** 默认总字节预算：超过后降级为 mtime-only。 */
 const DEFAULT_MAX_BYTES = 500 * 1024 * 1024  // 500MB
 
-export interface SnapshotOptions {
-  /** 取消信号，遍历过程中会定期检查，命中即中断。 */
+export interface SnapshotOptions extends ScanBudget {
+  /** 取消信号：命中即停止遍历，结果整体标记为未知。 */
   abortSignal?: AbortSignal
-  /** 最大处理文件数，超出后后续文件只记 mtime。 */
-  maxFiles?: number
-  /** 最大读取字节数（含已读 content），超出后后续文件只记 mtime。 */
-  maxBytes?: number
   /**
    * 是否读取文件正文。默认 true。
    * 只读命令只需 mtime/size 做变更检测；无正文的条目无法回退，走 skipped。
@@ -71,10 +68,17 @@ export interface SnapshotOptions {
   includeContent?: boolean
 }
 
+export interface ScanBudget {
+  /** 最大处理文件数，超出后后续文件只记 mtime。 */
+  maxFiles?: number
+  /** 最大读取字节数（含已读 content），超出后后续文件只记 mtime。 */
+  maxBytes?: number
+}
+
 export interface FileSnapshot {
   /**
    * 文件字节内容（二进制安全）。
-   * 超大文件（>MAX_SNAPSHOT_FILE_SIZE）或预算耗尽时跳过内容读取，content 为 undefined。
+   * 超大文件（>MAX_SNAPSHOT_FILE_SIZE）、预算耗尽或正文读取失败时为 undefined。
    * 这种情况下无法回退，但 mtime 仍可用于检测变化。
    */
   content?: Buffer
@@ -82,8 +86,17 @@ export interface FileSnapshot {
   size: number
 }
 
+/**
+ * 读取失败（非"不存在"）的相对路径。目录项覆盖其全部后代，'' 覆盖整个工作区。
+ * 这些路径的存在与否未知，diff 不能据此推断新增或删除。
+ */
+export type UnreadablePaths = Set<string>
+
 /** 工作区快照：相对路径 → 文件内容 + mtime */
-export type WorkspaceSnapshot = Map<string, FileSnapshot>
+export interface WorkspaceSnapshot {
+  files: Map<string, FileSnapshot>
+  unreadable: UnreadablePaths
+}
 
 /**
  * 遍历工作区，读取所有源文件的当前内容和 mtime
@@ -93,34 +106,50 @@ export async function snapshotWorkspace(
   workspaceRoot: string,
   options: SnapshotOptions = {}
 ): Promise<WorkspaceSnapshot> {
-  const snapshot: WorkspaceSnapshot = new Map()
+  const snapshot: WorkspaceSnapshot = { files: new Map(), unreadable: new Set() }
   const stats: SnapshotStats = { fileCount: 0, totalBytes: 0, skippedBigFiles: 0, budgetLimited: 0 }
   const ignoreMatcher = await loadIgnoreMatcher(workspaceRoot)
   await timedSnapshot('snapshotWorkspace', async () => {
     await walk(workspaceRoot, workspaceRoot, snapshot, stats, options, ignoreMatcher)
     return stats
   })
+  if (options.abortSignal?.aborted) snapshot.unreadable.add('')
   return snapshot
 }
 
 /** 仅采集 mtime 的轻量快照，用于执行后对比 */
-export type MtimeSnapshot = Map<string, number>
+export interface MtimeSnapshot {
+  mtimes: Map<string, number>
+  unreadable: UnreadablePaths
+}
 
+/** 执行后快照记录的是已经发生的改动，必须完整遍历，因此不接受取消信号。 */
 export async function snapshotMtimes(
   workspaceRoot: string,
-  options: SnapshotOptions = {}
+  budget: ScanBudget = {}
 ): Promise<MtimeSnapshot> {
-  const mtimes: MtimeSnapshot = new Map()
+  const snapshot: MtimeSnapshot = { mtimes: new Map(), unreadable: new Set() }
   const stats: SnapshotStats = { fileCount: 0, totalBytes: 0, skippedBigFiles: 0, budgetLimited: 0 }
   const ignoreMatcher = await loadIgnoreMatcher(workspaceRoot)
   await timedSnapshot('snapshotMtimes   ', async () => {
-    await walkMtimes(workspaceRoot, workspaceRoot, mtimes, stats, options, ignoreMatcher)
+    await walkMtimes(workspaceRoot, workspaceRoot, snapshot, stats, budget, ignoreMatcher)
     return stats
   })
-  return mtimes
+  return snapshot
 }
 
-/** 对比执行前后的快照，找出新增/修改/删除的文件 */
+export function isUnreadablePath(unreadable: UnreadablePaths, relPath: string): boolean {
+  if (unreadable.size === 0) return false
+  if (unreadable.has('')) return true
+  let cut = relPath.length
+  while (cut > 0) {
+    if (unreadable.has(relPath.slice(0, cut))) return true
+    cut = relPath.lastIndexOf('/', cut - 1)
+  }
+  return false
+}
+
+/** 对比执行前后的快照，找出新增/修改/删除的文件；任一侧状态未知的路径不计入 */
 export function diffSnapshots(
   before: WorkspaceSnapshot,
   after: MtimeSnapshot
@@ -129,17 +158,17 @@ export function diffSnapshots(
   const added: string[] = []
   const deleted: string[] = []
 
-  for (const [path, entry] of before) {
-    const afterMtime = after.get(path)
+  for (const [path, entry] of before.files) {
+    const afterMtime = after.mtimes.get(path)
     if (afterMtime === undefined) {
-      deleted.push(path)
+      if (!isUnreadablePath(after.unreadable, path)) deleted.push(path)
     } else if (afterMtime !== entry.mtimeMs) {
       modified.push(path)
     }
   }
 
-  for (const path of after.keys()) {
-    if (!before.has(path)) {
+  for (const path of after.mtimes.keys()) {
+    if (!before.files.has(path) && !isUnreadablePath(before.unreadable, path)) {
       added.push(path)
     }
   }
@@ -147,9 +176,45 @@ export function diffSnapshots(
   return { modified, added, deleted }
 }
 
-function isBudgetExceeded(stats: SnapshotStats, options: SnapshotOptions): boolean {
-  const maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
-  const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
+/**
+ * 读取单个文件快照。stat 失败按"不存在 / 未知"区分；
+ * 正文读取失败时退化为 mtime-only，保证已存在的文件不会因读不到正文而被当成不存在。
+ */
+export async function readFileSnapshot(
+  fullPath: string,
+  shouldReadContent: (size: number) => boolean
+): Promise<FileSnapshot | 'missing' | 'unreadable'> {
+  let fileStat
+  try {
+    fileStat = await stat(fullPath)
+  } catch (error) {
+    return isMissingPathError(error) ? 'missing' : 'unreadable'
+  }
+  const entry: FileSnapshot = { mtimeMs: fileStat.mtimeMs, size: fileStat.size }
+  if (!shouldReadContent(fileStat.size)) return entry
+  try {
+    return { ...entry, content: await readFile(fullPath) }
+  } catch (error) {
+    return isMissingPathError(error) ? 'missing' : entry
+  }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error.code === 'ENOENT' || error.code === 'ENOTDIR')
+  )
+}
+
+function toRelPath(root: string, fullPath: string): string {
+  return relative(root, fullPath).replace(/\\/g, '/')
+}
+
+function isBudgetExceeded(stats: SnapshotStats, budget: ScanBudget): boolean {
+  const maxFiles = budget.maxFiles ?? DEFAULT_MAX_FILES
+  const maxBytes = budget.maxBytes ?? DEFAULT_MAX_BYTES
   return stats.fileCount > maxFiles || stats.totalBytes > maxBytes
 }
 
@@ -166,7 +231,10 @@ async function walk(
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
-  } catch { return }
+  } catch (error) {
+    if (!isMissingPathError(error)) snapshot.unreadable.add(toRelPath(root, dir))
+    return
+  }
 
   for (const entry of entries) {
     if (options.abortSignal?.aborted) return
@@ -175,7 +243,7 @@ async function walk(
     if (isPathSkipped(name)) continue
 
     const fullPath = join(dir, name)
-    const relPath = relative(root, fullPath).replace(/\\/g, '/')
+    const relPath = toRelPath(root, fullPath)
 
     let isDir: boolean
     try {
@@ -184,7 +252,8 @@ async function walk(
     } catch {
       try {
         isDir = (await stat(fullPath)).isDirectory()
-      } catch {
+      } catch (error) {
+        if (!isMissingPathError(error)) snapshot.unreadable.add(relPath)
         continue
       }
     }
@@ -196,86 +265,82 @@ async function walk(
     } else {
       if (ignoreMatcher(relPath, false)) continue
 
-      try {
-        const fileStat = await stat(fullPath)
+      const result = await readFileSnapshot(fullPath, size => {
         stats.fileCount++
-        stats.totalBytes += fileStat.size
-
-        if (options.includeContent === false) {
-          snapshot.set(relPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size })
-          continue
-        }
-
+        stats.totalBytes += size
+        if (options.includeContent === false) return false
         // 预算超限：只记 mtime，不读 content
         if (isBudgetExceeded(stats, options)) {
           stats.budgetLimited++
-          snapshot.set(relPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size })
-          continue
+          return false
         }
-
         // 超大文件：只记 mtime 不读 content，避免内存爆炸
-        if (fileStat.size > MAX_SNAPSHOT_FILE_SIZE) {
+        if (size > MAX_SNAPSHOT_FILE_SIZE) {
           stats.skippedBigFiles++
-          snapshot.set(relPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size })
-          continue
+          return false
         }
-
-        // 用 Buffer 读，二进制安全
-        const content = await readFile(fullPath)
-        snapshot.set(relPath, { content, mtimeMs: fileStat.mtimeMs, size: fileStat.size })
-      } catch {
-        continue
-      }
+        return true
+      })
+      if (result === 'unreadable') snapshot.unreadable.add(relPath)
+      else if (result !== 'missing') snapshot.files.set(relPath, result)
     }
   }
 }
 
+type MtimeScanResult =
+  | { relPath: string; mtimeMs: number; size: number }
+  | { relPath: string; unreadable: true }
+  | undefined
+
 async function walkMtimes(
   root: string,
   dir: string,
-  mtimes: MtimeSnapshot,
+  snapshot: MtimeSnapshot,
   stats: SnapshotStats,
-  options: SnapshotOptions,
+  budget: ScanBudget,
   ignoreMatcher: IgnoreMatcher
 ): Promise<void> {
-  if (options.abortSignal?.aborted) return
-
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
-  } catch { return }
+  } catch (error) {
+    if (!isMissingPathError(error)) snapshot.unreadable.add(toRelPath(root, dir))
+    return
+  }
 
-  const pending: Promise<{ relPath: string; mtimeMs: number; size: number } | undefined>[] = []
+  const pending: Promise<MtimeScanResult>[] = []
   async function flush(): Promise<void> {
     const results = await Promise.all(pending)
     pending.length = 0
     for (const result of results) {
       if (!result) continue
+      if ('unreadable' in result) {
+        snapshot.unreadable.add(result.relPath)
+        continue
+      }
       stats.fileCount++
       stats.totalBytes += result.size
-      if (isBudgetExceeded(stats, options)) stats.budgetLimited++
-      mtimes.set(result.relPath, result.mtimeMs)
+      if (isBudgetExceeded(stats, budget)) stats.budgetLimited++
+      snapshot.mtimes.set(result.relPath, result.mtimeMs)
     }
   }
 
   for (const entry of entries) {
-    if (options.abortSignal?.aborted) break
-
     const name = entry.name
     if (isPathSkipped(name)) continue
 
     const fullPath = join(dir, name)
-    const relPath = relative(root, fullPath).replace(/\\/g, '/')
+    const relPath = toRelPath(root, fullPath)
 
     let isDir: boolean
     try {
       isDir = entry.isDirectory()
     } catch {
       await flush()
-      if (options.abortSignal?.aborted) break
       try {
         isDir = (await stat(fullPath)).isDirectory()
-      } catch {
+      } catch (error) {
+        if (!isMissingPathError(error)) snapshot.unreadable.add(relPath)
         continue
       }
     }
@@ -283,18 +348,17 @@ async function walkMtimes(
     if (isDir) {
       if (ignoreMatcher(relPath, true)) continue
       await flush()
-      await walkMtimes(root, fullPath, mtimes, stats, options, ignoreMatcher)
+      await walkMtimes(root, fullPath, snapshot, stats, budget, ignoreMatcher)
     } else {
       if (ignoreMatcher(relPath, false)) continue
 
-      if (options.abortSignal?.aborted) break
       pending.push(stat(fullPath).then(
-        fileStat => ({ relPath, mtimeMs: fileStat.mtimeMs, size: fileStat.size }),
-        () => undefined
+        (fileStat): MtimeScanResult => ({ relPath, mtimeMs: fileStat.mtimeMs, size: fileStat.size }),
+        (error): MtimeScanResult => (isMissingPathError(error) ? undefined : { relPath, unreadable: true })
       ))
       if (pending.length === 8) await flush()
     }
   }
-  // 取消也等待已发起的 I/O 收敛，结果只在此扫描内按发现顺序写入。
+  // 结果只在此扫描内按发现顺序写入。
   await flush()
 }

@@ -133,6 +133,7 @@ export function ensureObservationCaptureForSession(
     return
   }
   const capture = getObservationCaptureForSession(sessionId)
+  capture.setWorkspaceRoot(workspaceRoot)
   capture.setOnBufferOverflow(() => {
     handleBufferOverflow(sessionId, workspaceRoot)
   })

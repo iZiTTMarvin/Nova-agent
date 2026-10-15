@@ -95,6 +95,22 @@ describe('buildSessionDiffState', () => {
     expect(state.messageIdByFile).toEqual({})
   })
 
+  it('改后还原：与最早备份字节一致且未审查时不产生 diff，已审查的保留', () => {
+    for (const relPath of ['src/restored.ts', 'src/rejected.ts']) {
+      writeBackupFile('msg_1', relPath, 'original')
+      writeWorkspaceFile(relPath, 'original')
+    }
+    writeManifestAt('msg_1', 1000, {
+      modifiedFiles: ['src/restored.ts', 'src/rejected.ts'],
+      fileReviews: { 'src/rejected.ts': 'rejected' }
+    })
+
+    const state = buildSessionDiffState(checkpointRoot, workspaceRoot, sessionId)
+
+    expect(state.diffs.map(diff => diff.filePath)).toEqual(['src/rejected.ts'])
+    expect(state.reviews).toEqual({ 'src/rejected.ts': 'rejected' })
+  })
+
   it('先改后删：以最早 backup 为原始内容，聚合为 deleted', () => {
     writeBackupFile('msg_1', 'src/removed.ts', 'original line')
     writeBackupFile('msg_2', 'src/removed.ts', 'modified line')

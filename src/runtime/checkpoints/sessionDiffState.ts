@@ -75,7 +75,8 @@ export function buildSessionDiffState(
       sessionId,
       relPath,
       appearance,
-      manifests
+      manifests,
+      mergedReviews[relPath] !== undefined
     )
     if (!aggregated) continue
     diffs.push(aggregated.entry)
@@ -144,7 +145,8 @@ function buildAggregatedEntry(
   sessionId: string,
   relPath: string,
   appearance: EarliestFileAppearance,
-  manifests: CheckpointManifest[]
+  manifests: CheckpointManifest[],
+  reviewed: boolean
 ): AggregatedFileDiff | null {
   const startIndex = manifests.findIndex(
     (manifest) => manifest.messageId === appearance.messageId
@@ -167,7 +169,7 @@ function buildAggregatedEntry(
   }
 
   let routeMessageId = appearance.messageId
-  let oldContent: string | null = null
+  let backup: Buffer | null = null
   for (let i = Math.max(0, startIndex); i < manifests.length; i++) {
     const manifest = manifests[i]!
     if (!manifest.modifiedFiles.includes(relPath) && !manifest.deletedFiles.includes(relPath)) {
@@ -175,17 +177,19 @@ function buildAggregatedEntry(
     }
     const backupPath = join(getFilesDir(checkpointRoot, sessionId, manifest.messageId), relPath)
     if (!existsSync(backupPath)) continue
-    oldContent = readFileSync(backupPath, 'utf-8')
+    backup = readFileSync(backupPath)
     routeMessageId = manifest.messageId
     break
   }
   // 备份全部缺失（被清理或命中跳过规则）：与消息级口径一致，跳过该文件
-  if (oldContent === null) return null
+  if (backup === null) return null
+  // 与原始内容字节一致且未经审查：净变化为零，不产生 diff
+  if (currentBytes !== null && !reviewed && backup.equals(currentBytes)) return null
 
   const status: DiffEntry['status'] = currentBytes === null ? 'deleted' : 'modified'
   return {
     entry: {
-      ...computeFileDiff(relPath, oldContent, currentBytes?.toString('utf-8') ?? '', status),
+      ...computeFileDiff(relPath, backup.toString('utf-8'), currentBytes?.toString('utf-8') ?? '', status),
       currentDigest
     },
     routeMessageId

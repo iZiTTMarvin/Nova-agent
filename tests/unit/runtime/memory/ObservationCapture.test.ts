@@ -13,6 +13,8 @@ import {
 import { subscribeObservationCapture } from '../../../../src/runtime/memory/MemoryObservationBridge'
 import { PRIVACY_REDACTED } from '../../../../src/runtime/memory/PrivacyFilter'
 import { DEFAULT_NOVA_SETTINGS } from '../../../../src/runtime/settings/novaSettings'
+import { createLocalPathNormalizer } from '../../../../src/runtime/memory/localPathNormalizer'
+import { consolidateObservations } from '../../../../src/runtime/memory/MemoryConsolidator'
 
 const FAKE_SK = 'sk-fakefortestonly000000000002'
 const FAKE_BEARER_CMD =
@@ -52,8 +54,62 @@ describe('ObservationCapture 纯逻辑', () => {
     expect(hadSensitive).toBe(true)
   })
 
-  it('extractObservationFacts 取前三行非空', () => {
-    expect(extractObservationFacts('a\n\nb\nc\nd')).toEqual(['a', 'b', 'c'])
+  it('extractObservationFacts 取前三行非空，跳过工作区提示标头', () => {
+    expect(extractObservationFacts('[workspace: <workspace>]\na\n\nb\nc\nd')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('路径归一识别 Windows 大小写、混合分隔符与 JSON 转义，且不吞掉同名前缀目录', () => {
+    const normalize = createLocalPathNormalizer({
+      workspaceRoot: 'C:\\Users\\Tester\\work.v1',
+      tempDir: 'C:\\Users\\Tester\\Temp',
+      homeDir: 'C:\\Users\\Tester'
+    }, 'win32')
+    expect(normalize('"c:/USERS/tester/work.v1/src/a.ts"')).toBe('"<workspace>/src/a.ts"')
+    expect(normalize(JSON.stringify({ path: 'C:\\Users\\Tester\\work.v1\\src\\a.ts' })))
+      .toBe(JSON.stringify({ path: '<workspace>\\src\\a.ts' }))
+    expect(normalize('>C:/Users/Tester/Temp/log.txt')).toBe('><temp>/log.txt')
+    expect(normalize('C:/Users/Tester/work.v12/a.ts')).toBe('~/work.v12/a.ts')
+    expect(normalize('C:/Users/Tester2/work.v1/a.ts')).toBe('C:/Users/Tester2/work.v1/a.ts')
+  })
+
+  it('POSIX 路径归一保持大小写和路径边界，不改相对路径', () => {
+    const normalize = createLocalPathNormalizer({
+      workspaceRoot: '/home/tester/work', tempDir: '/tmp', homeDir: '/home/tester'
+    }, 'linux')
+    expect(normalize('cwd=/home/tester/work; log=/tmp/log.txt; /home/tester/.cache'))
+      .toBe('cwd=<workspace>; log=<temp>/log.txt; ~/.cache')
+    expect(normalize('/TMP/log.txt /tmp-backup/x src/save.ts /other/home/tester/work'))
+      .toBe('/TMP/log.txt /tmp-backup/x src/save.ts /other/home/tester/work')
+  })
+
+  it('采集到 episodic 摘要的标题、事实与文件路径不含本机根，归一发生在标题截断前', () => {
+    const workspaceRoot = `/home/tester/${'long-workspace-'.repeat(8)}`
+    const localCapture = new ObservationCapture({
+      now: () => now, localRoots: { tempDir: '/tmp', homeDir: '/home/tester' }
+    })
+    localCapture.setWorkspaceRoot(workspaceRoot)
+    const call = {
+      sessionId: 's1', messageId: 'm1', toolCallId: 'local-path', toolName: 'read',
+      args: { path: `${workspaceRoot}/src/save.ts` }
+    }
+    localCapture.onToolCall(call)
+    localCapture.onToolResult({
+      ...call,
+      result: `[workspace: ${workspaceRoot}]\nFile: ${workspaceRoot}/src/save.ts\nlog: /tmp/log.txt\ncache: /home/tester/.cache`
+    })
+    const observations = localCapture.getWorkingBuffer('s1')
+    expect(observations[0]).toMatchObject({
+      title: 'read <workspace>/src/save.ts',
+      facts: ['File: <workspace>/src/save.ts', 'log: <temp>/log.txt', 'cache: ~/.cache'],
+      filesTouched: ['<workspace>/src/save.ts']
+    })
+    const summary = consolidateObservations(observations)
+    expect(summary).not.toContain('/home/tester')
+    expect(summary).not.toContain('/tmp')
+
+    localCapture.onToolCall({ ...call, toolCallId: 'sensitive', args: { path: `${workspaceRoot}/.env` } })
+    localCapture.onToolResult({ ...call, toolCallId: 'sensitive', result: 'not for memory' })
+    expect(localCapture.getWorkingBuffer('s1')).toHaveLength(1)
   })
 
   it('tool_call + tool_result 写入 working buffer', () => {

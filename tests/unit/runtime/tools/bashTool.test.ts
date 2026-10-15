@@ -21,10 +21,6 @@ function createContext(): ToolContext {
   return { workingDir: WORKSPACE, readState: createReadState() }
 }
 
-function shellEscapePath(filePath: string): string {
-  return `'${filePath.replace(/'/g, `'\\''`)}'`
-}
-
 afterEach(() => {
   checkpointSpy.mockClear()
 })
@@ -167,16 +163,14 @@ describe('bashTool', () => {
     const markerPath = join(tempDir, 'marker.txt')
     const controller = new AbortController()
 
-    const delayedWriteCommand = process.platform === 'win32'
-      ? `powershell -NoProfile -Command "Start-Sleep -Seconds 2; Set-Content -Path '${markerPath.replace(/'/g, "''")}' -Value done"`
-      : `sh -c "sleep 2; printf done > ${shellEscapePath(markerPath)}"`
+    const delayedWriteCommand = 'node -e "const fs = require(\'fs\'); fs.writeFileSync(\'started.txt\', \'ready\'); setTimeout(() => fs.writeFileSync(\'marker.txt\', \'done\'), 2000)"'
 
     try {
       const promise = bashTool.execute(
         { command: delayedWriteCommand },
-        { workingDir: WORKSPACE, readState: createReadState(), abortSignal: controller.signal }
+        { workingDir: tempDir, readState: createReadState(), abortSignal: controller.signal }
       )
-      await new Promise(r => setTimeout(r, 100))
+      await vi.waitFor(() => expect(existsSync(join(tempDir, 'started.txt'))).toBe(true), { timeout: 5000 })
       controller.abort()
 
       const result = await promise
@@ -189,6 +183,67 @@ describe('bashTool', () => {
       rmSync(tempDir, { recursive: true, force: true })
     }
   }, 12_000)
+
+  it('取消命令后执行后扫描仍完整，未改动的文件不被记为删除', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-cancel-cp-'))
+    const manager = new CheckpointManager({
+      checkpointDir: join(tempDir, '.checkpoints'),
+      sessionId: 'sess_cancel',
+      workspaceRoot: tempDir
+    })
+    manager.beginMessage('msg_cancel')
+    const fsp = await import('fs/promises')
+    for (const name of ['a.txt', 'b.txt', 'nested/c.txt']) {
+      await fsp.mkdir(join(tempDir, name, '..'), { recursive: true })
+      await fsp.writeFile(join(tempDir, name), name)
+    }
+    const { readManifest } = await import('../../../../src/runtime/checkpoints/manifest')
+    const controller = new AbortController()
+    const longCmd = process.platform === 'win32' ? 'ping -n 30 127.0.0.1 >nul' : 'sleep 30'
+
+    try {
+      const promise = bashTool.execute(
+        { command: longCmd },
+        { workingDir: tempDir, readState: createReadState(), checkpointManager: manager, abortSignal: controller.signal }
+      )
+      await new Promise(r => setTimeout(r, 300))
+      controller.abort()
+      const result = await promise
+
+      expect(result.error).toContain('取消')
+      const manifest = readManifest(join(tempDir, '.checkpoints'), 'sess_cancel', 'msg_cancel')
+      expect(manifest?.deletedFiles ?? []).toEqual([])
+      expect(manifest?.skippedFiles ?? []).toEqual([])
+      expect(manifest?.createdFiles ?? []).toEqual([])
+    } finally {
+      manager.endMessage()
+      // 杀树异步完成，Windows 上子进程退出前仍占用 cwd
+      rmSync(tempDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+    }
+  }, 15_000)
+
+  it('已取消的调用不启动命令', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'nova-agent-bash-precancel-'))
+    const manager = new CheckpointManager({
+      checkpointDir: join(tempDir, '.checkpoints'),
+      sessionId: 'sess_pre',
+      workspaceRoot: tempDir
+    })
+    manager.beginMessage('msg_pre')
+    try {
+      const result = await bashTool.execute(
+        { command: 'node -e "require(\'fs\').writeFileSync(\'marker.txt\', \'x\')"' },
+        { workingDir: tempDir, readState: createReadState(), checkpointManager: manager, abortSignal: AbortSignal.abort() }
+      )
+      expect(result.success).toBe(false)
+      expect(result.error).toContain('取消')
+      await new Promise(r => setTimeout(r, 1000))
+      expect(existsSync(join(tempDir, 'marker.txt'))).toBe(false)
+    } finally {
+      manager.endMessage()
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  }, 10_000)
 
   // ── stderr 采集 ────────────────────────────────────────
 
@@ -277,8 +332,8 @@ describe('bashTool', () => {
 
     try {
       const before = await snapshotWorkspace(tempDir, { includeContent: false })
-      expect(before.get('payload.txt')?.content).toBeUndefined()
-      expect(before.get('payload.txt')?.size).toBe(payload.length)
+      expect(before.files.get('payload.txt')?.content).toBeUndefined()
+      expect(before.files.get('payload.txt')?.size).toBe(payload.length)
 
       const result = await bashTool.execute(
         { command: process.platform === 'win32' ? 'dir' : 'ls' },

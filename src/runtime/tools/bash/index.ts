@@ -14,13 +14,15 @@
 import { resolve } from 'path'
 import { existsSync } from 'fs'
 import { canonicalizeExistingPath, isPathWithinRoot } from '../../permissions/pathAccess'
-import { readFile, stat } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import type { ChildProcess } from 'child_process'
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import {
   snapshotWorkspace,
   snapshotMtimes,
   diffSnapshots,
+  isUnreadablePath,
+  readFileSnapshot,
   type WorkspaceSnapshot,
   type MtimeSnapshot
 } from '../../checkpoints/snapshot'
@@ -164,6 +166,10 @@ export const bashTool: ToolExecutor = {
           includeContent: destructive
         })
       : null
+    // 取消后的执行前快照不完整，且用户已放弃该命令：不再启动进程
+    if (context.abortSignal?.aborted) {
+      return { success: false, output: '', error: '命令已被用户取消' }
+    }
 
     // 大输出优先落到会话 artifact 目录，便于 ArtifactStore 认领
     const targetDir = context.artifactStore && context.sessionId
@@ -454,14 +460,14 @@ async function recordCheckpoint(
 ): Promise<void> {
   if (!beforeSnapshot || !context.checkpointManager) return
   try {
-    const afterMtimes = await snapshotMtimes(context.workingDir, { abortSignal: context.abortSignal })
+    const afterMtimes = await snapshotMtimes(context.workingDir)
     await recordCheckpointChanges(beforeSnapshot, afterMtimes, context)
   } catch (e) {
     console.error('bash 快照对比失败:', e)
   }
 }
 
-/** 把 baseline 与当前 mtimes 之间的改动喂给 checkpoint（提炼自原 recordCheckpoint，行为不变） */
+/** 把 baseline 与当前 mtimes 之间的改动喂给 checkpoint */
 export async function recordCheckpointChanges(
   baseline: WorkspaceSnapshot,
   mtimes: MtimeSnapshot,
@@ -477,12 +483,12 @@ export async function recordCheckpointChanges(
     changes.modified.filter(relPath => !deletedSet.has(relPath) && !addedSet.has(relPath))
   )
   for (const relPath of modifiedSet) {
-    const entry = baseline.get(relPath)
+    const entry = baseline.files.get(relPath)
     if (entry) {
       // 内容未知时只登记跳过，不写空备份
       if (entry.content === undefined) {
         checkpointManager.recordBashSkippedFile(join(context.workingDir, relPath), entry.size)
-      } else {
+      } else if (!await hasSameBytes(join(context.workingDir, relPath), entry.content)) {
         checkpointManager.recordBashChange(
           join(context.workingDir, relPath),
           entry.content,
@@ -499,7 +505,7 @@ export async function recordCheckpointChanges(
     )
   }
   for (const relPath of deletedSet) {
-    const entry = baseline.get(relPath)
+    const entry = baseline.files.get(relPath)
     if (entry) {
       // 内容未知时只登记跳过，不写空备份
       if (entry.content === undefined) {
@@ -516,41 +522,40 @@ export async function recordCheckpointChanges(
   }
 }
 
+/** mtime 变了但字节未变（touch、格式化无改动、git checkout 同内容）不算改动 */
+async function hasSameBytes(fullPath: string, original: Buffer): Promise<boolean> {
+  try {
+    return (await readFile(fullPath)).equals(original)
+  } catch {
+    return false
+  }
+}
+
 /** 与 checkpoints/snapshot.ts 的 MAX_SNAPSHOT_FILE_SIZE 同取舍：超大文件只记 mtime 不读内容 */
 const CONTENT_SNAPSHOT_MAX_BYTES = 10 * 1024 * 1024
 
 /**
- * 会话边界的滚动基线：为变化过的文件重读内容（>10MB 只记 mtime 不读内容），
+ * 会话边界的滚动基线：为变化过或此前未知的文件重读内容（>10MB 只记 mtime），
  * 删除已删文件条目，其余原样保留（保留原 content 才能支撑后续回退备份）。
+ * 本次扫描未知的路径保留旧条目并沿用未知标记，避免下次误判新增或删除。
  */
 export async function refreshCheckpointBaseline(
   baseline: WorkspaceSnapshot,
-  mtimes: MtimeSnapshot,
+  current: MtimeSnapshot,
   workingDir: string
 ): Promise<WorkspaceSnapshot> {
-  const changes = diffSnapshots(baseline, mtimes)
-  const deletedSet = new Set(changes.deleted)
-  const changedSet = new Set([...changes.modified, ...changes.added])
-
-  const next: WorkspaceSnapshot = new Map()
-  for (const [relPath, entry] of baseline) {
-    if (deletedSet.has(relPath) || changedSet.has(relPath)) continue
-    next.set(relPath, entry)
-  }
-  for (const relPath of changedSet) {
-    if (!mtimes.has(relPath)) continue
-    const fullPath = join(workingDir, relPath)
-    try {
-      const fileStat = await stat(fullPath)
-      if (fileStat.size > CONTENT_SNAPSHOT_MAX_BYTES) {
-        next.set(relPath, { mtimeMs: fileStat.mtimeMs, size: fileStat.size })
-        continue
-      }
-      const content = await readFile(fullPath)
-      next.set(relPath, { content, mtimeMs: fileStat.mtimeMs, size: fileStat.size })
-    } catch {
-      // 滚动窗口内文件被删 / 不可读：不保留条目，下次 diff 视为新增
+  const next: WorkspaceSnapshot = { files: new Map(), unreadable: new Set(current.unreadable) }
+  for (const [relPath, entry] of baseline.files) {
+    const mtimeMs = current.mtimes.get(relPath)
+    if (mtimeMs === entry.mtimeMs || (mtimeMs === undefined && isUnreadablePath(current.unreadable, relPath))) {
+      next.files.set(relPath, entry)
     }
+  }
+  for (const relPath of current.mtimes.keys()) {
+    if (next.files.has(relPath)) continue
+    const entry = await readFileSnapshot(join(workingDir, relPath), size => size <= CONTENT_SNAPSHOT_MAX_BYTES)
+    if (entry === 'unreadable') next.unreadable.add(relPath)
+    else if (entry !== 'missing') next.files.set(relPath, entry)
   }
   return next
 }
@@ -558,12 +563,13 @@ export async function refreshCheckpointBaseline(
 /**
  * 会话边界记账：记录 baseline 以来的改动并滚动基线存回 registry。
  * bash 让出路径的初始基线经 register 入参存入；之后每次 shell_session 调用都走这里。
+ * 边界扫描记录的是已发生的改动，不响应取消。
  */
 export async function recordSessionBoundary(ref: string, context: ToolContext): Promise<void> {
   const sessionId = context.sessionId ?? ''
   const baseline = processRegistry.getCheckpointBaseline(ref, sessionId)
   if (!baseline) return
-  const mtimes = await snapshotMtimes(context.workingDir, { abortSignal: context.abortSignal })
+  const mtimes = await snapshotMtimes(context.workingDir)
   await recordCheckpointChanges(baseline, mtimes, context)
   const next = await refreshCheckpointBaseline(baseline, mtimes, context.workingDir)
   processRegistry.updateCheckpointBaseline(ref, sessionId, next)
@@ -752,7 +758,8 @@ function createLocalBashOperations(shellConfig: ReturnType<typeof getShellConfig
   return {
     async exec(command, cwd, options) {
       const env = options.env ?? process.env
-      const child = spawnShell(shellConfig, command, cwd, env, options.signal)
+      // 取消只交给杀树：spawn 默认 abort 先杀根进程，会使后续杀树丢失后代。
+      const child = spawnShell(shellConfig, command, cwd, env)
       options.onChild?.(child)
 
       let killed = false

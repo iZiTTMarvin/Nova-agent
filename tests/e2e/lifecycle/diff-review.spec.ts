@@ -45,3 +45,30 @@ test('查看 diff 后文件又被修改时拒绝被拦下，刷新后可正常�
   await expect.poll(async () => readFile(target, 'utf8')).toBe('ORIGINAL_CONTENT\n')
   expect(nova.pageErrors).toEqual([])
 })
+
+test('取消 bash 后只展示真实改动，重载与拒绝仍保留正确文件基线', async ({ nova }) => {
+  const target = path.join(nova.workspacePath, 'changed.txt')
+  await writeFile(target, 'ORIGINAL\n', 'utf8')
+  await writeFile(path.join(nova.workspacePath, 'untouched.txt'), 'UNCHANGED\n', 'utf8')
+  nova.provider.enqueue({
+    kind: 'tool', name: 'bash', callId: 'cancel-diff-command',
+    arguments: {
+      command: 'node -e "require(\'fs\').writeFileSync(\'changed.txt\', \'AGENT_EDITED\\n\'); setTimeout(() => {}, 60000)"'
+    }
+  })
+
+  await nova.sendPrompt('修改 changed.txt 后等待我停止')
+  await expect.poll(async () => readFile(target, 'utf8')).toBe('AGENT_EDITED\n')
+  await nova.page.getByRole('button', { name: '中断生成' }).click()
+  await nova.waitUntilIdle()
+  await expect(nova.page.getByText('已编辑 1 个文件', { exact: true })).toBeVisible()
+  await expect(nova.page.locator('.diff-file').filter({ hasText: 'untouched.txt' })).toHaveCount(0)
+
+  await nova.page.reload()
+  await expect(nova.page.getByText('已编辑 1 个文件', { exact: true })).toBeVisible()
+  const filePanel = nova.page.locator('.diff-file').filter({ hasText: 'changed.txt' })
+  await filePanel.locator('.diff-action-btn--reject').click()
+  await expect.poll(async () => readFile(target, 'utf8')).toBe('ORIGINAL\n')
+  expect(await readFile(path.join(nova.workspacePath, 'untouched.txt'), 'utf8')).toBe('UNCHANGED\n')
+  expect(nova.pageErrors).toEqual([])
+})

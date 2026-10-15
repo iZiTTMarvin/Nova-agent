@@ -8,6 +8,7 @@
  * - 当前 shell 的类型与 OS
  * - 推荐用 `workdir` 参数（而不是写 `cd xxx &&`）
  * - 引号 / 路径 / 验证步骤的注意事项
+ * - 写入位置约束（临时文件进系统临时目录，工作区外写入不可撤销）
  * - 输出截断的限制值 + 临时文件提示
  * - 工具偏好（优先用 Glob/Grep 替代 find/grep）
  * - 并发命令的用法
@@ -30,6 +31,8 @@ export function renderBashDescription(shellName: string, platform: NodeJS.Platfo
   lines.push(...workdirHint(family))
   lines.push('')
   lines.push(...executionHint(family))
+  lines.push('')
+  lines.push(...fileLocationHint(family))
   lines.push('')
   lines.push(...truncationHint())
   lines.push('')
@@ -115,8 +118,17 @@ function executionHint(family: ShellFamily): string[] {
     '## Command execution notes',
     '- Wrap paths containing spaces or `$` in single quotes: `cat \'/path with $dollar/file\'`.',
     '- Dry-run before important operations: e.g. `rm -i`, `ls` before `rm`.',
-    '- Long-running tasks need no time-boxing — just run them: while still running, the tool returns a process reference (ref); use shell_session\'s read to watch more output, write to send input (content must carry its own trailing newline), stop to terminate.',
-    '- Commands that write files into the workspace are tracked automatically by the checkpoint system.'
+    '- Long-running tasks need no time-boxing — just run them: while still running, the tool returns a process reference (ref); use shell_session\'s read to watch more output, write to send input (content must carry its own trailing newline), stop to terminate.'
+  ]
+}
+
+function fileLocationHint(family: ShellFamily): string[] {
+  const tempDir = family === 'pwsh' ? '`$env:TEMP`' : family === 'cmd' ? '`%TEMP%`' : '`${TMPDIR:-/tmp}`'
+  return [
+    '## Where commands may write',
+    '- Workspace writes made by commands are tracked by the checkpoint system and can be reviewed or undone.',
+    `- Put scratch files (logs, downloaded archives, extraction dirs) under ${tempDir}. Never write to drive roots, the home directory, or other projects — writes outside the workspace are not tracked and cannot be undone.`,
+    '- Do not tee or redirect output into log files just to keep it: oversized output is already saved in full (see Output truncation).'
   ]
 }
 
