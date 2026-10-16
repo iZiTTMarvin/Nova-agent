@@ -138,6 +138,7 @@
   font-size: 0.75rem;
   color: var(--text-muted);
   font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 
@@ -182,6 +183,7 @@
   user-select: none;
   flex-shrink: 0;
   font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1.5;
   padding-top: 1px;
 }

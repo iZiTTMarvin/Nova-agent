@@ -1,7 +1,8 @@
-import { Fragment, useCallback, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useMemo, useRef } from 'react'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { CheckIcon, CopyIcon } from '../../components/Icons'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import type { ExtendedMessage } from '../../stores/types'
 import type { LearningQuestionView, LearningSurfaceProjection } from '../../../shared/learning/surface'
 import {
@@ -57,19 +58,23 @@ function topicDividerLabel(text: string, projection: LearningSurfaceProjection |
 }
 
 function CopyMessageButton({ message }: { message: ExtendedMessage }): React.ReactElement {
-  const [copied, setCopied] = useState(false)
+  const { copied, isDecaying, copy } = useCopyFeedback()
   const handleCopy = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) return
     const text = message.content || messageText(message)
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1800)
-    }, () => {})
-  }, [message])
+    copy(text)
+  }, [message, copy])
   return (
     <IconButton
       label={copied ? LEARNING_MESSAGE_COPIED : LEARNING_COPY_MESSAGE}
-      icon={copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+      icon={
+        copied ? (
+          <span className={isDecaying ? 'copy-feedback-icon copy-feedback-icon--decaying' : 'copy-feedback-icon'}>
+            <CheckIcon size={13} />
+          </span>
+        ) : (
+          <CopyIcon size={13} />
+        )
+      }
       variant="ghost"
       size="sm"
       onClick={handleCopy}

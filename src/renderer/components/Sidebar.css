@@ -378,6 +378,32 @@
   background-color: var(--sidebar-row-hover);
 }
 
+/* 置顶会话/项目拖拽重排幽灵态与 2px 品牌色落点指示线 */
+.sidebar-row--dragging {
+  opacity: 0.45;
+  transform: scale(0.985);
+}
+
+.sidebar-drop-indicator--before,
+.sidebar-drop-indicator--after {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 999px;
+  background-color: var(--accent-primary);
+  pointer-events: none;
+  z-index: 20;
+}
+
+.sidebar-drop-indicator--before {
+  top: -1px;
+}
+
+.sidebar-drop-indicator--after {
+  bottom: -1px;
+}
+
 .sidebar-session-row__meta {
   font-size: 12px;
   font-variant-numeric: tabular-nums;

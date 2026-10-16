@@ -4,6 +4,7 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { InspectorPanel } from '../../../../src/renderer/features/inspector/InspectorPanel'
 import {
+  INSPECTOR_WIDTH_DEFAULT,
   resetLayoutStoreForTests,
   useLayoutStore
 } from '../../../../src/renderer/stores/useLayoutStore'
@@ -380,5 +381,68 @@ describe('InspectorPanel', () => {
     expect(raf.pendingCount()).toBe(0)
     // 第二次会话同样成对：开始通知在 mousedown，结束通知在卸载清理
     expect(events).toEqual([true, false])
+  })
+  it('4px 移动死区、双击恢复默认宽度、Escape 原位回滚与边缘吸附折叠', () => {
+    const raf = installControllableRaf()
+    const renderer = renderDom(<InspectorPanel />)
+    act(() => {
+      useLayoutStore.getState().toggleInspector()
+    })
+    const aside = renderer.container.querySelector<HTMLElement>('.inspector-panel')!
+    const handle = aside.querySelector<HTMLElement>('.inspector-panel__resize')!
+    const startWidth = useLayoutStore.getState().inspectorWidth
+
+    // 1. 4px 死区内微颤不触发 rAF 改宽
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 800 }))
+    })
+    act(() => {
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 797 }))
+      window.dispatchEvent(new MouseEvent('mouseup'))
+    })
+    expect(raf.pendingCount()).toBe(0)
+    expect(useLayoutStore.getState().inspectorWidth).toBe(startWidth)
+
+    // 2. 拖拽途中按 Escape 回滚至拖拽前宽度，且不关闭 Inspector
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 800 }))
+    })
+    expect(document.documentElement.getAttribute('data-pane-dragging')).toBe('true')
+    act(() => {
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 700 }))
+      raf.flush()
+    })
+    expect(aside.style.width).toBe(`${startWidth + 100}px`)
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    })
+    expect(document.documentElement.getAttribute('data-pane-dragging')).toBeNull()
+    expect(aside.style.width).toBe(`${startWidth}px`)
+    expect(useLayoutStore.getState().inspectorWidth).toBe(startWidth)
+    expect(useLayoutStore.getState().inspectorOpen).toBe(true)
+
+    // 3. 改宽后双击分割条恢复默认宽度 420px
+    act(() => {
+      useLayoutStore.getState().setInspectorWidth(560)
+    })
+    expect(useLayoutStore.getState().inspectorWidth).toBe(560)
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    })
+    expect(useLayoutStore.getState().inspectorWidth).toBe(INSPECTOR_WIDTH_DEFAULT)
+    expect(aside.style.width).toBe(`${INSPECTOR_WIDTH_DEFAULT}px`)
+
+    // 4. 向右拖过折叠阈值（< 180px）松手自动折叠面板，且保留折叠前正常宽度
+    act(() => {
+      handle.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 800 }))
+    })
+    act(() => {
+      window.dispatchEvent(new MouseEvent('mousemove', { clientX: 1120 }))
+      window.dispatchEvent(new MouseEvent('mouseup'))
+    })
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    expect(useLayoutStore.getState().inspectorWidth).toBe(INSPECTOR_WIDTH_DEFAULT)
+
+    renderer.unmount()
   })
 })

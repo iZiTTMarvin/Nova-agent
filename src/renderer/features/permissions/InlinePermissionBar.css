@@ -23,12 +23,46 @@
   background-color: var(--bg-sidebar);
 }
 
-/* 风险等级左边框提示 */
+/* 风险等级左边框提示与脉冲状态点 */
 .inline-perm__reason--low {
   border-left: 3px solid #7a8a53;
 }
 .inline-perm__reason--high {
   border-left: 3px solid var(--color-error);
+}
+.inline-perm__reason--low::before,
+.inline-perm__reason--high::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 7px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background-color: var(--color-warning);
+  animation: inline-perm-pulse 1.6s ease-in-out infinite;
+}
+.inline-perm__reason--high::before {
+  background-color: var(--color-error);
+}
+
+@keyframes inline-perm-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.88);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inline-perm__reason--low::before,
+  .inline-perm__reason--high::before {
+    animation: none;
+  }
 }
 
 .inline-perm__error {

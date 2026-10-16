@@ -65,6 +65,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
 }
 
@@ -82,7 +83,6 @@
 /* 展开后的 Markdown 详情区 */
 .thinking-block__collapsible {
   margin-top: 4px;
-  animation: fade-slide-down-in 160ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .thinking-block__content {

@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { Thumbnail } from '@astryxdesign/core/Thumbnail'
@@ -7,7 +7,7 @@ import './ImagePreviewBar.css'
 interface ImagePreviewBarProps {
   attachments: ImageAttachment[]
   onRemove: (id: string) => void
-  onPreview?: (index: number) => void
+  onPreview?: (index: number, originEl?: HTMLElement | null) => void
 }
 
 export const ImagePreviewBar: React.FC<ImagePreviewBarProps> = ({
@@ -15,6 +15,7 @@ export const ImagePreviewBar: React.FC<ImagePreviewBarProps> = ({
   onRemove,
   onPreview
 }) => {
+  const lastClickedElRef = useRef<HTMLElement | null>(null)
   if (attachments.length === 0) return null
 
   return (
@@ -30,12 +31,16 @@ export const ImagePreviewBar: React.FC<ImagePreviewBarProps> = ({
               exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
               transition={{ type: 'spring', stiffness: 400, damping: 28 }}
               className="image-preview-bar__item"
+              onClickCapture={(e) => {
+                lastClickedElRef.current =
+                  e.currentTarget.querySelector<HTMLElement>('img') ?? e.currentTarget
+              }}
             >
               <Thumbnail
                 src={img.dataUrl}
                 alt={img.fileName}
                 label={img.fileName}
-                onClick={() => onPreview?.(idx)}
+                onClick={() => onPreview?.(idx, lastClickedElRef.current)}
                 onRemove={() => onRemove(img.id)}
                 showRemoveOn="always"
                 className="image-preview-bar__thumb-btn"

@@ -38,12 +38,15 @@ import {
   createStreamingScrollPoller,
   getDistanceFromBottom,
   isWithinProgrammaticScrollGuard,
+  isWithinUserScrollCooldown,
   markProgrammaticScroll,
+  markUserScrollInput,
   scrollContainerToBottom,
   shouldShowScrollToBottom,
   syncAutoScrollModeOnScroll,
   type AutoScrollMode
 } from './autoScroll'
+import { useScrollFadeMask } from '../../hooks/useScrollFadeMask'
 import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
 import { ContextIndicator } from './ContextIndicator'
 import { CodeIndexStatusChip } from './CodeIndexStatusChip'
@@ -55,6 +58,7 @@ import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RecoveryBanner } from './RecoveryBanner'
+import { ComposerNoticeBanner, type ComposerNotice } from './ComposerNoticeBanner'
 import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
   fileToImageAttachment,
@@ -375,7 +379,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const autoScrollModeRef = useRef<AutoScrollMode>('off')
   /** 程序滚动保护截止时间戳 */
   const programmaticScrollUntilRef = useRef(0)
+  /** 用户主动滚轮/触摸输入后的 150ms 防抢夺冷却时间戳 */
+  const userScrollCooldownUntilRef = useRef(0)
   const lastScrollTopRef = useRef(0)
+
+  useScrollFadeMask(scrollElement)
   /** prepend 历史消息前记录的 scrollHeight，用于补载后修正 scrollTop 防止视口跳动 */
   const scrollHeightBeforePrependRef = useRef<number | null>(null)
   // 生成阶段 rAF 合并滚动（render-pool tick 补充路径）
@@ -385,11 +393,35 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // 图片附件状态
   const [imageAttachments, setImageAttachments] = useDevComposerAttachments(currentSessionId)
   const [isDragOver, setIsDragOver] = useState(false)
+  const [composerNotice, setComposerNotice] = useState<ComposerNotice | null>(null)
+  const composerNoticeTimerRef = useRef<number | null>(null)
+
+  const dismissComposerNotice = useCallback(() => {
+    if (composerNoticeTimerRef.current !== null) {
+      window.clearTimeout(composerNoticeTimerRef.current)
+      composerNoticeTimerRef.current = null
+    }
+    setComposerNotice(null)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (composerNoticeTimerRef.current !== null) {
+        window.clearTimeout(composerNoticeTimerRef.current)
+      }
+    }
+  }, [])
   // 全屏预览状态
-  const [previewDialog, setPreviewDialog] = useState<{ open: boolean; images: { dataUrl: string; fileName: string }[]; index: number }>({
+  const [previewDialog, setPreviewDialog] = useState<{
+    open: boolean
+    images: { dataUrl: string; fileName: string }[]
+    index: number
+    originEl?: HTMLElement | null
+  }>({
     open: false,
     images: [],
-    index: 0
+    index: 0,
+    originEl: null
   })
   // 隐藏的文件上传 input
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -428,6 +460,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   ])
 
   const canAutoScroll = useCallback(() => {
+    if (isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) {
+      return false
+    }
     return canFollowAutoScroll(autoScrollModeRef.current)
   }, [])
 
@@ -449,12 +484,14 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       clientHeight: container.clientHeight
     }
     const isProgrammatic = isWithinProgrammaticScrollGuard(programmaticScrollUntilRef.current)
+    const isCoolingDown = isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)
     autoScrollModeRef.current = syncAutoScrollModeOnScroll({
       metrics,
       previousScrollTop: lastScrollTopRef.current,
       autoScrollMode: autoScrollModeRef.current,
       isOutputting: isGenerating,
-      isProgrammaticScroll: isProgrammatic
+      isProgrammaticScroll: isProgrammatic,
+      isWithinUserCooldown: isCoolingDown
     })
     lastScrollTopRef.current = container.scrollTop
     // 显隐只看距底部距离，与 autoScrollMode 解耦
@@ -462,6 +499,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }, [isGenerating])
 
   const handleScrollToBottomClick = useCallback(() => {
+    userScrollCooldownUntilRef.current = 0
     autoScrollModeRef.current = 'user'
     setShowScrollToBottom(false)
     scrollToBottomInstant('smooth')
@@ -480,7 +518,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
   const followBottomInstant = useCallback(() => {
     const container = scrollContainerRef.current
-    if (!container || autoScrollModeRef.current === 'off') return
+    if (
+      !container ||
+      autoScrollModeRef.current === 'off' ||
+      isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)
+    ) {
+      return
+    }
     markProgrammaticScroll(programmaticScrollUntilRef)
     scrollContainerToBottom(container)
   }, [])
@@ -533,8 +577,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }, [syncBottomState, tryLoadOlderMessages])
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
-    if (event.deltaY < 0 && autoScrollModeRef.current === 'stream') {
-      autoScrollModeRef.current = 'off'
+    if (event.deltaY < 0) {
+      markUserScrollInput(userScrollCooldownUntilRef)
+      if (autoScrollModeRef.current === 'stream' || autoScrollModeRef.current === 'user') {
+        autoScrollModeRef.current = 'off'
+      }
     }
   }, [])
 
@@ -631,15 +678,27 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     })
   }, [])
 
+  /** 非阻塞内联提示：在输入框上方展示并在 3.2s 后自动消退 */
+  const showToast = useCallback((message: string, tone: ComposerNotice['tone'] = 'warning') => {
+    if (composerNoticeTimerRef.current !== null) {
+      window.clearTimeout(composerNoticeTimerRef.current)
+    }
+    setComposerNotice({ message, tone })
+    composerNoticeTimerRef.current = window.setTimeout(() => {
+      composerNoticeTimerRef.current = null
+      setComposerNotice(null)
+    }, 3200)
+  }, [])
+
   const handleSend = async () => {
     if (!inputVal.trim() && imageAttachments.length === 0) return
     if (!modelConfig) {
-      alert("请先在设置中配置 LLM 服务商与模型！")
+      showToast('请先在设置中配置 LLM 服务商与模型！', 'warning')
       useSettingsStore.getState().openLlmSettings()
       return
     }
     if (!currentProject) {
-      alert("请先在左侧选择或新建一个项目工作区！")
+      showToast('请先在左侧选择或新建一个项目工作区！', 'warning')
       selectProject()
       return
     }
@@ -758,13 +817,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
 
   // ── 图片上传交互 ─────────────────────────────────────────
 
-  /** toast 提示工具（项目未引入 toast 库，用轻量 alert 或 console.warn） */
-  const showToast = useCallback((message: string) => {
-    // eslint-disable-next-line no-alert
-    window.alert(message)
-  }, [])
-
-
   /** 按钮上传：将有效图片加入附件列表，失败项逐条提示 */
   const addImageFiles = useCallback(async (files: File[]) => {
     const remainingSlots = MAX_IMAGE_COUNT - imageAttachments.length
@@ -863,11 +915,12 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }, [supportsVision, addImageFiles])
 
   /** 点击预览条缩略图打开全屏 */
-  const openPreviewFromBar = useCallback((index: number) => {
+  const openPreviewFromBar = useCallback((index: number, originEl?: HTMLElement | null) => {
     setPreviewDialog({
       open: true,
       images: imageAttachments.map(a => ({ dataUrl: a.dataUrl, fileName: a.fileName })),
-      index
+      index,
+      originEl: originEl ?? null
     })
   }, [imageAttachments])
 
@@ -914,7 +967,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
         </div>
       ) : !isEmptyState ? (
         <div
-          className="chat-messages flex-1 overflow-y-auto"
+          className="chat-messages scroll-fade-y flex-1 overflow-y-auto"
           ref={bindScrollContainer}
           onScroll={handleScroll}
           onWheel={handleWheel}
@@ -1056,6 +1109,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
               <ActiveBackgroundBanner parentSessionId={currentSessionId} />
             </div>
 
+            <ComposerNoticeBanner notice={composerNotice} onDismiss={dismissComposerNotice} />
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
 
@@ -1229,6 +1283,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
         images={previewDialog.images}
         currentIndex={previewDialog.index}
         isOpen={previewDialog.open}
+        originElement={previewDialog.originEl ?? null}
         onClose={() => setPreviewDialog(prev => ({ ...prev, open: false }))}
         onNavigate={(idx) => setPreviewDialog(prev => ({ ...prev, index: idx }))}
       />

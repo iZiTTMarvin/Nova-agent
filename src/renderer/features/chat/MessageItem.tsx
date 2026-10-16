@@ -22,6 +22,7 @@ import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
 import { TerminalErrorNotice } from './TerminalErrorNotice'
 import { useChatStore } from '../../stores/useChatStore'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon, BookIcon } from '../../components/Icons'
 import { extractChangedFilePaths } from '../../../shared/learning/devChangeFiles'
 import {
@@ -380,20 +381,24 @@ function MessageItemInner({
     ? msg.blocks?.filter((b): b is { type: 'image'; fileName: string; dataUrl: string; mimeType: string } => b.type === 'image') ?? []
     : []
 
-  const [copied, setCopied] = useState(false)
+  const { copied, isDecaying, copy } = useCopyFeedback()
   const handleCopyMessage = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) return
     const text = typeof textContent === 'string' ? textContent : msg.content || ''
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1800)
-    }, () => {})
-  }, [textContent, msg.content])
+    copy(text)
+  }, [textContent, msg.content, copy])
 
   const copyButton = (
     <IconButton
       label={copied ? '已复制' : '复制此消息'}
-      icon={copied ? <CheckIcon size={13} /> : <CopyIcon size={13} />}
+      icon={
+        copied ? (
+          <span className={isDecaying ? 'copy-feedback-icon copy-feedback-icon--decaying' : 'copy-feedback-icon'}>
+            <CheckIcon size={13} />
+          </span>
+        ) : (
+          <CopyIcon size={13} />
+        )
+      }
       variant="ghost"
       size="sm"
       onClick={handleCopyMessage}

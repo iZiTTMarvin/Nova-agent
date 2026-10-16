@@ -3,7 +3,14 @@ import { createPortal } from 'react-dom'
 import { useChatStore } from '../stores/useChatStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
-import { useLayoutStore, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX } from '../stores/useLayoutStore'
+import {
+  useLayoutStore,
+  orderPinnedItems,
+  SIDEBAR_WIDTH_MIN,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_COLLAPSE_THRESHOLD_PX
+} from '../stores/useLayoutStore'
 import type { PrimarySession, Session } from '../../shared/session/types'
 import {
   SESSION_PLACEHOLDER_TITLE,
@@ -44,6 +51,9 @@ import {
 import { exportSession } from '../features/chat/exportSession'
 import type { AppUpdateSnapshot } from '../../shared/update'
 import { UpdateIndicator } from '../features/update/UpdateIndicator'
+import { useDraggableReorderList } from '../hooks/useDraggableReorderList'
+import { useScrollFadeMask } from '../hooks/useScrollFadeMask'
+import { useSplitPaneResize } from '../hooks/useSplitPaneResize'
 import { formatCompactRelativeTime } from '../lib/time'
 import './Sidebar.css'
 
@@ -245,6 +255,10 @@ const SidebarSessions = React.memo(function SidebarSessions({
   const [archivedProjects, setArchivedProjects] = useState<Record<string, boolean>>(getStoredArchivedProjects)
   const [openMenuProjectPath, setOpenMenuProjectPath] = useState<string | null>(null)
   const [isArchivedSectionExpanded, setIsArchivedSectionExpanded] = useState(false)
+  const pinnedSessionOrder = useLayoutStore(state => state.pinnedSessionOrder)
+  const setPinnedSessionOrder = useLayoutStore(state => state.setPinnedSessionOrder)
+  const pinnedProjectOrder = useLayoutStore(state => state.pinnedProjectOrder)
+  const setPinnedProjectOrder = useLayoutStore(state => state.setPinnedProjectOrder)
 
   const togglePinProject = (path: string) => {
     setPinnedProjects(prev => {
@@ -429,29 +443,35 @@ const SidebarSessions = React.memo(function SidebarSessions({
     return groups
   }, [rootSessions, sessions, surface])
 
-  // 项目分组与排序（分离归档与置顶排序）
-  const { activeProjectEntries, archivedProjectEntries } = useMemo(() => {
+  // 项目分组与排序（分离归档与置顶排序，置顶项目遵循 pinnedProjectOrder 顺序）
+  const { activeProjectEntries, archivedProjectEntries, pinnedProjectPaths } = useMemo(() => {
     const entries = Object.entries(projectGroups)
-    const active: [string, PrimarySession[]][] = []
+    const pinnedEntries: [string, PrimarySession[]][] = []
+    const unpinnedEntries: [string, PrimarySession[]][] = []
     const archived: [string, PrimarySession[]][] = []
 
     for (const entry of entries) {
       if (archivedProjects[entry[0]]) {
         archived.push(entry)
+      } else if (pinnedProjects[entry[0]]) {
+        pinnedEntries.push(entry)
       } else {
-        active.push(entry)
+        unpinnedEntries.push(entry)
       }
     }
 
-    // 活跃项目中，置顶项目排在最前
-    active.sort(([pathA], [pathB]) => {
-      const pinnedA = pinnedProjects[pathA] ? 1 : 0
-      const pinnedB = pinnedProjects[pathB] ? 1 : 0
-      return pinnedB - pinnedA
-    })
+    const orderedPinned = orderPinnedItems(
+      pinnedEntries,
+      pinnedProjectOrder,
+      ([projectPath]) => projectPath
+    )
 
-    return { activeProjectEntries: active, archivedProjectEntries: archived }
-  }, [projectGroups, pinnedProjects, archivedProjects])
+    return {
+      activeProjectEntries: [...orderedPinned, ...unpinnedEntries],
+      archivedProjectEntries: archived,
+      pinnedProjectPaths: orderedPinned.map(([projectPath]) => projectPath)
+    }
+  }, [projectGroups, pinnedProjects, archivedProjects, pinnedProjectOrder])
 
   // 项目展开持久化状态：渲染对缺省键视为展开，故初始化只需还原持久化记录，
   // 不必等会话加载完补齐键（会话异步到达前项目表为空，补键会丢持久化值）
@@ -547,9 +567,12 @@ const SidebarSessions = React.memo(function SidebarSessions({
     }
   }
 
-  const pinnedSessions = listSidebarSessionsForSurface(sessions, surface).filter(
-    session => session.pinned === true
-  )
+  const pinnedSessions = useMemo(() => {
+    const raw = listSidebarSessionsForSurface(sessions, surface).filter(
+      session => session.pinned === true
+    )
+    return orderPinnedItems(raw, pinnedSessionOrder, session => session.id)
+  }, [sessions, surface, pinnedSessionOrder])
 
   const togglePin = (session: PrimarySession) => {
     setOpenMenuSessionId(null)
@@ -565,7 +588,14 @@ const SidebarSessions = React.memo(function SidebarSessions({
   const filteredSessionCount = rootSessions.filter(filterSessionMatch).length
 
   /** 单条高密度会话行（ThreadItem） */
-  const renderSessionRow = (session: PrimarySession, leadingIcon?: React.ReactNode) => {
+  const renderSessionRow = (
+    session: PrimarySession,
+    leadingIcon?: React.ReactNode,
+    dragOptions?: {
+      dragProps: ReturnType<ReturnType<typeof useDraggableReorderList<PrimarySession>>['getItemDragProps']>
+      dragState: ReturnType<ReturnType<typeof useDraggableReorderList<PrimarySession>>['getItemDragState']>
+    }
+  ) => {
     const isActive = session.id === sidebarActiveSessionId
     const isEditing = editingId === session.id
     const displayTitle = getDisplayTitle(session)
@@ -575,6 +605,8 @@ const SidebarSessions = React.memo(function SidebarSessions({
     const showRunning = !!runningBadge && !isActive
     const detailTitle = `${displayTitle}\n${formatDetailTitleTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`
     const compactTime = formatCompactRelativeTime(session.updatedAt)
+    const dragState = dragOptions?.dragState
+    const dragProps = !isEditing ? dragOptions?.dragProps : undefined
 
     return (
       <div
@@ -582,10 +614,18 @@ const SidebarSessions = React.memo(function SidebarSessions({
         className={[
           'sidebar-session-row',
           isActive ? 'sidebar-session-row--active' : '',
-          openMenuSessionId === session.id ? 'sidebar-session-row--menu-open' : ''
+          openMenuSessionId === session.id ? 'sidebar-session-row--menu-open' : '',
+          dragState?.isDragging ? 'sidebar-row--dragging' : ''
         ].filter(Boolean).join(' ')}
         title={showWaiting ? '等待你处理' : detailTitle}
+        {...dragProps}
       >
+        {dragState?.dropPosition === 'before' && (
+          <div className="sidebar-drop-indicator--before" aria-hidden="true" />
+        )}
+        {dragState?.dropPosition === 'after' && (
+          <div className="sidebar-drop-indicator--after" aria-hidden="true" />
+        )}
         {isEditing ? (
           <TextInput
             ref={editInputRef}
@@ -702,6 +742,20 @@ const SidebarSessions = React.memo(function SidebarSessions({
   }
 
   const visiblePinnedSessions = pinnedSessions.filter(filterSessionMatch)
+  const pinnedSessionsReorder = useDraggableReorderList({
+    items: visiblePinnedSessions,
+    getId: session => session.id,
+    onReorder: setPinnedSessionOrder
+  })
+  const pinnedProjectsReorder = useDraggableReorderList({
+    items: pinnedProjectPaths,
+    getId: path => path,
+    onReorder: setPinnedProjectOrder
+  })
+  useScrollFadeMask(containerRef, {
+    selector: '.sidebar-astryx-nav > div:nth-of-type(2)',
+    fadeSize: 20
+  })
 
   return (
     <div ref={containerRef} className="relative w-full h-full flex flex-col">
@@ -806,7 +860,12 @@ const SidebarSessions = React.memo(function SidebarSessions({
         {/* 置顶分区 */}
         {visiblePinnedSessions.length > 0 && (
           <SideNavSection title="置顶">
-            {visiblePinnedSessions.map((session) => renderSessionRow(session, <PinIcon size={14} />))}
+            {visiblePinnedSessions.map((session) =>
+              renderSessionRow(session, <PinIcon size={14} />, {
+                dragProps: pinnedSessionsReorder.getItemDragProps(session),
+                dragState: pinnedSessionsReorder.getItemDragState(session)
+              })
+            )}
           </SideNavSection>
         )}
 
@@ -847,6 +906,12 @@ const SidebarSessions = React.memo(function SidebarSessions({
                 : filteredProjectSessions.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
             const showMoreToggle = filteredProjectSessions.length > SIDEBAR_SESSION_PREVIEW_COUNT
             const isPinned = pinnedProjects[projectPath] === true
+            const projectDragState = isPinned
+              ? pinnedProjectsReorder.getItemDragState(projectPath)
+              : null
+            const projectDragProps = isPinned
+              ? pinnedProjectsReorder.getItemDragProps(projectPath)
+              : undefined
             const isMenuOpen = openMenuProjectPath === projectPath
             const projectIndexStatus = codeIndexSnapshot?.enabled === true &&
               codeIndexSnapshot.workspaceRoot === projectPath &&
@@ -860,9 +925,10 @@ const SidebarSessions = React.memo(function SidebarSessions({
               <div key={projectPath} className="sidebar-project-group mb-0.5">
                 {/* 项目标题行：加粗字体，hover 显示操作（三个点与新建会话按钮） */}
                 <div
+                  tabIndex={isPinned ? 0 : undefined}
                   className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer group transition-colors select-none ${
                     isMenuOpen ? 'sidebar-project-header--menu-open' : ''
-                  }`}
+                  } ${projectDragState?.isDragging ? 'sidebar-row--dragging' : ''}`}
                   onClick={() => toggleProjectExpand(projectPath)}
                   onMouseEnter={(e) =>
                     handleProjectMouseEnter(
@@ -873,7 +939,14 @@ const SidebarSessions = React.memo(function SidebarSessions({
                     )
                   }
                   onMouseLeave={handleProjectMouseLeave}
+                  {...projectDragProps}
                 >
+                  {projectDragState?.dropPosition === 'before' && (
+                    <div className="sidebar-drop-indicator--before" aria-hidden="true" />
+                  )}
+                  {projectDragState?.dropPosition === 'after' && (
+                    <div className="sidebar-drop-indicator--after" aria-hidden="true" />
+                  )}
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
                     <span
                       className={`text-text-muted transition-transform duration-150 inline-block shrink-0 ${
@@ -1196,62 +1269,28 @@ export interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const sidebarWidth = useLayoutStore(state => state.sidebarWidth)
-  const [isResizing, setIsResizing] = useState(false)
   const [searchTriggerCount, setSearchTriggerCount] = useState(0)
-  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const shellRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!isResizing) return
-
-    const onMove = (e: MouseEvent) => {
-      const drag = dragRef.current
-      const el = shellRef.current
-      if (!drag || !el) return
-      el.style.width = `${Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, drag.startWidth + (e.clientX - drag.startX)))}px`
+  const {
+    dragging: isResizing,
+    onResizeMouseDown,
+    onResizeDoubleClick
+  } = useSplitPaneResize({
+    shellRef,
+    direction: 'left',
+    widthMin: SIDEBAR_WIDTH_MIN,
+    widthMax: SIDEBAR_WIDTH_MAX,
+    defaultWidth: SIDEBAR_WIDTH_DEFAULT,
+    collapseThresholdPx: SIDEBAR_COLLAPSE_THRESHOLD_PX,
+    getCurrentWidth: () => useLayoutStore.getState().sidebarWidth,
+    onCommitWidth: (width) => useLayoutStore.getState().setSidebarWidth(width),
+    onCollapse: () => {
+      if (!useLayoutStore.getState().sidebarCollapsed) {
+        useLayoutStore.getState().toggleSidebar()
+      }
     }
-
-    const onUp = () => {
-      dragRef.current = null
-      setIsResizing(false)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
-
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-  }, [isResizing])
-
-  /** 拖拽结束：提交最终宽度到 store */
-  useEffect(() => {
-    if (isResizing) return
-    const el = shellRef.current
-    if (!el) return
-    const w = el.style.width
-    if (!w) return
-    const finalWidth = Math.min(SIDEBAR_WIDTH_MAX, Math.max(SIDEBAR_WIDTH_MIN, Number.parseFloat(w)))
-    if (Number.isFinite(finalWidth) && finalWidth !== sidebarWidth) {
-      useLayoutStore.getState().setSidebarWidth(finalWidth)
-    }
-  }, [isResizing, sidebarWidth])
-
-  const onResizeMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault()
-    dragRef.current = {
-      startX: e.clientX,
-      startWidth: useLayoutStore.getState().sidebarWidth
-    }
-    setIsResizing(true)
-  }
+  })
 
   const shellClass = [
     'sidebar-shell',
@@ -1311,9 +1350,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
         <div
           className="sidebar-shell__resize-handle"
           onMouseDown={onResizeMouseDown}
+          onDoubleClick={onResizeDoubleClick}
           role="separator"
           aria-orientation="vertical"
-          aria-label="调整会话导航宽度"
+          aria-label="调整会话导航宽度（双击恢复默认宽度，拖拽中按 Escape 还原）"
         />
       )}
     </div>

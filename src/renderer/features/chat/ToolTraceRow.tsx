@@ -265,7 +265,8 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   const rootClass = [
     'tool-trace-row',
     isLiveStreaming ? 'tool-trace-row--live' : '',
-    status === 'error' ? 'tool-trace-row--error' : ''
+    status === 'error' ? 'tool-trace-row--error' : '',
+    anchoredRequest !== null ? 'tool-trace-row--pending-approval' : ''
   ]
     .filter(Boolean)
     .join(' ')

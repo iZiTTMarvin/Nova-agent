@@ -14,11 +14,12 @@
  * 4. 链接保留 isSafeMarkdownHref 安全语义（unsafe → 纯文本）；
  *    autolink="gfm" 对齐原 remark-gfm 的裸 URL 自动链接行为。
  */
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useMemo, useRef } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { Markdown } from '@astryxdesign/core/Markdown'
 import type { MarkdownComponents } from '@astryxdesign/core/Markdown'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
+import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
 import { splitIncrementalMarkdown } from './incrementalMarkdown'
@@ -55,20 +56,11 @@ interface CodeBlockProps {
 }
 
 const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = false }) => {
-  const [copied, setCopied] = useState(false)
+  const { copied, isDecaying, copy } = useCopyFeedback()
 
   const handleCopy = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) return
-    navigator.clipboard.writeText(code).then(
-      () => {
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), 1800)
-      },
-      () => {
-        // 剪贴板权限被拒时静默忽略
-      }
-    )
-  }, [code])
+    copy(code)
+  }, [code, copy])
 
   const fakePath = langToFakePath(language)
   const lines = code.split('\n')
@@ -81,7 +73,15 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
           label={copied ? '已复制' : '复制'}
           variant="ghost"
           size="sm"
-          icon={copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+          icon={
+            copied ? (
+              <span className={isDecaying ? 'copy-feedback-icon copy-feedback-icon--decaying' : 'copy-feedback-icon'}>
+                <CheckIcon size={12} />
+              </span>
+            ) : (
+              <CopyIcon size={12} />
+            )
+          }
           className="md-code-block__copy"
           onClick={handleCopy}
           tooltip="复制代码"

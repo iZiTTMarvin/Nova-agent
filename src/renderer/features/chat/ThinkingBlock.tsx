@@ -6,7 +6,9 @@
  */
 import React, { useState, useEffect, useMemo, useRef } from 'react'
 import { ChevronIcon, ThinkIcon } from '../../components/Icons'
+import { useScrollFadeMask } from '../../hooks/useScrollFadeMask'
 import { MarkdownRenderer } from './MarkdownRenderer'
+import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import {
   markThinkingEnded,
   markThinkingStarted,
@@ -70,7 +72,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
   const [isOpen, setIsOpen] = useState(false)
   const [elapsed, setElapsed] = useState<number | null>(null)
   const startTimeRef = useRef<number | null>(null)
-  const summaryRef = useRef<HTMLSpanElement>(null)
+  const headerRef = useRef<HTMLButtonElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
 
   const displayThinking = useMemo(
@@ -108,23 +110,14 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     }
   }, [active])
 
-  // 运行中单行文本自动横向跟随最新流式字；结束后复位为 0，保证完整从头展示首行摘要
-  useEffect(() => {
-    const el = summaryRef.current
-    if (!el) return
-    if (active) {
-      el.scrollLeft = el.scrollWidth - el.clientWidth
-    } else {
-      el.scrollLeft = 0
-    }
-  }, [displayThinking, active])
-
   // 展开状态下将完整 Markdown 内容钉在底部（流式追加时）
   useEffect(() => {
     if (!isOpen) return
     const el = viewportRef.current
     if (el) el.scrollTop = el.scrollHeight
   }, [displayThinking, isOpen])
+
+  useScrollFadeMask(viewportRef, { enabled: isOpen, fadeSize: 18 })
 
   if (!thinking) return null
 
@@ -143,6 +136,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
   return (
     <div className={`thinking-block ${active ? 'thinking-block--active' : ''} ${isOpen ? 'thinking-block--open' : ''}`}>
       <button
+        ref={headerRef}
         type="button"
         className="thinking-block__summary"
         aria-expanded={isOpen}
@@ -154,7 +148,6 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
         </span>
         <span className="thinking-block__sep" aria-hidden="true">·</span>
         <span
-          ref={summaryRef}
           className={`thinking-block__line-text ${active ? 'thinking-block__line-text--active' : ''}`}
         >
           {summaryText}
@@ -166,15 +159,19 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
         />
       </button>
 
-      {isOpen && (
+      <TurnProcessCollapsible
+        open={isOpen}
+        pinHeaderRef={headerRef}
+        className="thinking-block__collapsible-shell"
+      >
         <div className="thinking-block__collapsible">
           <div className="thinking-block__content">
-            <div className="thinking-block__markdown" ref={viewportRef}>
+            <div className="thinking-block__markdown scroll-fade-y" ref={viewportRef}>
               <MarkdownRenderer content={displayThinking} isStreaming={active} chunkFade />
             </div>
           </div>
         </div>
-      )}
+      </TurnProcessCollapsible>
     </div>
   )
 })

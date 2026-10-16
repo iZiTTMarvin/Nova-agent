@@ -1,5 +1,6 @@
 import React from 'react'
 import { Lightbox } from '@astryxdesign/core/Lightbox'
+import { useSharedElementTransition } from '../hooks/useSharedElementTransition'
 
 interface PreviewImage {
   dataUrl: string
@@ -10,6 +11,7 @@ interface ImagePreviewDialogProps {
   images: PreviewImage[]
   currentIndex: number
   isOpen: boolean
+  originElement?: HTMLElement | null
   onClose: () => void
   onNavigate: (index: number) => void
 }
@@ -23,12 +25,18 @@ export const ImagePreviewDialog: React.FC<ImagePreviewDialogProps> = ({
   images,
   currentIndex,
   isOpen,
+  originElement = null,
   onClose,
   onNavigate
 }) => {
+  const { isMounted } = useSharedElementTransition({
+    isOpen,
+    originElement
+  })
+
   return (
     <Lightbox
-      isOpen={isOpen}
+      isOpen={isMounted}
       onOpenChange={nextOpen => {
         if (!nextOpen) onClose()
       }}

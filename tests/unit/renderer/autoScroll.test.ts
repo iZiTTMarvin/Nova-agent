@@ -4,12 +4,15 @@ import {
   PROGRAMMATIC_SCROLL_GUARD_MS,
   STREAMING_AUTO_SCROLL_POLL_MS,
   STREAMING_AUTO_SCROLL_STOP_THRESHOLD_PX,
+  USER_SCROLL_COOLDOWN_MS,
   canFollowAutoScroll,
   createStreamAutoScrollController,
   createStreamingScrollPoller,
   getDistanceFromBottom,
   isWithinProgrammaticScrollGuard,
+  isWithinUserScrollCooldown,
   markProgrammaticScroll,
+  markUserScrollInput,
   scrollContainerToBottom,
   shouldPauseAutoFollow,
   shouldShowScrollToBottom,
@@ -202,6 +205,57 @@ describe('autoScroll', () => {
     expect(canFollowAutoScroll('stream')).toBe(true)
     expect(canFollowAutoScroll('user')).toBe(true)
     expect(canFollowAutoScroll('off')).toBe(false)
+  })
+
+  it('用户主动滚轮输入应在 150ms 冷却窗口内生效，防止流式输出抢夺视口', () => {
+    const ref = { current: 0 }
+    const now = 2000
+    markUserScrollInput(ref, now)
+    expect(USER_SCROLL_COOLDOWN_MS).toBe(150)
+    expect(isWithinUserScrollCooldown(ref.current, now + 80)).toBe(true)
+    expect(isWithinUserScrollCooldown(ref.current, now + USER_SCROLL_COOLDOWN_MS)).toBe(false)
+  })
+
+  it('底部附近微幅向上滚动或处于用户冷却窗口内时，不应把 off 误恢复为 stream', () => {
+    const nearBottomMetrics = {
+      scrollHeight: 1000,
+      scrollTop: 575,
+      clientHeight: 400
+    }
+    expect(getDistanceFromBottom(nearBottomMetrics)).toBe(25)
+    expect(getDistanceFromBottom(nearBottomMetrics)).toBeLessThanOrEqual(AUTO_SCROLL_BOTTOM_THRESHOLD_PX)
+
+    expect(
+      syncAutoScrollModeOnScroll({
+        metrics: nearBottomMetrics,
+        previousScrollTop: 590,
+        autoScrollMode: 'off',
+        isOutputting: true,
+        isProgrammaticScroll: false
+      })
+    ).toBe('off')
+
+    expect(
+      syncAutoScrollModeOnScroll({
+        metrics: nearBottomMetrics,
+        previousScrollTop: 575,
+        autoScrollMode: 'off',
+        isOutputting: true,
+        isProgrammaticScroll: false,
+        isWithinUserCooldown: true
+      })
+    ).toBe('off')
+
+    expect(
+      syncAutoScrollModeOnScroll({
+        metrics: nearBottomMetrics,
+        previousScrollTop: 550,
+        autoScrollMode: 'off',
+        isOutputting: true,
+        isProgrammaticScroll: false,
+        isWithinUserCooldown: false
+      })
+    ).toBe('stream')
   })
 })
 

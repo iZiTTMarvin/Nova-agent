@@ -87,19 +87,19 @@
     90deg,
     var(--color-brand) 0%,
     var(--color-brand) 36%,
-    #e9d5ff 50%,
+    light-dark(#ffffff, #f3e8ff) 50%,
     var(--color-brand) 64%,
     var(--color-brand) 100%
   );
-  background-position: 100% 0;
+  background-position: 83.333% 0;
   background-size: 250% 100%;
   background-clip: text;
   color: transparent;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation:
-    nova-turn-status-shimmer 2.4s linear infinite,
-    nova-working-copy-fade 360ms ease-out both;
+    nova-turn-status-shimmer 2.8s linear infinite,
+    nova-working-copy-fade 360ms var(--ease-out-expo) both;
   text-shadow: 0 0 16px rgba(139, 92, 246, 0.18);
 }
 
@@ -115,8 +115,14 @@
 }
 
 @keyframes nova-turn-status-shimmer {
-  to {
-    background-position: 0 0;
+  0%,
+  15% {
+    background-position: 83.333% 0;
+    animation-timing-function: cubic-bezier(0.714, 0.121, 0.211, 0.888);
+  }
+  85%,
+  100% {
+    background-position: 16.667% 0;
   }
 }
 
@@ -134,9 +140,13 @@
 @keyframes nova-working-copy-fade {
   from {
     opacity: 0;
+    transform: translateY(3px);
+    filter: blur(2px);
   }
   to {
     opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
   }
 }
 

@@ -7,11 +7,16 @@ import './InspectorResizeHandle.css'
 
 export interface InspectorResizeHandleProps {
   onMouseDown: (e: React.MouseEvent) => void
+  onDoubleClick?: () => void
   /** 拖拽进行中保持光效常亮 */
   active?: boolean
 }
 
-export const InspectorResizeHandle: React.FC<InspectorResizeHandleProps> = ({ onMouseDown, active = false }) => {
+export const InspectorResizeHandle: React.FC<InspectorResizeHandleProps> = ({
+  onMouseDown,
+  onDoubleClick,
+  active = false
+}) => {
   const ref = useRef<HTMLDivElement>(null)
 
   // 光点位置只写 CSS 变量，不走 React 状态，避免指针移动触发重渲染
@@ -27,8 +32,9 @@ export const InspectorResizeHandle: React.FC<InspectorResizeHandleProps> = ({ on
       className={`inspector-panel__resize${active ? ' inspector-panel__resize--active' : ''}`}
       role="separator"
       aria-orientation="vertical"
-      aria-label="调整面板宽度"
+      aria-label="调整面板宽度（双击恢复默认宽度，拖拽中按 Escape 还原）"
       onMouseDown={onMouseDown}
+      onDoubleClick={onDoubleClick}
       onMouseEnter={trackPointer}
       onMouseMove={trackPointer}
     />

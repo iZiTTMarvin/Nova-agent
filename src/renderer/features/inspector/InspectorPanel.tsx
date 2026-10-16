@@ -63,9 +63,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
 
   // 浏览器标签需要更宽的舞台；其余标签维持原有边界
   const widthMin = activeTab === 'browser' ? BROWSER_PANE_WIDTH_MIN : INSPECTOR_WIDTH_MIN
-  const { dragging, onResizeMouseDown } = useInspectorResize({
+  const { dragging, onResizeMouseDown, onResizeDoubleClick } = useInspectorResize({
     shellRef: asideRef,
     widthMin,
+    onCollapse: closeInspector,
     onDragSessionChange
   })
   const showContent = usePanelPresence({ open: inspectorOpen, shellRef: asideRef })
@@ -140,7 +141,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     >
       {showContent && (
         <>
-          <InspectorResizeHandle onMouseDown={onResizeMouseDown} active={dragging} />
+          <InspectorResizeHandle
+            onMouseDown={onResizeMouseDown}
+            onDoubleClick={onResizeDoubleClick}
+            active={dragging}
+          />
           <div
             className="inspector-panel__inner"
             style={{ width: effectiveWidth }}

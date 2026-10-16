@@ -17,6 +17,9 @@ export const STREAMING_AUTO_SCROLL_STOP_THRESHOLD_PX = 240
 /** 程序滚动后的保护窗口：此期间内的 scroll 事件不算用户上滚 */
 export const PROGRAMMATIC_SCROLL_GUARD_MS = 160
 
+/** 用户主动滚轮/触摸输入后的防抢夺冷却窗口：此期间内禁止任何流式自动滚动抢夺视口 */
+export const USER_SCROLL_COOLDOWN_MS = 150
+
 /** 流式输出期间自动滚动的轮询间隔 */
 export const STREAMING_AUTO_SCROLL_POLL_MS = 500
 
@@ -83,6 +86,24 @@ export function markProgrammaticScroll(
   return until
 }
 
+/** 是否处于用户主动滚动冷却保护窗口内（150ms 内不抢夺用户滚轮/触摸） */
+export function isWithinUserScrollCooldown(
+  userScrollCooldownUntil: number,
+  now: number = typeof performance !== 'undefined' ? performance.now() : Date.now()
+): boolean {
+  return now < userScrollCooldownUntil
+}
+
+/** 标记用户主动滚动输入，开启 150ms 冷却锁 */
+export function markUserScrollInput(
+  userScrollCooldownUntilRef: { current: number },
+  now: number = typeof performance !== 'undefined' ? performance.now() : Date.now()
+): number {
+  const until = now + USER_SCROLL_COOLDOWN_MS
+  userScrollCooldownUntilRef.current = until
+  return until
+}
+
 /** 对滚动容器滚到底（不经过 scrollIntoView） */
 export function scrollContainerToBottom(
   container: HTMLElement,
@@ -98,13 +119,16 @@ export interface SyncAutoScrollModeInput {
   /** 会话是否仍在输出（生成中 / 工具执行等） */
   isOutputting: boolean
   isProgrammaticScroll: boolean
+  /** 是否正处于用户滚轮/触摸冷却窗口内 */
+  isWithinUserCooldown?: boolean
 }
 
 /**
  * 根据 scroll 事件同步自动滚动模式。
  *
- * - 用户明显上滚且远离底部 → off
- * - 回到底部：仍在输出 → stream；未输出 → user（离开 off，允许后续跟随）
+ * - 用户主动上滚且已离开底部吸附区（> 40px）→ off
+ * - 回到底部：仅当非上滚且不在用户冷却窗口内时，才从 off 恢复为 stream/user，
+ *   防止用户在底部 40px 内轻轻上拨滚轮时被瞬间拉回 stream。
  */
 export function syncAutoScrollModeOnScroll(input: SyncAutoScrollModeInput): AutoScrollMode {
   const distance = getDistanceFromBottom(input.metrics)
@@ -113,14 +137,20 @@ export function syncAutoScrollModeOnScroll(input: SyncAutoScrollModeInput): Auto
 
   if (
     scrolledUp &&
-    distance > STREAMING_AUTO_SCROLL_STOP_THRESHOLD_PX &&
+    distance > AUTO_SCROLL_BOTTOM_THRESHOLD_PX &&
     !input.isProgrammaticScroll
   ) {
     return 'off'
   }
 
   const atBottom = distance <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX
-  if (atBottom && input.autoScrollMode === 'off' && !input.isProgrammaticScroll) {
+  if (
+    atBottom &&
+    !scrolledUp &&
+    !input.isWithinUserCooldown &&
+    input.autoScrollMode === 'off' &&
+    !input.isProgrammaticScroll
+  ) {
     // 无论是否在输出，回到底部都应离开 off；按钮显隐另由 shouldShowScrollToBottom 决定
     return input.isOutputting ? 'stream' : 'user'
   }

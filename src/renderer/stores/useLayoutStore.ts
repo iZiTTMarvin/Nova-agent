@@ -44,21 +44,25 @@ const STORAGE_PREFIX = 'nova.layout.'
 /** 首次进入学习且没有存储值时，窗口不小于该宽度才默认展开大纲。 */
 export const LEARN_INSPECTOR_AUTO_OPEN_MIN_WIDTH = 1280
 
-/** 拖拽 clamp 与面板实现共享的宽度边界 */
+/** 拖拽 clamp 与面板实现共享的宽度边界与默认值 */
 export const SIDEBAR_WIDTH_MIN = 200
 export const SIDEBAR_WIDTH_MAX = 400
+export const SIDEBAR_WIDTH_DEFAULT = 264
+export const SIDEBAR_COLLAPSE_THRESHOLD_PX = 120
 export const INSPECTOR_WIDTH_MIN = 320
 export const INSPECTOR_WIDTH_MAX = 720
+export const INSPECTOR_WIDTH_DEFAULT = 420
+export const INSPECTOR_COLLAPSE_THRESHOLD_PX = 180
 /** 浏览器页签激活时面板的最小宽度（地址栏与舞台的可用下限）。 */
 export const BROWSER_PANE_WIDTH_MIN = 360
 
 const DEFAULTS = {
   sidebarCollapsed: false,
-  sidebarWidth: 264,
+  sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   sidebarSortMode: 'projects' as SidebarSortMode,
   inspectorOpen: false,
   inspectorTab: 'review' as InspectorTab,
-  inspectorWidth: 420,
+  inspectorWidth: INSPECTOR_WIDTH_DEFAULT,
   reviewTarget: null as ReviewTarget | null,
   inspectorSurface: 'standard' as InspectorSurface,
   planTarget: null as PlanTarget | null,
@@ -67,7 +71,10 @@ const DEFAULTS = {
   learnInspectorTab: 'outline' as LearnInspectorTab,
   // 已打开的视图标签（每种视图至多一个）；为空即面板首页（启动器）。不进持久化，每次启动回首页
   inspectorTabs: [] as readonly InspectorTab[],
-  learnInspectorTabs: [] as readonly LearnInspectorTab[]
+  learnInspectorTabs: [] as readonly LearnInspectorTab[],
+  // 侧边栏置顶会话与置顶项目的自定义排序 ID 列表
+  pinnedSessionOrder: [] as readonly string[],
+  pinnedProjectOrder: [] as readonly string[]
 }
 
 function canUseLocalStorage(): boolean {
@@ -119,9 +126,52 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n))
 }
 
+function parseStringArray(raw: string | null): readonly string[] {
+  if (!raw) return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item): item is string => typeof item === 'string' && item.length > 0)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 按持久化排序 ID 列表派生置顶项顺序：
+ * 已存在于 orderIds 中的项按 orderIds 顺序排列，新置顶但未进入 orderIds 的项保持原相对顺序跟在后面。
+ */
+export function orderPinnedItems<T>(
+  items: readonly T[],
+  orderIds: readonly string[],
+  getId: (item: T) => string
+): T[] {
+  if (items.length <= 1 || orderIds.length === 0) return [...items]
+  const indexMap = new Map<string, number>()
+  orderIds.forEach((id, idx) => {
+    if (!indexMap.has(id)) indexMap.set(id, idx)
+  })
+  return [...items].sort((a, b) => {
+    const idxA = indexMap.get(getId(a))
+    const idxB = indexMap.get(getId(b))
+    if (idxA !== undefined && idxB !== undefined) return idxA - idxB
+    if (idxA !== undefined) return -1
+    if (idxB !== undefined) return 1
+    return 0
+  })
+}
+
 function loadPersistedLayout(): Pick<
   typeof DEFAULTS,
-  'sidebarCollapsed' | 'sidebarWidth' | 'sidebarSortMode' | 'inspectorWidth' | 'inspectorTab' | 'learnInspectorOpen' | 'learnInspectorTab'
+  | 'sidebarCollapsed'
+  | 'sidebarWidth'
+  | 'sidebarSortMode'
+  | 'inspectorWidth'
+  | 'inspectorTab'
+  | 'learnInspectorOpen'
+  | 'learnInspectorTab'
+  | 'pinnedSessionOrder'
+  | 'pinnedProjectOrder'
 > {
   const collapsedRaw = readStored('sidebarCollapsed')
   const sidebarWidthRaw = readStored('sidebarWidth')
@@ -159,8 +209,20 @@ function loadPersistedLayout(): Pick<
     : typeof window !== 'undefined' && window.innerWidth >= LEARN_INSPECTOR_AUTO_OPEN_MIN_WIDTH
   const learnTabRaw = readStored('learnInspectorTab')
   const learnInspectorTab: LearnInspectorTab = learnTabRaw === 'files' ? 'files' : 'outline'
+  const pinnedSessionOrder = parseStringArray(readStored('pinnedSessionOrder'))
+  const pinnedProjectOrder = parseStringArray(readStored('pinnedProjectOrder'))
 
-  return { sidebarCollapsed, sidebarWidth, sidebarSortMode, inspectorWidth, inspectorTab, learnInspectorOpen, learnInspectorTab }
+  return {
+    sidebarCollapsed,
+    sidebarWidth,
+    sidebarSortMode,
+    inspectorWidth,
+    inspectorTab,
+    learnInspectorOpen,
+    learnInspectorTab,
+    pinnedSessionOrder,
+    pinnedProjectOrder
+  }
 }
 
 export interface LayoutStoreState {
@@ -178,10 +240,14 @@ export interface LayoutStoreState {
   learnInspectorTab: LearnInspectorTab
   inspectorTabs: readonly InspectorTab[]
   learnInspectorTabs: readonly LearnInspectorTab[]
+  pinnedSessionOrder: readonly string[]
+  pinnedProjectOrder: readonly string[]
 
   toggleSidebar: () => void
   setSidebarWidth: (w: number) => void
   setSidebarSortMode: (mode: SidebarSortMode) => void
+  setPinnedSessionOrder: (order: readonly string[]) => void
+  setPinnedProjectOrder: (order: readonly string[]) => void
   openReview: (target: ReviewTarget) => void
   openFiles: () => void
   openPlan: (target: PlanTarget) => void
@@ -223,6 +289,18 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   setSidebarSortMode: (sidebarSortMode) => {
     writeStored('sidebarSortMode', sidebarSortMode)
     set({ sidebarSortMode })
+  },
+
+  setPinnedSessionOrder: (order) => {
+    const deduped = Array.from(new Set(order.filter(Boolean)))
+    writeStored('pinnedSessionOrder', JSON.stringify(deduped))
+    set({ pinnedSessionOrder: deduped })
+  },
+
+  setPinnedProjectOrder: (order) => {
+    const deduped = Array.from(new Set(order.filter(Boolean)))
+    writeStored('pinnedProjectOrder', JSON.stringify(deduped))
+    set({ pinnedProjectOrder: deduped })
   },
 
   openReview: (target) => {
@@ -423,7 +501,9 @@ export function resetLayoutStoreForTests(): void {
         'inspectorWidth',
         'inspectorTab',
         'learnInspectorOpen',
-        'learnInspectorTab'
+        'learnInspectorTab',
+        'pinnedSessionOrder',
+        'pinnedProjectOrder'
       ]) {
         localStorage.removeItem(STORAGE_PREFIX + key)
       }

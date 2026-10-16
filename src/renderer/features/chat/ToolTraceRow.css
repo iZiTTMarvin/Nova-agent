@@ -20,6 +20,15 @@
   color: var(--color-error);
 }
 
+.tool-trace-row--pending-approval {
+  margin: 6px 0;
+  padding: 6px 10px 8px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-brand);
+  background-color: var(--bg-card);
+  box-shadow: var(--shadow-whisper);
+}
+
 .tool-trace-row__header {
   display: flex;
   align-items: center;

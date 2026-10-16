@@ -836,11 +836,14 @@
   padding: 2px 7px;
   border: 0;
   border-radius: var(--radius-md);
-  background: var(--bg-sand);
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 0.72rem;
   white-space: nowrap;
+  transition:
+    background-color 150ms var(--ease-out-expo),
+    color 150ms ease;
 }
 
 .code-index-status-chip svg {
@@ -852,7 +855,8 @@ button.code-index-status-chip {
 }
 
 button.code-index-status-chip:hover {
-  background: var(--bg-input);
+  background: var(--surface-hover);
+  color: var(--text-primary);
 }
 
 .code-index-status-chip--warning {

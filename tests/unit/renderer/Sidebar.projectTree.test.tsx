@@ -7,8 +7,8 @@ import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentSt
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { resetSettingsStoreForTests, useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
 import { resetCodeIndexStoreForTests } from '../../../src/renderer/stores/useCodeIndexStore'
-import { resetLayoutStoreForTests } from '../../../src/renderer/stores/useLayoutStore'
-import type { Session } from '../../../src/shared/session/types'
+import { resetLayoutStoreForTests, useLayoutStore } from '../../../src/renderer/stores/useLayoutStore'
+import type { PrimarySession, Session } from '../../../src/shared/session/types'
 import { act, renderDom } from './renderDom'
 
 vi.mock('../../../src/renderer/components/Icons', () => ({
@@ -60,11 +60,12 @@ vi.mock('@astryxdesign/core/DropdownMenu', () => ({
   )
 }))
 
-const sampleSession: Session = {
+const sampleSession: PrimarySession = {
   id: 'sess-1',
   kind: 'primary',
   workspaceRoot: 'D:/test-workspace',
   mode: 'default',
+  permissionMode: 'auto',
   createdAt: 1,
   updatedAt: 2,
   messageCount: 1,
@@ -85,25 +86,28 @@ function hover(element: Element, entering: boolean): void {
 }
 
 describe('Sidebar 项目树交互与悬浮窗优化', () => {
-  const originalApi = window.api
+  const mockInvoke = vi.fn()
 
   beforeEach(() => {
     vi.useFakeTimers()
+    mockInvoke.mockReset()
+    mockInvoke.mockResolvedValue(undefined)
     resetChatStoreForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     resetCodeIndexStoreForTests()
     resetLayoutStoreForTests()
-    window.api = {
-      invoke: vi.fn().mockResolvedValue(undefined),
-      on: vi.fn(() => () => {}),
-      removeAllListeners: vi.fn()
-    } as never
+    Object.assign(window, {
+      api: {
+        invoke: mockInvoke,
+        on: vi.fn(() => () => {}),
+        removeAllListeners: vi.fn()
+      }
+    })
   })
 
   afterEach(() => {
     vi.useRealTimers()
-    window.api = originalApi
   })
 
   it('项目树标题字体加粗 (font-semibold)', () => {
@@ -198,9 +202,34 @@ describe('Sidebar 项目树交互与悬浮窗优化', () => {
       pathBtn?.click()
     })
 
-    expect(window.api.invoke).toHaveBeenCalledWith('workspace:open-directory', {
+    expect(mockInvoke).toHaveBeenCalledWith('workspace:open-directory', {
       path: 'D:/test-workspace'
     })
+
+    renderer.unmount()
+  })
+
+  it('置顶会话支持 Alt+ArrowDown / Alt+ArrowUp 键盘重排并持久化顺序', () => {
+    const pinnedA: Session = { ...sampleSession, id: 'sess-a', title: 'Pinned A', pinned: true }
+    const pinnedB: Session = { ...sampleSession, id: 'sess-b', title: 'Pinned B', pinned: true }
+    useChatStore.setState({ sessions: [pinnedA, pinnedB], currentSessionId: pinnedA.id })
+    useSettingsStore.setState({ currentProject: 'D:/test-workspace' })
+
+    const renderer = renderDom(<Sidebar />)
+    const pinnedSection = renderer.container.querySelector('[data-section-title="置顶"]')!
+    const rows = pinnedSection.querySelectorAll<HTMLElement>('.sidebar-session-row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.getAttribute('title')).toContain('Pinned A')
+
+    act(() => {
+      rows[0]!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', altKey: true, bubbles: true, cancelable: true })
+      )
+    })
+
+    expect(useLayoutStore.getState().pinnedSessionOrder).toEqual(['sess-b', 'sess-a'])
+    const updatedRows = pinnedSection.querySelectorAll<HTMLElement>('.sidebar-session-row')
+    expect(updatedRows[0]?.getAttribute('title')).toContain('Pinned B')
 
     renderer.unmount()
   })

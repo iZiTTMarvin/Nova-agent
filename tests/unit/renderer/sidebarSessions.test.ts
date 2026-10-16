@@ -6,24 +6,31 @@ import {
   listSidebarSessionsForSurface,
   resolveSidebarActiveSessionId
 } from '../../../src/renderer/features/subagents/sidebarSessions'
-import type { Session } from '../../../src/shared/session/types'
+import { orderPinnedItems } from '../../../src/renderer/stores/useLayoutStore'
+import {
+  reorderIdsByDrop,
+  reorderIdsByKeyboard
+} from '../../../src/renderer/hooks/useDraggableReorderList'
+import type { PrimarySession, Session, SubagentSession } from '../../../src/shared/session/types'
 
-const parent: Session = {
+const parent: PrimarySession = {
   id: 'parent',
   kind: 'primary',
   workspaceRoot: 'D:/workspace',
   mode: 'default',
+  permissionMode: 'auto',
   createdAt: 1,
   updatedAt: 1,
   messageCount: 0,
   title: 'Parent'
 }
 
-const child: Session = {
+const child: SubagentSession = {
   id: 'child',
   kind: 'subagent',
   workspaceRoot: 'D:/workspace',
   mode: 'default',
+  permissionMode: 'auto',
   createdAt: 2,
   updatedAt: 2,
   messageCount: 1,
@@ -107,5 +114,29 @@ describe('listPinnedSessions', () => {
 
   it('无置顶会话时返回空数组', () => {
     expect(listPinnedSessions([parent, child])).toEqual([])
+  })
+})
+
+describe('orderPinnedItems 与拖拽/键盘重排纯函数', () => {
+  it('按 orderIds 排序已记录项，新置顶项跟在后面保持原相对顺序', () => {
+    const items = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]
+    expect(orderPinnedItems(items, ['c', 'a'], item => item.id).map(i => i.id)).toEqual([
+      'c',
+      'a',
+      'b',
+      'd'
+    ])
+  })
+
+  it('reorderIdsByDrop 按 before / after 目标落点重排', () => {
+    expect(reorderIdsByDrop(['a', 'b', 'c'], 'c', 'a', 'before')).toEqual(['c', 'a', 'b'])
+    expect(reorderIdsByDrop(['a', 'b', 'c'], 'a', 'b', 'after')).toEqual(['b', 'a', 'c'])
+  })
+
+  it('reorderIdsByKeyboard 支持上下移动并在边界处保持不变', () => {
+    expect(reorderIdsByKeyboard(['a', 'b', 'c'], 'b', 'up')).toEqual(['b', 'a', 'c'])
+    expect(reorderIdsByKeyboard(['a', 'b', 'c'], 'b', 'down')).toEqual(['a', 'c', 'b'])
+    expect(reorderIdsByKeyboard(['a', 'b', 'c'], 'a', 'up')).toEqual(['a', 'b', 'c'])
+    expect(reorderIdsByKeyboard(['a', 'b', 'c'], 'c', 'down')).toEqual(['a', 'b', 'c'])
   })
 })

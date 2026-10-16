@@ -363,6 +363,7 @@
   align-items: center;
   gap: 4px;
   font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
   flex: 1;
   min-width: 0;
@@ -623,6 +624,7 @@
   flex-shrink: 0;
   text-align: right;
   padding-right: 8px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   user-select: none;
   background-color: var(--surface-gutter);

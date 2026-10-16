@@ -13,8 +13,11 @@ import { isTerminalRunStatus } from '../../../shared/run/types'
 import {
   AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
   getDistanceFromBottom,
+  isWithinUserScrollCooldown,
+  markUserScrollInput,
   scrollContainerToBottom
 } from '../chat/autoScroll'
+import { useScrollFadeMask } from '../../hooks/useScrollFadeMask'
 import { useLearningStore } from './useLearningStore'
 import { LearningConversation } from './LearningConversation'
 import { LearningComposer } from './LearningComposer'
@@ -50,6 +53,11 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const userScrolledUpRef = useRef(false)
+  const userScrollCooldownUntilRef = useRef(0)
+  const lastScrollTopRef = useRef(0)
+
+  const hasMessages = messages.length > 0
+  useScrollFadeMask(scrollContainerRef, { enabled: hasMessages })
 
   useEffect(() => {
     const unsubChanged = window.api.on('learning:surface-changed', data => {
@@ -77,22 +85,38 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     if (sessions.length > 0) useLearningStore.getState().pruneDrafts(sessions.map(session => session.id))
   }, [sessions])
 
-  const hasMessages = messages.length > 0
-
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
+    const scrolledUp = el.scrollTop < lastScrollTopRef.current - 1
+    lastScrollTopRef.current = el.scrollTop
     const isUp = getDistanceFromBottom(el) > AUTO_SCROLL_BOTTOM_THRESHOLD_PX
-    userScrolledUpRef.current = isUp
+    if (scrolledUp || isUp) {
+      userScrolledUpRef.current = isUp || userScrolledUpRef.current
+    } else if (!isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) {
+      userScrolledUpRef.current = false
+    }
     setShowScrollToBottom(isUp)
   }, [])
 
-  // 内容高度增量推进时（流式文字、题目行出现）：未上滚则自动贴底跟随
+  const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
+    if (event.deltaY < 0) {
+      markUserScrollInput(userScrollCooldownUntilRef)
+      userScrolledUpRef.current = true
+    }
+  }, [])
+
+  // 内容高度增量推进时（流式文字、题目行出现）：未上滚且不在用户滚轮冷却窗口内则自动贴底跟随
   useEffect(() => {
     const content = contentRef.current
     if (!content || typeof ResizeObserver === 'undefined') return
     const observer = new ResizeObserver(() => {
-      if (userScrolledUpRef.current) return
+      if (
+        userScrolledUpRef.current ||
+        isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)
+      ) {
+        return
+      }
       const el = scrollContainerRef.current
       if (el) scrollContainerToBottom(el)
     })
@@ -100,16 +124,17 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     return () => observer.disconnect()
   }, [hasMessages])
 
-  // 出题或收题时若用户在底部附近，平滑跟随一次
+  // 出题或收题时若用户在底部附近且未主动上滚，平滑跟随一次
   useEffect(() => {
     const el = scrollContainerRef.current
-    if (!el) return
+    if (!el || isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) return
     if (getDistanceFromBottom(el) <= 120) scrollContainerToBottom(el, 'smooth')
   }, [projection?.currentCheckpointId, projection?.questions.length])
 
   const handleScrollToBottomClick = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
+    userScrollCooldownUntilRef.current = 0
     userScrolledUpRef.current = false
     setShowScrollToBottom(false)
     scrollContainerToBottom(el, 'smooth')
@@ -149,9 +174,10 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     <div className="learning-surface chat-panel relative flex flex-col h-full" role="region" aria-label={LEARNING_CONVERSATION_LABEL}>
       {!isEmptyState && (
         <div
-          className="chat-messages flex-1 overflow-y-auto"
+          className="chat-messages scroll-fade-y flex-1 overflow-y-auto"
           ref={scrollContainerRef}
           onScroll={handleScroll}
+          onWheel={handleWheel}
           style={{ overflowAnchor: 'none' }}
         >
           <div className="chat-messages__flow-inner" ref={contentRef} role="region" aria-label={LEARNING_MESSAGES_LABEL}>
