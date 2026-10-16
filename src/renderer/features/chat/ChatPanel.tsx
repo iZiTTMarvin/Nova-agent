@@ -52,8 +52,6 @@ import { ContextIndicator } from './ContextIndicator'
 import { CodeIndexStatusChip } from './CodeIndexStatusChip'
 import { ComposerContextBar } from '../composer-context/ComposerContextBar'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
-import { TodoPanel } from '../todo/TodoPanel'
-import { useTodoStore } from '../todo/useTodoStore'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
@@ -74,12 +72,9 @@ import { WelcomeHero } from './WelcomeHero'
 import './composerShell.css'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
-import { ActiveBackgroundBanner } from '../subagents/ActiveBackgroundBanner'
-import { XForgeCapsule, shouldShowXForgeCapsule } from '../compose/XForgeCapsule'
 import { retainDevComposerDrafts, useDevComposerDraft, useDevComposerAttachments } from './devComposerDraft'
 import { useLearningStore } from '../learning/useLearningStore'
 import { switchToLearningSurface } from '../learning/learningSurfaceSwitch'
-import '../todo/TodoPanel.css'
 
 /** ChatPanel — 主聊天控制面板 */
 
@@ -116,6 +111,7 @@ const READING_FROZEN_CLASS = 'chat-panel--reading-width-frozen'
 export interface ChatPanelHandle {
   freezeReadingWidth: (mainWidthDelta?: number) => void
   restoreReadingWidth: () => void
+  requestSupplement: () => void
 }
 
 /** 阅读柱宽度为 min(max-width, 父容器内容宽)；按主区宽度变化量投影终态 */
@@ -167,15 +163,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const regenerateAssistant = useChatStore(state => state.regenerateAssistant)
   const switchBranch = useChatStore(state => state.switchBranch)
   const editResend = useChatStore(state => state.editResend)
-  const messageDiffs = useChatStore(state => state.messageDiffs)
-  const loadingDiffs = useChatStore(state => state.loadingDiffs)
-  const loadingDiffPlaceholders = useChatStore(state => state.loadingDiffPlaceholders)
   const rollbackErrors = useChatStore(state => state.rollbackErrors)
-  const rejectFile = useChatStore(state => state.rejectFile)
-  const acceptFile = useChatStore(state => state.acceptFile)
-  const acceptAllFiles = useChatStore(state => state.acceptAllFiles)
-  const rejectAllFiles = useChatStore(state => state.rejectAllFiles)
-  const loadMessageDiffs = useChatStore(state => state.loadMessageDiffs)
   // Steering Queue
   const pendingUserMessages = useChatStore(state => state.pendingUserMessages)
   const enqueuePendingMessage = useChatStore(state => state.enqueuePendingMessage)
@@ -185,12 +173,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const loadOlderMessages = useChatStore(state => state.loadOlderMessages)
   const tier1BranchContext = useChatStore(state => state.tier1BranchContext)
   const dismissTier1BranchNotice = useChatStore(state => state.dismissTier1BranchNotice)
-  // 灰显标记与横幅解耦：关闭横幅不影响未重放 diff 卡的安全禁用
-  const tier1StaleDiffMessageIds = useChatStore(state => state.tier1StaleDiffMessageIds)
-  const tier1StaleDiffSet = useMemo(
-    () => new Set(tier1StaleDiffMessageIds),
-    [tier1StaleDiffMessageIds]
-  )
 
   // ── agent store（权限/取消/验证权限/askQuestion） ──
   const cancelExecution = useAgentStore(state => state.cancelExecution)
@@ -229,15 +211,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     return generatingMsg?.turnStartedAt ?? generatingMsg?.timestamp
   }, [messages, currentGeneratingMessageId])
 
-  // 新轮发起（isGenerating false→true）时清 turnTouched，避免 dock 秒弹上一轮残留 todo
-  const prevGeneratingRef = useRef(isGenerating)
-  useEffect(() => {
-    if (!prevGeneratingRef.current && isGenerating && currentSessionId) {
-      useTodoStore.getState().resetTurnTouched(currentSessionId)
-    }
-    prevGeneratingRef.current = isGenerating
-  }, [isGenerating, currentSessionId])
-
   const handleRegenerate = useCallback(async (messageId: string) => {
     if (!currentSessionId) return
     await regenerateAssistant(currentSessionId, messageId)
@@ -253,15 +226,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     if (!currentSessionId) return
     await editResend(currentSessionId, messageId, newContent)
   }, [currentSessionId, editResend])
-
-  // acceptFile / rejectFile 用 useCallback 包裹 store action，稳定引用
-  const handleAcceptFile = useCallback(async (sessionId: string, messageId: string, filePath: string) => {
-    await acceptFile(sessionId, messageId, filePath)
-  }, [acceptFile])
-
-  const handleRejectFile = useCallback(async (sessionId: string, messageId: string, filePath: string) => {
-    await rejectFile(sessionId, messageId, filePath)
-  }, [rejectFile])
 
   // 草稿按会话暂存：切会话、切学习表面再返回时各自原文可用
   const chatSessions = useChatStore(state => state.sessions)
@@ -454,10 +418,11 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     composerInnerRef.current?.style.removeProperty('width')
   }, [])
 
-  useImperativeHandle(ref, () => ({ freezeReadingWidth, restoreReadingWidth }), [
+  useImperativeHandle(ref, () => ({
     freezeReadingWidth,
-    restoreReadingWidth
-  ])
+    restoreReadingWidth,
+    requestSupplement: handleComposeSupplement
+  }), [freezeReadingWidth, restoreReadingWidth, handleComposeSupplement])
 
   const canAutoScroll = useCallback(() => {
     if (isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) {
@@ -944,14 +909,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       {currentSession?.kind === 'subagent' ? (
         <SubagentSessionHeader originalTask={currentSubagentTask} />
       ) : null}
-      {currentSession && shouldShowXForgeCapsule(currentSession) ? (
-        <XForgeCapsule
-          sessionId={currentSession.id}
-          interactionLocked={isGenerating}
-          isRunning={isGenerating && !isPausedForUserInput && !cancellingForCurrentSession}
-          onRequestSupplement={handleComposeSupplement}
-        />
-      ) : null}
       {/* 拖拽高亮遮罩 */}
       {isDragOver && (
         <div className="chat-panel__drag-overlay">
@@ -1017,19 +974,10 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           onRegenerate={handleRegenerate}
           onSwitchBranch={handleSwitchBranch}
           onEditResend={handleEditResend}
-          tier1StaleDiffSet={tier1StaleDiffSet}
           rollbackErrors={rollbackErrors}
-          onAcceptFile={handleAcceptFile}
-          onRejectFile={handleRejectFile}
-          onAcceptAllFiles={acceptAllFiles}
-          onRejectAllFiles={rejectAllFiles}
           onRenderPoolTick={scheduleStreamAutoScroll}
           isPausedForUserInput={isPausedForUserInput}
           pausedMessageId={pausedMessageId}
-          messageDiffs={messageDiffs}
-          loadingDiffs={loadingDiffs}
-          loadingDiffPlaceholders={loadingDiffPlaceholders}
-          onLoadDiffs={loadMessageDiffs}
           pendingPlanReview={pendingPlanReview}
           {...(!isComposeSession ? { onLearnChange: handleLearnChange } : {})}
         />
@@ -1104,25 +1052,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           <div
             className="w-full flex flex-col items-center pointer-events-none"
           >
-            {/* 常驻后台子任务指示横条 */}
-            <div className="w-full pointer-events-auto">
-              <ActiveBackgroundBanner parentSessionId={currentSessionId} />
-            </div>
-
             <ComposerNoticeBanner notice={composerNotice} onDismiss={dismissComposerNotice} />
             {/* Agent 恢复 / Hook 状态条：贴近输入框，对齐主流 Agent IDE 的 composer 状态区 */}
             <RecoveryBanner messageId={currentGeneratingMessageId} />
-
-            {/* 当前会话计划 dock：细条常驻至下一条消息；ask 面板在场时锁细条。
-                compose 模式下任务清单由右上胶囊展开查看，不再重复展示这条独立 dock。 */}
-            {currentMode !== 'compose' && (
-              <div className="w-full pointer-events-auto">
-                <TodoPanel
-                  sessionId={currentSessionId}
-                  priorityDockOccupied={!!pendingAskQuestion || !!planReviewForCurrentSession}
-                />
-              </div>
-            )}
 
           {/* Steering Queue：排队消息吸附在 composer 上方，像一叠待发卡片 */}
           {pendingUserMessages.length > 0 && (

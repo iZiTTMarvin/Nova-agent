@@ -14,6 +14,7 @@ import { formatSubagentModelLine } from './modelLine'
 import { useRunStore } from '../../stores/useRunStore'
 import { useChatStore } from '../../stores/useChatStore'
 import type { PopoverAnchor } from './SubagentActivityRow'
+import './SubagentActivityRow.css'
 
 /** 每页拉取的尾部消息条数；子代理为短会话，单页通常即可覆盖全部。 */
 const POPOVER_MESSAGE_PAGE_SIZE = 400
@@ -48,12 +49,10 @@ function computePanelGeometry(anchor: PopoverAnchor, viewportHeight: number): {
   }
 }
 
-export interface SubagentDetailPopoverProps {
+export type SubagentDetailPopoverProps = {
   projection: SubagentActivityProjection
-  /** 打开瞬间锚定行的视口几何；面板 fixed 定位，随视口而非滚动内容 */
-  anchor: PopoverAnchor
   onClose: () => void
-}
+} & ({ surface: 'inspector' } | { surface?: 'popover'; anchor: PopoverAnchor })
 
 interface ToolRow {
   id: string
@@ -132,11 +131,9 @@ function collectFinalReport(messages: readonly Message[]): string {
   return ''
 }
 
-export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
-  projection,
-  anchor,
-  onClose
-}) => {
+export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = (props) => {
+  const { projection, onClose } = props
+  const anchor = props.surface === 'inspector' ? null : props.anchor
   const [messages, setMessages] = useState<Message[] | null>(null)
   const [initialSnapshot, setInitialSnapshot] = useState<RunSnapshot | null>(null)
   const [loadError, setLoadError] = useState(false)
@@ -144,16 +141,17 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
   const terminal = ['completed', 'failed', 'cancelled', 'interrupted'].includes(projection.status)
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight)
   const panel = useMemo(
-    () => computePanelGeometry(anchor, viewportHeight),
+    () => anchor ? computePanelGeometry(anchor, viewportHeight) : { style: undefined },
     [anchor, viewportHeight]
   )
 
   // 视口尺寸变化时重算面板几何（窗口缩放 / 分栏调整）
   useEffect(() => {
+    if (!anchor) return
     const onResize = (): void => setViewportHeight(window.innerHeight)
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
+  }, [anchor])
 
   useEffect(() => {
     let cancelled = false
@@ -207,12 +205,13 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
 
   // Esc 关闭；点击背板关闭（背板覆盖全屏，面板自身冒泡禁止）
   useEffect(() => {
+    if (!anchor) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onClose])
+  }, [anchor, onClose])
 
   const toolRows = useMemo(
     () => collectToolRows(displayedMessages),
@@ -232,10 +231,10 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = ({
 
   return (
     <>
-      <div className="subagent-detail-popover__backdrop" onClick={onClose} />
+      {anchor && <div className="subagent-detail-popover__backdrop" onClick={onClose} />}
       <div
-        className="subagent-detail-popover"
-        role="dialog"
+        className={`subagent-detail-popover${anchor ? '' : ' subagent-detail-popover--inspector'}`}
+        role={anchor ? 'dialog' : 'region'}
         aria-label={`${projection.profile.name} 工作流详情`}
         style={panel.style}
         onClick={(event) => event.stopPropagation()}

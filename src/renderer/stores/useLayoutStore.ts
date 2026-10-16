@@ -8,7 +8,7 @@ import { create } from 'zustand'
 export type InspectorTab = 'review' | 'files' | 'browser'
 /** 学习会话的面板页签：大纲取代审阅（审阅对学习会话没有意义）。 */
 export type LearnInspectorTab = 'outline' | 'files' | 'browser'
-export type InspectorSurface = 'standard' | 'plan'
+export type InspectorSurface = 'standard' | 'plan' | 'subagent' | 'status'
 /** 两个表面的页签键并集，供跨表面的标签条按键渲染。 */
 export type InspectorViewKey = InspectorTab | LearnInspectorTab
 
@@ -27,12 +27,17 @@ export type ReviewTarget = {
 
 export type PlanTarget = {
   sessionId: string
-  messageId: string
-  toolCallId: string
+  messageId?: string
+  toolCallId?: string
   expectedPath?: string
 }
 
-type PlanReturnState = {
+export type SubagentTarget = {
+  parentSessionId: string
+  childSessionId: string
+}
+
+type DetailReturnState = {
   inspectorOpen: boolean
   inspectorTab: InspectorTab
 }
@@ -66,7 +71,9 @@ const DEFAULTS = {
   reviewTarget: null as ReviewTarget | null,
   inspectorSurface: 'standard' as InspectorSurface,
   planTarget: null as PlanTarget | null,
-  planReturnState: null as PlanReturnState | null,
+  subagentTarget: null as SubagentTarget | null,
+  statusSessionId: null as string | null,
+  detailReturnState: null as DetailReturnState | null,
   learnInspectorOpen: false,
   learnInspectorTab: 'outline' as LearnInspectorTab,
   // 已打开的视图标签（每种视图至多一个）；为空即面板首页（启动器）。不进持久化，每次启动回首页
@@ -235,7 +242,9 @@ export interface LayoutStoreState {
   reviewTarget: ReviewTarget | null
   inspectorSurface: InspectorSurface
   planTarget: PlanTarget | null
-  planReturnState: PlanReturnState | null
+  subagentTarget: SubagentTarget | null
+  statusSessionId: string | null
+  detailReturnState: DetailReturnState | null
   learnInspectorOpen: boolean
   learnInspectorTab: LearnInspectorTab
   inspectorTabs: readonly InspectorTab[]
@@ -251,6 +260,8 @@ export interface LayoutStoreState {
   openReview: (target: ReviewTarget) => void
   openFiles: () => void
   openPlan: (target: PlanTarget) => void
+  openSubagent: (target: SubagentTarget) => void
+  openStatus: (sessionId: string) => void
   closeInspector: () => void
   toggleInspector: (tab?: InspectorTab) => void
   setInspectorWidth: (w: number) => void
@@ -312,7 +323,9 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       reviewTarget: target,
       inspectorSurface: 'standard',
       planTarget: null,
-      planReturnState: null
+      subagentTarget: null,
+      statusSessionId: null,
+      detailReturnState: null
     })
   },
 
@@ -324,7 +337,9 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       inspectorTabs: withTabOpened(get().inspectorTabs, 'files'),
       inspectorSurface: 'standard',
       planTarget: null,
-      planReturnState: null
+      subagentTarget: null,
+      statusSessionId: null,
+      detailReturnState: null
     })
   },
 
@@ -334,22 +349,54 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       inspectorOpen: true,
       inspectorSurface: 'plan',
       planTarget: target,
-      planReturnState: state.inspectorSurface === 'plan'
-        ? state.planReturnState
+      subagentTarget: null,
+      statusSessionId: null,
+      detailReturnState: state.inspectorSurface !== 'standard'
+        ? state.detailReturnState
+        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
+    })
+  },
+
+  openSubagent: (target) => {
+    const state = get()
+    set({
+      inspectorOpen: true,
+      inspectorSurface: 'subagent',
+      subagentTarget: target,
+      planTarget: null,
+      statusSessionId: null,
+      detailReturnState: state.inspectorSurface !== 'standard'
+        ? state.detailReturnState
+        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
+    })
+  },
+
+  openStatus: (sessionId) => {
+    const state = get()
+    set({
+      inspectorOpen: true,
+      inspectorSurface: 'status',
+      statusSessionId: sessionId,
+      planTarget: null,
+      subagentTarget: null,
+      detailReturnState: state.inspectorSurface !== 'standard'
+        ? state.detailReturnState
         : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
     })
   },
 
   closeInspector: () => {
     const state = get()
-    if (state.inspectorSurface === 'plan') {
-      const restore = state.planReturnState
+    if (state.inspectorSurface !== 'standard') {
+      const restore = state.detailReturnState
       set({
         inspectorOpen: restore?.inspectorOpen ?? false,
         inspectorTab: restore?.inspectorTab ?? state.inspectorTab,
         inspectorSurface: 'standard',
         planTarget: null,
-        planReturnState: null
+        subagentTarget: null,
+        statusSessionId: null,
+        detailReturnState: null
       })
       return
     }
@@ -412,7 +459,9 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       // 计划表面没有页签条，先回标准表面浏览器才可见
       inspectorSurface: 'standard',
       planTarget: null,
-      planReturnState: null
+      subagentTarget: null,
+      statusSessionId: null,
+      detailReturnState: null
     })
   },
 

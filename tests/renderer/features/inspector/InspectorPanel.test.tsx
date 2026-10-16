@@ -8,6 +8,7 @@ import {
   resetLayoutStoreForTests,
   useLayoutStore
 } from '../../../../src/renderer/stores/useLayoutStore'
+import { useWorkspaceStore } from '../../../../src/renderer/stores/useWorkspaceStore'
 import { act, renderDom } from '../../../unit/renderer/renderDom'
 
 vi.mock('../../../../src/renderer/components/Icons', () => ({
@@ -30,6 +31,10 @@ vi.mock('../../../../src/renderer/features/inspector/FilesTab', () => ({
 
 vi.mock('../../../../src/renderer/features/inspector/PlanInspectorView', () => ({
   PlanInspectorView: () => <div data-testid="plan-inspector" />
+}))
+
+vi.mock('../../../../src/renderer/features/session-status/SessionStatusPanel', () => ({
+  SessionStatusPanel: ({ sessionId }: { sessionId: string }) => <div data-testid="status-inspector">{sessionId}</div>
 }))
 
 vi.mock('../../../../src/renderer/features/browser/BrowserPanel', () => ({
@@ -257,6 +262,26 @@ describe('InspectorPanel', () => {
     renderer.unmount()
   })
 
+  it('切换会话退出旧状态详情并恢复原标准视图，返回也不复活旧目标', () => {
+    useWorkspaceStore.setState({ currentSessionId: 's1', currentMode: 'default' })
+    const renderer = renderDom(<InspectorPanel />)
+    act(() => {
+      useLayoutStore.getState().openFiles()
+      useLayoutStore.getState().openStatus('s1')
+    })
+    expect(renderer.container.querySelector('[data-testid="status-inspector"]')?.textContent).toBe('s1')
+    act(() => useWorkspaceStore.setState({ currentSessionId: 's2' }))
+    expect(useLayoutStore.getState()).toMatchObject({
+      inspectorSurface: 'standard', statusSessionId: null, detailReturnState: null,
+      inspectorOpen: true, inspectorTab: 'files'
+    })
+    expect(renderer.container.querySelector('[data-testid="files-tab"]')).not.toBeNull()
+    act(() => useWorkspaceStore.setState({ currentSessionId: 's1' }))
+    expect(renderer.container.querySelector('[data-testid="status-inspector"]')).toBeNull()
+    renderer.unmount()
+    useWorkspaceStore.setState({ currentSessionId: null })
+  })
+
   it('拖拽期间外壳宽度按帧合并写入且不写 store，内层冻结；松手一次性提交最后位置', () => {
     const raf = installControllableRaf()
     const renderer = renderDom(<InspectorPanel />)
@@ -382,6 +407,7 @@ describe('InspectorPanel', () => {
     // 第二次会话同样成对：开始通知在 mousedown，结束通知在卸载清理
     expect(events).toEqual([true, false])
   })
+
   it('4px 移动死区、双击恢复默认宽度、Escape 原位回滚与边缘吸附折叠', () => {
     const raf = installControllableRaf()
     const renderer = renderDom(<InspectorPanel />)

@@ -80,6 +80,16 @@ describe('useLayoutStore', () => {
     })
   })
 
+  it('状态与子代理详情共享 Inspector，切换详情不丢失原来的返回位置', () => {
+    useLayoutStore.getState().openFiles()
+    useLayoutStore.getState().openSubagent({ parentSessionId: 'parent', childSessionId: 'child' })
+    expect(useLayoutStore.getState()).toMatchObject({ inspectorSurface: 'subagent', subagentTarget: { parentSessionId: 'parent', childSessionId: 'child' } })
+    useLayoutStore.getState().openStatus('parent')
+    useLayoutStore.getState().openPlan({ sessionId: 'parent' })
+    useLayoutStore.getState().closeInspector()
+    expect(useLayoutStore.getState()).toMatchObject({ inspectorOpen: true, inspectorSurface: 'standard', inspectorTab: 'files', subagentTarget: null, planTarget: null, statusSessionId: null })
+  })
+
   it('openReview / openFiles / closeInspector', () => {
     useLayoutStore.getState().openReview({ messageId: 'm1', filePath: 'a.ts' })
     let s = useLayoutStore.getState()

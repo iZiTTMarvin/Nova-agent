@@ -15,6 +15,7 @@ import { useChatStore } from '../../stores/useChatStore'
 import { countEntryChanges } from '../../../shared/diff/compute'
 import type { DiffEntry } from '../../../shared/diff/types'
 import type { MessageDiffCache } from '../../stores/types'
+import { buildStatusDiffTurns } from '../session-status/statusModel'
 import './InspectorPanel.css'
 
 /** HunkView 依赖 pierre + shiki，走 lazy 使其不进入首屏包 */
@@ -164,7 +165,9 @@ const ReviewContent: React.FC<{
   }
 
   if (diffs.length === 0 || !currentEntry || !currentFilePath) {
-    return <ReviewEmpty />
+    return diffCache.skippedFiles?.length ? (
+      <div className="inspector-empty"><p>以下文件未生成快照，无法回退</p>{diffCache.skippedFiles.map(file => <p key={file.path}>{file.path}</p>)}</div>
+    ) : <ReviewEmpty />
   }
 
   const { dir, base } = splitPath(currentFilePath)
@@ -255,6 +258,7 @@ const ReviewContent: React.FC<{
           {actionError}
         </div>
       )}
+      {!!diffCache.skippedFiles?.length && <div className="inspector-review__stale-banner">以下文件未生成快照，无法回退：{diffCache.skippedFiles.map(file => file.path).join('、')}</div>}
 
       <div className="inspector-review__body" ref={bodyScrollRef}>
         {currentEntry.hunks.length > 0 && (
@@ -335,24 +339,55 @@ const ReviewContent: React.FC<{
   )
 })
 
+function ReviewTurnActions({ messageId }: { messageId: string }) {
+  const sessionId = useChatStore(state => state.currentSessionId)
+  const cache = useChatStore(state => state.messageDiffs[messageId])
+  const stale = useChatStore(state => state.tier1StaleDiffMessageIds.includes(messageId))
+  const acceptAll = useChatStore(state => state.acceptAllFiles)
+  const rejectAll = useChatStore(state => state.rejectAllFiles)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const pending = cache?.diffs.filter(diff => !cache.reviews[diff.filePath]).map(diff => diff.filePath) ?? []
+  const apply = async (reject: boolean) => {
+    if (!sessionId || stale || busy || pending.length === 0) return
+    setBusy(true)
+    setError(null)
+    try {
+      if (reject) {
+        const result = await rejectAll(sessionId, messageId, pending)
+        if (result.failed.length > 0) setError(`部分文件回退失败：${result.failed.map(file => file.filePath).join('、')}`)
+      } else await acceptAll(sessionId, messageId, pending)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { setBusy(false) }
+  }
+  return pending.length > 0 ? (
+    <div className="inspector-review__turn-actions">
+      <button type="button" disabled={busy || stale} onClick={() => void apply(true)}>撤销本轮待审改动</button>
+      <button type="button" disabled={busy || stale} onClick={() => void apply(false)}>标记全部已审</button>
+      {error && <p role="alert">{error}</p>}
+    </div>
+  ) : null
+}
+
 export const ReviewTab: React.FC = () => {
   const reviewTarget = useLayoutStore(s => s.reviewTarget)
+  const openReview = useLayoutStore(s => s.openReview)
   const messages = useChatStore(s => s.messages)
   const messageDiffs = useChatStore(s => s.messageDiffs)
-
+  const placeholders = useChatStore(s => s.loadingDiffPlaceholders)
+  const sessionId = useChatStore(s => s.currentSessionId)
+  const turns = useMemo(() => buildStatusDiffTurns(messages, sessionId ?? '', messageDiffs, placeholders), [messages, sessionId, messageDiffs, placeholders])
   const derivedMessageId = useMemo(
     () => (reviewTarget ? null : findDerivedMessageId(messages, messageDiffs)),
     [reviewTarget, messages, messageDiffs]
   )
-
   const messageId = reviewTarget?.messageId ?? derivedMessageId
   if (!messageId) return <ReviewEmpty />
-
   return (
-    <ReviewContent
-      messageId={messageId}
-      preferredFilePath={reviewTarget?.filePath}
-      localFileMode={!reviewTarget}
-    />
+    <div className="inspector-review__turn">
+      {turns.length > 1 && <select aria-label="审阅轮次" value={messageId} onChange={event => openReview({ messageId: event.target.value })}>{turns.map((turn, index) => <option key={turn.messageId} value={turn.messageId}>{index === 0 ? '最近改动 · ' : ''}{turn.label}</option>)}</select>}
+      <ReviewContent key={messageId} messageId={messageId} preferredFilePath={reviewTarget?.filePath} localFileMode={!reviewTarget} />
+      <ReviewTurnActions key={`actions-${messageId}`} messageId={messageId} />
+    </div>
   )
 }

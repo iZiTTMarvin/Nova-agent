@@ -23,6 +23,17 @@
   --surface-card: light-dark(#ffffff, #27272a);
   --surface-muted: light-dark(#f4f4f5, #3f3f46);                               /* 次级面 / 用户气泡 */
   --surface-input: light-dark(#ffffff, #27272a);
+  --surface-status-glass: light-dark(rgba(255, 255, 255, 0.83), rgba(39, 39, 42, 0.84));
+  --border-status-glass: light-dark(rgba(0, 0, 0, 0.09), rgba(255, 255, 255, 0.11));
+  --border-status-section: light-dark(rgba(0, 0, 0, 0.055), rgba(255, 255, 255, 0.065));
+  --status-glass-light: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.16));
+  --status-glass-edge: light-dark(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.045));
+  --status-glass-sheen: linear-gradient(145deg, light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.04)), transparent 38%, transparent 80%, light-dark(rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.02)));
+  --shadow-status-glass: 0 4px 20px light-dark(rgba(0, 0, 0, 0.065), rgba(0, 0, 0, 0.22));
+  --status-sprite-fill: light-dark(#e5e6ed, #d6d7e0);
+  --status-sprite-edge: light-dark(#b7bbc8, #f0f0f4);
+  --status-sprite-ink: light-dark(#4c5161, #353945);
+  --status-sprite-complete: light-dark(#dbeadd, #bad8c0);
 
   /* 兼容与映射桥接 */
   --bg-app: var(--surface-canvas);
@@ -396,6 +407,17 @@ html[data-pane-dragging="true"] .browser-guest-layer {
 
 .copy-feedback-icon--decaying {
   animation: saved-check-decay 350ms var(--ease-decel) forwards;
+}
+
+@keyframes user-bubble-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 ::view-transition-group(chat-image-preview) {

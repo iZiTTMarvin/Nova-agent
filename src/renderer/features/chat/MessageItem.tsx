@@ -5,7 +5,7 @@
  * - 只有 _revision 变化的当前流式消息才真正重渲染
  * - 历史消息在 React.memo(areEqual) 中直接跳过 reconciliation
  */
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -35,22 +35,8 @@ import { TurnProcessTree } from './TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from './turnProcessModel'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { Mode } from '../../../shared/session/types'
-import type { ExtendedMessage, MessageDiffCache, RendererMessageBlock } from '../../stores/types'
-import type { DiffEntry } from '../../../shared/diff/types'
+import type { ExtendedMessage, RendererMessageBlock } from '../../stores/types'
 import type { MessageRenderMode } from './messageRenderTier'
-
-/**
- * DiffViewer 走 lazy：它是 pierre + shiki 依赖链进入首屏的入口，
- * 而 MessageItem 本身在首屏静态链路上（ChatPanel → MessageItem）。
- * 静态 import 会把整条高亮链路拖进首屏包，必须靠动态边界切断。
- * DiffPoolContextBridge 提供 worker 池 context，挂载时才创建池。
- */
-const DiffViewer = lazy(() =>
-  import('../diff/DiffViewer').then((m) => ({ default: m.DiffViewer }))
-)
-const DiffPoolContextBridge = lazy(() =>
-  import('../diff/DiffPoolContextBridge').then((m) => ({ default: m.DiffPoolContextBridge }))
-)
 
 export interface MessageItemProps {
   msg: ExtendedMessage
@@ -72,8 +58,6 @@ export interface MessageItemProps {
   currentGeneratingMessageId: string | null
   currentMode: Mode
   currentSessionId: string | null
-  /** Tier 1：工作区未重放此分支文件改动，diff 仅作历史展示 */
-  tier1DiffStale?: boolean
   onRegenerate: (messageId: string) => void
   /** 该消息操作失败时的错误提示；存在时操作按钮应置灰并展示 Tooltip */
   rollbackError?: string
@@ -83,20 +67,9 @@ export interface MessageItemProps {
   onSwitchBranch?: (targetMessageId: string) => void
   /** 编辑用户消息并重发：分叉出新分支（保留旧分支），随后流式生成新回答 */
   onEditResend?: (messageId: string, newContent: string) => void
-  onAcceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
-  onRejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
-  /** PRD §5.3：批量接受 */
-  onAcceptAllFiles?: (sessionId: string, messageId: string, filePaths: string[]) => Promise<void>
-  /** PRD §5.3：批量拒绝，返回恢复成功与失败的文件 */
-  onRejectAllFiles?: (sessionId: string, messageId: string, filePaths: string[]) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
   onRenderPoolTick: () => void
   turnProcessOpen?: boolean
   onTurnProcessOpenChange?: (messageId: string, open: boolean) => void
-  diffCache?: MessageDiffCache
-  isDiffLoading: boolean
-  diffPlaceholders?: Array<{ filePath: string; status: DiffEntry['status'] }>
-  /** 按需加载 diff 的回调，MessageItem 挂载时调用 */
-  onLoadDiffs?: (sessionId: string, messageId: string) => void
   pendingPlanReview?: PendingPlanReview | null
   /** 开发回复确实改过代码时提供「学懂这次改动」入口；缺省表示当前会话不提供 */
   onLearnChange?: (messageId: string) => void
@@ -228,21 +201,12 @@ function MessageItemInner({
   currentSessionId,
   onRegenerate,
   regenerateBlocked = false,
-  tier1DiffStale = false,
   rollbackError,
   onSwitchBranch,
   onEditResend,
-  onAcceptFile,
-  onRejectFile,
-  onAcceptAllFiles,
-  onRejectAllFiles,
   onRenderPoolTick,
   turnProcessOpen,
   onTurnProcessOpenChange,
-  diffCache,
-  isDiffLoading,
-  diffPlaceholders,
-  onLoadDiffs,
   pendingPlanReview,
   onLearnChange
 }: MessageItemProps) {
@@ -265,13 +229,6 @@ function MessageItemInner({
 
   // 流式动画的有效开关：轮次进行中且未因等待用户输入而暂停；static 行强制关闭。
   const streamingActive = isGenerating && !isPausedForInput && !isStaticRow
-
-  // assistant 消息挂载时按需加载 diff 数据（替代 selectSession 全量预加载）
-  useEffect(() => {
-    if (isAssistant && currentSessionId && onLoadDiffs && !diffCache && !isDiffLoading) {
-      onLoadDiffs(currentSessionId, msg.id)
-    }
-  }, [msg.id, isAssistant, currentSessionId, onLoadDiffs, diffCache, isDiffLoading])
 
   // 落盘的终态提示从正文里拆出来：正文保持正常配色，提示单独成卡。
   // 未命中时 extractTerminalErrorNotice 返回 null，blocks 引用不变，流式增量缓存照旧生效。
@@ -614,46 +571,6 @@ function MessageItemInner({
             ))}
           </div>
         )}
-
-        {/* diff 区域：loading 时优先展示骨架。Suspense 只包 diff 自身，懒加载期间
-            下面的正文与工具块照常交互，不会被闪成空白。 */}
-        {isAssistant && currentSessionId && isDiffLoading && (
-          <Suspense fallback={null}>
-            <DiffPoolContextBridge>
-              <DiffViewer
-                diffs={[]}
-                reviews={{}}
-                sessionId={currentSessionId}
-                messageId={msg.id}
-                isLoading={true}
-                loadingPlaceholders={diffPlaceholders}
-                tier1Stale={tier1DiffStale}
-              />
-            </DiffPoolContextBridge>
-          </Suspense>
-        )}
-
-        {/* diff 最终数据 */}
-        {isAssistant && currentSessionId && !isDiffLoading && diffCache && (
-          diffCache.diffs.length > 0 || (diffCache.skippedFiles && diffCache.skippedFiles.length > 0)
-        ) && (
-          <Suspense fallback={null}>
-            <DiffPoolContextBridge>
-              <DiffViewer
-                diffs={diffCache.diffs}
-                reviews={diffCache.reviews}
-                skippedFiles={diffCache.skippedFiles}
-                sessionId={currentSessionId}
-                messageId={msg.id}
-                tier1Stale={tier1DiffStale}
-                onRejectFile={tier1DiffStale ? undefined : (filePath) => onRejectFile(currentSessionId, msg.id, filePath)}
-                onAcceptFile={tier1DiffStale ? undefined : (filePath) => onAcceptFile(currentSessionId, msg.id, filePath)}
-                {...(onAcceptAllFiles && !tier1DiffStale ? { onAcceptAll: (filePaths: string[]) => onAcceptAllFiles(currentSessionId, msg.id, filePaths) } : {})}
-                {...(onRejectAllFiles && !tier1DiffStale ? { onRejectAll: (filePaths: string[]) => onRejectAllFiles(currentSessionId, msg.id, filePaths) } : {})}
-              />
-            </DiffPoolContextBridge>
-          </Suspense>
-        )}
     </>
   )
 
@@ -715,23 +632,14 @@ export function areEqual(prev: MessageItemProps, next: MessageItemProps): boolea
     prev.currentSessionId === next.currentSessionId &&
     prev.onRegenerate === next.onRegenerate &&
     prev.regenerateBlocked === next.regenerateBlocked &&
-    prev.tier1DiffStale === next.tier1DiffStale &&
     prev.rollbackError === next.rollbackError &&
     prev.onSwitchBranch === next.onSwitchBranch &&
     prev.msg.branch?.index === next.msg.branch?.index &&
     prev.msg.branch?.total === next.msg.branch?.total &&
     prev.onEditResend === next.onEditResend &&
-    prev.onAcceptFile === next.onAcceptFile &&
-    prev.onRejectFile === next.onRejectFile &&
-    prev.onAcceptAllFiles === next.onAcceptAllFiles &&
-    prev.onRejectAllFiles === next.onRejectAllFiles &&
     prev.onRenderPoolTick === next.onRenderPoolTick &&
     prev.turnProcessOpen === next.turnProcessOpen &&
     prev.onTurnProcessOpenChange === next.onTurnProcessOpenChange &&
-    prev.diffCache === next.diffCache &&
-    prev.isDiffLoading === next.isDiffLoading &&
-    prev.diffPlaceholders === next.diffPlaceholders &&
-    prev.onLoadDiffs === next.onLoadDiffs &&
     prev.pendingPlanReview === next.pendingPlanReview &&
     prev.onLearnChange === next.onLearnChange
   )

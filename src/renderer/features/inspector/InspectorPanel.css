@@ -2,6 +2,13 @@
 
 @import '../diff/diffLines.css';
 
+.inspector-review__turn { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.inspector-review__turn > select { font: inherit; color: var(--text-primary); background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 6px; min-height: 32px; margin: 8px 12px; }
+.inspector-review__turn-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border-subtle); }
+.inspector-review__turn-actions button { font: inherit; color: var(--text-secondary); background: var(--surface-card); border: 1px solid var(--border-subtle); border-radius: 6px; padding: 5px 8px; min-height: 32px; cursor: pointer; }
+.inspector-review__turn-actions button:disabled { opacity: .45; cursor: default; }
+.inspector-review__turn-actions p { flex-basis: 100%; color: var(--color-error); margin: 0; }
+
 .inspector-panel {
   position: relative;
   flex-shrink: 0;
@@ -27,14 +34,15 @@
   margin-left: auto;
 }
 
-/* 顶栏与会话头同高，使两栏顶行在分隔线两侧对齐；不画底线，视图自己的工具条才有分隔 */
+/* 顶栏与会话头同高（40px）且共用 1px 底部分隔线，在纵向分界线两侧形成完整十字贯通边界 */
 .inspector-panel__header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   height: 40px;
-  padding: 0 6px 0 10px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 

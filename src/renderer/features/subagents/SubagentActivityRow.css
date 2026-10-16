@@ -278,6 +278,24 @@
 
 /* ── 悬浮详情面板（portal 到 body，fixed 锚定行几何，几何由内联样式提供） ── */
 
+.subagent-detail-popover.subagent-detail-popover--inspector {
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  z-index: auto;
+}
+
+.subagent-detail-popover--inspector .subagent-detail-popover__header { padding: 14px; align-items: flex-start; flex-wrap: wrap; }
+.subagent-detail-popover--inspector .subagent-detail-popover__body { padding: 16px; gap: 22px; min-height: 0; }
+.subagent-detail-popover--inspector .subagent-detail-popover__name { font-size: 14px; }
+.subagent-detail-popover--inspector .subagent-detail-popover__section-title,
+.subagent-detail-popover--inspector .subagent-detail-popover__empty,
+.subagent-detail-popover--inspector .subagent-detail-popover__model { font-size: 12px; }
+.subagent-detail-popover--inspector .subagent-detail-popover__close { width: 32px; height: 32px; }
+.subagent-detail-popover--inspector .subagent-detail-popover__open-session { min-height: 32px; font-size: 12px; }
+
 .subagent-detail-popover__backdrop {
   position: fixed;
   inset: 0;

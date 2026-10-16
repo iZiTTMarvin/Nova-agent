@@ -5,8 +5,6 @@ import { areEqual } from '../../../src/renderer/features/chat/MessageItem'
 import type { MessageItemProps } from '../../../src/renderer/features/chat/MessageItem'
 
 const stableRegenerate = async (_messageId: string) => {}
-const stableAcceptFile = async (_sid: string, _mid: string, _fp: string) => {}
-const stableRejectFile = async (_sid: string, _mid: string, _fp: string) => {}
 const stableRenderPoolTick = () => {}
 
 function makeProps(overrides: Partial<MessageItemProps> = {}): MessageItemProps {
@@ -18,12 +16,7 @@ function makeProps(overrides: Partial<MessageItemProps> = {}): MessageItemProps 
     currentSessionId: 'sess_1',
     onRegenerate: stableRegenerate,
     regenerateBlocked: false,
-    onAcceptFile: stableAcceptFile,
-    onRejectFile: stableRejectFile,
     onRenderPoolTick: stableRenderPoolTick,
-    diffCache: undefined,
-    isDiffLoading: false,
-    diffPlaceholders: undefined,
     ...overrides
   }
 }

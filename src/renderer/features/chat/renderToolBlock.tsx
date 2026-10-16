@@ -3,7 +3,7 @@
  *
  * - 默认：L3 ToolTraceRow（等宽原子行，L4 按需挂载）
  * - askQuestion：消息内状态行（正在询问 / 已询问 N 题）；答题在底部 AskQuestionPanel
- * - todo_write：由会话顶部 TodoPanel 统一渲染，此处返回 null 避免与消息流重复
+ * - todo_write：由右侧会话状态统一渲染，此处返回 null 避免与消息流重复
  */
 import React from 'react'
 import type { PendingPlanReview } from '../../../shared/planReview'
@@ -29,7 +29,7 @@ export function renderToolBlock(
   // 工具级：瞬时工具（askQuestion / write / edit / 默认行）流式态，工具完成即结束
   const isLive = isCurrentAssistantGenerating && block.status === 'running'
 
-  // todo_write 由会话顶部 TodoPanel 统一渲染，不在消息流里重复展示
+  // 待办只在会话状态区显示，不随工具历史重复。
   if (block.toolName === 'todo_write') {
     return null
   }

@@ -90,13 +90,14 @@
   letter-spacing: 0.02em;
 }
 
-/* 玻璃顶行会话头：无分隔线，靠玻璃面自身承载；按钮复用壳顶栏命中规格 */
+/* 玻璃顶行会话头：底部分隔线与右侧 Inspector 顶栏齐平贯通，纵向分界线通顶 */
 .glass-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 40px;
-  padding: 0 6px 0 12px;
+  padding: 0 10px 0 12px;
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
   user-select: none;
 }
@@ -105,6 +106,24 @@
 .glass-header__right {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   min-width: 0;
+}
+
+.glass-header__status-slot {
+  display: flex;
+  align-items: center;
+}
+
+.glass-header__left .content-topbar__btn,
+.glass-header__right .glass-header__panel-btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.glass-header__right .glass-header__panel-btn.content-topbar__btn--active {
+  background-color: var(--surface-muted);
+  color: var(--text-primary);
 }

@@ -18,8 +18,7 @@ export const useChatStore = createChatStore({
     useComposeStageStore.getState().setSessionPlanApproval(detail.id, detail.composePlanApproval ?? null)
     // 修复-复审循环计数随详情水合：重开会话后回退入口的上限判定立即可用
     useComposeStageStore.getState().setSessionReviewLoops(detail.id, detail.composeReviewLoops ?? 0)
-    // 会话待办随详情水合：重开会话后 TodoPanel 与 compose 阶段条进度立即可见，
-    // 不必等下一次 todo_write 推送；空清单不写入，避免制造无数据状态
+    // 待办随详情恢复，不等下一次更新；空清单不制造无数据投影。
     if (detail.todos && detail.todos.length > 0) {
       useTodoStore.getState().setSessionTodos(detail.id, detail.todos)
     }

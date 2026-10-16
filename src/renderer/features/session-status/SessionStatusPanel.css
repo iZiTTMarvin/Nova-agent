@@ -1,0 +1,708 @@
+.chat-workspace {
+  --status-clearance: 0px;
+  position: relative;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  container: session-workspace / inline-size;
+}
+
+/* 悬浮状态面板展开时，为对话阅读列预留右侧净空：
+   大屏下自然居中边距 >= 296px，阅读列不动；窗口缩窄时阅读列自动左移让出空间，绝不遮挡对话 */
+.chat-workspace:has(.session-status-rail[data-expanded="true"]) {
+  --status-clearance: 296px;
+}
+
+.chat-workspace > .chat-panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.session-status-rail--inspector.session-status-rail {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.session-status-rail--inspector .session-status[data-expanded="true"] {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  backdrop-filter: none;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  animation: none;
+}
+
+.session-status-rail--inspector .session-status::before {
+  display: none;
+}
+
+.session-status-rail--inspector .session-status__viewport {
+  flex: 1;
+  max-height: none;
+  min-height: 0;
+}
+
+.session-status-rail--inspector .session-status__body {
+  width: 100%;
+}
+
+/* 零文档流占位锚点：纯悬浮于聊天区右上角，不挤压主容器本身 */
+.session-status-rail {
+  --status-wide: 0;
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 12;
+}
+
+@container session-workspace (min-width: 680px) {
+  .session-status-rail {
+    --status-wide: 1;
+  }
+}
+
+/* ── 顶部栏常驻状态胶囊按钮（对标 MiniMax 顶栏控制组，收起时胶囊在此，不在聊天区内悬浮） ── */
+.session-status__topbar-capsule {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background-color var(--transition-fast),
+    border-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.session-status__topbar-capsule[data-has-content="false"] {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
+  border-color: transparent;
+}
+
+.session-status__topbar-capsule:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.session-status__topbar-capsule[data-active="true"] {
+  background-color: var(--surface-muted);
+  border-color: var(--border-status-glass);
+  color: var(--text-primary);
+}
+
+.session-status__topbar-capsule:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.session-status__topbar-text {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-status {
+  --status-duration: 240ms;
+  --status-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  position: absolute;
+  top: 8px;
+  right: 16px;
+  z-index: 12;
+  width: 190px;
+  height: 36px;
+  overflow: hidden;
+  pointer-events: auto;
+  transform-origin: top right;
+  border: 1px solid var(--border-status-glass);
+  border-radius: 11px;
+  background: var(--surface-status-glass);
+  backdrop-filter: blur(16px) saturate(120%);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-whisper);
+  animation: session-status-emerge 200ms var(--status-ease) both;
+  transition:
+    width var(--status-duration) var(--status-ease),
+    height var(--status-duration) var(--status-ease),
+    opacity 180ms var(--status-ease),
+    transform 180ms var(--status-ease),
+    border-radius var(--status-duration) var(--status-ease),
+    background-color var(--status-duration),
+    box-shadow var(--status-duration);
+}
+
+/* 当胶囊按钮已挂载到顶部栏时，收起态不再在聊天区内残留悬浮胶囊 */
+.session-status-rail[data-topbar-hosted="true"] .session-status[data-expanded="false"] {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-6px) scale(0.96);
+}
+
+.session-status::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background: var(--status-glass-sheen);
+  opacity: 0;
+  box-shadow:
+    inset 0 1px 0 var(--status-glass-light),
+    inset 1px 0 0 var(--status-glass-edge),
+    inset -1px -1px 0 var(--status-glass-edge);
+  transition: opacity var(--status-duration);
+}
+
+.session-status[data-expanded="true"] {
+  width: 288px;
+  height: calc(42px + var(--status-body-height) + 2px);
+  border-radius: 14px;
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0) scale(1);
+  background: var(--surface-status-glass);
+  backdrop-filter: blur(16px) saturate(120%);
+  box-shadow: var(--shadow-status-glass);
+}
+
+.session-status[data-expanded="true"]::before {
+  opacity: 1;
+}
+
+.session-status button {
+  font: inherit;
+  cursor: pointer;
+}
+
+.session-status button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.session-status button:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.session-status__header {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  padding: 0 6px 0 10px;
+  position: relative;
+}
+
+.session-status[data-expanded="true"] .session-status__header {
+  height: 42px;
+  padding: 0 8px 0 12px;
+}
+
+.session-status__trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  min-height: 30px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: 8px;
+}
+
+.session-status__headline {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-status__count {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-success);
+}
+
+.session-status__header .session-status__count {
+  margin-left: 2px;
+}
+
+.session-status[data-expanded="false"] .session-status__header .session-status__count {
+  margin-left: auto;
+  padding-right: 4px;
+}
+
+.session-status__collapse {
+  display: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  transition: background-color 140ms, color 140ms;
+}
+
+.session-status[data-expanded="true"] .session-status__collapse {
+  display: grid;
+}
+
+.session-status__collapse:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.session-status__viewport {
+  max-height: 490px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 120ms, visibility 120ms;
+  position: relative;
+}
+
+.session-status[data-expanded="true"] .session-status__viewport {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 180ms 40ms, visibility 0s;
+}
+
+/* 首段外边距必须计入内容测量，避免展开后的底部被裁切。 */
+.session-status__body {
+  display: flow-root;
+  width: 286px;
+  padding: 0 12px 12px;
+}
+
+.session-status__section {
+  margin-top: 6px;
+}
+
+.session-status__section + .session-status__section {
+  border-top: 1px solid var(--border-status-section);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+
+.session-status__section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  margin: 0 4px 6px;
+}
+
+.session-status__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.session-status__fold-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 6px;
+  margin-bottom: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  text-align: left;
+  transition: background-color 140ms, color 140ms;
+}
+
+.session-status__fold-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.session-status__link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 12.5px !important;
+  transition: background-color 140ms, color 140ms;
+}
+
+.session-status__link > svg {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.session-status__link > span:not(.session-status__agent-dot) {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-status__link:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.session-status__tasks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.session-status__tasks li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px;
+  min-height: 30px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  border-radius: 6px;
+  transition: background-color 180ms;
+}
+
+.session-status__task-mark {
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  border: 1.25px solid var(--text-muted);
+  border-radius: 50%;
+  margin-top: 2px;
+  color: var(--color-success);
+}
+
+.session-status__tasks li[data-status="in_progress"] {
+  background: var(--surface-hover);
+}
+
+.session-status__tasks li[data-status="in_progress"] .session-status__task-mark {
+  border: 1.5px solid var(--color-success);
+  border-right-color: transparent;
+  animation: status-consider 1.1s linear infinite;
+}
+
+.session-status__tasks li[data-status="completed"] .session-status__task-mark {
+  border-color: color-mix(in srgb, var(--color-success) 65%, transparent);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  animation: status-check-in 220ms cubic-bezier(0.25, 1.4, 0.5, 1);
+}
+
+.session-status__tasks li[data-status="cancelled"] .session-status__task-mark {
+  color: var(--text-muted);
+}
+
+.session-status__task-text {
+  color: var(--text-primary);
+  transition: color 180ms;
+}
+
+.session-status__tasks li[data-status="completed"] .session-status__task-text,
+.session-status__tasks li[data-status="cancelled"] .session-status__task-text {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--text-muted) 65%, transparent);
+}
+
+.session-status__stats {
+  display: flex;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+.session-status__stats > span:first-child {
+  color: var(--color-success);
+}
+
+.session-status__stats > span:last-child {
+  color: var(--color-error);
+}
+
+.session-status__file-status {
+  flex: 0 !important;
+  font-size: 11.5px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.session-status__hint {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin: 6px 6px 0;
+}
+
+.session-status__error {
+  color: var(--color-error);
+  font-size: 12px;
+  margin: 8px 4px;
+}
+
+.session-status__error button,
+.session-status__more {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  min-height: 28px;
+  font-size: 12px !important;
+}
+
+.session-status__error button {
+  margin-left: 8px;
+  text-decoration: underline;
+}
+
+.session-status__more {
+  padding: 4px 6px;
+}
+
+.session-status__more:hover {
+  color: var(--text-primary);
+}
+
+.session-status__agent-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-success);
+}
+
+.session-status__agent small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.session-status__stages {
+  display: flex;
+  padding: 0 4px;
+  list-style: none;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+
+.session-status__stages li {
+  flex: 1;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  border-radius: 6px;
+  padding: 5px;
+  transition: background-color 200ms, color 200ms;
+}
+
+.session-status__stages li[data-status="in_progress"] {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.session-status__stages li[data-status="completed"] {
+  color: var(--color-success);
+}
+
+.session-status__capabilities {
+  list-style: none;
+  padding: 0 4px;
+  margin: 6px 0;
+}
+
+.session-status__capabilities li {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 0;
+}
+
+.session-status__capabilities li[data-checked="true"] {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.session-status__capabilities li[data-checked="true"] span {
+  color: var(--color-success);
+}
+
+.session-status__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.session-status__actions button {
+  border: 0;
+  border-radius: 6px;
+  min-height: 30px;
+  padding: 4px 7px;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.session-status[data-tiny="true"] {
+  right: 16px;
+}
+
+.status-sprite {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+}
+
+.status-sprite[data-running="true"],
+.status-sprite[data-complete="true"] {
+  color: var(--color-success);
+}
+
+.status-sprite__drawing {
+  width: 15px;
+  height: 15px;
+  overflow: visible;
+  transform-origin: center;
+}
+
+.status-sprite__body {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  opacity: 0.32;
+}
+
+.status-sprite[data-complete="true"] .status-sprite__body {
+  opacity: 0.55;
+  fill: color-mix(in srgb, var(--color-success) 14%, transparent);
+}
+
+.status-sprite__face {
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-origin: 8px 8px;
+}
+
+.status-sprite__dot {
+  display: none;
+}
+
+.status-sprite[data-running="true"] .status-sprite__face {
+  animation: status-consider 1s linear infinite;
+}
+
+.status-sprite__drawing--wake {
+  animation: status-wake 320ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+@keyframes session-status-emerge {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes status-wake {
+  0% {
+    transform: scale(0.9);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes status-consider {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes status-check-in {
+  from {
+    transform: scale(0.85);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-status-rail,
+  .session-status,
+  .session-status *,
+  .session-status__topbar-capsule {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+    animation: none !important;
+  }
+}

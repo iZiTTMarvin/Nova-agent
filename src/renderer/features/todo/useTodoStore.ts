@@ -1,16 +1,4 @@
-/**
- * TodoPanel 渲染端 store
- *
- * 职责：
- * - 订阅 IPC `agent:todos-updated` 事件，把后端推送的最新 todo 列表与紧凑视图缓存到本地
- * - 按 sessionId 隔离：切换会话时显示对应会话的 todo（不串数据）
- * - 暴露给 TodoPanel 组件消费的 selector：当前会话的 todos / view / 进度统计
- *
- * 设计要点：
- * - 使用独立 zustand store，不混入消息状态
- * - view 由后端计算并随事件下发，前端不做二次计算
- * - 会话详情水合时经 setSessionTodos 从持久化恢复（磁盘是事实源：todo_write 先落盘后推送）
- */
+// 待办投影按会话隔离；持久化为事实源，紧凑窗口随后端事件下发。
 import { create } from 'zustand'
 import type { TodoItem, TodoViewInfo, TodoViewItem } from '../../../shared/todo/types'
 
@@ -37,8 +25,6 @@ export interface TodoSessionState {
   total: number
   /** 最近一次更新时的 epoch ms（用于"刚刚更新"动画/排序） */
   updatedAt: number
-  /** 本轮是否已收到 todo_write；dock 显示门控，防止新轮秒弹上一轮残留 */
-  turnTouched: boolean
 }
 
 interface TodoStoreActions {
@@ -48,8 +34,6 @@ interface TodoStoreActions {
   reset: () => void
   /** 主动设置某会话的 todo 状态（用于 selectSession 时从持久化恢复） */
   setSessionTodos: (sessionId: string, todos: TodoItem[]) => void
-  /** 新轮发起时清零 turnTouched；会话尚无 state 时 no-op */
-  resetTurnTouched: (sessionId: string) => void
 }
 
 function summarize(todos: TodoItem[]): { completed: number; total: number } {
@@ -75,7 +59,7 @@ export const useTodoStore = create<TodoStoreState & TodoStoreActions>((set) => (
     set((state) => ({
       bySession: {
         ...state.bySession,
-        [sessionId]: { todos, view, completed, total, updatedAt: Date.now(), turnTouched: true }
+        [sessionId]: { todos, view, completed, total, updatedAt: Date.now() }
       },
       seen: { ...state.seen, [sessionId]: true }
     }))
@@ -86,25 +70,11 @@ export const useTodoStore = create<TodoStoreState & TodoStoreActions>((set) => (
     set((state) => ({
       bySession: {
         ...state.bySession,
-        // 从持久化恢复的数据视为已知，直接可显示；view 必须全量构造，
-        // 否则 TodoPanel 只能看到总数、展开后列表为空
-        [sessionId]: { todos, view: fullView(todos), completed, total, updatedAt: Date.now(), turnTouched: true }
+        // 水合不携带增量窗口，必须从完整清单恢复可见条目。
+        [sessionId]: { todos, view: fullView(todos), completed, total, updatedAt: Date.now() }
       },
       seen: { ...state.seen, [sessionId]: true }
     }))
-  },
-
-  resetTurnTouched: (sessionId) => {
-    set((state) => {
-      const existing = state.bySession[sessionId]
-      if (!existing) return state
-      return {
-        bySession: {
-          ...state.bySession,
-          [sessionId]: { ...existing, turnTouched: false }
-        }
-      }
-    })
   },
 
   reset: () => {

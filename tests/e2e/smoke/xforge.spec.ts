@@ -5,8 +5,7 @@ import { LOAD_SESSION_MESSAGES } from '../../../src/shared/ipc/channels'
 import type { Message, MessageBlock } from '../../../src/shared/session/types'
 import { expect, test, type NovaHarness } from '../fixtures/nova'
 
-const CAPSULE = '.xforge-capsule'
-const CAPSULE_CHIP = `${CAPSULE}__chip`
+const CAPSULE = '.session-status-rail:not(.session-status-rail--inspector) .session-status'
 const CRITIC_DENIAL = '一页纸还没有经过批评者挑刺'
 const PLAN_CONTENT = [
   '# 番茄钟一页纸',
@@ -34,7 +33,8 @@ async function readPlanMarkdown(workspacePath: string): Promise<string> {
 
 async function expectCapsuleStage(page: Page, label: string): Promise<void> {
   await expect(page.locator(CAPSULE)).toBeVisible()
-  await expect(page.locator(CAPSULE_CHIP)).toContainText(label)
+  const stages: Record<string, string> = { 问: 'interview', 图: 'blueprint', 锤: 'build', 验: 'inspect', 交: 'deliver' }
+  await expect(page.locator(CAPSULE).getByLabel('锻造阶段')).toHaveAttribute('data-current-stage', stages[label])
 }
 
 async function loadMessages(nova: NovaHarness, sessionId: string): Promise<Message[]> {
@@ -62,7 +62,7 @@ async function verifyInspectionFlow(nova: NovaHarness, repairMissingReport: bool
   await expect(nova.page.locator('.compose-stage-bar')).toHaveCount(0)
   await expectCapsuleStage(nova.page, '问')
 
-  await nova.page.locator(CAPSULE_CHIP).click()
+  await expect(nova.page.locator(CAPSULE)).toHaveAttribute('data-expanded', 'true')
   await expect(nova.page.locator(CAPSULE)).toContainText('暂无一页纸')
 
   nova.provider.enqueue(
@@ -92,10 +92,10 @@ async function verifyInspectionFlow(nova: NovaHarness, repairMissingReport: bool
   await expect(approval).toBeVisible()
   await expect(approval.getByRole('heading', { name: '确认一页纸' })).toBeVisible()
   await expectCapsuleStage(nova.page, '图')
-  await expect(nova.page.locator(`${CAPSULE}__checklist`)).toContainText('打开页面能看到计时器')
+  await expect(nova.page.locator(' .session-status__capabilities')).toContainText('打开页面能看到计时器')
   const waiting = await nova.getRunSnapshot(sessionId)
   expect(waiting?.status).toBe('waiting_user')
-  await expect(nova.page.locator('.xforge-capsule__glyph')).toHaveCSS('animation-name', 'none')
+  await expect(nova.page.locator('.status-sprite__face')).toHaveCSS('animation-name', 'none')
   expect(await readPlanMarkdown(nova.workspacePath)).toContain('做完你能做什么')
 
   const approve = approval.getByRole('button', { name: '批准', exact: true })
@@ -225,16 +225,16 @@ test('无 critic 时无法完成图阶段', async ({ nova }) => {
 
 test('运行中补充可排队，暂停保留草稿与队列，显式继续后只发送一次', async ({ nova }) => {
   await nova.createSession('compose')
-  const glyph = nova.page.locator('.xforge-capsule__glyph')
+  const glyph = nova.page.locator('.status-sprite__face')
   await expect(glyph).toHaveCSS('animation-name', 'none')
   nova.provider.enqueue({ kind: 'hold', id: 'supplement-hold', text: 'SHOULD_NOT_FINISH' })
   await nova.sendPrompt('保持运行以验证补充')
   await nova.provider.waitForRequestCount(1)
-  await expect(glyph).toHaveCSS('animation-name', 'xforge-consider')
+  await expect(glyph).toHaveCSS('animation-name', 'status-consider')
   await nova.page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(glyph).toHaveCSS('animation-name', 'none')
   await nova.page.emulateMedia({ reducedMotion: 'no-preference' })
-  await expect(glyph).toHaveCSS('animation-name', 'xforge-consider')
+  await expect(glyph).toHaveCSS('animation-name', 'status-consider')
   const editor = nova.page.getByLabel('消息输入')
   await expect(editor).toBeEmpty()
   await editor.fill('排队补充：标题小账本')

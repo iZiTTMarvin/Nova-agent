@@ -12,8 +12,6 @@
 import React, { useEffect, useLayoutEffect, useState, useCallback } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { ExtendedMessage } from '../../stores/types'
-import type { MessageDiffCache } from '../../stores/types'
-import type { DiffEntry } from '../../../shared/diff/types'
 import type { Mode } from '../../../shared/session/types'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import { MessageItem } from './MessageItem'
@@ -36,23 +34,10 @@ export interface VirtualMessageListProps {
   onRegenerate: (messageId: string) => void | Promise<void>
   onSwitchBranch: (targetMessageId: string) => void | Promise<void>
   onEditResend: (messageId: string, newContent: string) => void | Promise<void>
-  tier1StaleDiffSet: Set<string>
   rollbackErrors: Record<string, string | undefined>
-  onAcceptFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
-  onRejectFile: (sessionId: string, messageId: string, filePath: string) => Promise<void>
-  onAcceptAllFiles: (sessionId: string, messageId: string, filePaths: string[]) => Promise<void>
-  onRejectAllFiles: (
-    sessionId: string,
-    messageId: string,
-    filePaths: string[]
-  ) => Promise<{ restored: string[]; failed: Array<{ filePath: string; error: string }> }>
   onRenderPoolTick: () => void
   isPausedForUserInput: boolean
   pausedMessageId: string | null
-  messageDiffs: Record<string, MessageDiffCache>
-  loadingDiffs: Set<string>
-  loadingDiffPlaceholders: Record<string, Array<{ filePath: string; status: DiffEntry['status'] }>>
-  onLoadDiffs: (sessionId: string, messageId: string) => void | Promise<void>
   pendingPlanReview: PendingPlanReview | null
   /** 缺省表示当前会话不提供「学懂这次改动」 */
   onLearnChange?: (messageId: string) => void
@@ -74,25 +59,13 @@ function renderMessageRow(
     onRegenerate,
     onSwitchBranch,
     onEditResend,
-    tier1StaleDiffSet,
     rollbackErrors,
-    onAcceptFile,
-    onRejectFile,
-    onAcceptAllFiles,
-    onRejectAllFiles,
     onRenderPoolTick,
     isPausedForUserInput,
     pausedMessageId,
-    messageDiffs,
-    loadingDiffs,
-    loadingDiffPlaceholders,
-    onLoadDiffs,
     messages
   } = props
 
-  const diffCache = messageDiffs[msg.id]
-  const isDiffLoading = loadingDiffs.has(msg.id)
-  const diffPlaceholders = loadingDiffPlaceholders[msg.id]
   const renderMode = resolveMessageRenderMode(rowIndex, total, isGenerating)
   const prevMsg = rowIndex > 0 ? messages[rowIndex - 1] : undefined
   const regenerateBlocked =
@@ -118,21 +91,12 @@ function renderMessageRow(
       onRegenerate={onRegenerate}
       regenerateBlocked={regenerateBlocked}
       onSwitchBranch={onSwitchBranch}
-      tier1DiffStale={tier1StaleDiffSet.has(msg.id)}
       onEditResend={onEditResend}
       rollbackError={rollbackErrors[msg.id]}
-      onAcceptFile={onAcceptFile}
-      onRejectFile={onRejectFile}
-      onAcceptAllFiles={onAcceptAllFiles}
-      onRejectAllFiles={onRejectAllFiles}
       onRenderPoolTick={onRenderPoolTick}
       turnProcessOpen={turnProcessOpen}
       onTurnProcessOpenChange={onTurnProcessOpenChange}
       isPausedForInput={isPausedForUserInput && msg.id === pausedMessageId}
-      diffCache={diffCache}
-      isDiffLoading={isDiffLoading}
-      diffPlaceholders={diffPlaceholders}
-      onLoadDiffs={onLoadDiffs}
       pendingPlanReview={pendingPlanReviewForRow}
       {...(props.onLearnChange ? { onLearnChange: props.onLearnChange } : {})}
     />

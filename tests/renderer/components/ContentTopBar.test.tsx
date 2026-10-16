@@ -127,6 +127,7 @@ describe('ContentTopBar 删除会话错误反馈', () => {
         kind: 'primary',
         workspaceRoot: '/ws',
         mode: 'default',
+        permissionMode: 'auto',
         createdAt: 1,
         updatedAt: 1,
         messageCount: 0,

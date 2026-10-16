@@ -82,10 +82,10 @@ describe('useTodoStore', () => {
     const state = selectSessionTodoState(useTodoStore.getState(), 'sess_z')
     expect(state).not.toBeNull()
     expect(state!.todos).toHaveLength(1)
-    expect(state!.turnTouched).toBe(true)
+    expect(state!.total).toBe(1)
   })
 
-  it('setSessionTodos 恢复时构造 full 视图：TodoPanel 展开能看到全部条目', () => {
+  it('setSessionTodos 恢复时构造 full 视图：恢复后能看到全部条目', () => {
     useTodoStore.getState().setSessionTodos('sess_full', [
       { content: 'A', status: 'completed', priority: 'high' },
       { content: 'B', status: 'in_progress', priority: 'medium' },
@@ -100,37 +100,6 @@ describe('useTodoStore', () => {
     expect(selectVisibleTodoItems(state).map(todo => todo.content)).toEqual(['A', 'B', 'C'])
     expect(state.completed).toBe(1)
     expect(state.total).toBe(3)
-  })
-
-  it('applyUpdate 后 turnTouched 为 true', () => {
-    useTodoStore.getState().applyUpdate(makeUpdate('sess_t', [
-      { content: 'A', status: 'pending', priority: 'medium' }
-    ]))
-    expect(selectSessionTodoState(useTodoStore.getState(), 'sess_t')!.turnTouched).toBe(true)
-  })
-
-  it('resetTurnTouched：存在会话时置 false，其它字段不变', () => {
-    useTodoStore.getState().applyUpdate(makeUpdate('sess_r', [
-      { content: 'A', status: 'completed', priority: 'high' },
-      { content: 'B', status: 'pending', priority: 'low' }
-    ]))
-    const before = selectSessionTodoState(useTodoStore.getState(), 'sess_r')!
-    expect(before.turnTouched).toBe(true)
-
-    useTodoStore.getState().resetTurnTouched('sess_r')
-    const after = selectSessionTodoState(useTodoStore.getState(), 'sess_r')!
-    expect(after.turnTouched).toBe(false)
-    expect(after.todos).toEqual(before.todos)
-    expect(after.view).toEqual(before.view)
-    expect(after.completed).toBe(before.completed)
-    expect(after.total).toBe(before.total)
-    expect(after.updatedAt).toBe(before.updatedAt)
-  })
-
-  it('resetTurnTouched：不存在的会话 no-op，不创建空 state', () => {
-    useTodoStore.getState().resetTurnTouched('sess_missing')
-    expect(selectSessionTodoState(useTodoStore.getState(), 'sess_missing')).toBeNull()
-    expect(useTodoStore.getState().bySession).toEqual({})
   })
 
   it('多个会话独立计数，applyUpdate 不影响其他会话', () => {

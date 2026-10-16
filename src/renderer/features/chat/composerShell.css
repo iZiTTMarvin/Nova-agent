@@ -116,11 +116,16 @@
 .chat-panel__composer-inner {
   position: relative;
   width: 100%;
-  max-width: var(--chat-content-max-width);
+  max-width: min(var(--chat-content-max-width), calc(100% - var(--status-clearance, 0px)));
+  margin-left: auto;
+  margin-right: max(calc((100% - min(100%, var(--chat-content-max-width))) / 2), var(--status-clearance, 0px));
   display: flex;
   flex-direction: column;
   align-items: center;
   pointer-events: none;
+  transition:
+    margin-right var(--transition-normal),
+    max-width var(--transition-normal);
 }
 
 .composer-notice-banner {

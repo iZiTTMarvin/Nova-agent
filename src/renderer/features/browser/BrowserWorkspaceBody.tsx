@@ -3,6 +3,8 @@ import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
 import { InspectorPanel } from '../inspector/InspectorPanel'
 import { GlassSessionHeader } from '../../components/ContentTopBar'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
+import { useChatStore } from '../../stores/useChatStore'
+import { SessionStatusPanel } from '../session-status/SessionStatusPanel'
 
 // 学习表面是另一套完整交互面，开发会话首屏用不到：按需加载，不进首屏包。
 const LearningSurface = lazy(() =>
@@ -21,6 +23,8 @@ export function BrowserWorkspaceBody(props: {
   const { chatPanelRef } = props
   const currentSessionId = useWorkspaceStore((state) => state.currentSessionId)
   const currentMode = useWorkspaceStore((state) => state.currentMode)
+  const sessionKind = useChatStore(state => state.sessions.find(session => session.id === currentSessionId)?.kind)
+  const isSessionLoading = useWorkspaceStore(state => state.isSessionLoading)
 
   // learn 会话走独立学习表面；会话焦点仍由主进程 Workspace Owner 决定
   const isLearnSurface = currentMode === 'learn' && currentSessionId !== null
@@ -35,11 +39,17 @@ export function BrowserWorkspaceBody(props: {
               <LearningSurface sessionId={currentSessionId} />
             </Suspense>
           ) : (
-            <ChatPanel ref={chatPanelRef} />
+            <div className="chat-workspace">
+              <ChatPanel ref={chatPanelRef} />
+              {currentSessionId && sessionKind && !isSessionLoading && (
+                <SessionStatusPanel key={currentSessionId} sessionId={currentSessionId} mode={sessionKind === 'subagent' ? 'default' : currentMode} onRequestSupplement={() => chatPanelRef.current?.requestSupplement()} />
+              )}
+            </div>
           )}
         </div>
       </div>
       <InspectorPanel
+        onRequestSupplement={() => chatPanelRef.current?.requestSupplement()}
         onDragSessionChange={(active) => {
           if (active) chatPanelRef.current?.freezeReadingWidth()
           else chatPanelRef.current?.restoreReadingWidth()

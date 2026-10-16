@@ -213,6 +213,15 @@ test('后台接纳立即归还父执行权；父结束后空闲接力自动送�
   const midRun = await runSnapshot(nova, dispatch.childSessionId, dispatch.childRunId)
   expect(['running', 'queued']).toContain(midRun?.status ?? '')
 
+  await nova.page.getByRole('button', { name: `查看${preset.name}子会话` }).click()
+  const childDetail = nova.page.getByRole('region', { name: `${preset.name} 工作流详情` })
+  await expect(childDetail).toBeVisible()
+  await expect(childDetail).toContainText('工具调用')
+  await expect(nova.page.locator('.chat-workspace .session-status')).toHaveAttribute('data-expanded', 'false')
+  expect((await nova.getWorkspace()).currentSessionId).toBe(dispatch.parentSessionId)
+  await childDetail.getByRole('button', { name: '关闭详情' }).click()
+  await expect(childDetail).toHaveCount(0)
+
   await expandTurnProcess(nova, PARENT_TEXT_AFTER_SPAWN)
   const row = nova.page.getByRole('button', { name: `子代理 ${preset.name}` })
   await expect(row).toContainText('正在工作')

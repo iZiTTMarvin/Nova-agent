@@ -196,10 +196,13 @@ export const GlassSessionHeader: React.FC = () => {
     <div className="glass-header">
       <div className="glass-header__left">
         <SessionBreadcrumb />
+        <SessionMoreMenu />
       </div>
       <div className="glass-header__right">
-        {!inspectorOpen && <InspectorToggleButton className="content-topbar__btn" />}
-        <SessionMoreMenu />
+        <div className="glass-header__status-slot" />
+        {!inspectorOpen && (
+          <InspectorToggleButton className="content-topbar__btn glass-header__panel-btn" />
+        )}
       </div>
     </div>
   )
