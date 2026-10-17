@@ -54,6 +54,7 @@ function App(): React.ReactNode {
   // settings：仅稳定 action
   const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
   const loadTheme = useSettingsStore(state => state.loadTheme)
+  const loadStreamSmoothness = useSettingsStore(state => state.loadStreamSmoothness)
   const theme = useSettingsStore(state => state.theme)
   const handleUsage = useSettingsStore(state => state.handleUsage)
   const setContextBreakdown = useSettingsStore(state => state.setContextBreakdown)
@@ -82,6 +83,7 @@ function App(): React.ReactNode {
     installStreamingPerfMonitor()
     loadModelConfig()
     void loadTheme()
+    void loadStreamSmoothness()
     // 启动工作区分发器（订阅 workspace:changed）
     const stopDispatcher = startWorkspaceDispatcher()
     const stopBrowser = startBrowserStore()
@@ -95,7 +97,7 @@ function App(): React.ReactNode {
       stopDispatcher()
       stopBrowser()
     }
-  }, [loadModelConfig, loadTheme])
+  }, [loadModelConfig, loadTheme, loadStreamSmoothness])
 
   // 自动更新只在发现版本后等待用户决定，不在后台静默下载。
   useEffect(() => {

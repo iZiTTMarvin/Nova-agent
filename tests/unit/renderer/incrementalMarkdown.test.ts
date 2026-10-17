@@ -88,4 +88,49 @@ describe('incrementalMarkdown', () => {
     expect(totalScanned).toBeLessThan(content.length * 2.5)
     expect(totalScanned).toBeGreaterThan(content.length * 0.5)
   })
+
+  it('闭合 fence 内部的空行不构成封口边界（多段代码不被切断）', () => {
+    const content = [
+      '前文。',
+      '',
+      '```typescript',
+      'const a = 1',
+      '',
+      'const b = 2',
+      '```',
+      '',
+      '后文。'
+    ].join('\n')
+    const split = splitIncrementalMarkdown(content, false, 0)
+    // fence 整体封口：sealed 前缀包含完整 fence，且切分点不落在 fence 内部
+    expect(split.sealedEndOffset).toBe(content.indexOf('后文。'))
+    expect(split.sealedParts.length).toBe(2)
+    expect(split.sealedParts[1]).toContain('const a = 1')
+    expect(split.sealedParts[1]).toContain('const b = 2')
+  })
+
+  it('流式推进时含空行的闭合 fence 不会中途封口出残段', () => {
+    const frames = [
+      '前文。\n\n```typescript\nconst a = 1\n',
+      '前文。\n\n```typescript\nconst a = 1\n\nconst b = 2\n',
+      '前文。\n\n```typescript\nconst a = 1\n\nconst b = 2\n```\n',
+      '前文。\n\n```typescript\nconst a = 1\n\nconst b = 2\n```\n\n后文。'
+    ]
+    const parts: string[] = []
+    let sealedEnd = 0
+    for (const frame of frames) {
+      const split = splitIncrementalMarkdown(frame, false, sealedEnd)
+      if (split.sealedEndOffset > sealedEnd) {
+        parts.push(frame.slice(sealedEnd, split.sealedEndOffset))
+        sealedEnd = split.sealedEndOffset
+      }
+      // fence 未闭合期间不越过 fence 起点封口
+      if (frame.includes('```') && !frame.includes('```typescript\nconst a = 1\n\nconst b = 2\n```')) {
+        expect(split.sealedEndOffset).toBeLessThanOrEqual(frame.indexOf('```typescript'))
+      }
+    }
+    // fence 闭合后、后文空行到来前，也不在 fence 内部空行处封口
+    expect(parts.some(p => p.includes('const a = 1') && !p.includes('```'))).toBe(false)
+    expect(parts[parts.length - 1]).toContain('const b = 2')
+  })
 })

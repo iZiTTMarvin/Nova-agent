@@ -16,6 +16,7 @@ import type { NovaSettingsDto } from '../../shared/settings/types'
 import type { SessionUsageStats } from './types'
 
 export type SettingsTheme = NovaSettingsDto['theme']
+export type StreamSmoothness = NovaSettingsDto['streamSmoothness']
 
 export interface SettingsState {
   // ── 状态 ──
@@ -29,6 +30,8 @@ export interface SettingsState {
   currentMode: Mode
   /** 持久化 settings.theme 的 renderer 投影，作为 Astryx Theme mode 的唯一 Owner */
   theme: SettingsTheme
+  /** 流式输出节奏（smooth=打字机平滑 / instant=即时显示），持久化设置的 renderer 投影 */
+  streamSmoothness: StreamSmoothness
   /**
    * 全部分桶合计（兼容旧 UI / 测试）。
    * 有数据时非 null；reset 后清空。
@@ -45,6 +48,10 @@ export interface SettingsState {
   loadLlmRegistry: () => Promise<void>
   /** 从持久化 settings 加载主题模式 */
   loadTheme: () => Promise<void>
+  /** 从持久化 settings 加载流式输出节奏 */
+  loadStreamSmoothness: () => Promise<void>
+  /** 持久化并更新流式输出节奏 */
+  setStreamSmoothness: (value: StreamSmoothness) => Promise<void>
   /** 持久化并更新主题模式；调用方不得维护第二份主题状态 */
   setTheme: (theme: SettingsTheme) => Promise<void>
   /** @deprecated 请使用 loadLlmRegistry */
@@ -237,6 +244,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   currentProject: null,
   currentMode: 'default',
   theme: (typeof localStorage !== 'undefined' && (localStorage.getItem('nova-settings-theme') as SettingsTheme)) || 'system',
+  streamSmoothness:
+    typeof localStorage !== 'undefined' && localStorage.getItem('nova-settings-stream-smoothness') === 'instant'
+      ? 'instant'
+      : 'smooth',
   sessionUsage: null,
   sessionUsageByProfile: {},
   contextBreakdown: null,
@@ -266,6 +277,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       set({ theme: settings.theme })
     } catch (err) {
       console.error('读取主题设置失败:', err)
+    }
+  },
+
+  loadStreamSmoothness: async () => {
+    try {
+      const settings = await window.api.invoke('settings:get')
+      try {
+        localStorage.setItem('nova-settings-stream-smoothness', settings.streamSmoothness)
+      } catch (_) {}
+      set({ streamSmoothness: settings.streamSmoothness })
+    } catch (err) {
+      console.error('读取流式节奏设置失败:', err)
+    }
+  },
+
+  setStreamSmoothness: async (value: StreamSmoothness) => {
+    try {
+      const settings = await window.api.invoke('settings:set', { streamSmoothness: value })
+      try {
+        localStorage.setItem('nova-settings-stream-smoothness', settings.streamSmoothness)
+      } catch (_) {}
+      set({ streamSmoothness: settings.streamSmoothness })
+    } catch (err) {
+      console.error('保存流式节奏设置失败:', err)
+      throw err
     }
   },
 

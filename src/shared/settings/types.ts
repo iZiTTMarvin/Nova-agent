@@ -90,6 +90,11 @@ export interface NovaSettingsDto {
   editorFontFamily: string
   /** 主题 */
   theme: 'light' | 'dark' | 'system'
+  /**
+   * 流式输出的节奏：smooth = 打字机平滑放出（默认），instant = 即时显示
+   * （模型吐多少立刻显示多少，burst 时文字大段跳出）
+   */
+  streamSmoothness: 'smooth' | 'instant'
   /** DiffViewer 默认是否自动展开 */
   diffAutoExpand: boolean
   /** 上次打开的项目路径（启动时恢复，空表示无） */

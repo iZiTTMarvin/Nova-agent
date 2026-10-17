@@ -102,6 +102,8 @@ function getUpdateAction(
 export const GeneralSettingsPanel: React.FC = () => {
   const theme = useSettingsStore(state => state.theme)
   const setTheme = useSettingsStore(state => state.setTheme)
+  const streamSmoothness = useSettingsStore(state => state.streamSmoothness)
+  const setStreamSmoothness = useSettingsStore(state => state.setStreamSmoothness)
   const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
   const [shellDraft, setShellDraft] = useState('')
   const [saving, setSaving] = useState(false)
@@ -168,6 +170,22 @@ export const GeneralSettingsPanel: React.FC = () => {
     try {
       await setTheme(nextTheme)
       setSettings(current => (current ? { ...current, theme: nextTheme } : current))
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存设置失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const updateStreamSmoothness = async (next: NovaSettingsDto['streamSmoothness']): Promise<void> => {
+    setSaving(true)
+    setError(null)
+    setSaved(false)
+    try {
+      await setStreamSmoothness(next)
+      setSettings(current => (current ? { ...current, streamSmoothness: next } : current))
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1500)
     } catch (err) {
@@ -333,6 +351,22 @@ export const GeneralSettingsPanel: React.FC = () => {
                   <SegmentedControlItem value="system" label="跟随系统" />
                   <SegmentedControlItem value="light" label="浅色" />
                   <SegmentedControlItem value="dark" label="深色" />
+                </SegmentedControl>
+              }
+            />
+            <SettingsRow
+              icon={<SlidersIcon size={16} />}
+              label="流式输出节奏"
+              description="平滑：回复像打字机一样匀速放出，爆发输出时观感稳定；即时：模型吐出多少立刻显示多少。"
+              end={
+                <SegmentedControl
+                  label="流式输出节奏"
+                  value={streamSmoothness}
+                  onChange={value => void updateStreamSmoothness(value as NovaSettingsDto['streamSmoothness'])}
+                  isDisabled={saving}
+                >
+                  <SegmentedControlItem value="smooth" label="平滑" />
+                  <SegmentedControlItem value="instant" label="即时" />
                 </SegmentedControl>
               }
             />

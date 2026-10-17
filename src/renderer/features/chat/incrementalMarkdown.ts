@@ -133,25 +133,31 @@ export function findOpenFenceStart(content: string): number {
 /**
  * 在 [from, to) 区间内找「空行块边界」的结束位置列表（边界落在第二个 \n 之后）。
  * 返回的每个 offset 表示「该位置之前的内容可视为已完整的一块」。
+ *
+ * 围栏感知：闭合围栏内部的空行不构成边界——否则多段代码会被从内部
+ * 空行处切断成两个残段（前段未闭合 fence、后段以正文开头）。
+ * 调用方保证 from 位于围栏外（sealed 前缀从不终止于围栏内部）。
  */
 function findBlankLineBoundaries(content: string, from: number, to: number): number[] {
   const ends: number[] = []
-  let i = from
-  while (i < to) {
-    if (content[i] !== '\n') {
-      i += 1
-      continue
+  if (from >= to) return ends
+
+  let fenceMarker: string | null = null
+  let offset = from
+  const lines = content.slice(from, to).split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    const nextOffset = offset + line.length + 1
+
+    const fenceMatch = FENCE_LINE_RE.exec(line.trimEnd())
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (fenceMarker === null) fenceMarker = marker
+      else if (marker === fenceMarker) fenceMarker = null
+    } else if (fenceMarker === null && i + 1 < lines.length && line.trim().length === 0) {
+      ends.push(nextOffset)
     }
-    // 吃掉连续空白行：\n + 可选空白 + \n
-    let j = i + 1
-    while (j < to && (content[j] === ' ' || content[j] === '\t' || content[j] === '\r')) j += 1
-    if (j < to && content[j] === '\n') {
-      const boundaryEnd = j + 1
-      if (boundaryEnd > from) ends.push(boundaryEnd)
-      i = boundaryEnd
-      continue
-    }
-    i += 1
+    offset = nextOffset
   }
   return ends
 }

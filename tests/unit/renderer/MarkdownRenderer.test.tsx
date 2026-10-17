@@ -1,22 +1,38 @@
 // @vitest-environment jsdom
 
 /**
- * MarkdownRenderer 关键行为测试：覆盖 C2 修复 — isStreaming 传递链路
+ * MarkdownRenderer 关键行为测试
  *
  * 验证：
- * 1. isStreaming=true 时，代码块不调用 highlightLine，输出纯文本节点（无 .diff-token）
- * 2. isStreaming=false（默认）时，代码块调用 highlightLine，输出 .diff-token span
- * 3. isStreaming 翻转时，components 引用重建（useMemo 依赖），保证切换路径正确
+ * 1. 代码高亮是块级渐进门控：sealed 块（含终态）立即高亮，active tail 无高亮
+ * 2. 数学语法转译后经代码通路渲染 KaTeX（$$ 块级 / $ 行内）
+ * 3. mermaid 围栏：tail 占位不加载，封口/终态触发渲染
+ * 4. 链接安全与 chunkFade 等既有行为不回归
  */
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll } from 'vitest'
 import React from 'react'
+
+vi.mock('mermaid', () => {
+  const api = { initialize: vi.fn(), render: vi.fn(() => Promise.resolve({ svg: '<svg data-mermaid-mock="1"></svg>' })) }
+  return { default: api }
+})
+
+import mermaidMock from 'mermaid'
 import {
   MarkdownRenderer,
   __takeMarkdownReparseChars
 } from '../../../src/renderer/features/chat/MarkdownRenderer'
-import { renderDom } from './renderDom'
+import { ensureKatexLoaded } from '../../../src/renderer/features/chat/MathBlock'
+import { renderDom, waitFor, act } from './renderDom'
 
 const FENCE = '```typescript\nconst x: number = 1\nconst y: string = "hi"\n```'
+
+/** 动态 import 需要宏任务节拍；懒加载组件（KaTeX/mermaid）落地前先给一拍 */
+async function flushLazyModules(): Promise<void> {
+  await act(async () => {
+    await new Promise(resolve => setTimeout(resolve, 10))
+  })
+}
 
 function countDiffTokens(container: HTMLElement): number {
   return Array.from(container.querySelectorAll('[class]')).filter(element =>
@@ -188,6 +204,69 @@ describe('MarkdownRenderer chunkFade（sealed 段逐段淡入）', () => {
     tree.render(<MarkdownRenderer content={content} isStreaming={true} />)
     expect(tree.container.querySelector('.md-sealed-chunk--fade')).toBeNull()
     expect(tree.container.querySelectorAll('.md-sealed-chunk').length).toBeGreaterThan(0)
+    tree.unmount()
+  })
+})
+
+describe('MarkdownRenderer 块级渐进门控', () => {
+  it('流式中已封口的代码块立即高亮（sealed 走 complete 组件集）', () => {
+    const content = '前文。\n\n```typescript\nconst x: number = 1\n```\n\n结尾还在写'
+    const tree = renderDom(<MarkdownRenderer content={content} isStreaming={true} />)
+    expect(countDiffTokens(tree.container)).toBeGreaterThan(0)
+    tree.unmount()
+  })
+})
+
+describe('MarkdownRenderer 数学渲染（转译路线 + 真实 KaTeX）', () => {
+  beforeAll(async () => {
+    await ensureKatexLoaded()
+  })
+
+  it('终态 $$ 块转译为 math 围栏并渲染 display 公式，反斜杠保真', () => {
+    const content = '公式：\n\n$$\n\\frac{a}{b} + \\sum_{i=1}^n i\n$$\n\n结束'
+    const tree = renderDom(<MarkdownRenderer content={content} />)
+    expect(tree.container.querySelector('.katex-display')).not.toBeNull()
+    // 定界符被转译消费；源码仅存在于 KaTeX 的 MathML annotation（复制/无障碍用）
+    expect(tree.container.textContent).not.toContain('$$')
+    tree.unmount()
+  })
+
+  it('流式行内 $...$ 即时渲染 KaTeX', async () => {
+    const tree = renderDom(<MarkdownRenderer content={'价值 $x^2+1$ 左右'} isStreaming={true} />)
+    await flushLazyModules()
+    await waitFor(() => tree.container.querySelector('.katex') !== null)
+    tree.unmount()
+  })
+
+  it('流式未闭合 $$ 块保持原文，不误渲染半截公式', () => {
+    const tree = renderDom(<MarkdownRenderer content={'$$\n\\frac{a}{b}'} isStreaming={true} />)
+    expect(tree.container.querySelector('.katex')).toBeNull()
+    expect(tree.container.textContent).toContain('$$')
+    tree.unmount()
+  })
+
+  it('货币文本不被误判为公式', async () => {
+    const tree = renderDom(<MarkdownRenderer content={'价格 $5 和 $10 之间'} isStreaming={true} />)
+    await flushLazyModules()
+    expect(tree.container.querySelector('.katex')).toBeNull()
+    expect(tree.container.textContent).toContain('$5')
+    tree.unmount()
+  })
+})
+
+describe('MarkdownRenderer mermaid 围栏路由', () => {
+  it('tail 中未闭合围栏：占位态展示源码，不触发渲染', async () => {
+    const tree = renderDom(<MarkdownRenderer content={'```mermaid\ngraph TD\n  A --> B'} isStreaming={true} />)
+    expect(tree.container.querySelector('.mermaid-diagram--pending')).not.toBeNull()
+    await flushLazyModules()
+    expect(mermaidMock.render).not.toHaveBeenCalled()
+    tree.unmount()
+  })
+
+  it('终态 mermaid 围栏：触发渲染并注入 SVG', async () => {
+    const tree = renderDom(<MarkdownRenderer content={'```mermaid\ngraph LR\n  X --> Y\n```'} />)
+    await flushLazyModules()
+    await waitFor(() => tree.container.querySelector('[data-mermaid-mock="1"]') !== null)
     tree.unmount()
   })
 })

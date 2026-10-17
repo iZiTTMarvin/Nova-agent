@@ -41,6 +41,21 @@ describe('novaSettings', () => {
     expect(loadNovaSettings().loadThirdPartySkills).toBe(false)
   })
 
+  it('streamSmoothness 默认 smooth，合法值持久化，非法值拒绝且旧文件缺省回落', async () => {
+    const { loadNovaSettings, saveNovaSettings, DEFAULT_NOVA_SETTINGS } = await import(
+      '../../../../src/runtime/settings/novaSettings'
+    )
+    expect(DEFAULT_NOVA_SETTINGS.streamSmoothness).toBe('smooth')
+    // 旧 settings.json 没有该字段：迁移兜底为默认
+    writeFileSync(join(mockHome, '.nova', 'settings.json'), JSON.stringify({ settingsVersion: 4 }), 'utf-8')
+    expect(loadNovaSettings().streamSmoothness).toBe('smooth')
+
+    saveNovaSettings({ streamSmoothness: 'instant' })
+    expect(loadNovaSettings().streamSmoothness).toBe('instant')
+
+    expect(() => saveNovaSettings({ streamSmoothness: 'fast' as never })).toThrow()
+  })
+
   it.each([
     [{ permissionPolicy: 'ask' }, 'request_approval'],
     [{ permissionPolicy: 'auto' }, 'auto'],

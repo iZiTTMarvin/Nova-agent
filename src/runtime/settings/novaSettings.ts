@@ -34,6 +34,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   editorFontSize: 13,
   editorFontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
   theme: 'system',
+  streamSmoothness: 'smooth',
   diffAutoExpand: false,
   lastProjectPath: null,
   defaultWorkspacePath: null,
@@ -135,6 +136,9 @@ function migrateAndFill(raw: unknown): NovaSettings {
   }
   if (obj.theme === 'light' || obj.theme === 'dark' || obj.theme === 'system') {
     result.theme = obj.theme
+  }
+  if (obj.streamSmoothness === 'smooth' || obj.streamSmoothness === 'instant') {
+    result.streamSmoothness = obj.streamSmoothness
   }
   if (typeof obj.diffAutoExpand === 'boolean') {
     result.diffAutoExpand = obj.diffAutoExpand
@@ -248,6 +252,11 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   if ('theme' in patch && patch.theme !== undefined) {
     if (!['light', 'dark', 'system'].includes(patch.theme)) {
       errors.push('theme 必须是 light / dark / system 之一')
+    }
+  }
+  if ('streamSmoothness' in patch && patch.streamSmoothness !== undefined) {
+    if (!['smooth', 'instant'].includes(patch.streamSmoothness)) {
+      errors.push('streamSmoothness 必须是 smooth / instant 之一')
     }
   }
   if ('defaultShell' in patch && patch.defaultShell !== undefined && typeof patch.defaultShell !== 'string') {

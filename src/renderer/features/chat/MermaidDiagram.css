@@ -1,0 +1,67 @@
+/* MermaidDiagram — 图表渐进渲染样式 */
+
+.mermaid-diagram {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--nova-surface-soft, rgba(0, 0, 0, 0.03));
+  overflow-x: auto;
+  text-align: center;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mermaid-diagram__hint {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-bottom: 6px;
+  text-align: left;
+}
+
+.mermaid-diagram__source {
+  margin: 0;
+  padding: 0;
+  font-family: var(--nova-font-mono, ui-monospace, monospace);
+  font-size: 0.85em;
+  white-space: pre-wrap;
+  text-align: left;
+  opacity: 0.8;
+}
+
+.mermaid-diagram--pending {
+  opacity: 0.75;
+}
+
+.mermaid-diagram--loading .mermaid-diagram__hint {
+  text-align: center;
+  margin-bottom: 0;
+}
+
+.mermaid-diagram--error {
+  border: 1px solid rgba(179, 64, 42, 0.4);
+}
+
+.mermaid-diagram--error .mermaid-diagram__hint {
+  color: #b3402a;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mermaid-diagram__copy {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-decoration: underline;
+}
+
+.mermaid-diagram__copy:hover {
+  background: rgba(0, 0, 0, 0.06);
+}

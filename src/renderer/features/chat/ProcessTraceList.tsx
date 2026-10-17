@@ -8,6 +8,7 @@ import { ToolCallGroup } from './ToolCallGroup'
 import { renderToolBlock } from './renderToolBlock'
 import { isActiveThinkingBlock } from './renderingPolicy'
 import { shouldEnableTextBlockTypewriter } from './textBlockTypewriterPolicy'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import type { PendingPlanReview } from '../../../shared/planReview'
 import type { ProcessSegment } from './turnProcessModel'
 import type { RendererMessageBlock } from '../../stores/types'
@@ -45,6 +46,9 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
   pendingPlanReview,
   onRenderPoolTick
 }) {
+  // 流式节奏（smooth=打字机平滑 / instant=即时显示）：设置直读，学习模式等轨迹路径共用
+  const streamSmoothness = useSettingsStore(state => state.streamSmoothness)
+  const streamStyle: 'agile' | 'elegant' = streamSmoothness === 'instant' ? 'agile' : 'elegant'
   return (
     <div className="turn-process-trace-list">
       {segments.map((segment, idx) => {
@@ -81,6 +85,7 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
                 <StreamingTextBlock
                   fullContent={block.content}
                   isStreaming={isTurnActiveForThisMsg}
+                  style={streamStyle}
                   enableTypewriter={enableTypewriter}
                   paused={isPausedForInput}
                   onRenderPoolTick={onRenderPoolTick}

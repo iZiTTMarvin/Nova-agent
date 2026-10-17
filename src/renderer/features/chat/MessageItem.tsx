@@ -22,6 +22,7 @@ import { renderToolBlock } from './renderToolBlock'
 import { useEffectiveMessage } from './useEffectiveMessage'
 import { TerminalErrorNotice } from './TerminalErrorNotice'
 import { useChatStore } from '../../stores/useChatStore'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { RegenerateIcon, EditIcon, CopyIcon, CheckIcon, BookIcon } from '../../components/Icons'
 import { extractChangedFilePaths } from '../../../shared/learning/devChangeFiles'
@@ -119,6 +120,7 @@ function renderMessageUnit(
     streamingActive: boolean
     currentGeneratingMessageId: string | null
     handleRenderPoolTick?: () => void
+    streamStyle: 'agile' | 'elegant'
   }
 ): React.ReactNode {
   const {
@@ -128,7 +130,8 @@ function renderMessageUnit(
     isCurrentAssistantGenerating,
     streamingActive,
     currentGeneratingMessageId,
-    handleRenderPoolTick
+    handleRenderPoolTick,
+    streamStyle
   } = ctx
 
   if (unit.kind === 'block') {
@@ -157,6 +160,7 @@ function renderMessageUnit(
             key={`text-${index}-${msg.id}`}
             fullContent={block.content}
             isStreaming={isTurnActiveForThisMsg}
+            style={streamStyle}
             enableTypewriter={shouldEnableTextBlockTypewriter({
               isTurnActive: isTurnActiveForThisMsg,
               blockIndex: index >= 0 ? index : -1,
@@ -213,6 +217,9 @@ function MessageItemInner({
   // 流式期间的活跃尾部文本/思考由 liveTurn 单独订阅并叠加为 effective 消息，
   // 使该行可独立重渲染而不牵动 ChatPanel 的 messages 订阅。
   const msg = useEffectiveMessage(msgProp)
+  // 流式节奏（smooth=打字机平滑 / instant=即时显示）：设置直读，全消息生效
+  const streamSmoothness = useSettingsStore(state => state.streamSmoothness)
+  const streamStyle: 'agile' | 'elegant' = streamSmoothness === 'instant' ? 'agile' : 'elegant'
   const isInternalInput = msg.role === 'user' && msg.internalSource === 'runtime_input'
   const isAssistant = msg.role === 'assistant'
   const isUser = msg.role === 'user' && !isInternalInput
@@ -312,7 +319,8 @@ function MessageItemInner({
     isCurrentAssistantGenerating,
     streamingActive,
     currentGeneratingMessageId,
-    handleRenderPoolTick
+    handleRenderPoolTick,
+    streamStyle
   }
 
   const turnTree = isAssistant && turnModel ? (

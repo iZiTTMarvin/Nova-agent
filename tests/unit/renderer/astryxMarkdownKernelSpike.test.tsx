@@ -442,3 +442,67 @@ describe('spike：components.code 覆盖兼容 Nova highlightLine 路径', () =>
     tree.unmount()
   })
 })
+
+// ── 6. 数学公式与图表扩展契约（转译路线的行为依据）──────────────────
+//
+// 结论（2026-10 契约锁定）：Astryx 段落文本节点会吃掉反斜杠转义
+// （\sum → sum），LaTeX 源码不能经 prose/inlinePlugins 通路进入；
+// 行内代码与围栏代码完整保留反斜杠。因此 Nova 的公式渲染采用转译路线：
+// $$...$$ → ```math 围栏、$...$ → `$...$` 行内代码，全部走代码通路保真。
+// 本节锁定的行为一旦被 Astryx 升级破坏，公式渲染会静默失真。
+
+describe('spike：数学/图表渲染依赖的 Astryx 行为契约', () => {
+  const LATEX = '\\frac{a}{b} + \\sum_{i=1}^n i'
+
+  it('围栏代码（math/mermaid）原样保留反斜杠与内容', () => {
+    const blocks = parseMarkdown(['```math', LATEX, '```'].join('\n'))
+    const code = blocks.find(b => b.type === 'codeblock') as { language: string; content: string }
+    expect(code.language).toBe('math')
+    expect(code.content).toBe(LATEX)
+
+    const mermaid = parseMarkdown(['```mermaid', 'graph TD', '  A --> B', '```'].join('\n'))
+    const m = mermaid.find(b => b.type === 'codeblock') as { language: string; content: string }
+    expect(m.language).toBe('mermaid')
+    expect(m.content).toBe('graph TD\n  A --> B')
+  })
+
+  it('行内代码原样保留反斜杠（inlineCode 组件收到未转义源码）', () => {
+    const seen: string[] = []
+    const tree = renderDom(
+      <Markdown components={{ inlineCode: ({ children }) => <span data-probe={children} /> }}>
+        {['行内公式 `$' + LATEX + '$` 结束'].join('\n')}
+      </Markdown>
+    )
+    tree.container.querySelectorAll('[data-probe]').forEach(el => seen.push(el.getAttribute('data-probe') ?? ''))
+    tree.unmount()
+    expect(seen).toEqual(['$' + LATEX + '$'])
+  })
+
+  it('段落文本节点吃掉反斜杠（inlinePlugins 路线不可用的原因，锁定契约）', () => {
+    const blocks = parseMarkdown('公式 \\frac{a}{b} 在散文中')
+    const para = blocks[0] as { children: Array<{ type: string; content?: string }> }
+    const joined = para.children.map(c => c.content ?? '').join('')
+    expect(joined).toContain('frac{a}{b}')
+    expect(joined).not.toContain('\\frac')
+  })
+
+  it('$$ 多行块解析为单段单文本节点且保留换行（转译输入形态）', () => {
+    const doc = ['前文。', '', '$$', 'E = mc^2', '$$', '', '后文。'].join('\n')
+    const blocks = parseMarkdown(doc)
+    const mathPara = blocks[1] as { children: Array<{ type: string; content: string }> }
+    expect(mathPara.type).toBe('paragraph')
+    expect(mathPara.children[0].content).toBe('$$\nE = mc^2\n$$')
+  })
+
+  it('components.code 收到 math 围栏的 language 与完整源码（渲染层路由依据）', () => {
+    const tree = renderDom(
+      <Markdown components={{ code: ({ code, language }) => <pre data-lang={language ?? ''}>{code}</pre> }}>
+        {['```math', LATEX, '```'].join('\n')}
+      </Markdown>
+    )
+    const pre = tree.container.querySelector('pre[data-lang="math"]')
+    expect(pre).not.toBeNull()
+    expect(pre!.textContent).toBe(LATEX)
+    tree.unmount()
+  })
+})
