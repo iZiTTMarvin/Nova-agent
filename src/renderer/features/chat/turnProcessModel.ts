@@ -2,7 +2,7 @@
  * TurnProcessTree 纯函数层：分区、摘要、过程时间线。
  */
 import type { Mode } from '../../../shared/session/types'
-import { shouldRenderToolBlock } from './renderingPolicy'
+import { isPersistentToolBlock, shouldRenderToolBlock } from './renderingPolicy'
 import {
   buildBlockRenderUnits,
   buildToolCallRenderUnits,
@@ -182,7 +182,7 @@ export function normalizeThinkingForDisplay(thinking: string): string {
 
 /**
  * 将 blocks 映射为按时间线排序的 TurnTimelineSegment[]（tool 段经 buildBlockRenderUnits 聚合）。
- * 工具全部属于 process；只有 answerIndex 处的 text 是 persistent；空 text 不产生渲染单元。
+ * 工具属于 process（可视化等回合产物除外）；answerIndex 处的 text 是 persistent；空 text 不产生渲染单元。
  *
  * cache 命中时按 block 引用前缀复用已产出的段：流式 tick 只浅拷贝尾部，
  * 前缀段（含 toolGroup 的 blocks 数组）引用保持稳定，下游 React.memo 不再级联失效。
@@ -207,7 +207,7 @@ function buildTimeline(
     const units = buildBlockRenderUnits(toolRun, mode)
     for (const unit of units) {
       if (unit.kind === 'tool' || unit.kind === 'toolGroup') {
-        timeline.push({ ...unit, display: 'process' })
+        timeline.push({ ...unit, display: resolveToolDisplay(unit) })
         segmentEndBlockIndex.push(runLastBlockIndex)
       }
     }
@@ -321,6 +321,13 @@ export interface TurnBuildCache {
   segmentEndBlockIndex: number[]
 }
 
+/** 工具段的展示位置只取决于其自身 block，前缀复用不受影响 */
+function resolveToolDisplay(
+  unit: Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }>
+): TurnTimelineSegment['display'] {
+  return unit.kind === 'tool' && isPersistentToolBlock(unit.block) ? 'persistent' : 'process'
+}
+
 function resolveDurationMs(
   phase: TurnPhase,
   turnStartedAt?: number,
@@ -391,7 +398,7 @@ export function buildTurnRenderModel(
       ...buildToolCallRenderUnits(toolCalls, mode)
         .filter((unit): unit is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
           unit.kind === 'tool' || unit.kind === 'toolGroup')
-        .map(unit => ({ ...unit, display: 'process' as const })),
+        .map(unit => ({ ...unit, display: resolveToolDisplay(unit) })),
       ...(answerBlock
         ? [{ kind: 'block' as const, block: answerBlock, index: -1, display: 'persistent' as const }]
         : [])

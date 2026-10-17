@@ -42,8 +42,10 @@ import { createBrowserObserveTool } from '../../../runtime/tools/browser_observe
 import { createBrowserActTool } from '../../../runtime/tools/browser_act'
 import { createBrowserCloseTool } from '../../../runtime/tools/browser_close'
 import { createBrowserCaptureTool } from '../../../runtime/tools/browser_capture'
+import { createPresentVisualizationTool } from '../../../runtime/tools/present_visualization'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
 import type { BrowserPort } from '../../../runtime/browser'
+import type { VisualizationStore } from '../../../runtime/visualizations/VisualizationStore'
 import {
   InProcessCodeRuntime,
   getProcessToolPresentationMode,
@@ -99,6 +101,8 @@ export interface BuiltinToolRegistrationDeps {
    * 测试注册工具时不必接投影服务。
    */
   getStageFacts?: (sessionId: string) => ComposeStageFacts
+  /** 会话内可视化快照存储；缺省时 present_visualization 返回不可用。 */
+  getVisualizationStore?: () => VisualizationStore | null
 }
 
 /**
@@ -156,6 +160,11 @@ export function registerBuiltinTools(
   toolRegistry.register(historyReadTool)
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
+  toolRegistry.register(
+    createPresentVisualizationTool({
+      getStore: deps.getVisualizationStore ?? (() => null)
+    })
+  )
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
   toolRegistry.register(

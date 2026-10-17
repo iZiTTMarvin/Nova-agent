@@ -71,6 +71,8 @@ export function getToolDisplayName(toolName: string): string {
       return '查询代码上下文 (code_context)'
     case 'askQuestion':
       return '询问用户 (askQuestion)'
+    case 'present_visualization':
+      return '展示可视化 (present_visualization)'
     case 'save_plan':
       return '保存实施计划 (save_plan)'
     case 'switch_mode':
@@ -287,6 +289,10 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
       const title = typeof args.title === 'string' ? args.title : ''
       const lines = countLines(args.content)
       return title ? `正在保存计划「${title}」（${lines} 行）` : '正在保存实施计划'
+    }
+    case 'present_visualization': {
+      const title = typeof args.title === 'string' ? args.title.trim() : ''
+      return title ? `可视化「${title}」` : '展示可视化'
     }
     case 'switch_mode': {
       const mode = typeof args.mode === 'string' ? args.mode : ''

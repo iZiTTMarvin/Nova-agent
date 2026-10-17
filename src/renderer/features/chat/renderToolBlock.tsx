@@ -4,6 +4,7 @@
  * - 默认：L3 ToolTraceRow（等宽原子行，L4 按需挂载）
  * - askQuestion：消息内状态行（正在询问 / 已询问 N 题）；答题在底部 AskQuestionPanel
  * - todo_write：由右侧会话状态统一渲染，此处返回 null 避免与消息流重复
+ * - present_visualization：可视化卡片（按需加载，不占首屏体积）；失败的调用退回默认行
  */
 import React from 'react'
 import type { PendingPlanReview } from '../../../shared/planReview'
@@ -12,8 +13,13 @@ import { AskQuestionToolCard } from './AskQuestionToolCard'
 import { PlanApprovalIgnoredCard, PlanApprovalPendingRow } from './PlanApprovalCard'
 import { PlanReviewCard } from './PlanReviewCard'
 import { ToolTraceRow } from './ToolTraceRow'
+import { isPersistentToolBlock } from './renderingPolicy'
 import type { RendererToolBlock } from '../../stores/types'
 import { SubagentToolRow } from '../subagents/SubagentActivityRow'
+
+const VisualizationCard = React.lazy(() =>
+  import('../visualization/VisualizationCard').then(module => ({ default: module.VisualizationCard }))
+)
 
 export interface RenderToolBlockContext {
   messageId: string
@@ -32,6 +38,19 @@ export function renderToolBlock(
   // 待办只在会话状态区显示，不随工具历史重复。
   if (block.toolName === 'todo_write') {
     return null
+  }
+
+  if (isPersistentToolBlock(block)) {
+    return (
+      <React.Suspense key={block.toolCallId} fallback={null}>
+        <VisualizationCard
+          status={block.status}
+          title={typeof block.arguments.title === 'string' ? block.arguments.title : ''}
+          result={block.result}
+          streamedChars={block.argumentsRaw?.length}
+        />
+      </React.Suspense>
+    )
   }
 
   if (block.toolName === 'save_plan') {

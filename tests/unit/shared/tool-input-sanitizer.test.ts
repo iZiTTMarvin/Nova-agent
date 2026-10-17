@@ -49,6 +49,18 @@ describe('sanitizeToolInput', () => {
     expect(isContentSummary(result.content)).toBe(true)
   })
 
+  it('present_visualization 的大 html 被摘要化，标题保留；小 html 原样返回', () => {
+    const big = sanitizeToolInput('present_visualization', {
+      title: '架构图',
+      html: 'h'.repeat(WRITE_TOOL_INLINE_LIMIT + 1)
+    })
+    expect(big.title).toBe('架构图')
+    expect(isContentSummary(big.html)).toBe(true)
+
+    const small = { title: '小图', html: '<p>ok</p>' }
+    expect(sanitizeToolInput('present_visualization', small)).toBe(small)
+  })
+
   it('刚好等于阈值不截断', () => {
     const exactContent = 'x'.repeat(WRITE_TOOL_INLINE_LIMIT)
     const input = { path: '/foo.ts', content: exactContent }

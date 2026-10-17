@@ -1,6 +1,8 @@
 import { app, BrowserWindow, Menu, shell, dialog } from 'electron'
 // registerSchemesAsPrivileged 必须在 app.whenReady 之前调用，放模块顶层最早执行
-import { registerNovaImageScheme, registerNovaImageHandler } from './protocol/novaImageProtocol'
+import { registerPrivilegedSchemes } from './protocol/privilegedSchemes'
+import { registerNovaImageHandler } from './protocol/novaImageProtocol'
+import { bindVisualizationFramePolicy, registerNovaVizHandler } from './protocol/novaVizProtocol'
 import { registerWindowHandler, watchWindowMaximizeState } from './ipc/windowHandler'
 import { resolveAppIconPath } from './appIcon'
 import { join } from 'path'
@@ -28,6 +30,7 @@ import { shutdownMemoryMaintenanceHost } from './services/MemoryMaintenanceHost'
 import { getWorkspaceService } from './services/WorkspaceService'
 import { closeAllSessionIndexes } from '../runtime/sessions/SessionIndexHost'
 import { getSessionStore } from './services/SessionStoreHost'
+import { getVisualizationStoreFor } from './services/VisualizationStoreHost'
 import { processRegistry } from '../runtime/process'
 import { installMainLoopLagMonitor } from './diagnostics/mainLoopLagMonitor'
 import { getMainWindow, setMainWindow } from './mainWindowRef'
@@ -54,9 +57,9 @@ let renderReloadAttempts = 0
 /** 获取主窗口实例 */
 export { getMainWindow } from './mainWindowRef'
 
-// 注册 nova-image:// scheme 属性。必须在 app.whenReady 之前执行，
-// 否则 registerSchemesAsPrivileged 静默失败，<img src="nova-image://..."> 无法加载。
-registerNovaImageScheme()
+// 注册 nova-image:// 与 nova-viz:// scheme 属性。必须在 app.whenReady 之前执行，
+// 否则 registerSchemesAsPrivileged 静默失败，图片与可视化快照都无法加载。
+registerPrivilegedSchemes()
 
 // Windows 的冷启动 GPU 栅格化会等待着色器编译；CPU 栅格化仍保留 GPU 合成与 WebGL。
 if (process.platform === 'win32') {
@@ -184,6 +187,9 @@ function createMainWindow(): void {
 
   const contents = win.webContents
 
+  // 可视化快照帧只能由宿主页面挂载，帧内不得再导航
+  bindVisualizationFramePolicy(contents)
+
   // 导航安全：永不在应用内开新窗口；http(s) 外链走系统浏览器
   contents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -288,9 +294,10 @@ async function bootstrap(): Promise<void> {
   // 4.5. 注册窗口控制的 IPC 处理器；首屏就绪后再跑后台维护
   registerWindowHandler(getMainWindow, runDeferredStartupTasks)
 
-  // 4.6. 注册 nova-image:// 协议 handler（必须在 createMainWindow 之前；
+  // 4.6. 注册 nova-image:// 与 nova-viz:// 协议 handler（必须在 createMainWindow 之前；
   //      scheme 属性已在模块顶层通过 registerSchemesAsPrivileged 注册）
   registerNovaImageHandler(imageStore)
+  registerNovaVizHandler(getVisualizationStoreFor(getSessionStore().getSessionsDir()))
 
   // 5. 创建渲染视窗，内容帧完成后显示窗口。
   createMainWindow()

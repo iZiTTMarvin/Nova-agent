@@ -75,6 +75,7 @@ import { createComposeStageFactsProvider } from './composeStageWiring'
 import { resolveSessionAgentBinding } from './sessionAgentBinding/resolveSessionAgentBinding'
 import { assertLearningModuleAvailable } from './learningModuleGate'
 import { getSubagentProjectionService } from '../../services/SubagentProjectionServiceHost'
+import { getVisualizationStoreFor } from '../../services/VisualizationStoreHost'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
 import {
@@ -262,6 +263,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     codeIndexEnabled: session.codeIndexEnabled === true,
     getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null),
     getBrowserPort: () => getBrowserSessionHost(),
+    getVisualizationStore: () => getVisualizationStoreFor(sessionsDir),
     saveBrowserCaptureEvidence: async ({ sessionId, mimeType, base64 }) => {
       try {
         return getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`).filePath

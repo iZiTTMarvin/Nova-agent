@@ -38,3 +38,11 @@ export function shouldRenderToolBlock(mode: Mode, toolName: string): boolean {
   }
   return !isModeHiddenWriteTool(mode, toolName)
 }
+
+/**
+ * 可视化是回合产物而非工作过程：生成中与展示后都留在折叠区外；
+ * 失败的调用（校验拒绝、取消）没有产物，退回普通轨迹行。
+ */
+export function isPersistentToolBlock(block: { toolName: string; status: string }): boolean {
+  return block.toolName === 'present_visualization' && block.status !== 'error'
+}

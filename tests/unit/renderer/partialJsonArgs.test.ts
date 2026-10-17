@@ -146,6 +146,11 @@ describe('parsePartialToolArgs', () => {
     expect(result).toEqual({ command: 'npm' })
   })
 
+  it('present_visualization 只提取标题，不解析 html', () => {
+    expect(parsePartialToolArgs('present_visualization', '{"title":"架构","html":"<div class=\\"a')).toEqual({ title: '架构' })
+    expect(parsePartialToolArgs('present_visualization', '{"html":"<div>')).toEqual({})
+  })
+
   it('未识别工具返回空对象', () => {
     const result = parsePartialToolArgs('read', '{"path":"a.ts"}')
     expect(result).toEqual({})

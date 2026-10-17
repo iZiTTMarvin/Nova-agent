@@ -119,6 +119,12 @@ export function parsePartialToolArgs(toolName: string, raw: string): Record<stri
       if (command !== undefined) args.command = command
       break
     }
+    // 流式期间只需标题；html 可达数 MB，逐帧反转义没有展示价值
+    case 'present_visualization': {
+      const title = extractPartialString(raw, 'title')
+      if (title !== undefined) args.title = title
+      break
+    }
     default:
       break
   }

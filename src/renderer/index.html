@@ -14,7 +14,6 @@
             ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
             : (saved === 'dark' ? 'dark' : 'light');
           document.documentElement.setAttribute('data-theme', resolved);
-          document.documentElement.style.colorScheme = resolved;
         } catch (_) {}
       })();
     </script>

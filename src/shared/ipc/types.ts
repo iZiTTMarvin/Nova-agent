@@ -64,6 +64,7 @@ import type {
   PermissionDeleteParams
 } from '../permissions/types'
 import type { AskQuestionItem, AskQuestionAnswer } from '../askQuestion/types'
+import type { VisualizationTheme } from '../visualization'
 import type {
   GitStatusSummary,
   GitBranchListResult,
@@ -348,6 +349,14 @@ export interface IpcCommands {
     params: { sessionId: string; target: 'clipboard' | 'file' }
     result:
       | { status: 'copied' }
+      | { status: 'saved'; filePath: string }
+      | { status: 'cancelled' }
+      | { status: 'failed'; error: string }
+  }
+  'visualization:export': {
+    /** theme 为导出时宿主正在使用的主题投影：独立打开的文件保持所见即所得 */
+    params: { uri: string; title: string; theme: VisualizationTheme }
+    result:
       | { status: 'saved'; filePath: string }
       | { status: 'cancelled' }
       | { status: 'failed'; error: string }

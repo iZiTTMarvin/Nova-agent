@@ -79,6 +79,8 @@ export function getToolTraceAction(toolName: string): string {
       return 'Todos'
     case 'askQuestion':
       return 'Asked'
+    case 'present_visualization':
+      return 'Visualized'
     case 'save_plan':
       return 'Planned'
     case 'switch_mode':
@@ -305,6 +307,10 @@ export function getToolTraceTarget(
       const mode = typeof args.mode === 'string' ? args.mode : ''
       return mode ? truncateTarget(mode) : 'mode'
     }
+    case 'present_visualization': {
+      const title = typeof args.title === 'string' ? args.title.trim() : ''
+      return title ? truncateTarget(title) : 'visual'
+    }
     case 'run_code': {
       const description = typeof args.description === 'string' ? args.description : ''
       return description ? truncateTarget(description) : 'with code'
@@ -420,6 +426,8 @@ export function getToolTraceActionChinese(toolName: string): string {
       return '已更新待办'
     case 'askQuestion':
       return '已提问'
+    case 'present_visualization':
+      return '可视化'
     case 'save_plan':
       return '已保存计划'
     case 'switch_mode':

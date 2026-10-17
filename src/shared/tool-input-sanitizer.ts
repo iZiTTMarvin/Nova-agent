@@ -113,6 +113,7 @@ export function isContentSummary(value: unknown): value is ContentSummary {
  * - write：input.content 超过 4KB → 替换为摘要对象
  * - edit（新 schema）：input.edits[].newText 超过 2KB → 逐项替换
  * - edit（旧 schema）：input.new_string 超过 2KB → 替换为摘要对象
+ * - present_visualization：input.html 超过 4KB → 替换为摘要对象（卡片按快照地址加载，不读参数）
  * - 其他工具：原样返回
  */
 export function sanitizeToolInput(
@@ -120,6 +121,14 @@ export function sanitizeToolInput(
   input: Record<string, unknown>
 ): Record<string, unknown> {
   if (!input || typeof input !== 'object') return input
+
+  if (toolName === 'present_visualization') {
+    const html = input.html
+    if (typeof html === 'string' && html.length > WRITE_TOOL_INLINE_LIMIT) {
+      return { ...input, html: summarizeLargeText(html, WRITE_TOOL_PREVIEW_CHARS - PREVIEW_TAIL_CHARS) }
+    }
+    return input
+  }
 
   if (toolName === 'write' || toolName === 'save_plan') {
     const content = input.content

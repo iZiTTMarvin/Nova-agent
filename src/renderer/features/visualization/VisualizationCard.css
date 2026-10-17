@@ -1,0 +1,186 @@
+.visualization-card {
+  margin: 12px 0 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-warm) 84%, var(--text-muted));
+  border-radius: 14px;
+  background: var(--bg-card);
+}
+
+.visualization-card__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 4px 6px 4px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.visualization-card__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--color-brand);
+}
+
+.visualization-card__title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualization-card__notice {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+}
+
+.visualization-card__actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.visualization-card__toggle--on {
+  color: var(--color-brand);
+}
+
+.visualization-card__viewport {
+  position: relative;
+}
+
+/* 握手前保持透明：避免 about:blank 白底与未上主题的首帧闪烁 */
+.visualization-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  opacity: 0;
+}
+
+.visualization-frame--ready {
+  opacity: 1;
+  transition: opacity 120ms ease-out;
+}
+
+.visualization-card__loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.visualization-card__spinner {
+  animation: visualization-spin 0.9s linear infinite;
+}
+
+.visualization-card__placeholder {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* 只动 transform：生成可能持续数十秒，光带不应逐帧重绘 */
+.visualization-card__placeholder--live::before {
+  position: absolute;
+  inset: 0;
+  content: '';
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--text-primary) 5%, transparent) 50%,
+    transparent 70%
+  );
+  transform: translateX(-100%);
+  animation: visualization-shimmer 1.6s ease-in-out infinite;
+}
+
+.visualization-card__meta {
+  position: relative;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.visualization-card__state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.visualization-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--nova-status-error);
+  font-size: 0.8rem;
+}
+
+.visualization-card__error {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualization-dialog__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.visualization-dialog__title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualization-dialog__body {
+  overflow: auto;
+  background: var(--bg-card);
+}
+
+@keyframes visualization-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes visualization-shimmer {
+  to { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .visualization-frame--ready {
+    transition: none;
+  }
+
+  .visualization-card__spinner,
+  .visualization-card__placeholder--live::before {
+    animation: none;
+  }
+}

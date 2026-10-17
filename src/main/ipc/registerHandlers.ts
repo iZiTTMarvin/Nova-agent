@@ -21,6 +21,7 @@ import { registerFsHandler } from './fsHandler'
 import { registerBrowserHandler } from './browserHandler'
 import { initBrowserSessionHost, getBrowserSessionHost } from '../browser'
 import { registerImageHandler } from './imageHandler'
+import { registerVisualizationHandler } from './visualizationHandler'
 import { registerRunHandler } from './runHandler'
 import { registerCodeIndexHandler } from './codeIndexHandler'
 import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
@@ -49,6 +50,7 @@ import {
   isMemoryExtractEnabled
 } from '../services/MemoryExtractHost'
 import { getSessionStore } from '../services/SessionStoreHost'
+import { getVisualizationStoreFor } from '../services/VisualizationStoreHost'
 import { alignSkillsToWorkspace } from '../services/SkillServiceHost'
 import { recoverInterruptedTurnDraftsOnStartup } from '../../runtime/sessions/turnDraftRecovery'
 import { settleSubagentToolCall } from '../../runtime/subagents/toolSettlement'
@@ -224,6 +226,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。
   const imageStore = new ImageStore(join(app.getPath('userData'), 'sessions'))
   registerImageHandler(() => imageStore)
+  registerVisualizationHandler(() => getVisualizationStoreFor(getSessionStore().getSessionsDir()))
 
   return imageStore
 }

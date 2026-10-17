@@ -44,6 +44,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   stage_transition: { effects: ['session.write'], pathScope: 'none' },
   inspection_report: { effects: ['session.write'], pathScope: 'none' },
   askQuestion: { effects: ['session.write'], pathScope: 'none' },
+  present_visualization: { effects: ['session.write'], pathScope: 'none' },
   load_tools: { effects: ['session.write'], pathScope: 'none' },
   save_plan: {
     effects: ['filesystem.write'],

@@ -153,6 +153,34 @@ describe('buildTurnRenderModel', () => {
     expect(displays(model)).toEqual(['process', 'process', 'process', 'persistent'])
   })
 
+  it('可视化是回合产物：生成中与展示后都外露，失败的调用退回过程轨迹', () => {
+    const blocks: RendererMessageBlock[] = [
+      { type: 'text', content: '先看结构' },
+      toolBlock('v1', 'present_visualization', { title: '架构' }),
+      { ...toolBlock('v2', 'present_visualization', { title: '被拒' }), status: 'error' },
+      { ...toolBlock('v3', 'present_visualization', { title: '生成中' }), status: 'running' }
+    ]
+    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
+    expect(model.timeline.map(s => [s.kind === 'tool' ? s.block.toolCallId : s.kind, s.display])).toEqual([
+      ['block', 'process'],
+      ['v1', 'persistent'],
+      ['v2', 'process'],
+      ['v3', 'persistent']
+    ])
+    // 可视化本身就是结论，不再补“无结论”占位
+    expect(model.missingAnswer).toBe(false)
+  })
+
+  it('可视化后的文字仍是答案，可视化卡片不进入折叠区', () => {
+    const blocks: RendererMessageBlock[] = [
+      toolBlock('1', 'read', { path: 'a.ts' }),
+      toolBlock('v1', 'present_visualization', { title: '架构' }),
+      { type: 'text', content: '图中红色是热点' }
+    ]
+    const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
+    expect(displays(model)).toEqual(['process', 'persistent', 'persistent'])
+  })
+
   it('连续 read×3 → 过程时间线含 toolGroup', () => {
     const blocks: RendererMessageBlock[] = [
       toolBlock('1', 'read', { path: 'a.ts' }),
@@ -349,6 +377,20 @@ describe('buildTurnRenderModel 增量缓存', () => {
     const incremental = build(blocks2, cache)
     const full = build(blocks2)
     expect(incremental.timeline).toEqual(full.timeline)
+  })
+
+  it('可视化生成失败后归入过程：增量结果与全量一致', () => {
+    const blocks1: RendererMessageBlock[] = [
+      { type: 'thinking', content: '思考' },
+      { ...toolBlock('v1', 'present_visualization'), status: 'running' }
+    ]
+    const cache = freshCache()
+    expect(displays(build(blocks1, cache))).toEqual(['process', 'persistent'])
+
+    const blocks2: RendererMessageBlock[] = [blocks1[0], { ...toolBlock('v1', 'present_visualization'), status: 'error' }]
+    const incremental = build(blocks2, cache)
+    expect(incremental.timeline).toEqual(build(blocks2).timeline)
+    expect(displays(incremental)).toEqual(['process', 'process'])
   })
 
   it('新增 save_plan 使前缀计划卡隐藏：增量必须与全量一致（不残留旧段）', () => {

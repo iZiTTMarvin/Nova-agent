@@ -232,6 +232,16 @@ export const RestoreIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   </svg>
 )
 
+/** 展开图标 - 放大查看 */
+export const ExpandIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <path d="M15 3h6v6" />
+    <path d="M9 21H3v-6" />
+    <path d="m21 3-7 7" />
+    <path d="m3 21 7-7" />
+  </svg>
+)
+
 /** 加载旋转图标 — 流式写入卡片 running 状态 */
 export const SpinnerIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" {...props}>
