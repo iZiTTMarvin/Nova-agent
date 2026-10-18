@@ -192,12 +192,15 @@ export function registerSessionHandler(): void {
     }
     hydrateSessionWhitelistFromSession(display.session)
     getWorkspaceService().scheduleContextBreakdown(params.sessionId)
-    return toSessionDetail(display.session, {
-      isDraft: sessionStore.isDraft(params.sessionId),
-      displayPage: true,
-      hasMore: display.hasMore,
-      subagentTask: display.subagentTask
-    })
+    return {
+      ...toSessionDetail(display.session, {
+        isDraft: sessionStore.isDraft(params.sessionId),
+        displayPage: true,
+        hasMore: display.hasMore,
+        subagentTask: display.subagentTask
+      }),
+      usage: sessionStore.loadUsage(params.sessionId)
+    }
   })
 
   // 按游标加载更早的消息页（只读，不触发会话切换副作用）

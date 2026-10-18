@@ -58,7 +58,7 @@ function App(): React.ReactNode {
   const loadTheme = useSettingsStore(state => state.loadTheme)
   const loadStreamSmoothness = useSettingsStore(state => state.loadStreamSmoothness)
   const theme = useSettingsStore(state => state.theme)
-  const handleUsage = useSettingsStore(state => state.handleUsage)
+  const applySessionUsage = useSettingsStore(state => state.applySessionUsage)
   const setContextBreakdown = useSettingsStore(state => state.setContextBreakdown)
 
   // chat：低频最终事件 action（不走 buffer）
@@ -246,10 +246,10 @@ function App(): React.ReactNode {
       })
     }))
 
-    // 监听：Token 用量统计（按实际 provider 的 cacheProfileId 分桶）
-    const unsubUsage = window.api.on('agent:usage', gateAgentEvent('usage', (data) => {
-      handleUsage(data.usage, data.cacheProfileId)
-    }))
+    // 会话用量使用权威累计快照，不依赖消息是否仍在前台生成。
+    const unsubUsage = window.api.on('agent:usage', (data) => {
+      applySessionUsage(data.snapshot)
+    })
 
     // 监听：缓存前缀诊断（展示在 ContextIndicator hover）
     const unsubCacheDiagnostic = window.api.on('agent:cache-diagnostic', gateAgentEvent('cache-diagnostic', (data) => {
@@ -337,7 +337,7 @@ function App(): React.ReactNode {
     applyComposeStageUpdate,
     applyComposePlanApprovalUpdate,
     handleMessageEnd,
-    handleUsage,
+    applySessionUsage,
     setContextBreakdown
   ])
 

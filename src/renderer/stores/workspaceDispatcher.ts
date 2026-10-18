@@ -62,7 +62,7 @@ export function dispatchWorkspaceChange(state: WorkspaceState): void {
   // snapshot-first 恢复由 chat store 的单一 hydration 流程完成，避免重复拉取与顺序竞争。
   if (sessionChanged) {
     useAgentStore.getState().resetAgentRuntime()
-    useSettingsStore.getState().resetSessionUsage()
+    useSettingsStore.getState().resetSessionUsage(state.currentSessionId)
     lastDispatchedSessionId = state.currentSessionId
   }
 }

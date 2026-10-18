@@ -23,6 +23,7 @@ export type FakeTurn =
       kind: 'hold'
       id: string
       text: string
+      usage?: JsonObject
     }
   | {
       kind: 'error'
@@ -360,7 +361,7 @@ export class FakeRuntime {
         this.holds.delete(turn.id)
         if (res.destroyed) return
         writeSse(res, contentChunk(turn.text))
-        writeSse(res, finishChunk())
+        writeSse(res, { ...finishChunk(), ...(turn.usage ? { usage: turn.usage } : {}) })
         writeSse(res, '[DONE]')
         finished = true
         res.end()

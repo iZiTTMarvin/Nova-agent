@@ -11,7 +11,7 @@ import type {
   MessageDiffsState,
   SessionMessageDiffsState
 } from '../diff'
-import type { ChatRequestPurpose, NormalizedUsage } from '../model/types'
+import type { ChatRequestPurpose } from '../model/types'
 import type { HookEvent } from '../agent/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
@@ -937,9 +937,7 @@ export interface IpcEvents {
   }
   'agent:usage': {
     messageId: string
-    usage: NormalizedUsage
-    /** 实际产出 usage 的 provider 档案 id（fallback 后归属新 provider） */
-    cacheProfileId: string
+    snapshot: import('../session/usage').SessionUsageSnapshot
   }
   'agent:cache-diagnostic': {
     messageId: string

@@ -236,6 +236,8 @@ export type Session = PrimarySession | SubagentSession
 
 /** 会话详情（含完整消息列表，用于加载历史对话） */
 export type SessionDetail = Session & {
+  /** 累计用量独立于消息分页恢复；旧会话可能没有记录。 */
+  usage?: import('./usage').SessionUsageSnapshot | null
   contextBreakdown?: import('../agent/contextBreakdown').ContextBreakdown
   messages: Message[]
   /** 当前会话直接拥有的 Child Session 投影，可由 durable owners 重新构建。 */

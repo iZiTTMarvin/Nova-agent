@@ -10,8 +10,8 @@ import {
   createEmptyRegistry
 } from '../../shared/config/llmRegistry'
 import { resolveContextWindow } from '../../shared/config/types'
-import type { ChatRequestPurpose, NormalizedUsage } from '../../shared/model/types'
-import { computeCacheHitRate, EMPTY_CACHE_COUNT_COVERAGE, addCacheCountCoverage, cacheCountCoverageBucket, mergeCacheCountCoverage } from '../../shared/model/types'
+import type { ChatRequestPurpose } from '../../shared/model/types'
+import { projectSessionUsage, type SessionUsageSnapshot } from '../../shared/session/usage'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 import type { SessionUsageStats } from './types'
 
@@ -32,11 +32,10 @@ export interface SettingsState {
   theme: SettingsTheme
   /** 流式输出节奏（smooth=打字机平滑 / instant=即时显示），持久化设置的 renderer 投影 */
   streamSmoothness: StreamSmoothness
-  /**
-   * 全部分桶合计（兼容旧 UI / 测试）。
-   * 有数据时非 null；reset 后清空。
-   */
+  /** 当前会话的只读用量投影；切换后由持久化快照恢复。 */
   sessionUsage: SessionUsageStats | null
+  sessionUsageSessionId: string | null
+  sessionUsageRevision: number
   /** 按 cacheProfileId 分桶的会话用量；fallback 后进新桶 */
   sessionUsageByProfile: Record<string, SessionUsageStats>
   contextBreakdown: ContextBreakdown | null
@@ -73,12 +72,8 @@ export interface SettingsState {
   openCustomizeSettings: (initialTab?: 'skills' | 'rules') => void
   selectProject: () => Promise<void>
   setMode: (mode: Mode) => Promise<void>
-  /**
-   * 累计本轮 usage。
-   * @param cacheProfileId 实际 provider 档案；缺省时归入 'unknown'（兼容旧测试调用）
-   */
-  handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => void
-  resetSessionUsage: () => void
+  applySessionUsage: (snapshot: SessionUsageSnapshot) => void
+  resetSessionUsage: (sessionId?: string | null) => void
   setContextBreakdown: (payload: ContextBreakdown) => void
   setCacheDiagnostic: (diagnostic: CacheDiagnosticUi | null) => void
   syncFromWorkspace: (project: string | null, mode: Mode) => void
@@ -99,120 +94,6 @@ export interface CacheDiagnosticUi {
   actualCacheReadTokens?: number
   /** 请求用途标记（压缩摘要等受控内部调用）；主对话为 undefined */
   purpose?: ChatRequestPurpose
-}
-
-const EMPTY_USAGE: SessionUsageStats = {
-  cacheCountCoverage: EMPTY_CACHE_COUNT_COVERAGE,
-  totalUncachedInputTokens: 0,
-  totalCacheReadTokens: 0,
-  totalCacheWriteTokens: 0,
-  totalOutputTokens: 0,
-  totalPromptTokens: 0,
-  totalCompletionTokens: 0,
-  totalCachedTokens: 0,
-  hitRate: 0,
-  lastRoundHitRate: 0,
-  estimatedSavedInputTokens: 0
-}
-
-/** 无 profileId 时的兜底桶名（旧测试 / 未接线路径） */
-const UNKNOWN_PROFILE_BUCKET = 'unknown'
-
-/** 把单轮 usage 累加进已有 SessionUsageStats（单一命中率公式） */
-function accumulateUsage(prev: SessionUsageStats, usage: NormalizedUsage): SessionUsageStats {
-  const cacheRead = usage.cacheReadTokens ?? usage.cachedTokens ?? 0
-  const cacheWrite = usage.cacheWriteTokens ?? 0
-  const output = usage.outputTokens ?? usage.completionTokens ?? 0
-  const uncached =
-    usage.uncachedInputTokens ??
-    (usage.cacheMissTokens !== undefined
-      ? usage.cacheMissTokens
-      : Math.max(0, (usage.promptTokens ?? 0) - cacheRead))
-
-  const totalUncached = prev.totalUncachedInputTokens + uncached
-  const totalCacheRead = prev.totalCacheReadTokens + cacheRead
-  const totalCacheWrite = prev.totalCacheWriteTokens + cacheWrite
-  const totalOutput = prev.totalOutputTokens + output
-
-  const lastRoundHitRate = computeCacheHitRate({
-    uncachedInputTokens: uncached,
-    cacheReadTokens: cacheRead,
-    cacheWriteTokens: cacheWrite
-  })
-  const hitRate = computeCacheHitRate({
-    uncachedInputTokens: totalUncached,
-    cacheReadTokens: totalCacheRead,
-    cacheWriteTokens: totalCacheWrite
-  })
-
-  const hasMissThisRound = usage.cacheMissTokens !== undefined
-  const totalMiss = hasMissThisRound
-    ? (prev.totalCacheMissTokens ?? 0) + usage.cacheMissTokens!
-    : prev.totalCacheMissTokens
-
-  const next: SessionUsageStats = {
-    cacheCountCoverage: addCacheCountCoverage(prev.cacheCountCoverage, cacheCountCoverageBucket(usage)),
-    totalUncachedInputTokens: totalUncached,
-    totalCacheReadTokens: totalCacheRead,
-    totalCacheWriteTokens: totalCacheWrite,
-    totalOutputTokens: totalOutput,
-    totalPromptTokens: totalUncached + totalCacheRead,
-    totalCompletionTokens: totalOutput,
-    totalCachedTokens: totalCacheRead,
-    hitRate,
-    lastRoundHitRate,
-    estimatedSavedInputTokens: totalCacheRead
-  }
-  if (totalMiss !== undefined) {
-    next.totalCacheMissTokens = totalMiss
-  }
-  return next
-}
-
-/** 多分桶合计，供兼容 sessionUsage 与 compact 摘要 */
-function aggregateUsageBuckets(buckets: Record<string, SessionUsageStats>): SessionUsageStats | null {
-  const values = Object.values(buckets)
-  if (values.length === 0) return null
-
-  let totalUncached = 0
-  let totalCacheRead = 0
-  let totalCacheWrite = 0
-  let totalOutput = 0
-  let totalMiss: number | undefined
-  let lastRoundHitRate = 0
-
-  for (const b of values) {
-    totalUncached += b.totalUncachedInputTokens
-    totalCacheRead += b.totalCacheReadTokens
-    totalCacheWrite += b.totalCacheWriteTokens
-    totalOutput += b.totalOutputTokens
-    lastRoundHitRate = b.lastRoundHitRate
-    if (b.totalCacheMissTokens !== undefined) {
-      totalMiss = (totalMiss ?? 0) + b.totalCacheMissTokens
-    }
-  }
-
-  const next: SessionUsageStats = {
-    cacheCountCoverage: values.reduce((sum, b) => mergeCacheCountCoverage(sum, b.cacheCountCoverage), EMPTY_CACHE_COUNT_COVERAGE),
-    totalUncachedInputTokens: totalUncached,
-    totalCacheReadTokens: totalCacheRead,
-    totalCacheWriteTokens: totalCacheWrite,
-    totalOutputTokens: totalOutput,
-    totalPromptTokens: totalUncached + totalCacheRead,
-    totalCompletionTokens: totalOutput,
-    totalCachedTokens: totalCacheRead,
-    hitRate: computeCacheHitRate({
-      uncachedInputTokens: totalUncached,
-      cacheReadTokens: totalCacheRead,
-      cacheWriteTokens: totalCacheWrite
-    }),
-    lastRoundHitRate,
-    estimatedSavedInputTokens: totalCacheRead
-  }
-  if (totalMiss !== undefined) {
-    next.totalCacheMissTokens = totalMiss
-  }
-  return next
 }
 
 import type { ContextBreakdown } from '../../shared/agent/contextBreakdown'
@@ -249,6 +130,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ? 'instant'
       : 'smooth',
   sessionUsage: null,
+  sessionUsageSessionId: null,
+  sessionUsageRevision: 0,
   sessionUsageByProfile: {},
   contextBreakdown: null,
   lastCacheDiagnostic: null,
@@ -414,26 +297,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await useWorkspaceStore.getState().setMode(mode)
   },
 
-  handleUsage: (usage: NormalizedUsage, cacheProfileId?: string) => {
-    const bucketId = cacheProfileId && cacheProfileId.length > 0
-      ? cacheProfileId
-      : UNKNOWN_PROFILE_BUCKET
+  applySessionUsage: (snapshot) => {
     set(state => {
-      const prevBucket = state.sessionUsageByProfile[bucketId] ?? EMPTY_USAGE
-      const nextBucket = accumulateUsage(prevBucket, usage)
-      const sessionUsageByProfile = {
-        ...state.sessionUsageByProfile,
-        [bucketId]: nextBucket
-      }
-      return {
-        sessionUsageByProfile,
-        sessionUsage: aggregateUsageBuckets(sessionUsageByProfile)
-      }
+      if (snapshot.sessionId !== state.sessionUsageSessionId || snapshot.revision <= state.sessionUsageRevision) return state
+      return { ...projectSessionUsage(snapshot), sessionUsageRevision: snapshot.revision }
     })
   },
 
-  resetSessionUsage: () => {
-    set({ sessionUsage: null, sessionUsageByProfile: {}, lastCacheDiagnostic: null })
+  resetSessionUsage: (sessionId = null) => {
+    set({ sessionUsageSessionId: sessionId, sessionUsageRevision: 0,
+      sessionUsage: null, sessionUsageByProfile: {}, lastCacheDiagnostic: null })
   },
 
   setContextBreakdown: (payload) => {
@@ -475,6 +348,8 @@ export function resetSettingsStoreForTests(): void {
     currentMode: 'default',
     theme: 'system',
     sessionUsage: null,
+    sessionUsageSessionId: null,
+    sessionUsageRevision: 0,
     sessionUsageByProfile: {},
     contextBreakdown: null,
     lastCacheDiagnostic: null,

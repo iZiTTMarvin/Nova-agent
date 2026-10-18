@@ -1,3 +1,5 @@
+import { appendSessionUsage, decodeSessionUsage, type SessionUsageSnapshot } from '../../shared/session/usage'
+import type { NormalizedUsage } from '../../shared/model/types'
 import { parseRequestBudgetAnchor, type RequestBudgetAnchor } from '../model/requestBudget'
 import { parseStructuredHandoff, renderStructuredHandoff } from './handoffState'
 import { classifyLedgerRestore, durableCompactionPrefixLength } from './ledgerValidation'
@@ -1946,6 +1948,26 @@ export class SessionStore {
     }
 
     return data.messageCount
+  }
+
+  /** 用量是会话级事实，独立于消息分页和当前分支；没有旧文件时保持未知。 */
+  loadUsage(sessionId: string): SessionUsageSnapshot | null {
+    const file = path.join(this.resolveSessionDir(sessionId), 'usage.json')
+    try {
+      return decodeSessionUsage(JSON.parse(fs.readFileSync(file, 'utf8')), sessionId)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return null
+      throw error
+    }
+  }
+
+  /** 先原子提交再发布快照；失败不会用内存值冒充已保存的数据。 */
+  recordUsage(sessionId: string, usage: NormalizedUsage, cacheProfileId: string): SessionUsageSnapshot {
+    const dir = this.resolveSessionDir(sessionId)
+    if (!fs.existsSync(path.join(dir, SESSION_DATA_FILE))) throw new Error('Session usage requires a persisted session')
+    const next = decodeSessionUsage(appendSessionUsage(this.loadUsage(sessionId), sessionId, usage, cacheProfileId), sessionId)
+    atomicWriteFileSync(path.join(dir, 'usage.json'), JSON.stringify(next), 'utf8')
+    return next
   }
 
   /** 写入压缩账本（派生缓存，独立于 session.json，不复制消息正文） */

@@ -1,3 +1,4 @@
+import type { SessionUsageSnapshot } from '../../../shared/session/usage'
 import type { BrowserWindow } from 'electron'
 import type { AgentEvent, RecoveryState } from '../../../runtime/agent'
 import type { RendererRecoveryState } from '../../../shared/ipc/types'
@@ -30,7 +31,8 @@ function toRendererRecoveryState(state: RecoveryState): RendererRecoveryState {
 /** 将 AgentEvent 映射到 IPC 事件 channel 并推送到 renderer */
 export function forwardEventToRenderer(
   mainWindow: BrowserWindow | null,
-  event: AgentEvent
+  event: AgentEvent,
+  sessionUsage?: SessionUsageSnapshot
 ): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
 
@@ -152,10 +154,10 @@ export function forwardEventToRenderer(
       })
       break
     case 'usage':
+      if (!sessionUsage) throw new Error('Usage must be persisted before publication')
       webContents.send('agent:usage', {
         messageId: event.messageId,
-        usage: event.usage,
-        cacheProfileId: event.cacheProfileId,
+        snapshot: sessionUsage,
         sessionId: event.sessionId
       })
       break

@@ -1068,7 +1068,10 @@ function forwardAgentEvent(
   context.stallMark?.(event.type)
   stampSessionId(event, context.sessionId)
   if (context.parentSessionId) stampParentSessionId(event, context.parentSessionId)
-  forwardEventToRenderer(context.getMainWindow(), event)
+  const sessionUsage = event.type === 'usage'
+    ? getSessionStore().recordUsage(context.sessionId, event.usage, event.cacheProfileId)
+    : undefined
+  forwardEventToRenderer(context.getMainWindow(), event, sessionUsage)
   accumulateStreamEvent(context.sessionId, event, {
     mode: context.mode,
     permissionMode: context.permissionMode,

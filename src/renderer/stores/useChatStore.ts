@@ -10,6 +10,7 @@ export type { ChatState, StreamDelta, StreamDeltaBatch } from './chat/types'
 /** 公共入口保持稳定；具体状态与 action 由 chat/ 下的 owner slice 组装。 */
 export const useChatStore = createChatStore({
   onSessionDetailHydrated: (detail) => {
+    if (detail.usage) useSettingsStore.getState().applySessionUsage(detail.usage)
     if (detail.contextBreakdown) useSettingsStore.getState().setContextBreakdown(detail.contextBreakdown)
     useSubagentProjectionStore.getState().hydrateSessionDetail(detail)
     // compose 阶段表随详情水合：磁盘是事实源（转换先落盘后推送）；
