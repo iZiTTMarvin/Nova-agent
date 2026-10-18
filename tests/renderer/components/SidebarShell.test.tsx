@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import React from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Sidebar } from '../../../src/renderer/components/Sidebar'
 import {
   resetLayoutStoreForTests,
@@ -49,7 +49,11 @@ describe('Sidebar 折叠壳', () => {
     resetAgentStoreForTests()
   })
 
-  it('展开时壳宽等于 sidebarWidth；折叠时壳宽瞬时为 0 且内容 transform 滑出', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('展开时壳宽等于 sidebarWidth；折叠时壳宽收为 0 且内容 transform 滑出', () => {
     const renderer = renderDom(<Sidebar />)
     const shell = renderer.container.querySelector<HTMLElement>('.sidebar-shell')
     const inner = renderer.container.querySelector<HTMLElement>('.sidebar-shell__inner')
@@ -87,23 +91,37 @@ describe('Sidebar 折叠壳', () => {
     renderer.unmount()
   })
 
-  it('拖拽期间宽度直写 DOM，不触发 store；松手一次性提交', () => {
+  it('拖拽期间壳与内层宽度按帧合并实时写 DOM，不触发 store；松手一次性提交', () => {
+    const queue = new Map<number, FrameRequestCallback>()
+    let nextId = 1
+    vi.stubGlobal('requestAnimationFrame', vi.fn((cb: FrameRequestCallback) => {
+      const id = nextId++
+      queue.set(id, cb)
+      return id
+    }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn((id: number) => queue.delete(id)))
+
     const renderer = renderDom(<Sidebar />)
     const shell = renderer.container.querySelector<HTMLElement>('.sidebar-shell')
+    const inner = renderer.container.querySelector<HTMLElement>('.sidebar-shell__inner')
     const handle = shell?.querySelector<HTMLElement>('.sidebar-shell__resize-handle')
     expect(shell).not.toBeNull()
+    expect(inner).not.toBeNull()
     expect(handle).not.toBeNull()
 
     // 开始拖拽（mousedown 在 handle 上）
     act(() => {
       handle!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: 300 }))
     })
-    // 拖拽中：直接改 DOM 宽度
+    // 拖拽中：经 rAF 合帧直接同步改壳与内层 DOM 宽度
     act(() => {
       window.dispatchEvent(new MouseEvent('mousemove', { clientX: 340 }))
+      for (const cb of [...queue.values()]) cb(0)
+      queue.clear()
     })
-    // 拖拽期间：不写 store
+    // 拖拽期间：不写 store，但壳与内层均实时跟随
     expect(shell!.style.width).toBe('304px')
+    expect(inner!.style.width).toBe('304px')
     expect(useLayoutStore.getState().sidebarWidth).toBe(264)
 
     // 松手：提交一次到 store

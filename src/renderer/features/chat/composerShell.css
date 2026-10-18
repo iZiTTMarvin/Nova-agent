@@ -114,18 +114,20 @@
 }
 
 .chat-panel__composer-inner {
+  --status-shift: min(
+    max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+    max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+  );
   position: relative;
   width: 100%;
-  max-width: min(var(--chat-content-max-width), calc(100% - var(--status-clearance, 0px)));
-  margin-left: auto;
-  margin-right: max(calc((100% - min(100%, var(--chat-content-max-width))) / 2), var(--status-clearance, 0px));
+  max-width: var(--chat-content-max-width);
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   pointer-events: none;
-  transition:
-    margin-right var(--transition-normal),
-    max-width var(--transition-normal);
+  transform: translate3d(calc(-1 * var(--status-shift, 0px)), 0, 0);
+  container: chat-composer / inline-size;
 }
 
 .composer-notice-banner {

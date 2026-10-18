@@ -50,14 +50,6 @@ export function BrowserWorkspaceBody(props: {
       </div>
       <InspectorPanel
         onRequestSupplement={() => chatPanelRef.current?.requestSupplement()}
-        onDragSessionChange={(active) => {
-          if (active) chatPanelRef.current?.freezeReadingWidth()
-          else chatPanelRef.current?.restoreReadingWidth()
-        }}
-        onSlideChange={(mainWidthDelta) => {
-          if (mainWidthDelta === null) chatPanelRef.current?.restoreReadingWidth()
-          else chatPanelRef.current?.freezeReadingWidth(mainWidthDelta)
-        }}
       />
     </div>
   )

@@ -112,6 +112,64 @@ test('统一状态：独立右侧、双主题、轮次审阅回退与侧栏互�
   await expect(nova.page.locator(capsule).locator('.status-sprite__drawing')).toHaveCSS('animation-name', 'none')
   await nova.page.emulateMedia({ reducedMotion: 'no-preference' })
 
+  await nova.page.setViewportSize({ width: 1120, height: 800 })
+  // 缩窄窗口后触发胶囊收起/展开动画：采样整个过渡帧，验证阅读列横向平移时自身宽度零变化（文字不上下跳动重排）
+  const shiftMotion = await nova.page.evaluate(async () => {
+    const flow = document.querySelector<HTMLElement>('.chat-messages__flow-inner')!
+    const workspace = document.querySelector<HTMLElement>('.chat-workspace')!
+    const collapseBtn = document.querySelector<HTMLButtonElement>('.session-status__collapse')!
+    const topbarCapsule = document.querySelector<HTMLButtonElement>('.session-status__topbar-capsule')!
+    const isAnimating = () =>
+      workspace.getAnimations().some(anim => anim.playState === 'running') ||
+      flow.getAnimations().some(anim => anim.playState === 'running')
+    while (isAnimating()) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    }
+    const wsBox = workspace.getBoundingClientRect()
+    const expandedBox = flow.getBoundingClientRect()
+    const centeredLeft = wsBox.left + (wsBox.width - expandedBox.width) / 2
+    const widths: number[] = [expandedBox.width]
+    const lefts: number[] = [expandedBox.left]
+
+    collapseBtn.click()
+    const started = performance.now()
+    while (performance.now() - started < 1000) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const box = flow.getBoundingClientRect()
+      widths.push(box.width)
+      lefts.push(box.left)
+      if (!isAnimating() && Math.abs(box.left - centeredLeft) < 1) {
+        break
+      }
+    }
+
+    topbarCapsule.click()
+    const startedExpand = performance.now()
+    while (performance.now() - startedExpand < 1000) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      const box = flow.getBoundingClientRect()
+      widths.push(box.width)
+      lefts.push(box.left)
+      if (!isAnimating() && Math.abs(box.left - expandedBox.left) < 1) {
+        break
+      }
+    }
+
+    const widthSpread = Math.max(...widths) - Math.min(...widths)
+    const leftSpread = Math.max(...lefts) - Math.min(...lefts)
+    return {
+      expandedWidth: expandedBox.width,
+      expandedLeft: expandedBox.left,
+      centeredLeft,
+      widthSpread,
+      leftSpread
+    }
+  })
+  expect(shiftMotion.expandedWidth).toBeCloseTo(768, 0)
+  expect(shiftMotion.expandedLeft).toBeLessThan(shiftMotion.centeredLeft - 10)
+  expect(shiftMotion.leftSpread).toBeGreaterThan(10)
+  expect(shiftMotion.widthSpread).toBeLessThanOrEqual(0.5)
+
   await nova.page.setViewportSize({ width: 900, height: 700 })
   await expect(nova.page.locator(capsule)).toHaveAttribute('data-tiny', 'true')
   await expect(nova.page.locator(capsule)).toHaveAttribute('data-expanded', 'false')

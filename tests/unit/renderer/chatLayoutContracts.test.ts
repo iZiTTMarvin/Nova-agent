@@ -51,6 +51,8 @@ describe('chat panel layout contracts', () => {
     const flowInner = rule('.chat-messages__flow-inner')
     expect(flowInner).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
     expect(flowInner).toMatch(/margin-inline:\s*auto/)
+    expect(flowInner).toMatch(/transform:\s*translate3d\(calc\(-1\s*\*\s*var\(--status-shift,\s*0px\)\),\s*0,\s*0\)/)
+    expect(flowInner).not.toMatch(/transition:[\s\S]*?max-width/)
 
     const virtualList = rule('.chat-messages__virtual')
     expect(virtualList).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
@@ -58,13 +60,20 @@ describe('chat panel layout contracts', () => {
 
     const composerInner = rule('.chat-panel__composer-inner')
     expect(composerInner).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
+    expect(composerInner).toMatch(/margin-inline:\s*auto/)
+    expect(composerInner).toMatch(/transform:\s*translate3d\(calc\(-1\s*\*\s*var\(--status-shift,\s*0px\)\),\s*0,\s*0\)/)
+    expect(composerInner).not.toMatch(/transition:[\s\S]*?max-width/)
 
     const tier1Notice = rule('.chat-tier1-notice')
     expect(tier1Notice).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
+    expect(tier1Notice).toMatch(/margin-inline:\s*auto/)
   })
 
-  it('clips overflow while reading column widths are frozen', () => {
-    // 根容器裁剪溢出：冻结宽度超出收缩后的主区时不产生横向滚动
-    expect(rule('.chat-panel--reading-width-frozen')).toMatch(/overflow:\s*hidden/)
+  it('keeps reading columns responsive without hard width freezes', () => {
+    const flowInner = rule('.chat-messages__flow-inner')
+    const composerInner = rule('.chat-panel__composer-inner')
+    expect(flowInner).toMatch(/width:\s*100%/)
+    expect(composerInner).toMatch(/width:\s*100%/)
+    expect(css).not.toContain('.chat-panel--reading-width-frozen')
   })
 })

@@ -282,7 +282,7 @@ describe('InspectorPanel', () => {
     useWorkspaceStore.setState({ currentSessionId: null })
   })
 
-  it('拖拽期间外壳宽度按帧合并写入且不写 store，内层冻结；松手一次性提交最后位置', () => {
+  it('拖拽期间外壳与内层宽度按帧合并实时同步且不写 store；松手一次性提交最后位置', () => {
     const raf = installControllableRaf()
     const renderer = renderDom(<InspectorPanel />)
     act(() => {
@@ -308,14 +308,13 @@ describe('InspectorPanel', () => {
     expect(raf.pendingCount()).toBe(1)
     expect(aside!.style.width).toBe(`${startWidth}px`)
 
-    // 帧执行：一次写消费最新 clientX
+    // 帧执行：一次写消费最新 clientX，内层同步跟随变化而非死锁在一帧
     act(() => {
       raf.flush()
     })
     expect(aside!.style.width).toBe(`${startWidth + 100}px`)
     expect(useLayoutStore.getState().inspectorWidth).toBe(startWidth)
-    // 内层保持已提交宽度，不随外壳逐帧变化
-    expect(inner!.style.width).toBe(`${startWidth}px`)
+    expect(inner!.style.width).toBe(`${startWidth + 100}px`)
 
     // 待执行帧存在时 mouseup：先消费最后位置再提交，不落后一帧
     act(() => {
@@ -325,7 +324,6 @@ describe('InspectorPanel', () => {
     expect(raf.cancel).toHaveBeenCalled()
     expect(useLayoutStore.getState().inspectorWidth).toBe(startWidth + 50)
     expect(aside!.style.width).toBe(`${startWidth + 50}px`)
-    // 提交后内层一次切换到最终宽度
     expect(inner!.style.width).toBe(`${startWidth + 50}px`)
     renderer.unmount()
   })

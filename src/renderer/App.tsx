@@ -48,7 +48,6 @@ registerIcons(neutralIconRegistry)
  */
 function App(): React.ReactNode {
   const [updateSnapshot, setUpdateSnapshot] = useState<AppUpdateSnapshot | null>(null)
-  // Inspector 拖拽会话 → ChatPanel 冻结/恢复阅读宽度；App 只做兄弟模块连接，不保存拖拽状态
   const chatPanelRef = useRef<ChatPanelHandle>(null)
 
   // settings：仅稳定 action

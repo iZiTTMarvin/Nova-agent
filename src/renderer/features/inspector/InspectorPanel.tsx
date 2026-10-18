@@ -66,6 +66,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
 
   /** 拖拽期间宽度直写面板 DOM，避免每次 mousemove 触发 store 重渲染 */
   const asideRef = useRef<HTMLElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
 
   // 浏览器标签需要更宽的舞台；其余标签维持原有边界
   const widthMin = activeTab === 'browser' ? BROWSER_PANE_WIDTH_MIN : INSPECTOR_WIDTH_MIN
@@ -73,7 +74,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
     shellRef: asideRef,
     widthMin,
     onCollapse: closeInspector,
-    onDragSessionChange
+    onDragSessionChange,
+    onLiveWidthChange: (nextWidth) => {
+      if (innerRef.current) innerRef.current.style.width = `${nextWidth}px`
+    }
   })
   const showContent = usePanelPresence({ open: inspectorOpen, shellRef: asideRef })
 
@@ -157,6 +161,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
             active={dragging}
           />
           <div
+            ref={innerRef}
             className="inspector-panel__inner"
             style={{ width: effectiveWidth }}
           >

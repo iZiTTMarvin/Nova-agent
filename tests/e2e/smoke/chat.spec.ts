@@ -47,7 +47,7 @@ const READING_WIDTH_SELECTORS = [
   '.chat-panel__composer-inner'
 ] as const
 
-test('拖拽 Inspector 期间聊天阅读宽度冻结，松手后恢复响应式并提交一次', async ({ nova }) => {
+test('拖拽与开合 Inspector 及 Sidebar 期间主区阅读列与面板内容实时平滑伸缩，松手无跳变且持久化一次', async ({ nova }) => {
   const { page, app } = nova
 
   // 固定窗口几何，保证拖拽前后阅读柱宽度可直接比较
@@ -74,6 +74,11 @@ test('拖拽 Inspector 期间聊天阅读宽度冻结，松手后恢复响应式
       const el = document.querySelector(sel)
       return el ? el.getBoundingClientRect().width : -1
     }), [...READING_WIDTH_SELECTORS])
+  const readInnerWidth = (selector: string) =>
+    page.evaluate((sel: string) => {
+      const el = document.querySelector<HTMLElement>(sel)
+      return el ? el.getBoundingClientRect().width : -1
+    }, selector)
 
   const beforeDrag = await readWidths()
   const startX = handleBox.x + handleBox.width / 2
@@ -82,32 +87,97 @@ test('拖拽 Inspector 期间聊天阅读宽度冻结，松手后恢复响应式
   await page.mouse.move(startX, y)
   await page.mouse.down()
   const dragSamples: number[][] = []
+  const inspectorInnerSamples: number[] = []
   for (let step = 1; step <= 10; step++) {
     await page.mouse.move(startX - step * 15, y, { steps: 2 })
     dragSamples.push(await readWidths())
+    inspectorInnerSamples.push(await readInnerWidth('.inspector-panel__inner'))
   }
 
-  // 拖拽中：阅读柱 / 虚拟列表父容器 / Composer 宽度冻结在拖拽开始时的值
+  // 拖拽中：主聊天阅读列 / 虚拟列表父容器 / Composer 与面板内层容器均实时平滑伸缩跟随，
+  // 不锁死在初始帧等待松手才跳变
   const labels = ['消息阅读柱', '虚拟列表父容器', 'Composer']
   dragSamples[0].forEach((_, idx) => {
-    const spread = Math.max(...dragSamples.map(s => s[idx])) - Math.min(...dragSamples.map(s => s[idx]))
+    const distinctChatWidths = new Set(dragSamples.map(s => Math.round(s[idx])))
     expect(
-      spread,
-      `拖拽中${labels[idx]}宽度逐帧变化: ${dragSamples.map(s => s[idx]).join(' → ')}`
-    ).toBeLessThanOrEqual(1)
+      distinctChatWidths.size,
+      `拖拽中${labels[idx]}应实时动态伸缩: ${dragSamples.map(s => Math.round(s[idx])).join(' → ')}`
+    ).toBeGreaterThanOrEqual(5)
+    expect(dragSamples.at(-1)![idx]).toBeLessThan(beforeDrag[idx] - 100)
   })
+  const distinctInspectorInnerWidths = new Set(inspectorInnerSamples.map(w => Math.round(w)))
+  expect(distinctInspectorInnerWidths.size).toBeGreaterThanOrEqual(5)
+  expect(inspectorInnerSamples.at(-1)!).toBeGreaterThan(420)
 
   await page.mouse.up()
 
-  // 松手：面板宽度提交后主区恢复响应式，阅读柱跟随变窄
+  // 松手：阅读列已经在拖拽末帧到达目标宽度，松手瞬间无跳变
   const afterDrag = await readWidths()
   expect(afterDrag[0]).toBeLessThan(beforeDrag[0])
   expect(afterDrag[2]).toBeLessThan(beforeDrag[2])
+  expect(Math.abs(afterDrag[0] - dragSamples.at(-1)![0])).toBeLessThanOrEqual(2)
+  expect(Math.abs(afterDrag[2] - dragSamples.at(-1)![2])).toBeLessThanOrEqual(2)
 
   const storedWidth = await page.evaluate(() =>
     Number(window.localStorage.getItem('nova.layout.inspectorWidth'))
   )
   expect(storedWidth).toBeGreaterThan(420)
+
+  // 拖拽左侧 Sidebar：同样实时平滑挤压主区阅读列与侧栏内层文字，松手无跳变
+  const sidebarHandle = page.locator('.sidebar-shell__resize-handle')
+  const sidebarBox = await sidebarHandle.boundingBox()
+  if (!sidebarBox) throw new Error('sidebar resize handle not visible')
+  const sbStartX = sidebarBox.x + sidebarBox.width / 2
+  await page.mouse.move(sbStartX, y)
+  await page.mouse.down()
+  const sbChatSamples: number[][] = []
+  const sbInnerSamples: number[] = []
+  for (let step = 1; step <= 8; step++) {
+    await page.mouse.move(sbStartX + step * 12, y, { steps: 2 })
+    sbChatSamples.push(await readWidths())
+    sbInnerSamples.push(await readInnerWidth('.sidebar-shell__inner'))
+  }
+  sbChatSamples[0].forEach((_, idx) => {
+    expect(new Set(sbChatSamples.map(s => Math.round(s[idx]))).size).toBeGreaterThanOrEqual(4)
+  })
+  expect(new Set(sbInnerSamples.map(w => Math.round(w))).size).toBeGreaterThanOrEqual(4)
+  await page.mouse.up()
+  const afterSbDrag = await readWidths()
+  expect(Math.abs(afterSbDrag[0] - sbChatSamples.at(-1)![0])).toBeLessThanOrEqual(2)
+
+  // 点击折叠与展开左侧 Sidebar：主区阅读列在 250ms 过渡中逐帧平滑放大填充与收缩挤压，不发生单帧跳变
+  const sidebarSlideMotion = await page.evaluate(async () => {
+    const shell = document.querySelector<HTMLElement>('.sidebar-shell')!
+    const flow = document.querySelector<HTMLElement>('.chat-messages__flow-inner')!
+    const collapseBtn = document.querySelector<HTMLButtonElement>('button[aria-label="折叠会话导航"]')!
+    const collapseWidths: number[] = [Math.round(flow.getBoundingClientRect().width)]
+    collapseBtn.click()
+    const t0 = performance.now()
+    while (performance.now() - t0 < 1000) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      collapseWidths.push(Math.round(flow.getBoundingClientRect().width))
+      if (shell.getAnimations().length === 0 && shell.getBoundingClientRect().width < 1) break
+    }
+    const expandBtn = document.querySelector<HTMLButtonElement>('button[aria-label="展开会话导航"]')!
+    const expandWidths: number[] = [Math.round(flow.getBoundingClientRect().width)]
+    expandBtn.click()
+    const t1 = performance.now()
+    while (performance.now() - t1 < 1000) {
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+      expandWidths.push(Math.round(flow.getBoundingClientRect().width))
+      if (shell.getAnimations().length === 0 && shell.getBoundingClientRect().width > 200) break
+    }
+    return {
+      collapseDistinct: new Set(collapseWidths).size,
+      expandDistinct: new Set(expandWidths).size,
+      collapseStart: collapseWidths[0],
+      collapseEnd: collapseWidths.at(-1)!
+    }
+  })
+  expect(sidebarSlideMotion.collapseDistinct).toBeGreaterThanOrEqual(4)
+  expect(sidebarSlideMotion.expandDistinct).toBeGreaterThanOrEqual(4)
+  expect(sidebarSlideMotion.collapseEnd).toBeGreaterThan(sidebarSlideMotion.collapseStart + 100)
+
   expect(nova.pageErrors).toEqual([])
 })
 

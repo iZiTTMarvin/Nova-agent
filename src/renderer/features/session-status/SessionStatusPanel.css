@@ -1,3 +1,13 @@
+/* 悬浮状态面板展开时，为对话阅读列预留右侧净空 --status-clearance：
+   大屏下居中右侧余量 >= 296px 时阅读列不动；窗口缩窄时子元素按容器宽度与净空计算 --status-shift 向左平滑平移，
+   保持阅读列自身宽度恒定，杜绝横向动画期间逐帧改动 max-width 引发的文字上下跳动重排。
+   通过 @property 仅对 --status-clearance 做插值过渡，使侧边栏开合或拖拽改变 100cqi 时即时同步不滞后。 */
+@property --status-clearance {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
 .chat-workspace {
   --status-clearance: 0px;
   position: relative;
@@ -6,10 +16,13 @@
   min-height: 0;
   min-width: 0;
   container: session-workspace / inline-size;
+  transition: --status-clearance var(--transition-normal);
 }
 
-/* 悬浮状态面板展开时，为对话阅读列预留右侧净空：
-   大屏下自然居中边距 >= 296px，阅读列不动；窗口缩窄时阅读列自动左移让出空间，绝不遮挡对话 */
+html[data-pane-dragging='true'] .chat-workspace {
+  transition: none !important;
+}
+
 .chat-workspace:has(.session-status-rail[data-expanded="true"]) {
   --status-clearance: 296px;
 }
@@ -697,6 +710,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .chat-workspace,
   .session-status-rail,
   .session-status,
   .session-status *,

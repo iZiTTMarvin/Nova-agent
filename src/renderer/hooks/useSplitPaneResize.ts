@@ -29,6 +29,8 @@ export interface UseSplitPaneResizeOptions {
   onCollapse?: () => void
   /** 拖拽会话开始/结束成对通知 */
   onDragSessionChange?: (active: boolean) => void
+  /** 拖拽帧或双击改宽后同步更新附属 DOM（如内层容器宽度），避免等松手才一帧跳变 */
+  onLiveWidthChange?: (width: number) => void
 }
 
 export interface SplitPaneResizeControls {
@@ -47,7 +49,8 @@ export function useSplitPaneResize({
   getCurrentWidth,
   onCommitWidth,
   onCollapse,
-  onDragSessionChange
+  onDragSessionChange,
+  onLiveWidthChange
 }: UseSplitPaneResizeOptions): SplitPaneResizeControls {
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
@@ -60,6 +63,8 @@ export function useSplitPaneResize({
 
   const onDragSessionChangeRef = useRef(onDragSessionChange)
   onDragSessionChangeRef.current = onDragSessionChange
+  const onLiveWidthChangeRef = useRef(onLiveWidthChange)
+  onLiveWidthChangeRef.current = onLiveWidthChange
   const onCommitWidthRef = useRef(onCommitWidth)
   onCommitWidthRef.current = onCommitWidth
   const onCollapseRef = useRef(onCollapse)
@@ -100,8 +105,10 @@ export function useSplitPaneResize({
 
   const applyShellWidth = useCallback(
     (clientX: number) => {
+      const nextWidth = clampWidth(rawWidthFromClientX(clientX))
       const el = shellRef.current
-      if (el) el.style.width = `${clampWidth(rawWidthFromClientX(clientX))}px`
+      if (el) el.style.width = `${nextWidth}px`
+      onLiveWidthChangeRef.current?.(nextWidth)
     },
     [shellRef, clampWidth, rawWidthFromClientX]
   )
@@ -135,6 +142,7 @@ export function useSplitPaneResize({
     onCommitWidthRef.current(clampedDefault)
     const el = shellRef.current
     if (el) el.style.width = `${clampedDefault}px`
+    onLiveWidthChangeRef.current?.(clampedDefault)
   }, [clampWidth, defaultWidth, shellRef])
 
   useEffect(() => {
@@ -170,6 +178,7 @@ export function useSplitPaneResize({
           rawWidth >= DOCKING_COLLAPSE_LOWER_BOUND_PX &&
           rawWidth < collapseThresholdPx
         ) {
+          onLiveWidthChangeRef.current?.(dragStartWidth.current)
           onCommitWidthRef.current(dragStartWidth.current)
           onCollapseRef.current()
         } else {
@@ -193,6 +202,7 @@ export function useSplitPaneResize({
       }
       const el = shellRef.current
       if (el) el.style.width = `${dragStartWidth.current}px`
+      onLiveWidthChangeRef.current?.(dragStartWidth.current)
       onCommitWidthRef.current(dragStartWidth.current)
       notifyDragSession(false)
       setDragging(false)

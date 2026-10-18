@@ -1266,11 +1266,14 @@ export interface SidebarProps {
   updateSnapshot?: AppUpdateSnapshot | null
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  updateSnapshot = null
+}) => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const sidebarWidth = useLayoutStore(state => state.sidebarWidth)
   const [searchTriggerCount, setSearchTriggerCount] = useState(0)
   const shellRef = useRef<HTMLDivElement>(null)
+  const innerRef = useRef<HTMLDivElement>(null)
 
   const {
     dragging: isResizing,
@@ -1285,6 +1288,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
     collapseThresholdPx: SIDEBAR_COLLAPSE_THRESHOLD_PX,
     getCurrentWidth: () => useLayoutStore.getState().sidebarWidth,
     onCommitWidth: (width) => useLayoutStore.getState().setSidebarWidth(width),
+    onLiveWidthChange: (width) => {
+      if (innerRef.current) innerRef.current.style.width = `${width}px`
+    },
     onCollapse: () => {
       if (!useLayoutStore.getState().sidebarCollapsed) {
         useLayoutStore.getState().toggleSidebar()
@@ -1306,6 +1312,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ updateSnapshot = null }) => {
       aria-hidden={sidebarCollapsed}
     >
       <div
+        ref={innerRef}
         className="sidebar-shell__inner"
         style={{
           width: sidebarWidth,

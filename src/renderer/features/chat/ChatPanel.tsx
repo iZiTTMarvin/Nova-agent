@@ -100,31 +100,8 @@ const MaybeProfiler: React.FC<{
 /** 距列表顶部小于此像素时触发向更早方向补载历史 */
 const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
 
-/** Inspector 拖拽与开合过渡期间冻结阅读宽度的根节点标记 class（与 CSS 冻结规则成对） */
-const READING_FROZEN_CLASS = 'chat-panel--reading-width-frozen'
-
-/**
- * ChatPanel 命令式布局接口：由 App 在 Inspector 拖拽会话或宽度过渡期间调用，
- * 冻结消息阅读柱与 Composer 的宽度，从源头消除逐帧文字重排。
- * 传入主区宽度变化量时冻结到终态宽度，过渡一开始就完成唯一一次折行。
- */
 export interface ChatPanelHandle {
-  freezeReadingWidth: (mainWidthDelta?: number) => void
-  restoreReadingWidth: () => void
   requestSupplement: () => void
-}
-
-/** 阅读柱宽度为 min(max-width, 父容器内容宽)；按主区宽度变化量投影终态 */
-function projectReadingWidth(el: HTMLElement, mainWidthDelta: number): number {
-  const parent = el.parentElement
-  if (!parent) return el.getBoundingClientRect().width
-  const parentStyle = getComputedStyle(parent)
-  const available = parent.clientWidth
-    - parseFloat(parentStyle.paddingLeft)
-    - parseFloat(parentStyle.paddingRight)
-    + mainWidthDelta
-  const maxWidth = parseFloat(getComputedStyle(el).maxWidth)
-  return Math.max(0, Number.isNaN(maxWidth) ? available : Math.min(maxWidth, available))
 }
 
 export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref }) => {
@@ -390,39 +367,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // 隐藏的文件上传 input
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  /** composer 阅读柱容器：Inspector 拖拽时冻结其实际渲染宽度 */
-  const composerInnerRef = useRef<HTMLDivElement | null>(null)
-
-  // 冻结值按两个容器各自的几何计算（窄窗口、滚动条和响应式 padding 下互不相同），
-  // 不能用主区宽度或单一 max-width 代替。拖拽冻结取当前渲染宽度，重复调用保持首次测量值；
-  // 过渡冻结每次按新的变化量重算（过渡可被反向打断）。
-  // 宽度直接写在两个容器上：写根节点自定义属性会让整棵聊天子树重算样式
-  const freezeReadingWidth = useCallback((mainWidthDelta?: number) => {
-    const root = rootRef.current
-    if (!root) return
-    if (mainWidthDelta === undefined && root.classList.contains(READING_FROZEN_CLASS)) return
-    const columns = [messagesContentRef.current, composerInnerRef.current]
-      .filter((el): el is HTMLDivElement => el !== null)
-    const widths = columns.map(el => mainWidthDelta === undefined
-      ? el.getBoundingClientRect().width
-      : projectReadingWidth(el, mainWidthDelta))
-    columns.forEach((el, index) => { el.style.width = `${widths[index]}px` })
-    root.classList.add(READING_FROZEN_CLASS)
-  }, [])
-
-  const restoreReadingWidth = useCallback(() => {
-    const root = rootRef.current
-    if (!root) return
-    root.classList.remove(READING_FROZEN_CLASS)
-    messagesContentRef.current?.style.removeProperty('width')
-    composerInnerRef.current?.style.removeProperty('width')
-  }, [])
-
   useImperativeHandle(ref, () => ({
-    freezeReadingWidth,
-    restoreReadingWidth,
     requestSupplement: handleComposeSupplement
-  }), [freezeReadingWidth, restoreReadingWidth, handleComposeSupplement])
+  }), [handleComposeSupplement])
 
   const canAutoScroll = useCallback(() => {
     if (isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) {
@@ -1006,7 +953,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           isEmptyState ? 'chat-panel__composer-area--empty' : ''
         }`}
       >
-        <div ref={composerInnerRef} className="chat-panel__composer-inner">
+        <div className="chat-panel__composer-inner">
           {/* 回到底部：悬浮小箭头；自有实心底保证叠在代码块上也清晰 */}
 
           {!isEmptyState && showScrollToBottom && (

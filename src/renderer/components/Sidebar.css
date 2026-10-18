@@ -8,8 +8,7 @@
   height: 100%;
   background-color: var(--surface-sidebar);
   overflow: hidden;
-  transition: none;
-  will-change: transform;
+  transition: width var(--transition-normal);
   contain: paint;
 }
 
@@ -18,15 +17,32 @@
 }
 
 .sidebar-shell--resizing {
-  transition: none;
+  transition: none !important;
 }
 
 .sidebar-shell__inner {
   height: 100%;
   display: flex;
   flex-direction: column;
-  transition: transform var(--transition-normal);
+  transition:
+    transform var(--transition-normal),
+    opacity 180ms var(--ease-out-expo);
   will-change: transform;
+}
+
+.sidebar-shell--collapsed .sidebar-shell__inner {
+  opacity: 0;
+}
+
+.sidebar-shell--resizing .sidebar-shell__inner {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-shell,
+  .sidebar-shell__inner {
+    transition: none;
+  }
 }
 
 /* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮。不做底部分隔线，靠表面色差分层。 */

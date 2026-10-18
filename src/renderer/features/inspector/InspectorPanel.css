@@ -30,8 +30,26 @@
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  /* 固定宽度并靠右：外壳变宽时内容像从右边滑入，且面板内部不随动画重排 */
+  /* 固定宽度并靠右：外壳变宽时内容带轻微位移与淡入，且面板内部不随动画逐帧重排 */
   margin-left: auto;
+  transform: translate3d(16px, 0, 0);
+  transition: transform var(--transition-normal);
+  will-change: transform;
+}
+
+.inspector-panel--open .inspector-panel__inner {
+  transform: translate3d(0, 0, 0);
+}
+
+.inspector-panel--dragging .inspector-panel__inner {
+  transition: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inspector-panel,
+  .inspector-panel__inner {
+    transition: none !important;
+  }
 }
 
 /* 顶栏与会话头同高（40px）且共用 1px 底部分隔线，在纵向分界线两侧形成完整十字贯通边界 */

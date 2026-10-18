@@ -23,13 +23,16 @@ export interface UseInspectorResizeOptions {
   onCollapse?: () => void
   /** 拖拽会话开始/结束成对通知；重复清理不会重复触发 */
   onDragSessionChange?: (active: boolean) => void
+  /** 拖拽帧或双击改宽后同步更新内层容器宽度，让面板内文字在拖拽中实时跟随 */
+  onLiveWidthChange?: (width: number) => void
 }
 
 export function useInspectorResize({
   shellRef,
   widthMin,
   onCollapse,
-  onDragSessionChange
+  onDragSessionChange,
+  onLiveWidthChange
 }: UseInspectorResizeOptions) {
   const setInspectorWidth = useLayoutStore(s => s.setInspectorWidth)
 
@@ -52,7 +55,8 @@ export function useInspectorResize({
     getCurrentWidth: () => useLayoutStore.getState().inspectorWidth,
     onCommitWidth: setInspectorWidth,
     onCollapse,
-    onDragSessionChange
+    onDragSessionChange,
+    onLiveWidthChange
   })
 
   const clampToAvailableWidth = useCallback(() => {

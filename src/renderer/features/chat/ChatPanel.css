@@ -126,23 +126,20 @@
 }
 
 /* 消息流内层阅读柱容器：最大宽度对齐主流 Agent 黄金阅读行宽（48rem/768px）。
-   大屏居中；当右侧悬浮状态面板展开且窗口缩窄时，通过 --status-clearance 自动向左平移让出空间，绝不遮挡对话。 */
+   大屏居中；当右侧悬浮状态面板展开且窗口缩窄时，通过 --status-shift 平滑向左平移让出空间；
+   当左右侧边栏开合或拖拽挤压主区时，实时平滑滑动并随可用空间动态伸缩填充。 */
 .chat-messages__flow-inner {
+  --status-shift: min(
+    max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+    max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+  );
   width: 100%;
-  max-width: min(var(--chat-content-max-width), calc(100% - var(--status-clearance, 0px)));
-  margin-left: auto;
-  margin-right: max(calc((100% - min(100%, var(--chat-content-max-width))) / 2), var(--status-clearance, 0px));
+  max-width: var(--chat-content-max-width);
+  margin-inline: auto;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  transition:
-    margin-right var(--transition-normal),
-    max-width var(--transition-normal);
-}
-
-.chat-panel--reading-width-frozen .chat-messages__flow-inner,
-.chat-panel--reading-width-frozen .chat-panel__composer-inner {
-  transition: none;
+  transform: translate3d(calc(-1 * var(--status-shift, 0px)), 0, 0);
 }
 
 .chat-messages__virtual {
@@ -707,14 +704,17 @@
 
 /* ── Tier 1 切分支提示横幅 ─────────────────────────────────── */
 .chat-tier1-notice {
+  --status-shift: min(
+    max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+    max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+  );
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  max-width: min(var(--chat-content-max-width), calc(100% - var(--status-clearance, 0px)));
-  margin-left: auto;
-  margin-right: max(calc((100% - min(100%, var(--chat-content-max-width))) / 2), var(--status-clearance, 0px));
+  max-width: var(--chat-content-max-width);
+  margin-inline: auto;
   margin-bottom: 12px;
   padding: 10px 12px;
   border-radius: 8px;
@@ -722,9 +722,7 @@
   background: var(--surface-muted);
   font-size: 0.82rem;
   color: var(--text-secondary);
-  transition:
-    margin-right var(--transition-normal),
-    max-width var(--transition-normal);
+  transform: translate3d(calc(-1 * var(--status-shift, 0px)), 0, 0);
 }
 
 .chat-tier1-notice__dismiss {
@@ -1277,10 +1275,6 @@ button.code-index-status-chip:hover {
   white-space: nowrap;
 }
 
-.chat-panel__composer-inner {
-  container: chat-composer / inline-size;
-}
-
 @container chat-composer (max-width: 320px) {
   .chat-composer__footer-start,
   .chat-composer__footer-end {
@@ -1295,12 +1289,6 @@ button.code-index-status-chip:hover {
   .chat-composer__footer-end .model-selector__label {
     max-width: 96px;
   }
-}
-
-/* Inspector 拖拽或开合过渡期间冻结阅读宽度：阅读柱与 Composer 的固定宽度由 ChatPanel
-   freezeReadingWidth 直接写在各自元素上，超出主区的部分由根容器裁剪，消除逐帧文字重排。 */
-.chat-panel--reading-width-frozen {
-  overflow: hidden;
 }
 
 .ask-question-dock {
