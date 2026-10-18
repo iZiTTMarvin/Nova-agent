@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, useMemo, Profiler } from 'react'
+import React, { lazy, Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, useMemo, Profiler } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import {
@@ -46,7 +46,6 @@ import {
   syncAutoScrollModeOnScroll,
   type AutoScrollMode
 } from './autoScroll'
-import { useScrollFadeMask } from '../../hooks/useScrollFadeMask'
 import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
 import { ContextIndicator } from './ContextIndicator'
 import { CodeIndexStatusChip } from './CodeIndexStatusChip'
@@ -57,7 +56,6 @@ import { PlanApprovalCard } from './PlanApprovalCard'
 import { AssistantPendingIndicator } from './AssistantPendingIndicator'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ComposerNoticeBanner, type ComposerNotice } from './ComposerNoticeBanner'
-import { ImagePreviewDialog } from '../../components/ImagePreviewDialog'
 import {
   fileToImageAttachment,
   getDroppedImageFiles,
@@ -96,6 +94,10 @@ const MaybeProfiler: React.FC<{
   )
 }
 
+
+const ImagePreviewDialog = lazy(() =>
+  import('../../components/ImagePreviewDialog').then(m => ({ default: m.ImagePreviewDialog }))
+)
 
 /** 距列表顶部小于此像素时触发向更早方向补载历史 */
 const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
@@ -324,7 +326,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const userScrollCooldownUntilRef = useRef(0)
   const lastScrollTopRef = useRef(0)
 
-  useScrollFadeMask(scrollElement)
   /** prepend 历史消息前记录的 scrollHeight，用于补载后修正 scrollTop 防止视口跳动 */
   const scrollHeightBeforePrependRef = useRef<number | null>(null)
   // 生成阶段 rAF 合并滚动（render-pool tick 补充路径）
@@ -871,7 +872,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
         </div>
       ) : !isEmptyState ? (
         <div
-          className="chat-messages scroll-fade-y flex-1 overflow-y-auto"
+          className="chat-messages flex-1 overflow-y-auto"
           ref={bindScrollContainer}
           onScroll={handleScroll}
           onWheel={handleWheel}
@@ -1158,14 +1159,18 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       </div>
 
       {/* 全屏图片预览 */}
-      <ImagePreviewDialog
-        images={previewDialog.images}
-        currentIndex={previewDialog.index}
-        isOpen={previewDialog.open}
-        originElement={previewDialog.originEl ?? null}
-        onClose={() => setPreviewDialog(prev => ({ ...prev, open: false }))}
-        onNavigate={(idx) => setPreviewDialog(prev => ({ ...prev, index: idx }))}
-      />
+      {(previewDialog.open || previewDialog.images.length > 0) && (
+        <Suspense fallback={null}>
+          <ImagePreviewDialog
+            images={previewDialog.images}
+            currentIndex={previewDialog.index}
+            isOpen={previewDialog.open}
+            originElement={previewDialog.originEl ?? null}
+            onClose={() => setPreviewDialog(prev => ({ ...prev, open: false }))}
+            onNavigate={(idx) => setPreviewDialog(prev => ({ ...prev, index: idx }))}
+          />
+        </Suspense>
+      )}
     </div>
   )
 }

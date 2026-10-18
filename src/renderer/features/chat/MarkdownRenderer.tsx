@@ -20,6 +20,7 @@ import { Markdown } from '@astryxdesign/core/Markdown'
 import type { MarkdownComponents } from '@astryxdesign/core/Markdown'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
+import { highlightLineCached } from '../../lib/highlightCache'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { MarkdownLink } from './MarkdownLink'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
@@ -95,7 +96,7 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
           {lines.map((line, idx) => (
             <React.Fragment key={idx}>
               {idx > 0 && '\n'}
-              {isStreaming ? line : highlightLine(line, fakePath).map((token, tIdx) => (
+              {isStreaming ? line : highlightLineCached(line, fakePath, highlightLine).map((token, tIdx) => (
                 <span key={tIdx} className={`diff-token diff-token--${token.type}`}>
                   {token.text}
                 </span>

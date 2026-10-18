@@ -68,6 +68,13 @@ export function createWorkspaceSyncSlice(
             .map(session => useRunStore.getState().pullSnapshot(session.id)))
         }).catch(err => console.error('[useChatStore] 子任务交互恢复失败:', err))
       }
+      const messageIdsAtRequest = new Set(get().messages.map(message => message.id))
+      const detailResult = targetSessionId
+        ? window.api.invoke('load-session', { sessionId: targetSessionId })
+        : null
+      if (detailResult && typeof (detailResult as PromiseLike<unknown>).then === 'function') {
+        void (detailResult as Promise<SessionDetail>).catch(() => undefined)
+      }
       void (async () => {
         const { useWorkspaceStore } = await import('../../useWorkspaceStore')
         if (!isHydrationEpochCurrent(hydrationEpoch)) return
@@ -81,10 +88,6 @@ export function createWorkspaceSyncSlice(
         try {
           // load-session 与 run snapshot 并行启动；应用时先消费 snapshot，
           // 再合并持久化历史，避免运行中切回会话时撕裂覆盖草稿。
-          const messageIdsAtRequest = new Set(get().messages.map(message => message.id))
-          const detailResult = window.api.invoke('load-session', {
-            sessionId: targetSessionId
-          })
           // invoke 未注册/调用方返回非 Promise 时按加载失败处理，走既有 catch 路径；
           // 否则对 undefined 调 .catch 会让水合 IIFE 静默死亡（分支元信息永不更新）
           if (!detailResult || typeof (detailResult as PromiseLike<unknown>).then !== 'function') {
@@ -129,10 +132,21 @@ export function createWorkspaceSyncSlice(
                 draft,
                 new Set(liveFolded.filter(message => !messageIdsAtRequest.has(message.id)).map(message => message.id))
               )
+              const nextGeneratingMessageId = targetRunning ? snapshot?.messageId || null : null
+              const nextActiveAgentSessionId = targetRunning ? targetSessionId : null
+              if (
+                !hasLive &&
+                messages.length === 0 &&
+                state.messages.length === 0 &&
+                state.currentGeneratingMessageId === nextGeneratingMessageId &&
+                state.activeAgentSessionId === nextActiveAgentSessionId
+              ) {
+                return state
+              }
               return {
                 ...commitMessageList(state, { nextMessages: messages, skipWindowTrim: true }),
-                currentGeneratingMessageId: targetRunning ? snapshot?.messageId || null : null,
-                activeAgentSessionId: targetRunning ? targetSessionId : null,
+                currentGeneratingMessageId: nextGeneratingMessageId,
+                activeAgentSessionId: nextActiveAgentSessionId,
                 ...(hasLive ? { liveTurn: {} } : {})
               }
             })

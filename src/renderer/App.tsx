@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { Theme } from '@astryxdesign/core/theme'
 import { AppShell } from '@astryxdesign/core/AppShell'
 import { registerIcons } from '@astryxdesign/core/Icon'
@@ -10,7 +10,6 @@ import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { Sidebar } from './components/Sidebar'
 import { type ChatPanelHandle } from './features/chat/ChatPanel'
-import { SettingsModal } from './features/settings/SettingsModal'
 import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
 import { BrowserWorkspaceBody } from './features/browser/BrowserWorkspaceBody'
 import { startBrowserStore } from './features/browser/useBrowserStore'
@@ -34,6 +33,10 @@ import './App.css'
 // registerIcons 语义是 app 初始化时调用一次（全局注册表幂等合并），
 // 必须留在模块级；放进组件体会在每次 render 重复执行（StrictMode 下双次）。
 registerIcons(neutralIconRegistry)
+
+const SettingsModal = lazy(() =>
+  import('./features/settings/SettingsModal').then(m => ({ default: m.SettingsModal }))
+)
 
 /**
  * App 根组件
@@ -364,7 +367,9 @@ function App(): React.ReactNode {
         </div>
         <BrowserGuestLayer />
         {/* 模型参数配置模态窗：须叠在 guest 之上，DOM 合成才能挡住网页 */}
-        <SettingsModal />
+        <Suspense fallback={null}>
+          <SettingsModal />
+        </Suspense>
       </AppShell>
     </Theme>
   )

@@ -875,8 +875,6 @@ export class SessionStore {
 
     for (const entry of entries) {
       if (!entry.isDirectory()) continue
-      const filePath = path.join(this.sessionsDir, entry.name, SESSION_DATA_FILE)
-      if (!fs.existsSync(filePath)) continue
 
       try {
         // list 也走迁移，确保侧边栏展示的会话都是最新结构
@@ -1347,7 +1345,7 @@ export class SessionStore {
 
   /** 更新会话模式并持久化（只写 session.json 元数据，不碰 messages.jsonl） */
   updateMode(sessionId: string, mode: Mode): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     assertSessionModeMutable(session.mode, mode)
@@ -1492,7 +1490,7 @@ export class SessionStore {
 
   /** 更新会话权限模式并持久化（只写 session.json 元数据）。 */
   updatePermissionMode(sessionId: string, permissionMode: PermissionMode): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     session.permissionMode = permissionMode
@@ -1553,7 +1551,7 @@ export class SessionStore {
       throw new Error(`无效的计划路径: ${plan.path}`)
     }
 
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     session.activePlan = { ...plan }
@@ -1570,7 +1568,7 @@ export class SessionStore {
     sessionId: string,
     state: SessionToolAvailabilityState | null
   ): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     if (state === null) {
@@ -1588,7 +1586,7 @@ export class SessionStore {
    * 覆盖保护：当前 titleSource 为 manual 时，非 manual 来源的写入会被忽略。
    */
   updateTitle(sessionId: string, title: string, source: SessionTitleSource): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     if (source !== 'manual' && session.titleSource === 'manual') {
@@ -1608,7 +1606,7 @@ export class SessionStore {
    * 否则取消置顶后会话会跳到列表顶部。
    */
   updatePinned(sessionId: string, pinned: boolean): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     session.pinned = pinned
@@ -1633,7 +1631,7 @@ export class SessionStore {
     sessionId: string,
     intent: SessionControlIntent
   ): { ok: true } | { ok: false; code: 'not_found' | 'conflict'; current?: SessionControlIntent } {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return { ok: false, code: 'not_found' }
     const pending = this.unpersistedControlIntents.get(sessionId)
     const existing = pending ?? decodeSessionControlIntent(session.controlIntent)
@@ -1660,7 +1658,7 @@ export class SessionStore {
   /** 清除指定操作的控制意图；会话已删或无意图幂等返回 true，不得清除他人意图。 */
   clearControlIntent(sessionId: string, operationId: string): boolean {
     if (this.unpersistedControlIntents.has(sessionId)) return false
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return true
     const existing = decodeSessionControlIntent(session.controlIntent)
     if (!existing) return true
@@ -1694,7 +1692,7 @@ export class SessionStore {
    * 这是 todo_write 工具读取"写入前快照"和"恢复视图"时的统一入口。
    */
   getTodos(sessionId: string): TodoItem[] {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return []
     return Array.isArray(session.todos) ? session.todos : []
   }
@@ -1703,7 +1701,7 @@ export class SessionStore {
    * 读取 compose 阶段表。旧会话（无 composeStages 字段）返回 null。
    */
   getComposeStages(sessionId: string): ComposeStageEntry[] | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
     return Array.isArray(session.composeStages) ? session.composeStages : null
   }
@@ -1726,7 +1724,7 @@ export class SessionStore {
       }
     | { status: 'rejected'; error: string }
     | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     const previousStages = Array.isArray(session.composeStages) ? session.composeStages : null
@@ -1758,7 +1756,7 @@ export class SessionStore {
    * 硬门默认关闭，stage_transition 无法把「图」阶段 complete 掉。
    */
   getComposePlanApproval(sessionId: string): ComposePlanApproval | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
     return session.composePlanApproval ?? { status: 'pending' }
   }
@@ -1769,7 +1767,7 @@ export class SessionStore {
    * 持久化层只负责状态写入本身。
    */
   approveComposePlan(sessionId: string, opts: { auto: boolean }): ComposePlanApproval | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     const approval: ComposePlanApproval = {
@@ -1787,7 +1785,7 @@ export class SessionStore {
    * 计划文档被重新保存后，此前的批准针对的是旧内容，必须清空重新走一遍确认门。
    */
   resetComposePlanApproval(sessionId: string): SessionData | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     session.composePlanApproval = { status: 'pending' }
@@ -1809,7 +1807,7 @@ export class SessionStore {
     sessionId: string,
     todos: TodoItem[]
   ): { session: SessionData; previousTodos: TodoItem[] } | null {
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     const previousTodos = Array.isArray(session.todos) ? session.todos : []
@@ -1825,9 +1823,9 @@ export class SessionStore {
    */
   addGrantedSkillRoot(sessionId: string, skillDirectory: string): SessionData | null {
     const trimmed = skillDirectory.trim()
-    if (!trimmed) return this.load(sessionId)
+    if (!trimmed) return this.loadMetadata(sessionId)
 
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     const existing = Array.isArray(session.grantedSkillRoots) ? session.grantedSkillRoots : []
@@ -1845,9 +1843,9 @@ export class SessionStore {
    */
   addBashSessionAllowPrefix(sessionId: string, commandPrefix: string): SessionData | null {
     const trimmed = commandPrefix.trim()
-    if (!trimmed) return this.load(sessionId)
+    if (!trimmed) return this.loadMetadata(sessionId)
 
-    const session = this.load(sessionId)
+    const session = this.loadMetadata(sessionId)
     if (!session) return null
 
     const existing = Array.isArray(session.bashSessionAllowPrefixes)
@@ -1911,6 +1909,9 @@ export class SessionStore {
    * list() 用：读 metadata.messageCount；缺失时按 SQLite activeCount（或旧算法）回算并写回。
    */
   private resolveMessageCountForList(sessionId: string, data: SessionData): number {
+    if (typeof data.messageCount === 'number' && data.messageCount > 0) {
+      return data.messageCount
+    }
     const sessionDir = this.resolveSessionDir(sessionId)
     const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
     let fileSize = 0

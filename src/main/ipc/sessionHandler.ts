@@ -273,7 +273,7 @@ export function registerSessionHandler(): void {
     _event,
     params: { sessionId: string; messageId: string }
   ): Promise<MessageDiffsState> => {
-    const session = sessionStore.load(params.sessionId)
+    const session = sessionStore.loadMetadata(params.sessionId)
     if (!session) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }
@@ -290,7 +290,7 @@ export function registerSessionHandler(): void {
     _event,
     params: { sessionId: string }
   ) => {
-    const session = sessionStore.load(params.sessionId)
+    const session = sessionStore.loadMetadata(params.sessionId)
     if (!session) {
       throw new Error(`会话 ${params.sessionId} 不存在`)
     }

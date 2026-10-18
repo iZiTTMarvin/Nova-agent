@@ -325,4 +325,31 @@ describe('SessionStore SQLite load', () => {
     expect(meta.subagentTask).toBeUndefined()
     expect(__takeJsonlFullReads()).toBe(0)
   })
+
+  it('元数据读写与列表扫描在已知 messageCount 时不触发 messages.jsonl 全量读取', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    for (let i = 0; i < 50; i++) {
+      store.appendMessageFast(session.id, {
+        id: `m${i}`,
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `c${i}`,
+        timestamp: i
+      })
+    }
+
+    __takeJsonlFullReads()
+    __takeJsonlRangeBytesRead()
+
+    expect(store.updateTitle(session.id, '优化后的会话标题', 'manual')?.title).toBe('优化后的会话标题')
+    expect(store.updatePinned(session.id, true)?.pinned).toBe(true)
+    expect(store.updateMode(session.id, 'plan')?.mode).toBe('plan')
+    expect(store.updatePermissionMode(session.id, 'auto')?.permissionMode).toBe('auto')
+    expect(store.updateTodos(session.id, [{ content: '核对索引', status: 'in_progress', priority: 'high' }])).not.toBeNull()
+    expect(store.getTodos(session.id)).toHaveLength(1)
+    expect(store.list().find(s => s.id === session.id)?.messageCount).toBe(50)
+
+    expect(__takeJsonlFullReads()).toBe(0)
+    expect(__takeJsonlRangeBytesRead()).toBe(0)
+  })
 })

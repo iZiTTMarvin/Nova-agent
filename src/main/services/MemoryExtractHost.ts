@@ -54,9 +54,12 @@ export function initializeMemoryExtractHost(): void {
       const sessions = store.list().filter(session => session.updatedAt >= cutoff && !!session.workspaceRoot)
         .sort((a, b) => b.updatedAt - a.updatedAt)
         .filter(session => {
-          const data = store.load(session.id)
-          return data?.kind === 'primary' && !data.memoryOptOut && !isMemoryExcludedMode(data.mode)
-            && getSessionActiveMessages(data).at(-1)?.id !== queue.getCursor(session.id)?.lastMessageId
+          const data = store.loadMetadata(session.id)
+          if (!data || data.kind !== 'primary' || data.memoryOptOut || isMemoryExcludedMode(data.mode)) return false
+          const tailId = data.currentLeafId !== undefined
+            ? data.currentLeafId
+            : (getSessionActiveMessages(store.load(session.id) ?? data).at(-1)?.id ?? null)
+          return tailId !== queue.getCursor(session.id)?.lastMessageId
         }).slice(0, MEMORY_EXTRACT_BACKFILL_MAX_SESSIONS)
       for (const session of sessions) queue.enqueue(session.id, session.workspaceRoot!, 0)
     } catch { console.error('[MemoryExtract] startup queue unavailable') }
@@ -78,10 +81,13 @@ export function shutdownMemoryExtractHost(): void {
 
 export function onMemoryExtractTurnStarted(sessionId: string): void { scheduler?.onTurnStarted(sessionId) }
 export function skipMemoryExtractionThroughCurrentTail(sessionId: string, store: SessionStore = getSessionStore()): void {
-  const session = store.load(sessionId)
-  if (!session) return
+  const meta = store.loadMetadata(sessionId)
+  if (!meta) return
   userTurnsSinceExtract.delete(sessionId)
-  getScheduler(store).advanceThrough(sessionId, getSessionActiveMessages(session).at(-1)?.id ?? null)
+  const tailId = meta.currentLeafId !== undefined
+    ? meta.currentLeafId
+    : (getSessionActiveMessages(store.load(sessionId) ?? meta).at(-1)?.id ?? null)
+  getScheduler(store).advanceThrough(sessionId, tailId)
 }
 /**
  * turn 收尾与离开会话时的跳过不能抛出：失败只会让光标停留，提炼执行前仍会复查 memoryOptOut。

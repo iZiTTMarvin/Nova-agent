@@ -660,7 +660,15 @@ export async function sendAgentMessage(
         return draftBound
       }
       if (isBoundToRun()) {
-        // 同一 userMessageId 已绑定既有 run（已完成或在途）：重复提交不再执行
+        // 同一 userMessageId 已绑定既有 run（已完成或在途）：重复提交不再执行；
+        // 学习交付意图若此前因崩溃未标记完成，补标 delivered 以免阻塞后续 resume。
+        if (trustedDelivery) {
+          const progress = (await import('../../learning/LearningDbHost')).getLearningProgressOrNull()
+          if (progress) {
+            const { markLearningDeliveryComplete } = await import('../../learning/LearningHost')
+            await markLearningDeliveryComplete(progress, trustedDelivery.commandId).catch(() => undefined)
+          }
+        }
         console.info(`[AgentTurnService] already_exists 且已绑定，跳过重复执行: userMessageId=${turnUserMessageId}`)
         return { accepted: true }
       }

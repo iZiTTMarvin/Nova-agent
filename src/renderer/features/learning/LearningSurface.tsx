@@ -2,7 +2,7 @@
  * 学习主区：对话滚动区 + 悬浮输入区，版式与开发模式同一套（chat-panel / chat-messages /
  * chat-panel__composer-area）。会话切换、投影刷新与草稿清理的生命周期受 E2E 保护，保持原语义。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
@@ -17,7 +17,6 @@ import {
   markUserScrollInput,
   scrollContainerToBottom
 } from '../chat/autoScroll'
-import { useScrollFadeMask } from '../../hooks/useScrollFadeMask'
 import { useLearningStore } from './useLearningStore'
 import { LearningConversation } from './LearningConversation'
 import { LearningComposer } from './LearningComposer'
@@ -35,6 +34,8 @@ import '../chat/composerShell.css'
 import '../chat/ChatPanel.css'
 import './LearningSurface.css'
 
+const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
+
 export function LearningSurface({ sessionId }: { sessionId: string }): React.ReactElement {
   const projection = useLearningStore(state => (state.sessionId === sessionId ? state.projection : null))
   const status = useLearningStore(state => state.status)
@@ -47,17 +48,35 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
   const sessions = useChatStore(state => state.sessions)
   // 仅在 chat store 当前聚焦会话与本表面 sessionId 匹配时才渲染消息，杜绝跨会话切面水合间隙展示脏数据
   const messages = useChatStore(state => (state.currentSessionId === sessionId ? state.messages : []))
+  const hasMoreMessagesAbove = useChatStore(state => state.currentSessionId === sessionId && state.hasMoreMessagesAbove)
+  const isLoadingOlderMessages = useChatStore(state => state.currentSessionId === sessionId && state.isLoadingOlderMessages)
+  const loadOlderMessages = useChatStore(state => state.loadOlderMessages)
   const isGenerating = useRunStore(state => selectSessionIsRunning(state, sessionId))
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
+  const scrollHeightBeforePrependRef = useRef<number | null>(null)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const userScrolledUpRef = useRef(false)
   const userScrollCooldownUntilRef = useRef(0)
   const lastScrollTopRef = useRef(0)
 
   const hasMessages = messages.length > 0
-  useScrollFadeMask(scrollContainerRef, { enabled: hasMessages })
+
+  useEffect(() => {
+    scrollHeightBeforePrependRef.current = null
+  }, [sessionId])
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current
+    const prevHeight = scrollHeightBeforePrependRef.current
+    if (!container || prevHeight === null || isLoadingOlderMessages) return
+    const delta = container.scrollHeight - prevHeight
+    if (delta > 0) {
+      container.scrollTop += delta
+    }
+    scrollHeightBeforePrependRef.current = null
+  }, [messages, isLoadingOlderMessages])
 
   useEffect(() => {
     const unsubChanged = window.api.on('learning:surface-changed', data => {
@@ -97,7 +116,11 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
       userScrolledUpRef.current = false
     }
     setShowScrollToBottom(isUp)
-  }, [])
+    if (hasMoreMessagesAbove && !isLoadingOlderMessages && el.scrollTop <= HISTORY_LOAD_SCROLL_THRESHOLD_PX) {
+      scrollHeightBeforePrependRef.current = el.scrollHeight
+      void loadOlderMessages()
+    }
+  }, [hasMoreMessagesAbove, isLoadingOlderMessages, loadOlderMessages])
 
   const handleWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     if (event.deltaY < 0) {
@@ -174,12 +197,17 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     <div className="learning-surface chat-panel relative flex flex-col h-full" role="region" aria-label={LEARNING_CONVERSATION_LABEL}>
       {!isEmptyState && (
         <div
-          className="chat-messages scroll-fade-y flex-1 overflow-y-auto"
+          className="chat-messages flex-1 overflow-y-auto"
           ref={scrollContainerRef}
           onScroll={handleScroll}
           onWheel={handleWheel}
           style={{ overflowAnchor: 'none' }}
         >
+          {(isLoadingOlderMessages || hasMoreMessagesAbove) && (
+            <div className="chat-messages__history-hint" aria-live="polite">
+              {isLoadingOlderMessages ? '正在加载更早的消息…' : '向上滚动加载更早的消息'}
+            </div>
+          )}
           <div className="chat-messages__flow-inner" ref={contentRef} role="region" aria-label={LEARNING_MESSAGES_LABEL}>
             <LearningConversation
               messages={messages}

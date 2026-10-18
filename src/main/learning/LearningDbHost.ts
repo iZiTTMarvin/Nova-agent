@@ -38,6 +38,15 @@ export async function ensureLearningDatabaseReady(): Promise<LearningProgress | 
   if (!isLearningModuleAssembled()) {
     return null
   }
+  if (client?.isCrashed()) {
+    const stale = client
+    client = null
+    setDefaultLearningProgress(null)
+    reader = null
+    knowledge = null
+    readyPromise = null
+    await stale.close().catch(() => undefined)
+  }
   const existing = getDefaultLearningProgress()
   if (existing) {
     return existing

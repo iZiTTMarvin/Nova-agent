@@ -6,21 +6,34 @@ import {
   initSessionStoreHost,
   resetSessionStoreHostForTests
 } from '../../../../src/main/services/SessionStoreHost'
+import {
+  setDefaultLearningProgress,
+  type LearningProgress
+} from '../../../../src/runtime/learning/progress/LearningProgress'
 import { sendAgentMessage, fromSteeringMessage } from '../../../../src/main/agent/turn/AgentTurnService'
 import { isToolVisibleInMode } from '../../../../src/shared/session/toolVisibility'
 import { createLearningAssessTool } from '../../../../src/runtime/tools/learning_assess'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 
 vi.mock('electron', () => ({
-  app: { getPath: () => mkdtempSync(join(tmpdir(), 'nova-learn-gate-app-')) }
+  app: {
+    getPath: () => mkdtempSync(join(tmpdir(), 'nova-learn-gate-app-')),
+    getAppPath: () => process.cwd()
+  }
 }))
 
 vi.mock('../../../../src/main/services/RunCoordinatorHost', () => ({
   getRunCoordinator: () => ({
     getSnapshot: () => undefined,
     listSnapshotsForSession: () => [],
+    listDispatchSnapshots: () => [],
+    onTerminalHook: () => () => {},
     startRun: vi.fn(),
     inbox: { enqueue: vi.fn() }
+  }),
+  getRunExecutionRegistry: () => ({
+    listActiveRunIds: () => [],
+    get: () => null
   })
 }))
 
@@ -122,5 +135,49 @@ describe('learn 会话入口与工具门禁', () => {
       }
     )
     expect(result.accepted).toBe(false)
+  })
+
+  it('受信任学习投递遇到已绑定历史消息跳过重复执行时，仍将 outbox 标记为 delivered', async () => {
+    const store = initSessionStoreHost(sessionsRoot)
+    const session = store.create('/proj', 'learn')
+    store.appendMessageFast(session.id, {
+      id: 'u-bound',
+      role: 'user',
+      content: '应该是加载时重新查了数据库',
+      timestamp: 1
+    })
+    store.appendMessageFast(session.id, {
+      id: 'a-bound',
+      role: 'assistant',
+      content: '中断回复',
+      userDelivery: { userMessageId: 'u-bound', modeInstruction: '', sessionPrefix: null },
+      interrupted: true,
+      timestamp: 2
+    })
+
+    const markOutboxDelivered = vi.fn().mockResolvedValue(undefined)
+    setDefaultLearningProgress({ markOutboxDelivered } as unknown as LearningProgress)
+    try {
+      const result = await sendAgentMessage(
+        {
+          sessionId: session.id,
+          trustedLearningDelivery: {
+            userMessageId: 'u-bound',
+            commandId: 'cmd-bound',
+            displayText: '应该是加载时重新查了数据库',
+            modelInput: '[学习回答]\n应该是加载时重新查了数据库'
+          }
+        },
+        {
+          getMainWindow: () => null,
+          getModelClient: () => ({}) as never,
+          getImageStore: () => ({}) as never
+        }
+      )
+      expect(result.accepted).toBe(true)
+      expect(markOutboxDelivered).toHaveBeenCalledWith('cmd-bound')
+    } finally {
+      setDefaultLearningProgress(null)
+    }
   })
 })

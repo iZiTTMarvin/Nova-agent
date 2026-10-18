@@ -16,16 +16,20 @@ export function useSessionChanges(sessionId: string) {
   useEffect(() => {
     let active = true
     void (async () => {
-      const failed: string[] = []
-      // 同一轮仍走 diffSlice 的缓存与 generation fence；按需分页，不把历史折成全仓 diff。
-      for (const messageId of [...messageIds].reverse()) {
-        if (!active || useChatStore.getState().currentSessionId !== sessionId) break
-        await useChatStore.getState().loadMessageDiffs(sessionId, messageId)
-        const state = useChatStore.getState()
-        if (!active || state.currentSessionId !== sessionId) break
-        if (!state.messageDiffs[messageId] && !state.loadingDiffs.has(messageId)) failed.push(messageId)
-      }
-      if (active) setFailedIds(failed)
+      const reversedIds = [...messageIds].reverse()
+      // 同一轮仍走 diffSlice 的缓存与 generation fence；并发拉取本页消息 diff，避免逐条串行 IPC 阻塞会话打开后响应。
+      await Promise.all(
+        reversedIds.map(async (messageId) => {
+          if (!active || useChatStore.getState().currentSessionId !== sessionId) return
+          await useChatStore.getState().loadMessageDiffs(sessionId, messageId)
+        })
+      )
+      if (!active || useChatStore.getState().currentSessionId !== sessionId) return
+      const state = useChatStore.getState()
+      const failed = reversedIds.filter(
+        messageId => !state.messageDiffs[messageId] && !state.loadingDiffs.has(messageId)
+      )
+      setFailedIds(failed)
     })()
     return () => { active = false }
   }, [messageIds, sessionId, retry])

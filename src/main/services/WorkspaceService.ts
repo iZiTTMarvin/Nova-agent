@@ -501,7 +501,7 @@ export class WorkspaceService {
     runCoordinator.deleteRunsForSessions(effectiveDeletingIdSet)
     this.clearTier1View()
     for (const id of orderedDeletingIds) {
-      const detail = store.load(id)
+      const detail = store.loadMetadata(id)
       if (detail) this.leaveSession(id, detail.workspaceRoot)
       store.delete(id)
       this.deps.onSessionDeleted?.(id)
@@ -525,7 +525,7 @@ export class WorkspaceService {
       if (remaining.length > 0) {
         // 切到剩余的第一条
         const next = remaining[0]
-        const detail = store.load(next.id)
+        const detail = store.loadMetadata(next.id)
         if (detail) {
           // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
           // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
@@ -538,7 +538,7 @@ export class WorkspaceService {
             availableSessions: remaining
           }
           hydrateSessionWhitelistFromSession(detail)
-          pushContextBreakdownForSession(detail, this.deps.getMainWindow, this.deps.getSessionStore())
+          this.scheduleContextBreakdown(detail.id)
         } else {
           this.state = { ...this.state, availableSessions: remaining }
         }
@@ -571,9 +571,9 @@ export class WorkspaceService {
       throw new Error('标题不能为空')
     }
     const finalTitle = clampSessionTitle(trimmed)
-    store.updateTitle(params.sessionId, finalTitle, 'manual')
-
-    this.state = { ...this.state, availableSessions: store.list() }
+    const updated = store.updateTitle(params.sessionId, finalTitle, 'manual')
+    if (updated) this.upsertSessionSummary(updated)
+    else this.state = { ...this.state, availableSessions: store.list() }
     this.broadcast()
     return this.getState()
   }
@@ -581,9 +581,9 @@ export class WorkspaceService {
   /** 设置会话置顶标记，刷新侧边栏列表并广播。 */
   setSessionPinned(params: { sessionId: string; pinned: boolean }): WorkspaceState {
     const store = this.deps.getSessionStore()
-    store.updatePinned(params.sessionId, params.pinned)
-
-    this.state = { ...this.state, availableSessions: store.list() }
+    const updated = store.updatePinned(params.sessionId, params.pinned)
+    if (updated) this.upsertSessionSummary(updated)
+    else this.state = { ...this.state, availableSessions: store.list() }
     this.broadcast()
     return this.getState()
   }
@@ -748,7 +748,7 @@ export class WorkspaceService {
     const source = params.source ?? 'user'
 
     if (sessionId) {
-      const session = store.load(sessionId)
+      const session = store.loadMetadata(sessionId)
       if (!session) {
         throw new Error(`会话不存在: ${sessionId}`)
       }
@@ -756,9 +756,10 @@ export class WorkspaceService {
         throw new Error('当前会话仍在运行，不能切换模式。请先等待完成或停止当前任务。')
       }
       assertSessionModeMutable(session.mode, params.mode)
-      store.updateMode(sessionId, params.mode)
+      const updated = store.updateMode(sessionId, params.mode)
       // 同步 availableSessions 里的 mode 字段
-      this.state.availableSessions = store.list()
+      if (updated) this.upsertSessionSummary(updated)
+      else this.state.availableSessions = store.list()
     }
 
     // 只有目标会话仍是当前会话时才改全局 currentMode。
@@ -789,7 +790,7 @@ export class WorkspaceService {
       throw new Error('当前没有可切换权限模式的会话')
     }
 
-    const session = store.load(sessionId)
+    const session = store.loadMetadata(sessionId)
     if (!session) {
       throw new Error(`会话不存在: ${sessionId}`)
     }
@@ -806,8 +807,9 @@ export class WorkspaceService {
     ) {
       throw new Error('未知的权限模式')
     }
-    store.updatePermissionMode(sessionId, params.permissionMode)
-    this.state.availableSessions = store.list()
+    const updated = store.updatePermissionMode(sessionId, params.permissionMode)
+    if (updated) this.upsertSessionSummary(updated)
+    else this.state.availableSessions = store.list()
     this.broadcast()
     return this.getState()
   }
@@ -920,7 +922,7 @@ export class WorkspaceService {
     const sessionId = params.sessionId ?? this.state.currentSessionId
     if (!sessionId) return null
 
-    const session = this.deps.getSessionStore().load(sessionId)
+    const session = this.deps.getSessionStore().loadMetadata(sessionId)
     const activePlan = session?.activePlan
     if (!session || !activePlan) return null
     if (params.expectedPath && activePlan.path !== params.expectedPath) return null
