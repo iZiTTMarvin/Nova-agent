@@ -233,7 +233,7 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
             top: 0,
             left: 0,
             width: '100%',
-            transform: `translateY(${item.start}px)`,
+            transform: `translateY(${Math.round(item.start)}px)`,
             paddingBottom: MESSAGE_GAP_PX
           }}
         >

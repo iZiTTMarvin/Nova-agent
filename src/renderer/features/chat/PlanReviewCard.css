@@ -105,6 +105,8 @@
 }
 
 .plan-review-card__preview .markdown-body {
+  --text-body-size: 0.9rem;
+  --color-text-primary: var(--text-secondary);
   font-size: inherit;
 }
 

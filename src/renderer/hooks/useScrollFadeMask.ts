@@ -25,6 +25,7 @@ export function updateScrollFadeMaskVars(el: HTMLElement, fadeSize = 24): void {
     canScroll && scrollTop + clientHeight < scrollHeight - EDGE_TOLERANCE_PX ? fadeSize : 0
   el.style.setProperty('--scroll-fade-top', `${topPx}px`)
   el.style.setProperty('--scroll-fade-bottom', `${bottomPx}px`)
+  el.classList.toggle('scroll-fade-y--active', topPx > 0 || bottomPx > 0)
 }
 
 function isRefObject(

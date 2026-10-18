@@ -117,6 +117,8 @@
   gap: 24px;
   min-width: 0;
   position: relative;
+  /* 显式提供不透明实色底，确保 Chromium 将滚动合成层标为 contents_opaque 并开启 DirectWrite ClearType */
+  background-color: var(--surface-glass);
 }
 
 @media (min-width: 768px) {
@@ -127,11 +129,15 @@
 
 /* 消息流内层阅读柱容器：最大宽度对齐主流 Agent 黄金阅读行宽（48rem/768px）。
    大屏居中；当右侧悬浮状态面板展开且窗口缩窄时，通过 --status-shift 平滑向左平移让出空间；
-   当左右侧边栏开合或拖拽挤压主区时，实时平滑滑动并随可用空间动态伸缩填充。 */
+   round(nearest, ..., 1px) 保证位移始终对齐整数物理像素，杜绝奇数屏宽 0.5px 导致的纹理插值模糊。 */
 .chat-messages__flow-inner {
-  --status-shift: min(
-    max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
-    max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+  --status-shift: round(
+    nearest,
+    min(
+      max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+      max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+    ),
+    1px
   );
   width: 100%;
   max-width: var(--chat-content-max-width);
@@ -139,6 +145,7 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
+  background-color: var(--surface-glass);
   transform: translate3d(calc(-1 * var(--status-shift, 0px)), 0, 0);
 }
 
@@ -704,9 +711,13 @@
 
 /* ── Tier 1 切分支提示横幅 ─────────────────────────────────── */
 .chat-tier1-notice {
-  --status-shift: min(
-    max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
-    max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+  --status-shift: round(
+    nearest,
+    min(
+      max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+      max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+    ),
+    1px
   );
   display: flex;
   align-items: center;

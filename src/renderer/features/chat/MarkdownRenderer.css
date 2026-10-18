@@ -8,15 +8,27 @@
  */
 
 .markdown-body {
+  /* 对话阅读排版：15px 突破 Windows 复杂汉字笔画粘连阈值，1.72 行高拉开方块字行距；
+     正文采用防眩光柔和近白，与 <strong> 纯亮白形成清晰明度+字重双层对比。 */
+  --text-body-size: 0.9375rem;
+  --text-body-leading: 1.72;
+  --text-code-size: 0.84375rem;
+  --color-text-primary: light-dark(#1f2328, #e6e6eb);
   min-width: 0;
   max-width: 100%;
+  font-size: var(--text-body-size);
+  line-height: var(--text-body-leading);
+  letter-spacing: 0.01em;
+  color: var(--color-text-primary);
+  font-optical-sizing: auto;
+  font-kerning: normal;
   overflow-wrap: anywhere;
 }
 
 .markdown-body > *:first-child { margin-top: 0; }
 .markdown-body > *:last-child { margin-bottom: 0; }
 
-/* 标题字号/字重/行由 theme scale 拥有；Nova 只保留 serif 品牌字体 */
+/* 标题字号/字重/行由 theme scale 拥有；显式抬升标题明度与字距 */
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3,
@@ -24,6 +36,52 @@
 .markdown-body h5,
 .markdown-body h6 {
   font-family: var(--font-serif);
+  color: light-dark(#09090b, #fafafa);
+  letter-spacing: 0.005em;
+}
+
+/* 加粗强调：以纯高对比明度 + 600 字重与柔和正文拉开层次，避免笔画过粗粘连 */
+.markdown-body :is(strong, b) {
+  color: light-dark(#09090b, #fafafa);
+  font-weight: 600;
+}
+
+/* 行内代码胶囊：微缩字号与轻描边，融入中英混排节奏 */
+.markdown-body :not(pre) > code {
+  padding: 0.14em 0.42em;
+  border-radius: 5px;
+  border: 1px solid var(--border-subtle);
+  background-color: light-dark(rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0.07));
+  color: light-dark(#18181b, #f4f4f5);
+  font-size: 0.875em;
+}
+
+/* 普通无序/有序列表排版打磨（排除 GFM 任务复选框列表）：
+   收敛过大的纯白圆点为精致的次级色小圆点并与首行汉字中线对齐，有序编号等宽对齐，消除嵌套列表断层。 */
+.markdown-body :not(.astryx-checkbox-list) > ul[role="list"] > li > span:first-child {
+  align-self: flex-start;
+  margin-top: calc((1em * var(--text-body-leading) - 5px) / 2);
+}
+
+.markdown-body :not(.astryx-checkbox-list) > ul[role="list"] > li > span:first-child > span {
+  width: 5px;
+  height: 5px;
+  background-color: var(--text-secondary);
+}
+
+.markdown-body :not(.astryx-checkbox-list) > ol[role="list"] > li > span:first-child {
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.markdown-body :not(.astryx-checkbox-list) > :is(ul, ol)[role="list"] > li [role="paragraph"] {
+  margin-block: 0;
+}
+
+.markdown-body :not(.astryx-checkbox-list) > :is(ul, ol)[role="list"] > li div:has(> :is(ul, ol)[role="list"]) {
+  margin-block: 4px 0;
+  padding-inline-start: 8px;
 }
 
 /* ── 链接（safeMarkdownLink 语义的可见层）──────────────────── */

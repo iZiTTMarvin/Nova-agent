@@ -48,9 +48,14 @@ describe('chat panel layout contracts', () => {
   })
 
   it('locks message flow and composer to centered reading column with responsive gutters', () => {
+    const messagesRule = rule('.chat-messages')
+    expect(messagesRule).toMatch(/background-color:\s*var\(--surface-glass\)/)
+
     const flowInner = rule('.chat-messages__flow-inner')
     expect(flowInner).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
     expect(flowInner).toMatch(/margin-inline:\s*auto/)
+    expect(flowInner).toMatch(/background-color:\s*var\(--surface-glass\)/)
+    expect(flowInner).toMatch(/--status-shift:\s*round\(\s*nearest,[\s\S]*?1px\s*\)/)
     expect(flowInner).toMatch(/transform:\s*translate3d\(calc\(-1\s*\*\s*var\(--status-shift,\s*0px\)\),\s*0,\s*0\)/)
     expect(flowInner).not.toMatch(/transition:[\s\S]*?max-width/)
 
@@ -61,6 +66,7 @@ describe('chat panel layout contracts', () => {
     const composerInner = rule('.chat-panel__composer-inner')
     expect(composerInner).toMatch(/max-width:\s*var\(--chat-content-max-width\)/)
     expect(composerInner).toMatch(/margin-inline:\s*auto/)
+    expect(composerInner).toMatch(/--status-shift:\s*round\(\s*nearest,[\s\S]*?1px\s*\)/)
     expect(composerInner).toMatch(/transform:\s*translate3d\(calc\(-1\s*\*\s*var\(--status-shift,\s*0px\)\),\s*0,\s*0\)/)
     expect(composerInner).not.toMatch(/transition:[\s\S]*?max-width/)
 

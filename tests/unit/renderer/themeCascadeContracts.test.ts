@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { isVisualizationThemeTokenValue } from '../../../src/shared/visualization/contracts'
 
 const mainEntry = readFileSync(
   new URL('../../../src/renderer/main.tsx', import.meta.url),
@@ -101,5 +102,17 @@ describe('主题 token 层契约', () => {
     for (const dead of ['--bg-hover', '--bg-cream', '--border-light', '--border-chrome', '--surface-sidebar-hover']) {
       expect(globalCss).not.toContain(dead)
     }
+  })
+
+  it('字体栈显式包含中西文字体且符合可视化主题 token 长度契约', () => {
+    const fontSans = globalCss.match(/--font-sans:\s*([^;]+);/)?.[1]?.trim() ?? ''
+    const fontMono = globalCss.match(/--font-mono:\s*([^;]+);/)?.[1]?.trim() ?? ''
+    expect(fontSans).toContain('"Segoe UI Variable Text"')
+    expect(fontSans).toContain('"PingFang SC"')
+    expect(fontSans).toContain('"Microsoft YaHei"')
+    expect(fontMono).toContain('"PingFang SC"')
+    expect(fontMono).toContain('"Microsoft YaHei"')
+    expect(isVisualizationThemeTokenValue(fontSans)).toBe(true)
+    expect(isVisualizationThemeTokenValue(fontMono)).toBe(true)
   })
 })

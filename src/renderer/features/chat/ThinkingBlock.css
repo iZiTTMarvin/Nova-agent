@@ -127,6 +127,9 @@
 }
 
 .thinking-block__markdown .markdown-body {
+  --text-body-size: 12.5px;
+  --text-body-leading: 1.6;
+  --color-text-primary: var(--text-muted);
   gap: 6px;
   font-size: inherit;
   line-height: inherit;

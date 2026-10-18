@@ -38,7 +38,7 @@ module.exports = {
         'accent-primary': 'var(--accent-primary)',
       },
       fontFamily: {
-        sans: ['system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        sans: ['var(--font-sans)'],
         serif: ['var(--font-serif)'],
       }
     },

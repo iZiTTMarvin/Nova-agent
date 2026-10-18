@@ -114,9 +114,13 @@
 }
 
 .chat-panel__composer-inner {
-  --status-shift: min(
-    max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
-    max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+  --status-shift: round(
+    nearest,
+    min(
+      max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+      max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+    ),
+    1px
   );
   position: relative;
   width: 100%;
