@@ -8,6 +8,7 @@ import {
 import { PatchDiff, VirtualizerContext } from '@pierre/diffs/react'
 import { Button } from '@astryxdesign/core/Button'
 import type { DiffEntry, DiffHunk } from '../../../shared/diff/types'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import { buildHunkPatch } from './pierrePatch'
 import { acquirePierreVirtualizer } from './pierreVirtualizer'
 import './diffLines.css'
@@ -23,13 +24,63 @@ const DIFF_METRICS: VirtualFileMetrics = {
   spacing: 0
 }
 
-const PIERRE_CSS = `
-:host {
+/**
+ * 构建注入 Pierre Shadow DOM 的主题与排版样式。
+ * 显式指定 color-scheme 与表面背景/文字变量，避免纯文本文件（如 .gitignore）
+ * 或未走 Shiki Worker 的大文件在深色模式下回退到刺眼的亮白底色。
+ */
+export function buildPierreCss(resolvedTheme: 'light' | 'dark'): string {
+  const isDark = resolvedTheme === 'dark'
+  const bg = isDark ? '#141417' : '#f8f8fa'
+  const fg = isDark ? '#f4f4f5' : '#18181b'
+  const contextBg = isDark ? '#18181c' : '#f1f1f4'
+  const separatorBg = isDark ? '#1f1f24' : '#ececf0'
+
+  return `
+:host, [data-diffs], [data-diffs-header], [data-error-wrapper] {
+  color-scheme: ${resolvedTheme};
   --diffs-font-family: var(--font-mono);
   --diffs-font-size: 0.8rem;
   --diffs-line-height: 22px;
+  --diffs-light-bg: #f8f8fa;
+  --diffs-dark-bg: #141417;
+  --diffs-light: #18181b;
+  --diffs-dark: #f4f4f5;
+  --diffs-bg: ${bg};
+  --diffs-fg: ${fg};
+  --diffs-bg-context-override: ${contextBg};
+  --diffs-bg-separator-override: ${separatorBg};
+  --diffs-bg-buffer-override: ${contextBg};
 }
 `
+}
+
+function useResolvedDiffTheme(): 'light' | 'dark' {
+  const theme = useSettingsStore(s => s.theme)
+  const [systemDark, setSystemDark] = useState<boolean>(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false
+    return window.matchMedia('(prefers-color-scheme: dark)').matches
+  })
+
+  useEffect(() => {
+    if (theme !== 'system' || typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return
+    }
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    setSystemDark(mq.matches)
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [theme])
+
+  if (theme === 'dark') return 'dark'
+  if (theme === 'light') return 'light'
+  if (typeof document !== 'undefined') {
+    const attr = document.documentElement.getAttribute('data-theme')
+    if (attr === 'dark' || attr === 'light') return attr
+  }
+  return systemDark ? 'dark' : 'light'
+}
 
 export interface DiffRenderPolicy {
   disableWorkerPool: boolean
@@ -71,6 +122,7 @@ export const HunkView: React.FC<HunkViewProps> = ({
 }) => {
   const [showFull, setShowFull] = useState(false)
   const [virtualizer, setVirtualizer] = useState<Virtualizer>()
+  const resolvedTheme = useResolvedDiffTheme()
 
   useEffect(() => {
     const scrollElement = scrollRef?.current
@@ -96,17 +148,21 @@ export const HunkView: React.FC<HunkViewProps> = ({
   )
   const options = useMemo<FileDiffOptions<undefined>>(() => ({
     diffStyle: 'unified',
+    themeType: resolvedTheme,
     overflow: wrap ? 'wrap' : 'scroll',
     disableFileHeader: true,
     hunkSeparators: 'line-info-basic',
     lineDiffType: policy.lineDiffType,
     maxLineDiffLength: policy.maxLineDiffLength,
     tokenizeMaxLineLength: policy.tokenizeMaxLineLength,
-    unsafeCSS: PIERRE_CSS
-  }), [policy, wrap])
+    unsafeCSS: buildPierreCss(resolvedTheme)
+  }), [policy, resolvedTheme, wrap])
 
+  // VirtualizedFileDiff 内部对 this.fileDiff 使用 ??= 惰性赋值，
+  // 用 patch 内容作为 key 确保切换文件或展开完整 hunk 时重建实例。
   const diff = (
     <PatchDiff
+      key={preview.patch}
       patch={preview.patch}
       options={options}
       metrics={DIFF_METRICS}

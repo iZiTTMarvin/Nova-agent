@@ -145,4 +145,28 @@ describe('HunkView Pierre 集成', () => {
 
     renderer.unmount()
   })
+
+  it('深色主题下向 Pierre 注入深色 themeType 与 --diffs-bg 防止纯文本 Diff 白底刺眼', () => {
+    document.documentElement.dataset.theme = 'dark'
+    try {
+      const renderer = renderDom(
+        <HunkView
+          hunk={makeHunk(4)}
+          filePath=".gitignore"
+          status="modified"
+        />
+      )
+
+      const lastCall = mocks.patchDiff.mock.calls.at(-1)?.[0] as {
+        options?: { themeType?: string; unsafeCSS?: string }
+      }
+      expect(lastCall?.options?.themeType).toBe('dark')
+      expect(lastCall?.options?.unsafeCSS).toContain('color-scheme: dark;')
+      expect(lastCall?.options?.unsafeCSS).toContain('--diffs-bg: #141417;')
+
+      renderer.unmount()
+    } finally {
+      delete document.documentElement.dataset.theme
+    }
+  })
 })

@@ -26,7 +26,6 @@ import {
   PanelLeftIcon,
   SearchIcon,
   ChevronDownIcon,
-  FilterIcon,
   TerminalIcon,
   CodeIcon,
   BookIcon
@@ -74,6 +73,13 @@ function newSessionShortcutLabel(): string {
     return '⌘N'
   }
   return 'Ctrl+N'
+}
+
+function searchSessionShortcutLabel(): string {
+  if (typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)) {
+    return '⌘P'
+  }
+  return 'Ctrl+P'
 }
 
 function getStoredExpandedProjects(): Record<string, boolean> {
@@ -184,13 +190,10 @@ function SidebarStatusDot({
 /** 会话导航主体内容 */
 interface SidebarSessionsProps {
   updateSnapshot: AppUpdateSnapshot | null
-  onFocusSearch?: () => void
-  searchTriggerCount?: number
 }
 
 const SidebarSessions = React.memo(function SidebarSessions({
-  updateSnapshot,
-  searchTriggerCount = 0
+  updateSnapshot
 }: SidebarSessionsProps) {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
@@ -215,13 +218,18 @@ const SidebarSessions = React.memo(function SidebarSessions({
   const [isFilterOpen, setIsFilterOpen] = useState(false)
   const filterInputRef = useRef<HTMLInputElement>(null)
 
-  // 当外部顶行点击 Search 或快捷键时触发聚焦过滤输入
-  useEffect(() => {
-    if (searchTriggerCount > 0) {
-      setIsFilterOpen(true)
-      setTimeout(() => filterInputRef.current?.focus(), 50)
-    }
-  }, [searchTriggerCount])
+  const openSearch = () => {
+    setIsFilterOpen(true)
+    setTimeout(() => {
+      filterInputRef.current?.focus()
+      filterInputRef.current?.select()
+    }, 20)
+  }
+
+  const closeSearch = () => {
+    setFilterText('')
+    setIsFilterOpen(false)
+  }
 
   /** 后台运行中会话：非焦点、非终态 run，按 sessionId 去重 */
   const runningSessions = useMemo(() => {
@@ -409,19 +417,30 @@ const SidebarSessions = React.memo(function SidebarSessions({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [createNewSession, currentProject])
 
-  // Ctrl+P 快捷键监听会话检索
+  // Ctrl+P 快捷键监听会话检索（若已在搜索框内再次按下且内容为空，支持直接收起）
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== 'p') return
+      if (event.target === filterInputRef.current) {
+        event.preventDefault()
+        if (!filterText.trim()) {
+          closeSearch()
+        } else {
+          filterInputRef.current?.select()
+        }
+        return
+      }
       if (isEditableKeyboardTarget(event.target)) return
       event.preventDefault()
-      setIsFilterOpen(true)
-      setTimeout(() => filterInputRef.current?.focus(), 50)
+      if (useLayoutStore.getState().sidebarCollapsed) {
+        useLayoutStore.getState().toggleSidebar()
+      }
+      openSearch()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [filterText])
 
   const sidebarActiveSessionId = resolveSidebarActiveSessionId(sessions, currentSessionId)
   const surface: 'dev' | 'learn' = currentMode === 'learn' ? 'learn' : 'dev'
@@ -579,13 +598,18 @@ const SidebarSessions = React.memo(function SidebarSessions({
     void setSessionPinned(session.id, !session.pinned)
   }
 
-  // 过滤处理逻辑
+  // 过滤处理逻辑：支持按会话标题或所属项目名检索
   const normalizedFilter = filterText.trim().toLowerCase()
   const filterSessionMatch = (session: PrimarySession) => {
     if (!normalizedFilter) return true
-    return getDisplayTitle(session).toLowerCase().includes(normalizedFilter)
+    return (
+      getDisplayTitle(session).toLowerCase().includes(normalizedFilter) ||
+      getProjectName(session.workspaceRoot).toLowerCase().includes(normalizedFilter)
+    )
   }
-  const filteredSessionCount = rootSessions.filter(filterSessionMatch).length
+  const matchedRootSessions = rootSessions.filter(filterSessionMatch)
+  const filteredSessionCount = matchedRootSessions.length
+  const firstMatchedSession = matchedRootSessions[0] ?? null
 
   /** 单条高密度会话行（ThreadItem） */
   const renderSessionRow = (
@@ -821,24 +845,66 @@ const SidebarSessions = React.memo(function SidebarSessions({
               <span>添加工作区</span>
             </button>
 
-            {/* 3. 过滤输入框（仅在展开时显示，平时隐藏） */}
-            {isFilterOpen && (
-              <div className="sidebar-filter-box pt-1">
+            {/* 3. 搜索会话：平时为与上方对齐的动作行，点击或按 Ctrl+P 后原地切换为可随时清空/关闭的搜索栏 */}
+            {!isFilterOpen ? (
+              <button
+                type="button"
+                className="sidebar-action-btn w-full h-[34px] flex items-center justify-between px-3 rounded text-[13px] font-medium text-text-secondary hover:text-text-primary transition-colors"
+                onClick={openSearch}
+              >
+                <div className="flex items-center gap-2">
+                  <SearchIcon size={15} />
+                  <span>搜索会话</span>
+                </div>
+                <span className="text-xs font-normal text-text-muted tabular-nums">
+                  {searchSessionShortcutLabel()}
+                </span>
+              </button>
+            ) : (
+              <div className="sidebar-search-bar" role="search" aria-label="搜索会话">
+                <SearchIcon size={14} className="sidebar-search-bar__icon" />
                 <input
                   ref={filterInputRef}
                   type="text"
-                  className="w-full px-2.5 py-1 text-xs rounded border border-border-subtle bg-surface-canvas text-text-primary placeholder:text-text-placeholder outline-none focus:border-accent-primary"
-                  placeholder="搜索当前表面所有项目的会话标题…"
+                  className="sidebar-search-bar__input"
+                  aria-label="搜索会话"
+                  placeholder="搜索会话标题或项目…"
                   spellCheck={false}
                   value={filterText}
                   onChange={(e) => setFilterText(e.target.value)}
+                  onBlur={(e) => {
+                    const nextTarget = e.relatedTarget as Node | null
+                    if (nextTarget && e.currentTarget.parentElement?.contains(nextTarget)) {
+                      return
+                    }
+                    if (!filterText.trim()) {
+                      setIsFilterOpen(false)
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Escape') {
-                      setIsFilterOpen(false)
-                      setFilterText('')
+                      e.preventDefault()
+                      closeSearch()
+                    } else if (e.key === 'Enter' && firstMatchedSession) {
+                      e.preventDefault()
+                      void selectSession(firstMatchedSession.id)
                     }
                   }}
                 />
+                {normalizedFilter && (
+                  <span className="sidebar-search-bar__count" aria-live="polite">
+                    {filteredSessionCount}
+                  </span>
+                )}
+                <button
+                  type="button"
+                  className="sidebar-search-bar__close"
+                  aria-label="关闭搜索"
+                  title="关闭搜索 (Esc)"
+                  onClick={closeSearch}
+                >
+                  <span aria-hidden="true">×</span>
+                </button>
               </div>
             )}
           </div>
@@ -870,41 +936,21 @@ const SidebarSessions = React.memo(function SidebarSessions({
         )}
 
         {/* 项目树分区 */}
-        <SideNavSection
-          title="项目"
-          endContent={(
-            <IconButton
-              label="过滤会话"
-              icon={<FilterIcon size={13} />}
-              variant="ghost"
-              size="sm"
-              tooltip="过滤会话"
-              onClick={() => {
-                setIsFilterOpen(prev => {
-                  const next = !prev
-                  if (next) {
-                    setTimeout(() => filterInputRef.current?.focus(), 50)
-                  }
-                  return next
-                })
-              }}
-            />
-          )}
-        >
+        <SideNavSection title="项目">
           {activeProjectEntries.map(([projectPath, projectSessions]) => {
             const filteredProjectSessions = projectSessions.filter(filterSessionMatch)
             if (filteredProjectSessions.length === 0 && normalizedFilter) return null
 
-            const isExpanded = expandedProjects[projectPath] !== false
+            const isExpanded = Boolean(normalizedFilter) || expandedProjects[projectPath] !== false
             const selectedIndex = filteredProjectSessions.findIndex(session => session.id === sidebarActiveSessionId)
             const selectedBeyondPreview = selectedIndex >= SIDEBAR_SESSION_PREVIEW_COUNT
             const userExpandedSessions = expandedSessionLists[projectPath] === true
-            const isSessionListExpanded = userExpandedSessions || selectedBeyondPreview
+            const isSessionListExpanded = Boolean(normalizedFilter) || userExpandedSessions || selectedBeyondPreview
             const visibleSessions =
               isSessionListExpanded || filteredProjectSessions.length <= SIDEBAR_SESSION_PREVIEW_COUNT
                 ? filteredProjectSessions
                 : filteredProjectSessions.slice(0, SIDEBAR_SESSION_PREVIEW_COUNT)
-            const showMoreToggle = filteredProjectSessions.length > SIDEBAR_SESSION_PREVIEW_COUNT
+            const showMoreToggle = !normalizedFilter && filteredProjectSessions.length > SIDEBAR_SESSION_PREVIEW_COUNT
             const isPinned = pinnedProjects[projectPath] === true
             const projectDragState = isPinned
               ? pinnedProjectsReorder.getItemDragState(projectPath)
@@ -1083,7 +1129,11 @@ const SidebarSessions = React.memo(function SidebarSessions({
           })}
 
           {/* 已归档项目折叠分区 */}
-          {archivedProjectEntries.length > 0 && (
+          {archivedProjectEntries.length > 0 &&
+            (!normalizedFilter ||
+              archivedProjectEntries.some(([, projectSessions]) =>
+                projectSessions.some(filterSessionMatch)
+              )) && (
             <div className="sidebar-archived-projects-section mt-2 pt-2 border-t border-border-subtle">
               <div
                 className="flex items-center justify-between px-2 py-1 text-xs font-medium text-text-muted cursor-pointer hover:text-text-secondary select-none"
@@ -1092,7 +1142,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                 <div className="flex items-center gap-1.5">
                   <span
                     className={`transition-transform duration-150 inline-block shrink-0 ${
-                      isArchivedSectionExpanded ? 'rotate-0' : '-rotate-90'
+                      Boolean(normalizedFilter) || isArchivedSectionExpanded ? 'rotate-0' : '-rotate-90'
                     }`}
                   >
                     <ChevronDownIcon size={12} />
@@ -1100,12 +1150,12 @@ const SidebarSessions = React.memo(function SidebarSessions({
                   <span>已归档项目 ({archivedProjectEntries.length})</span>
                 </div>
               </div>
-              {isArchivedSectionExpanded && (
+              {(Boolean(normalizedFilter) || isArchivedSectionExpanded) && (
                 <div className="mt-1">
                   {archivedProjectEntries.map(([projectPath, projectSessions]) => {
                     const filteredProjectSessions = projectSessions.filter(filterSessionMatch)
                     if (filteredProjectSessions.length === 0 && normalizedFilter) return null
-                    const isExpanded = expandedProjects[projectPath] !== false
+                    const isExpanded = Boolean(normalizedFilter) || expandedProjects[projectPath] !== false
                     const isMenuOpen = openMenuProjectPath === projectPath
 
                     return (
@@ -1271,7 +1321,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
   const sidebarWidth = useLayoutStore(state => state.sidebarWidth)
-  const [searchTriggerCount, setSearchTriggerCount] = useState(0)
   const shellRef = useRef<HTMLDivElement>(null)
   const innerRef = useRef<HTMLDivElement>(null)
 
@@ -1319,20 +1368,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
           transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)'
         }}
       >
-        {/* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮 */}
+        {/* 顶行：窗口拖拽区 + 品牌 Logo + 折叠按钮 */}
         <div className="sidebar-topbar">
           <div className="sidebar-topbar__brand">
             <NovaLogo size={24} />
           </div>
           <div className="sidebar-topbar__actions flex items-center gap-1">
-            <IconButton
-              label="会话检索 (Ctrl+P)"
-              icon={<SearchIcon size={15} />}
-              variant="ghost"
-              size="sm"
-              tooltip="会话检索 (Ctrl+P)"
-              onClick={() => setSearchTriggerCount(prev => prev + 1)}
-            />
             <IconButton
               label="折叠会话导航"
               icon={<PanelLeftIcon size={16} />}
@@ -1349,7 +1390,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="sidebar-shell__nav">
           <SidebarSessions
             updateSnapshot={updateSnapshot}
-            searchTriggerCount={searchTriggerCount}
           />
         </div>
       </div>

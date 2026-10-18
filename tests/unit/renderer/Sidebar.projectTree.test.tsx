@@ -29,13 +29,36 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
 }))
 
 vi.mock('@astryxdesign/core/SideNav', () => ({
-  SideNav: ({ children }: { children?: React.ReactNode }) => (
-    <div data-testid="sidenav">{children}</div>
+  SideNav: ({
+    topContent,
+    children,
+    footer
+  }: {
+    topContent?: React.ReactNode
+    children?: React.ReactNode
+    footer?: React.ReactNode
+  }) => (
+    <div data-testid="sidenav">
+      {topContent}
+      {children}
+      {footer}
+    </div>
   ),
   SideNavHeading: () => null,
   SideNavItem: () => null,
-  SideNavSection: ({ children, title }: { children?: React.ReactNode; title?: string }) => (
-    <div data-section-title={title}>{children}</div>
+  SideNavSection: ({
+    children,
+    title,
+    endContent
+  }: {
+    children?: React.ReactNode
+    title?: string
+    endContent?: React.ReactNode
+  }) => (
+    <div data-section-title={title}>
+      {endContent}
+      {children}
+    </div>
   )
 }))
 
@@ -230,6 +253,57 @@ describe('Sidebar 项目树交互与悬浮窗优化', () => {
     expect(useLayoutStore.getState().pinnedSessionOrder).toEqual(['sess-b', 'sess-a'])
     const updatedRows = pinnedSection.querySelectorAll<HTMLElement>('.sidebar-session-row')
     expect(updatedRows[0]?.getAttribute('title')).toContain('Pinned B')
+
+    renderer.unmount()
+  })
+
+  it('「搜索会话」位于「添加工作区」下方，点击后展开可直接输入与关闭的搜索栏，且不再展示冗余的过滤会话按钮', () => {
+    const sessA: Session = { ...sampleSession, id: 'sess-a', title: '修复深色主题 Diff' }
+    const sessB: Session = { ...sampleSession, id: 'sess-b', title: '重构侧边栏搜索' }
+    useChatStore.setState({ sessions: [sessA, sessB], currentSessionId: sessA.id })
+    useSettingsStore.setState({ currentProject: 'D:/test-workspace' })
+
+    const renderer = renderDom(<Sidebar />)
+
+    // 不再渲染「过滤会话」和顶栏「会话检索」按钮
+    const allButtons = Array.from(renderer.container.querySelectorAll('button'))
+    expect(allButtons.some(btn => (btn.getAttribute('aria-label') ?? '').includes('过滤会话'))).toBe(false)
+    expect(allButtons.some(btn => (btn.getAttribute('aria-label') ?? '').includes('会话检索'))).toBe(false)
+
+    // 「搜索会话」按钮存在，点击后切换为搜索输入框
+    const searchActionBtn = allButtons.find(btn => (btn.textContent ?? '').includes('搜索会话'))
+    expect(searchActionBtn).toBeTruthy()
+
+    act(() => {
+      searchActionBtn?.click()
+    })
+
+    const searchInput = renderer.container.querySelector<HTMLInputElement>('.sidebar-search-bar__input')
+    expect(searchInput).toBeTruthy()
+
+    // 输入关键字过滤会话
+    act(() => {
+      const nativeValueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )?.set
+      nativeValueSetter?.call(searchInput, '深色主题')
+      searchInput?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+
+    const filteredRows = renderer.container.querySelectorAll<HTMLElement>('.sidebar-session-row')
+    expect(filteredRows).toHaveLength(1)
+    expect(filteredRows[0]?.getAttribute('title')).toContain('修复深色主题 Diff')
+
+    // 点击关闭按钮清空并收起搜索栏，恢复完整会话列表
+    const closeBtn = renderer.container.querySelector<HTMLButtonElement>('.sidebar-search-bar__close')
+    expect(closeBtn).toBeTruthy()
+    act(() => {
+      closeBtn?.click()
+    })
+
+    expect(renderer.container.querySelector('.sidebar-search-bar__input')).toBeNull()
+    expect(renderer.container.querySelectorAll('.sidebar-session-row')).toHaveLength(2)
 
     renderer.unmount()
   })

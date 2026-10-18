@@ -135,13 +135,13 @@
 }
 
 .diff-file--added .diff-file__status-badge {
-  background-color: rgba(120, 140, 93, 0.12);
+  background-color: var(--surface-success);
   color: var(--color-success);
 }
 
 .diff-file--modified .diff-file__status-badge {
-  background-color: rgba(201, 100, 66, 0.1);
-  color: var(--color-brand);
+  background-color: var(--surface-brand);
+  color: var(--accent-primary);
 }
 
 .diff-file--deleted .diff-file__status-badge {

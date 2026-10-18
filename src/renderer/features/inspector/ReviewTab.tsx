@@ -1,8 +1,7 @@
 /**
- * Inspector 审阅 Tab：展示目标消息的文件 diff，支持逐文件保留/回退。
+ * Inspector 审阅 Tab：以默认折叠的紧凑文件列表展示目标消息改动，点击文件行按需展开 Diff，支持单文件与整轮保留/回退。
  */
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { Button } from '@astryxdesign/core/Button'
 import {
   ChevronIcon,
   CheckIcon,
@@ -67,13 +66,11 @@ const ReviewEmpty: React.FC = () => (
 
 /**
  * 精确订阅单条 messageId 的 diff 缓存与审查动作。
- * memo 隔离外层 messages/messageDiffs 根订阅：流式 delta 更新 messages 时
- * props（原始值）不变，审查区不跟随重渲染。
+ * 默认将所有改动文件收起为紧凑单行，点击文件行再按需展开对应 diff。
  */
 const ReviewContent: React.FC<{
   messageId: string
   preferredFilePath?: string
-  /** 无 store reviewTarget 时用本地文件选择，不写回 layout store */
   localFileMode: boolean
 }> = React.memo(({ messageId, preferredFilePath, localFileMode }) => {
   const diffCache = useChatStore(s => s.messageDiffs[messageId])
@@ -85,74 +82,115 @@ const ReviewContent: React.FC<{
   const tier1Stale = useChatStore(s => s.tier1StaleDiffMessageIds.includes(messageId))
   const selectReviewFile = useLayoutStore(s => s.selectReviewFile)
 
-  const [localFilePath, setLocalFilePath] = useState<string | null>(null)
+  /** 默认全部折叠为紧凑文件行，由用户点击按需展开 */
+  const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({})
+  const [focusedFilePath, setFocusedFilePath] = useState<string | null>(preferredFilePath ?? null)
   const [syntaxMode, setSyntaxMode] = useState<'syntax' | 'text'>('syntax')
   const [wrap, setWrap] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [busyFilePath, setBusyFilePath] = useState<string | null>(null)
   /** 最近一次保留/回退失败的就地提示 */
   const [actionError, setActionError] = useState<string | null>(null)
   /** diff 区外层滚动容器：大 hunk 虚拟化共享同一滚动条 */
   const bodyScrollRef = useRef<HTMLDivElement>(null)
+  const fileRowRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  const refreshedDigestForMsgRef = useRef<string | null>(null)
 
   useEffect(() => {
-    if (!diffCache && currentSessionId) {
+    if (!currentSessionId) return
+    if (!diffCache) {
       void loadMessageDiffs(currentSessionId, messageId)
+      return
+    }
+    // 流式阶段结束时 diff:update 仅携带 hunks 而不含 currentDigest，
+    // 首次进入审阅面板时补拉一次完整快照，避免点击回退时报“改动已过期”。
+    const missingDigest =
+      diffCache.diffs.length > 0 &&
+      diffCache.diffs.some(d => d.currentDigest === undefined)
+    if (
+      missingDigest &&
+      refreshedDigestForMsgRef.current !== messageId &&
+      typeof window !== 'undefined' &&
+      typeof window.api?.invoke === 'function'
+    ) {
+      refreshedDigestForMsgRef.current = messageId
+      void loadMessageDiffs(currentSessionId, messageId, true)
     }
   }, [diffCache, currentSessionId, messageId, loadMessageDiffs])
+
+  useEffect(() => {
+    if (!preferredFilePath) return
+    setFocusedFilePath(preferredFilePath)
+    const rowEl = fileRowRefs.current[preferredFilePath]
+    if (rowEl && typeof rowEl.scrollIntoView === 'function') {
+      rowEl.scrollIntoView({ block: 'nearest' })
+    }
+  }, [preferredFilePath])
 
   const diffs = diffCache?.diffs ?? []
   const reviews = diffCache?.reviews ?? {}
 
-  const currentFilePath = useMemo(() => {
-    if (diffs.length === 0) return null
-    const preferred = localFileMode
-      ? (localFilePath ?? preferredFilePath)
-      : (preferredFilePath ?? localFilePath)
-    if (preferred && diffs.some(d => d.filePath === preferred)) return preferred
-    return diffs[0].filePath
-  }, [diffs, preferredFilePath, localFilePath, localFileMode])
-
-  const currentIndex = currentFilePath
-    ? diffs.findIndex(d => d.filePath === currentFilePath)
-    : -1
-  const currentEntry = currentIndex >= 0 ? diffs[currentIndex] : null
-  const reviewStatus = currentFilePath ? reviews[currentFilePath] : undefined
-
-  const goFile = (delta: number) => {
-    if (diffs.length === 0 || currentIndex < 0) return
-    const next = currentIndex + delta
-    if (next < 0 || next >= diffs.length) return
-    const path = diffs[next].filePath
-    if (localFileMode) {
-      setLocalFilePath(path)
-    } else {
-      selectReviewFile(path)
+  const totals = useMemo(() => {
+    let additions = 0
+    let deletions = 0
+    for (const entry of diffs) {
+      const count = countEntryChanges(entry)
+      additions += count.additions
+      deletions += count.deletions
     }
+    return { additions, deletions }
+  }, [diffs])
+
+  const allExpanded = useMemo(
+    () => diffs.length > 0 && diffs.every(d => expandedFiles[d.filePath]),
+    [diffs, expandedFiles]
+  )
+
+  const toggleFileExpand = (filePath: string) => {
+    setFocusedFilePath(filePath)
+    if (!localFileMode) {
+      selectReviewFile(filePath)
+    }
+    setExpandedFiles(prev => ({
+      ...prev,
+      [filePath]: !prev[filePath]
+    }))
   }
 
-  const handleAccept = async () => {
-    if (!currentSessionId || !currentFilePath || tier1Stale) return
-    setBusy(true)
+  const toggleExpandAll = () => {
+    if (allExpanded) {
+      setExpandedFiles({})
+      return
+    }
+    const next: Record<string, boolean> = {}
+    for (const entry of diffs) {
+      next[entry.filePath] = true
+    }
+    setExpandedFiles(next)
+  }
+
+  const handleAccept = async (filePath: string) => {
+    if (!currentSessionId || tier1Stale || busyFilePath) return
+    setBusyFilePath(filePath)
     setActionError(null)
     try {
-      await acceptFile(currentSessionId, messageId, currentFilePath)
+      await acceptFile(currentSessionId, messageId, filePath)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '保留失败')
     } finally {
-      setBusy(false)
+      setBusyFilePath(null)
     }
   }
 
-  const handleReject = async () => {
-    if (!currentSessionId || !currentFilePath || tier1Stale) return
-    setBusy(true)
+  const handleReject = async (filePath: string) => {
+    if (!currentSessionId || tier1Stale || busyFilePath) return
+    setBusyFilePath(filePath)
     setActionError(null)
     try {
-      await rejectFile(currentSessionId, messageId, currentFilePath)
+      await rejectFile(currentSessionId, messageId, filePath)
     } catch (err) {
       setActionError(err instanceof Error ? err.message : '回退失败')
     } finally {
-      setBusy(false)
+      setBusyFilePath(null)
     }
   }
 
@@ -164,62 +202,39 @@ const ReviewContent: React.FC<{
     )
   }
 
-  if (diffs.length === 0 || !currentEntry || !currentFilePath) {
+  if (diffs.length === 0) {
     return diffCache.skippedFiles?.length ? (
-      <div className="inspector-empty"><p>以下文件未生成快照，无法回退</p>{diffCache.skippedFiles.map(file => <p key={file.path}>{file.path}</p>)}</div>
+      <div className="inspector-empty">
+        <p>以下文件未生成快照，无法回退</p>
+        {diffCache.skippedFiles.map(file => <p key={file.path}>{file.path}</p>)}
+      </div>
     ) : <ReviewEmpty />
   }
 
-  const { dir, base } = splitPath(currentFilePath)
-  const { additions, deletions } = countEntryChanges(currentEntry)
   const reviewedCount = diffs.filter(d => reviews[d.filePath]).length
-  const canPrev = currentIndex > 0
-  const canNext = currentIndex < diffs.length - 1
-  const actionsDisabled = busy || tier1Stale || !currentSessionId
+  const actionsDisabled = Boolean(busyFilePath) || tier1Stale || !currentSessionId
 
   return (
     <div className={`inspector-review${tier1Stale ? ' inspector-review--stale' : ''}`}>
-      <div className="inspector-review__nav">
-        <button
-          type="button"
-          className="inspector-icon-btn"
-          aria-label="上一个文件"
-          disabled={!canPrev}
-          onClick={() => goFile(-1)}
-        >
-          <ChevronIcon size={14} direction="up" />
-        </button>
-        <button
-          type="button"
-          className="inspector-icon-btn"
-          aria-label="下一个文件"
-          disabled={!canNext}
-          onClick={() => goFile(1)}
-        >
-          <ChevronIcon size={14} direction="down" />
-        </button>
-        <div className="inspector-review__path" title={currentFilePath}>
-          {dir ? <span className="inspector-review__dir">{dir}</span> : null}
-          <span className="inspector-review__base">{base}</span>
-        </div>
-        <span className={statusClass(currentEntry.status)}>
-          <span className="diff-file__status-badge">{statusLabel(currentEntry.status)}</span>
-        </span>
-        <span className="diff-file__changes">
-          <span className="diff-file__changes-add">+{additions}</span>
-          <span className="diff-file__changes-del">-{deletions}</span>
-        </span>
-        {reviewStatus === 'accepted' && (
-          <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
-        )}
-        {reviewStatus === 'rejected' && (
-          <span className="diff-file__review-badge diff-file__review-badge--rejected">已拒绝</span>
-        )}
-      </div>
-
       <div className="inspector-review__toolbar">
-        <span className="inspector-review__agent-label">Agent 编辑</span>
+        <div className="inspector-review__summary">
+          <span className="inspector-review__summary-count">{diffs.length} 个文件</span>
+          <span className="diff-file__changes">
+            <span className="diff-file__changes-add">+{totals.additions}</span>
+            <span className="diff-file__changes-del">-{totals.deletions}</span>
+          </span>
+          <span className="inspector-review__summary-progress">
+            已审 {reviewedCount}/{diffs.length}
+          </span>
+        </div>
         <div className="inspector-review__toggles">
+          <button
+            type="button"
+            className={`inspector-toggle${allExpanded ? ' inspector-toggle--on' : ''}`}
+            onClick={toggleExpandAll}
+          >
+            {allExpanded ? '全部收起' : '全部展开'}
+          </button>
           <div className="inspector-segment" role="group" aria-label="高亮模式">
             <button
               type="button"
@@ -258,81 +273,123 @@ const ReviewContent: React.FC<{
           {actionError}
         </div>
       )}
-      {!!diffCache.skippedFiles?.length && <div className="inspector-review__stale-banner">以下文件未生成快照，无法回退：{diffCache.skippedFiles.map(file => file.path).join('、')}</div>}
+      {!!diffCache.skippedFiles?.length && (
+        <div className="inspector-review__stale-banner">
+          以下文件未生成快照，无法回退：{diffCache.skippedFiles.map(file => file.path).join('、')}
+        </div>
+      )}
 
       <div className="inspector-review__body" ref={bodyScrollRef}>
-        {currentEntry.hunks.length > 0 && (
-          <Suspense fallback={null}>
-            <DiffPoolContextBridge>
-              {currentEntry.hunks.map((hunk, idx) => (
-                <HunkView
-                  key={idx}
-                  hunk={hunk}
-                  filePath={currentEntry.filePath}
-                  status={currentEntry.status}
-                  syntaxHighlight={syntaxMode === 'syntax'}
-                  wrap={wrap}
-                  scrollRef={bodyScrollRef}
-                />
-              ))}
-            </DiffPoolContextBridge>
-          </Suspense>
-        )}
-      </div>
+        <div className="inspector-review__list">
+          {diffs.map((entry) => {
+            const { dir, base } = splitPath(entry.filePath)
+            const { additions, deletions } = countEntryChanges(entry)
+            const reviewStatus = reviews[entry.filePath]
+            const isExpanded = Boolean(expandedFiles[entry.filePath])
+            const isFocused = focusedFilePath === entry.filePath
+            const isFileBusy = busyFilePath === entry.filePath
 
-      <div className="inspector-review__footer">
-        <div className="inspector-review__progress">
-          <span>审查中：{reviewedCount} / {diffs.length}</span>
-          <button
-            type="button"
-            className="inspector-icon-btn"
-            aria-label="上一个文件"
-            disabled={!canPrev}
-            onClick={() => goFile(-1)}
-          >
-            <ChevronIcon size={14} direction="up" />
-          </button>
-          <button
-            type="button"
-            className="inspector-icon-btn"
-            aria-label="下一个文件"
-            disabled={!canNext}
-            onClick={() => goFile(1)}
-          >
-            <ChevronIcon size={14} direction="down" />
-          </button>
-        </div>
-        <div className="inspector-review__actions">
-          {reviewStatus === 'accepted' ? (
-            <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
-          ) : reviewStatus === 'rejected' ? (
-            <span className="diff-file__review-badge diff-file__review-badge--rejected">已拒绝</span>
-          ) : (
-            <>
-              <Button
-                label="回退"
-                variant="secondary"
-                size="sm"
-                className="inspector-review__btn"
-                isDisabled={actionsDisabled}
-                onClick={() => void handleReject()}
-                icon={<UndoIcon size={13} />}
+            return (
+              <div
+                key={entry.filePath}
+                ref={(el) => {
+                  fileRowRefs.current[entry.filePath] = el
+                }}
+                className={[
+                  'inspector-review__file-item',
+                  isExpanded ? 'inspector-review__file-item--expanded' : '',
+                  isFocused ? 'inspector-review__file-item--focused' : ''
+                ].filter(Boolean).join(' ')}
               >
-                回退
-              </Button>
-              <Button
-                label="保留"
-                variant="primary"
-                size="sm"
-                className="inspector-review__btn"
-                isDisabled={actionsDisabled}
-                onClick={() => void handleAccept()}
-                icon={<CheckIcon size={13} />}
-              >
-                保留
-              </Button>
-            </>
-          )}
+                <div
+                  className="inspector-review__file-header"
+                  onClick={() => toggleFileExpand(entry.filePath)}
+                >
+                  <button
+                    type="button"
+                    className="inspector-review__file-trigger"
+                    aria-expanded={isExpanded}
+                    title={entry.filePath}
+                  >
+                    <ChevronIcon
+                      size={13}
+                      direction={isExpanded ? 'down' : 'right'}
+                      className="inspector-review__file-chevron"
+                    />
+                    <div className="inspector-review__path">
+                      <span className="inspector-review__base">{base}</span>
+                      {dir ? <span className="inspector-review__dir">{dir.replace(/\/$/, '')}</span> : null}
+                    </div>
+                  </button>
+
+                  <div
+                    className="inspector-review__file-meta"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className={statusClass(entry.status)}>
+                      <span className="diff-file__status-badge">{statusLabel(entry.status)}</span>
+                    </span>
+                    <span className="diff-file__changes">
+                      <span className="diff-file__changes-add">+{additions}</span>
+                      <span className="diff-file__changes-del">-{deletions}</span>
+                    </span>
+                    {reviewStatus === 'accepted' ? (
+                      <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
+                    ) : reviewStatus === 'rejected' ? (
+                      <span className="diff-file__review-badge diff-file__review-badge--rejected">已拒绝</span>
+                    ) : (
+                      <div className="inspector-review__file-actions">
+                        <button
+                          type="button"
+                          className="inspector-review__row-btn inspector-review__row-btn--reject"
+                          disabled={actionsDisabled}
+                          title="回退此文件改动"
+                          onClick={() => void handleReject(entry.filePath)}
+                        >
+                          <UndoIcon size={12} />
+                          <span>{isFileBusy ? '处理中' : '回退'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="inspector-review__row-btn inspector-review__row-btn--accept"
+                          disabled={actionsDisabled}
+                          title="保留此文件改动"
+                          onClick={() => void handleAccept(entry.filePath)}
+                        >
+                          <CheckIcon size={12} />
+                          <span>保留</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {isExpanded && (
+                  <div className="inspector-review__file-diff">
+                    {entry.hunks.length > 0 ? (
+                      <Suspense fallback={<div className="diff-hunk__pending">正在准备差异视图…</div>}>
+                        <DiffPoolContextBridge>
+                          {entry.hunks.map((hunk, idx) => (
+                            <HunkView
+                              key={`${entry.filePath}:${idx}`}
+                              hunk={hunk}
+                              filePath={entry.filePath}
+                              status={entry.status}
+                              syntaxHighlight={syntaxMode === 'syntax'}
+                              wrap={wrap}
+                              scrollRef={bodyScrollRef}
+                            />
+                          ))}
+                        </DiffPoolContextBridge>
+                      </Suspense>
+                    ) : (
+                      <div className="inspector-review__file-empty">此文件无文本差异可展示</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -362,8 +419,27 @@ function ReviewTurnActions({ messageId }: { messageId: string }) {
   }
   return pending.length > 0 ? (
     <div className="inspector-review__turn-actions">
-      <button type="button" disabled={busy || stale} onClick={() => void apply(true)}>撤销本轮待审改动</button>
-      <button type="button" disabled={busy || stale} onClick={() => void apply(false)}>标记全部已审</button>
+      <span className="inspector-review__turn-hint">待审 {pending.length} 个文件</span>
+      <div className="inspector-review__turn-btns">
+        <button
+          type="button"
+          className="inspector-review__batch-btn inspector-review__batch-btn--reject"
+          disabled={busy || stale}
+          onClick={() => void apply(true)}
+        >
+          <UndoIcon size={12} />
+          <span>撤销本轮待审改动</span>
+        </button>
+        <button
+          type="button"
+          className="inspector-review__batch-btn inspector-review__batch-btn--accept"
+          disabled={busy || stale}
+          onClick={() => void apply(false)}
+        >
+          <CheckIcon size={12} />
+          <span>标记全部已审</span>
+        </button>
+      </div>
       {error && <p role="alert">{error}</p>}
     </div>
   ) : null
@@ -376,17 +452,49 @@ export const ReviewTab: React.FC = () => {
   const messageDiffs = useChatStore(s => s.messageDiffs)
   const placeholders = useChatStore(s => s.loadingDiffPlaceholders)
   const sessionId = useChatStore(s => s.currentSessionId)
-  const turns = useMemo(() => buildStatusDiffTurns(messages, sessionId ?? '', messageDiffs, placeholders), [messages, sessionId, messageDiffs, placeholders])
-  const derivedMessageId = useMemo(
-    () => (reviewTarget ? null : findDerivedMessageId(messages, messageDiffs)),
-    [reviewTarget, messages, messageDiffs]
+  const turns = useMemo(
+    () => buildStatusDiffTurns(messages, sessionId ?? '', messageDiffs, placeholders),
+    [messages, sessionId, messageDiffs, placeholders]
   )
-  const messageId = reviewTarget?.messageId ?? derivedMessageId
+  const derivedMessageId = useMemo(
+    () => turns[0]?.messageId ?? findDerivedMessageId(messages, messageDiffs),
+    [turns, messages, messageDiffs]
+  )
+  // 若 reviewTarget 指向跨会话遗留消息（当前会话有消息但并不包含该 messageId），自动回退到当前会话最新改动轮次
+  const validTargetMessageId = useMemo(() => {
+    if (!reviewTarget?.messageId) return null
+    if (messages.length === 0) return reviewTarget.messageId
+    const inCurrentMessages = messages.some(m => m.id === reviewTarget.messageId)
+    const inCurrentTurns = turns.some(t => t.messageId === reviewTarget.messageId)
+    if (inCurrentMessages || inCurrentTurns) return reviewTarget.messageId
+    return derivedMessageId ?? reviewTarget.messageId
+  }, [reviewTarget, messages, turns, derivedMessageId])
+
+  const messageId = validTargetMessageId ?? derivedMessageId
   if (!messageId) return <ReviewEmpty />
   return (
     <div className="inspector-review__turn">
-      {turns.length > 1 && <select aria-label="审阅轮次" value={messageId} onChange={event => openReview({ messageId: event.target.value })}>{turns.map((turn, index) => <option key={turn.messageId} value={turn.messageId}>{index === 0 ? '最近改动 · ' : ''}{turn.label}</option>)}</select>}
-      <ReviewContent key={messageId} messageId={messageId} preferredFilePath={reviewTarget?.filePath} localFileMode={!reviewTarget} />
+      {turns.length > 1 && (
+        <div className="inspector-review__turn-picker">
+          <select
+            aria-label="审阅轮次"
+            value={messageId}
+            onChange={event => openReview({ messageId: event.target.value })}
+          >
+            {turns.map((turn, index) => (
+              <option key={turn.messageId} value={turn.messageId}>
+                {index === 0 ? '最近改动 · ' : ''}{turn.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      <ReviewContent
+        key={messageId}
+        messageId={messageId}
+        preferredFilePath={reviewTarget?.filePath}
+        localFileMode={!reviewTarget}
+      />
       <ReviewTurnActions key={`actions-${messageId}`} messageId={messageId} />
     </div>
   )

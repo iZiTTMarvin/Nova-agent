@@ -15,6 +15,7 @@ vi.mock('@pierre/diffs/react', async () => {
   const ReactModule = await import('react')
   return {
     VirtualizerContext: ReactModule.createContext(undefined),
+    WorkerPoolContext: ReactModule.createContext(undefined),
     PatchDiff: () => ReactModule.createElement('div', { 'data-testid': 'pierre-diff' })
   }
 })
@@ -74,12 +75,15 @@ describe('ReviewTab', () => {
     renderer.unmount()
   })
 
-  it('给定 messageDiffs 与 reviewTarget 时渲染文件名与增删统计', () => {
+  it('给定 messageDiffs 与 reviewTarget 时默认折叠文件行，点击文件行或全部展开可切换 Diff 详情', async () => {
     useChatStore.setState({
       currentSessionId: 'sess_1',
       messageDiffs: {
         msg_1: {
-          diffs: [makeDiff()],
+          diffs: [
+            makeDiff({ filePath: 'src/app.ts' }),
+            makeDiff({ filePath: 'src/utils.ts' })
+          ],
           reviews: {}
         }
       }
@@ -89,9 +93,70 @@ describe('ReviewTab', () => {
     const renderer = renderDom(<ReviewTab />)
     const text = renderer.container.textContent ?? ''
     expect(text).toContain('app.ts')
+    expect(text).toContain('utils.ts')
     expect(text).toContain('+2')
     expect(text).toContain('-1')
     expect(text).toContain('修改')
+
+    // 默认不直接展开大块 Diff，保持紧凑文件行
+    expect(renderer.container.querySelectorAll('[data-testid="pierre-diff"]')).toHaveLength(0)
+
+    // 点击第一行展开该文件 Diff（首次展开会触发 lazy HunkView 加载）
+    const firstTrigger = renderer.container.querySelector<HTMLButtonElement>(
+      '.inspector-review__file-trigger'
+    )
+    expect(firstTrigger).toBeTruthy()
+    await act(async () => {
+      firstTrigger?.click()
+      await import('../../../../src/renderer/features/diff/diffLines')
+      await import('../../../../src/renderer/features/diff/DiffPoolContextBridge')
+    })
+    expect(renderer.container.querySelectorAll('[data-testid="pierre-diff"]')).toHaveLength(1)
+
+    // 点击“全部展开”展开所有文件 Diff，再点“全部收起”折叠全部
+    const expandAllBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('全部展开')
+    )
+    expect(expandAllBtn).toBeTruthy()
+    await act(async () => {
+      expandAllBtn?.click()
+    })
+    expect(renderer.container.querySelectorAll('[data-testid="pierre-diff"]')).toHaveLength(2)
+
+    const collapseAllBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('全部收起')
+    )
+    expect(collapseAllBtn).toBeTruthy()
+    await act(async () => {
+      collapseAllBtn?.click()
+    })
+    expect(renderer.container.querySelectorAll('[data-testid="pierre-diff"]')).toHaveLength(0)
+
+    renderer.unmount()
+  })
+
+  it('reviewTarget 指向非当前会话的旧消息时自动回退到当前会话最新可审阅轮次', () => {
+    useChatStore.setState({
+      currentSessionId: 'sess_2',
+      messages: [
+        {
+          id: 'msg_current',
+          role: 'assistant',
+          content: 'done',
+          timestamp: 100
+        }
+      ],
+      messageDiffs: {
+        msg_current: {
+          diffs: [makeDiff({ filePath: 'src/current.ts' })],
+          reviews: {}
+        }
+      }
+    })
+    useLayoutStore.getState().openReview({ messageId: 'msg_stale_other_session', filePath: 'src/old.ts' })
+
+    const renderer = renderDom(<ReviewTab />)
+    expect(renderer.container.textContent ?? '').toContain('current.ts')
     renderer.unmount()
   })
 

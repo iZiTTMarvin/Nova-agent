@@ -98,6 +98,88 @@
   color: var(--text-primary);
 }
 
+/* 搜索会话栏：与上方动作按钮等高（34px），原地展开不跳动，自带计数与关闭按钮 */
+.sidebar-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 34px;
+  padding: 0 6px 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background-color: var(--surface-card);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.sidebar-search-bar:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.sidebar-search-bar__icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.sidebar-search-bar:focus-within .sidebar-search-bar__icon {
+  color: var(--accent-primary);
+}
+
+.sidebar-search-bar__input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  outline: none;
+}
+
+.sidebar-search-bar__input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.sidebar-search-bar__count {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  background-color: var(--surface-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  padding: 0 6px;
+  line-height: 18px;
+}
+
+.sidebar-search-bar__close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color var(--transition-fast),
+    color var(--transition-fast);
+}
+
+.sidebar-search-bar__close:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
 /*
  * 项目级表面切换：开发 | 学习（液态玻璃胶囊）
  * 轨道半透 + 顶部受光内边缘；激活段由滑动 thumb 指示（弹簧回弹），

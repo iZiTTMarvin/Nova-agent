@@ -5,9 +5,10 @@
 }
 
 .diff-hunk {
-  border-top: 1px solid var(--border-cream);
+  border-top: 1px solid var(--border-subtle);
   min-width: 0;
   max-width: 100%;
+  background-color: var(--code-block-bg);
 }
 
 .diff-hunk:first-child {
@@ -24,6 +25,8 @@
   min-width: 0;
   font-family: var(--font-mono);
   font-size: 0.8rem;
+  background-color: var(--code-block-bg);
+  color: var(--text-primary);
 }
 
 .diff-hunk__pending {
@@ -32,7 +35,7 @@
   place-items: center;
   color: var(--text-muted);
   font-size: 0.75rem;
-  background-color: var(--bg-sand);
+  background-color: var(--code-block-bg);
 }
 
 .diff-hunk__truncation {
