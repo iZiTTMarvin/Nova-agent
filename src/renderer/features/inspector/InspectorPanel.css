@@ -699,7 +699,7 @@
   align-items: center;
   gap: 6px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border-cream);
+  border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
 
@@ -710,10 +710,15 @@
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border: 1px solid var(--border-warm);
+  border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background-color: var(--bg-card);
+  background-color: var(--surface-card);
   color: var(--text-muted);
+  transition: border-color var(--transition-fast);
+}
+
+.inspector-files__search:focus-within {
+  border-color: var(--accent-primary);
 }
 
 .inspector-files__search-input {
@@ -724,6 +729,28 @@
   background: transparent;
   color: var(--text-primary);
   font-size: 0.8rem;
+}
+
+.inspector-files__search-clear {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.inspector-files__search-clear:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
 }
 
 .inspector-tree {
@@ -750,12 +777,12 @@
 }
 
 .inspector-tree__row:hover {
-  background-color: var(--bg-sand);
+  background-color: var(--surface-hover);
 }
 
 .inspector-tree__row--selected {
-  background-color: rgba(201, 100, 66, 0.1);
-  color: var(--color-brand);
+  background-color: var(--surface-brand);
+  color: var(--accent-primary);
 }
 
 .inspector-tree__search-results {
@@ -776,17 +803,35 @@
   font-size: 0.8rem;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--transition-fast);
 }
 
 .inspector-tree__search-row:hover {
-  background-color: var(--bg-sand);
+  background-color: var(--surface-hover);
 }
 
 .inspector-tree__search-path {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.inspector-tree__search-base {
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.inspector-tree__search-dir {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.72rem;
+  color: var(--text-muted);
 }
 
 .inspector-tree__spacer {

@@ -28,6 +28,7 @@ vi.mock('../../../../src/renderer/features/diff/pierreVirtualizer', () => ({
 }))
 
 import { ReviewTab } from '../../../../src/renderer/features/inspector/ReviewTab'
+import { useFileTreeStore } from '../../../../src/renderer/features/inspector/useFileTreeStore'
 import { resetLayoutStoreForTests, useLayoutStore } from '../../../../src/renderer/stores/useLayoutStore'
 import { resetChatStoreForTests, useChatStore } from '../../../../src/renderer/stores/useChatStore'
 import { act, renderDom } from '../../../unit/renderer/renderDom'
@@ -131,6 +132,17 @@ describe('ReviewTab', () => {
       collapseAllBtn?.click()
     })
     expect(renderer.container.querySelectorAll('[data-testid="pierre-diff"]')).toHaveLength(0)
+
+    // 点击文件行右侧“打开”按钮可跳转到文件面板并选中对应文件
+    const openFileBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').trim() === '打开'
+    )
+    expect(openFileBtn).toBeTruthy()
+    act(() => {
+      openFileBtn?.click()
+    })
+    expect(useLayoutStore.getState().inspectorTab).toBe('files')
+    expect(useFileTreeStore.getState().selectedFile).toBe('src/app.ts')
 
     renderer.unmount()
   })

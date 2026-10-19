@@ -325,16 +325,18 @@ const SidebarSessions = React.memo(function SidebarSessions({
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 当项目菜单打开时立即关闭 hover 浮窗
+  const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
+
+  // 当项目菜单打开或侧栏收起时立即关闭 hover 浮窗
   useEffect(() => {
-    if (openMenuProjectPath) {
+    if (openMenuProjectPath || sidebarCollapsed) {
       if (hoverTimerRef.current) {
         clearTimeout(hoverTimerRef.current)
         hoverTimerRef.current = null
       }
       setHoveredProject(null)
     }
-  }, [openMenuProjectPath])
+  }, [openMenuProjectPath, sidebarCollapsed])
 
   const handleProjectMouseEnter = (
     e: React.MouseEvent<HTMLDivElement>,
@@ -342,14 +344,18 @@ const SidebarSessions = React.memo(function SidebarSessions({
     projectSessions: PrimarySession[],
     indexStatus: string | null
   ) => {
-    if (openMenuProjectPath) return
+    if (openMenuProjectPath || sidebarCollapsed) return
+    if (hoverTimerRef.current) {
+      clearTimeout(hoverTimerRef.current)
+      hoverTimerRef.current = null
+    }
     if (closeTimerRef.current) {
       clearTimeout(closeTimerRef.current)
       closeTimerRef.current = null
     }
     const rect = e.currentTarget.getBoundingClientRect()
     hoverTimerRef.current = setTimeout(() => {
-      if (openMenuProjectPath) return
+      if (openMenuProjectPath || sidebarCollapsed) return
       setHoveredProject({
         path,
         rect,

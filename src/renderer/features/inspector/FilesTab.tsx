@@ -1,10 +1,11 @@
 /**
  * Inspector 文件 Tab：只读项目文件树 + 预览。
  */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftIcon,
   ChevronIcon,
+  CloseIcon,
   FolderIcon,
   FileIcon,
   SearchIcon,
@@ -135,6 +136,20 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
     return { lines: all.slice(0, PREVIEW_RENDER_LINE_LIMIT), lineCapped: true }
   }, [preview])
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      const target = event.target as HTMLElement | null
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return
+      }
+      event.preventDefault()
+      selectFile(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [selectFile])
+
   return (
     <div className="inspector-preview">
       <div className="inspector-preview__header">
@@ -142,6 +157,7 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
           type="button"
           className="inspector-icon-btn"
           aria-label="返回文件树"
+          title="返回文件树 (Esc)"
           onClick={() => selectFile(null)}
         >
           <ArrowLeftIcon size={14} />
@@ -182,24 +198,37 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
   )
 }
 
+function splitSearchPath(filePath: string): { dir: string; base: string } {
+  const normalized = filePath.replace(/\\/g, '/')
+  const idx = normalized.lastIndexOf('/')
+  if (idx === -1) return { dir: '', base: normalized }
+  return { dir: normalized.slice(0, idx), base: normalized.slice(idx + 1) }
+}
+
 const FileSearchResults: React.FC<{ paths: readonly string[] }> = ({ paths }) => {
   const selectedFile = useFileTreeStore(s => s.selectedFile)
   const selectFile = useFileTreeStore(s => s.selectFile)
 
   return (
     <div className="inspector-tree__search-results">
-      {paths.map(path => (
-        <button
-          key={path}
-          type="button"
-          className={`inspector-tree__search-row${selectedFile === path ? ' inspector-tree__row--selected' : ''}`}
-          title={path}
-          onClick={() => selectFile(path)}
-        >
-          <FileIcon size={14} />
-          <span className="inspector-tree__search-path">{path}</span>
-        </button>
-      ))}
+      {paths.map(path => {
+        const { dir, base } = splitSearchPath(path)
+        return (
+          <button
+            key={path}
+            type="button"
+            className={`inspector-tree__search-row${selectedFile === path ? ' inspector-tree__row--selected' : ''}`}
+            title={path}
+            onClick={() => selectFile(path)}
+          >
+            <FileIcon size={14} />
+            <span className="inspector-tree__search-path">
+              <span className="inspector-tree__search-base">{base}</span>
+              {dir ? <span className="inspector-tree__search-dir">{dir}</span> : null}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -217,6 +246,7 @@ const FileTreeView: React.FC = () => {
   const refresh = useFileTreeStore(s => s.refresh)
   const loadDir = useFileTreeStore(s => s.loadDir)
   const filterQuery = filter.trim()
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (rootEntries === undefined && !loadingRoot) {
@@ -230,12 +260,37 @@ const FileTreeView: React.FC = () => {
         <div className="inspector-files__search">
           <SearchIcon size={14} />
           <input
-            type="search"
+            ref={searchInputRef}
+            type="text"
             className="inspector-files__search-input"
             placeholder="过滤文件…"
             value={filter}
             onChange={e => setFilter(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                if (filter) {
+                  setFilter('')
+                } else {
+                  searchInputRef.current?.blur()
+                }
+              }
+            }}
           />
+          {filter && (
+            <button
+              type="button"
+              className="inspector-files__search-clear"
+              aria-label="清除文件过滤"
+              title="清除过滤 (Esc)"
+              onClick={() => {
+                setFilter('')
+                searchInputRef.current?.focus()
+              }}
+            >
+              <CloseIcon size={12} />
+            </button>
+          )}
         </div>
         <button
           type="button"

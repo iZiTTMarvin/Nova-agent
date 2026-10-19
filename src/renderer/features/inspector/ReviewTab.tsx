@@ -9,6 +9,7 @@ import {
 } from '../../components/Icons'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useChatStore } from '../../stores/useChatStore'
+import { useFileTreeStore } from './useFileTreeStore'
 // 增删行统计的唯一实现在 shared/diff/compute；这里直接引用来源，
 // 不再经由 diffLines —— 后者会连带把 pierre 高亮链路拖进首屏包。
 import { countEntryChanges } from '../../../shared/diff/compute'
@@ -333,6 +334,19 @@ const ReviewContent: React.FC<{
                       <span className="diff-file__changes-add">+{additions}</span>
                       <span className="diff-file__changes-del">-{deletions}</span>
                     </span>
+                    {entry.status !== 'deleted' && (
+                      <button
+                        type="button"
+                        className="inspector-review__row-btn"
+                        title="在文件面板查看完整文件"
+                        onClick={() => {
+                          useLayoutStore.getState().openFiles()
+                          useFileTreeStore.getState().selectFile(entry.filePath)
+                        }}
+                      >
+                        打开
+                      </button>
+                    )}
                     {reviewStatus === 'accepted' ? (
                       <span className="diff-file__review-badge diff-file__review-badge--accepted">已审查</span>
                     ) : reviewStatus === 'rejected' ? (
