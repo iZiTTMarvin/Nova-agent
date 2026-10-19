@@ -9,7 +9,7 @@ import { resetSettingsStoreForTests, useSettingsStore } from '../../../src/rende
 import { resetCodeIndexStoreForTests } from '../../../src/renderer/stores/useCodeIndexStore'
 import { resetLayoutStoreForTests, useLayoutStore } from '../../../src/renderer/stores/useLayoutStore'
 import type { PrimarySession, Session } from '../../../src/shared/session/types'
-import { act, renderDom } from './renderDom'
+import { act, renderDom, waitFor } from './renderDom'
 
 vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
@@ -75,8 +75,21 @@ vi.mock('@astryxdesign/core/TextInput', () => ({
 }))
 
 vi.mock('@astryxdesign/core/DropdownMenu', () => ({
-  DropdownMenu: ({ children, isMenuOpen }: { children?: React.ReactNode; isMenuOpen?: boolean }) => (
-    <div data-testid="dropdown-menu">{isMenuOpen ? children : null}</div>
+  DropdownMenu: ({
+    children,
+    isMenuOpen,
+    onOpenChange,
+    button
+  }: {
+    children?: React.ReactNode
+    isMenuOpen?: boolean
+    onOpenChange?: (open: boolean) => void
+    button?: { label?: string }
+  }) => (
+    <div data-testid="dropdown-menu">
+      <button type="button" aria-label={button?.label} onClick={() => onOpenChange?.(!isMenuOpen)} />
+      {isMenuOpen ? children : null}
+    </div>
   ),
   DropdownMenuItem: ({ label, onClick }: { label: string; onClick?: () => void }) => (
     <button type="button" onClick={onClick}>{label}</button>
@@ -304,6 +317,46 @@ describe('Sidebar 项目树交互与悬浮窗优化', () => {
 
     expect(renderer.container.querySelector('.sidebar-search-bar__input')).toBeNull()
     expect(renderer.container.querySelectorAll('.sidebar-session-row')).toHaveLength(2)
+
+    renderer.unmount()
+  })
+
+  it('搜索过滤期间删除项目，仍删除该项目下的全部会话', async () => {
+    vi.useRealTimers()
+    const sessA: Session = { ...sampleSession, id: 'sess-a', title: '修复深色主题 Diff' }
+    const sessB: Session = { ...sampleSession, id: 'sess-b', title: '重构侧边栏搜索' }
+    const deleteSession = vi.fn(async (_sessionId: string) => {})
+    useChatStore.setState({ sessions: [sessA, sessB], currentSessionId: sessA.id, deleteSession })
+    useSettingsStore.setState({ currentProject: 'D:/test-workspace' })
+    mockInvoke.mockImplementation(async (channel: string) => (channel === 'dialog:confirm' ? 1 : undefined))
+
+    const renderer = renderDom(<Sidebar />)
+    const searchActionBtn = Array.from(renderer.container.querySelectorAll('button'))
+      .find(btn => (btn.textContent ?? '').includes('搜索会话'))
+    act(() => {
+      searchActionBtn?.click()
+    })
+    const searchInput = renderer.container.querySelector<HTMLInputElement>('.sidebar-search-bar__input')
+    act(() => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set?.call(searchInput, '深色主题')
+      searchInput?.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    expect(renderer.container.querySelectorAll('.sidebar-session-row')).toHaveLength(1)
+
+    act(() => {
+      renderer.container.querySelector<HTMLButtonElement>('button[aria-label="项目操作"]')?.click()
+    })
+    const deleteItem = Array.from(renderer.container.querySelectorAll('button'))
+      .find(btn => btn.textContent === '删除')
+    act(() => {
+      deleteItem?.click()
+    })
+
+    await waitFor(() => deleteSession.mock.calls.length === 2)
+    expect(mockInvoke).toHaveBeenCalledWith('dialog:confirm', expect.objectContaining({
+      detail: expect.stringContaining('共 2 个任务')
+    }))
+    expect(deleteSession.mock.calls.map(([id]) => id).sort()).toEqual(['sess-a', 'sess-b'])
 
     renderer.unmount()
   })

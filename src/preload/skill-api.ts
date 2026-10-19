@@ -17,27 +17,28 @@ import {
   SKILL_PICK_IMPORT,
   SKILL_CHANGED
 } from '../shared/ipc/channels'
+import { invokeMain } from './remoteInvoke'
 
 export const skillApi: NovaSkillApi = {
-  list: () => ipcRenderer.invoke(SKILL_LIST),
+  list: () => invokeMain(SKILL_LIST),
 
-  get: (name) => ipcRenderer.invoke(SKILL_GET, name),
+  get: (name) => invokeMain(SKILL_GET, name),
 
-  getBody: (name) => ipcRenderer.invoke(SKILL_GET_BODY, name),
+  getBody: (name) => invokeMain(SKILL_GET_BODY, name),
 
-  create: (input) => ipcRenderer.invoke(SKILL_CREATE, input),
+  create: (input) => invokeMain(SKILL_CREATE, input),
 
-  delete: (name) => ipcRenderer.invoke(SKILL_DELETE, name),
+  delete: (name) => invokeMain(SKILL_DELETE, name),
 
-  toggle: (name, enabled) => ipcRenderer.invoke(SKILL_TOGGLE, { name, enabled }),
+  toggle: (name, enabled) => invokeMain(SKILL_TOGGLE, { name, enabled }),
 
-  import: (input) => ipcRenderer.invoke(SKILL_IMPORT, input),
+  import: (input) => invokeMain(SKILL_IMPORT, input),
 
-  export: (name, destPath) => ipcRenderer.invoke(SKILL_EXPORT, { name, destPath }),
+  export: (name, destPath) => invokeMain(SKILL_EXPORT, { name, destPath }),
 
-  reload: (workspaceRoot) => ipcRenderer.invoke(SKILL_RELOAD, workspaceRoot),
+  reload: (workspaceRoot) => invokeMain(SKILL_RELOAD, workspaceRoot),
 
-  pickImportFile: () => ipcRenderer.invoke(SKILL_PICK_IMPORT),
+  pickImportFile: () => invokeMain(SKILL_PICK_IMPORT),
 
   onChange: (cb) => {
     const handler = (_event: Electron.IpcRendererEvent, data: { snapshot: import('../shared/skills/types').SkillCatalogSnapshot }) => {

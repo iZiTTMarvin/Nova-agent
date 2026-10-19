@@ -1081,7 +1081,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                           style={{ color: 'var(--color-error)' }}
                           onClick={() => {
                             setOpenMenuProjectPath(null)
-                            void handleDeleteProject(projectPath, filteredProjectSessions)
+                            void handleDeleteProject(projectPath, projectSessions)
                           }}
                         />
                       </DropdownMenu>
@@ -1220,7 +1220,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                                 style={{ color: 'var(--color-error)' }}
                                 onClick={() => {
                                   setOpenMenuProjectPath(null)
-                                  void handleDeleteProject(projectPath, filteredProjectSessions)
+                                  void handleDeleteProject(projectPath, projectSessions)
                                 }}
                               />
                             </DropdownMenu>

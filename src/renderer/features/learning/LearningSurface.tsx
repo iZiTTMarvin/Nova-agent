@@ -8,6 +8,7 @@ import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { ChevronIcon } from '../../components/Icons'
 import { useChatStore } from '../../stores/useChatStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { selectSessionIsRunning, useRunStore } from '../../stores/useRunStore'
 import { isTerminalRunStatus } from '../../../shared/run/types'
 import {
@@ -52,6 +53,7 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
   const isLoadingOlderMessages = useChatStore(state => state.currentSessionId === sessionId && state.isLoadingOlderMessages)
   const loadOlderMessages = useChatStore(state => state.loadOlderMessages)
   const isGenerating = useRunStore(state => selectSessionIsRunning(state, sessionId))
+  const isSessionLoading = useWorkspaceStore(state => state.isSessionLoading)
 
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
@@ -62,9 +64,17 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
   const lastScrollTopRef = useRef(0)
 
   const hasMessages = messages.length > 0
+  // 切会话水合期间消息尚未到达：显示加载态，不能误判为空会话而露出开场引导
+  const showConversation = hasMessages && !isSessionLoading
+  const isEmptyState = !hasMessages && !isSessionLoading
 
+  // 滚动跟随状态属于单个会话；不重置会让新会话沿用上一会话的「已上滚」而停在顶部
   useEffect(() => {
     scrollHeightBeforePrependRef.current = null
+    userScrolledUpRef.current = false
+    userScrollCooldownUntilRef.current = 0
+    lastScrollTopRef.current = 0
+    setShowScrollToBottom(false)
   }, [sessionId])
 
   useLayoutEffect(() => {
@@ -145,7 +155,7 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
     })
     observer.observe(content)
     return () => observer.disconnect()
-  }, [hasMessages])
+  }, [showConversation])
 
   // 出题或收题时若用户在底部附近且未主动上滚，平滑跟随一次
   useEffect(() => {
@@ -178,7 +188,6 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
   )
 
   const busy = isGenerating || commandPending
-  const isEmptyState = !hasMessages
   const firstTopic = useMemo(
     () => (projection && projection.tree.nodes.length > 0 ? firstOutlineTopic(projection.tree) : null),
     [projection]
@@ -195,7 +204,12 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
 
   return (
     <div className="learning-surface chat-panel relative flex flex-col h-full" role="region" aria-label={LEARNING_CONVERSATION_LABEL}>
-      {!isEmptyState && (
+      {isSessionLoading ? (
+        <div className="chat-session-loading" role="status" aria-live="polite">
+          <div className="chat-session-loading__spinner" aria-hidden="true" />
+          <span className="chat-session-loading__text">加载中...</span>
+        </div>
+      ) : showConversation && (
         <div
           className="chat-messages flex-1 overflow-y-auto"
           ref={scrollContainerRef}
@@ -223,7 +237,7 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
         className={`chat-panel__composer-area ${isEmptyState ? 'chat-panel__composer-area--empty' : ''}`}
       >
         <div className="chat-panel__composer-inner">
-          {!isEmptyState && showScrollToBottom && (
+          {showConversation && showScrollToBottom && (
             <IconButton
               label={LEARNING_SCROLL_TO_BOTTOM}
               tooltip={LEARNING_SCROLL_TO_BOTTOM}

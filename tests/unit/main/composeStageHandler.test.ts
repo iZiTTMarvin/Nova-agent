@@ -76,6 +76,7 @@ const mockStore = {
     return { session: data, hasMore: false }
   }),
   save: vi.fn(),
+  loadUsage: vi.fn((): null => null),
   isDraft: () => false,
   getSessionsDir: () => '/tmp/test-sessions',
   getComposeStages: vi.fn(() => currentStages),
@@ -510,6 +511,12 @@ describe('sessionHandler（load-session 透出 composeStages）', () => {
     }
 
     expect(detail.composeStages).toBeUndefined()
+  })
+
+  it('用量文件损坏时会话照常打开，用量按未知透出', async () => {
+    mockStore.loadUsage.mockImplementationOnce(() => { throw new Error('unsupported usage version') })
+    const detail = await registeredHandler('load-session')(makeTrustedEvent(), { sessionId: 'sess_1' })
+    expect(detail).toMatchObject({ id: 'sess_1', usage: null })
   })
 
   it('创建会话经过 WorkspaceService 并保持默认模式语义', async () => {

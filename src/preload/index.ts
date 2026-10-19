@@ -6,6 +6,7 @@ import {
   DEV_MAIN_LOOP_LAG_SNAPSHOT
 } from '../shared/ipc/channels'
 import { skillApi } from './skill-api'
+import { invokeMain } from './remoteInvoke'
 
 /**
  * 类型安全的 IPC invoke 封装
@@ -15,7 +16,7 @@ function invoke<C extends IpcCommandChannel>(
   channel: C,
   ...args: IpcCommands[C]['params'] extends void ? [] : [IpcCommands[C]['params']]
 ): Promise<IpcCommands[C]['result']> {
-  return ipcRenderer.invoke(channel, ...args)
+  return invokeMain(channel, ...args)
 }
 
 /**
@@ -57,8 +58,8 @@ contextBridge.exposeInMainWorld('api', api)
 // 开发环境：主进程 event-loop lag（与 renderer streamingPerf 对齐的 snapshot/reset API）
 if (process.env.NODE_ENV === 'development') {
   const mainLoopLag: RendererMainLoopLagApi = {
-    snapshot: () => ipcRenderer.invoke(DEV_MAIN_LOOP_LAG_SNAPSHOT),
-    reset: () => ipcRenderer.invoke(DEV_MAIN_LOOP_LAG_RESET)
+    snapshot: () => invokeMain(DEV_MAIN_LOOP_LAG_SNAPSHOT),
+    reset: () => invokeMain(DEV_MAIN_LOOP_LAG_RESET)
   }
   contextBridge.exposeInMainWorld('__novaMainLoopLag', mainLoopLag)
 }

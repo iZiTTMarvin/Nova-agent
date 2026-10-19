@@ -28,6 +28,7 @@ import { buildSessionDiffState } from '../../runtime/checkpoints/sessionDiffStat
 import type { MessageDiffsState } from '../../shared/diff/types'
 import type { SessionDetail, Message, BranchMeta } from '../../shared/session'
 import type { Mode } from '../../shared/session'
+import type { SessionUsageSnapshot } from '../../shared/session/usage'
 import {
   extractTextFromSerializableContent,
   type SessionData,
@@ -178,6 +179,16 @@ export function registerSessionHandler(): void {
   })
 
 
+  // 用量文件损坏时按「未知」展示，会话照常打开；原文件保留，由 SessionStore 拒绝覆盖。
+  const loadUsageForDisplay = (sessionId: string): SessionUsageSnapshot | null => {
+    try {
+      return sessionStore.loadUsage(sessionId)
+    } catch (err) {
+      console.warn(`[sessionHandler] 会话 ${sessionId} 用量读取失败，按未知展示:`, err)
+      return null
+    }
+  }
+
   // 加载单个会话的展示页（尾部消息）；上下文拆分延后全量计算后推送
   handle(LOAD_SESSION, async (_event, params: { sessionId: string }) => {
     // 与启动归档、sendAgentMessage 注入同一结算闭包：打开会话触发的归档同样要精确结算
@@ -199,7 +210,7 @@ export function registerSessionHandler(): void {
         hasMore: display.hasMore,
         subagentTask: display.subagentTask
       }),
-      usage: sessionStore.loadUsage(params.sessionId)
+      usage: loadUsageForDisplay(params.sessionId)
     }
   })
 

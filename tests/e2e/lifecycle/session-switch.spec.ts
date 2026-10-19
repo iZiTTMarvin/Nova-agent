@@ -51,7 +51,13 @@ test('记忆计数跟随会话投影，菜单选择持久化且下轮排除工�
   await expect(nova.page.getByLabel('消息输入')).toBeEditable()
   expect((await nova.getWorkspace()).availableSessions.find(session => session.id === first)?.memoryOptOut).toBe(true)
   expect(JSON.parse(await readFile(path.join(nova.profileRoot, 'userData', 'sessions', first, 'session.json'), 'utf8')).memoryOptOut).toBe(true)
-  await expect(nova.invoke('session:set-memory-opt-out', { sessionId: 'missing', optOut: true })).rejects.toThrow('主会话不存在')
+  // 渲染层拿到的只有主进程给出的原因，不带 Electron 的通道前缀
+  const rejection = await nova.page.evaluate(async () => {
+    const api = (window as unknown as { api: { invoke: (channel: string, ...args: unknown[]) => Promise<unknown> } }).api
+    return api.invoke('session:set-memory-opt-out', { sessionId: 'missing', optOut: true })
+      .then(() => null, (error: unknown) => (error instanceof Error ? error.message : String(error)))
+  })
+  expect(rejection).toBe('主会话不存在')
   expect(nova.pageErrors).toEqual([])
 })
 
