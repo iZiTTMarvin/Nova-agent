@@ -52,7 +52,7 @@ export function useInspectorResize({
     widthMax: getAvailableInspectorMaxWidth,
     defaultWidth: INSPECTOR_WIDTH_DEFAULT,
     collapseThresholdPx: INSPECTOR_COLLAPSE_THRESHOLD_PX,
-    getCurrentWidth: () => useLayoutStore.getState().inspectorWidth,
+    getCurrentWidth: () => Math.max(widthMin, useLayoutStore.getState().inspectorWidth),
     onCommitWidth: setInspectorWidth,
     onCollapse,
     onDragSessionChange,
@@ -67,7 +67,8 @@ export function useInspectorResize({
     setInspectorWidth(nextWidth)
     const el = shellRef.current
     if (el && el.style.width !== '0px') el.style.width = `${nextWidth}px`
-  }, [dragging, getAvailableInspectorMaxWidth, setInspectorWidth, shellRef])
+    onLiveWidthChange?.(nextWidth)
+  }, [dragging, getAvailableInspectorMaxWidth, onLiveWidthChange, setInspectorWidth, shellRef])
 
   useEffect(() => {
     clampToAvailableWidth()

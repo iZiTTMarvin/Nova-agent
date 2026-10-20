@@ -132,6 +132,25 @@
   font-size: 0.8rem;
 }
 
+.visualization-card__overflow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border-top: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.visualization-card__overflow > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.visualization-card__overflow button {
+  margin-left: auto;
+}
+
 .visualization-card__error {
   flex: 1;
   min-width: 0;

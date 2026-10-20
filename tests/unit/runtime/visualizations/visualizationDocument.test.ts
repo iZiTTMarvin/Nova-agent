@@ -7,6 +7,7 @@ import {
   type VisualizationSnapshotReader
 } from '../../../../src/runtime/visualizations/visualizationDocument'
 import type { VisualizationSnapshotRead } from '../../../../src/runtime/visualizations/VisualizationStore'
+import { VISUALIZATION_BASE_STYLE } from '../../../../src/runtime/visualizations/visualizationStyles'
 import {
   buildVisualizationFrameSrc,
   buildVisualizationUri,
@@ -52,6 +53,35 @@ describe('帧文档装配', () => {
     expect(policy).toContain("default-src 'none'")
     expect(policy).not.toContain('sandbox')
     expect(document).toContain('"bg":"#0a0b0c"')
+  })
+
+  it('帧与导出文件带同一份共享样式，产物不另起一套视觉语言', () => {
+    const served = buildServedVisualizationDocument('<!doctype html><p>x</p>', CONFIG)
+    const exported = buildExportedVisualizationDocument('<!doctype html><p>x</p>', THEME)
+    for (const document of [served, exported]) {
+      expect(document).toContain('.viz-card')
+      expect(document).toContain('.viz-table')
+      expect(document).toContain('var(--viz-series-1)')
+    }
+  })
+
+  it('共享样式零特异性：每条规则都包在 :where() 里，作者自己的选择器始终优先', () => {
+    const rules = VISUALIZATION_BASE_STYLE.split('}')
+      .map(rule => rule.trim())
+      .filter(Boolean)
+    expect(rules.length).toBeGreaterThan(0)
+    for (const rule of rules) {
+      expect(rule.startsWith(':where(')).toBe(true)
+    }
+  })
+
+  it('注入前缀只有桥脚本自身的换行：桥据此把产物报错行号换算回作者源码', () => {
+    const author = '<html><body>\n<p>x</p>\n</body></html>'
+    const document = buildServedVisualizationDocument(author, CONFIG)
+    const prefix = document.slice(0, document.indexOf(author))
+    const script = /<script>([\s\S]*)<\/script>/.exec(prefix)?.[1] ?? ''
+    expect(script).not.toBe('')
+    expect(prefix.split('\n').length).toBe(script.split('\n').length)
   })
 })
 

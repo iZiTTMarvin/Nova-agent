@@ -85,6 +85,7 @@ function PresentedVisualization({ uri, title }: { uri: string; title: string }):
   const [errors, setErrors] = useState<readonly string[]>([])
   const [repairRequested, setRepairRequested] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const motionScale = slowMotion ? VISUALIZATION_SLOW_MOTION_SCALE : 1
 
@@ -199,6 +200,7 @@ function PresentedVisualization({ uri, title }: { uri: string; title: string }):
             onAnimated={markAnimated}
             onRuntimeError={collectError}
             onUserEvent={sendEvent}
+            onOverflow={setOverflowing}
           />
           {frameState === 'loading' && (
             <div className="visualization-card__loading" aria-hidden="true">
@@ -206,6 +208,13 @@ function PresentedVisualization({ uri, title }: { uri: string; title: string }):
             </div>
           )}
         </div>
+      )}
+
+      {overflowing && (
+        <footer className="visualization-card__overflow" data-testid="visualization-overflow">
+          <span>内容超出卡片高度，可在卡片内滚动查看</span>
+          <Button label="展开查看" variant="secondary" size="sm" onClick={() => setExpanded(true)} />
+        </footer>
       )}
 
       {errors.length > 0 && (

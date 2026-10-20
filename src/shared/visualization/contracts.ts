@@ -8,7 +8,7 @@ export const VISUALIZATION_SCHEME = 'nova-viz'
 export const MAX_VISUALIZATION_HTML_BYTES = 2 * 1024 * 1024
 export const MAX_VISUALIZATION_TITLE_CHARS = 80
 /** 内联形态的高度上限：超出后由产物内部滚动，聊天流不被撑开 */
-export const VISUALIZATION_MAX_INLINE_HEIGHT = 720
+export const VISUALIZATION_MAX_INLINE_HEIGHT = 1200
 export const VISUALIZATION_MIN_HEIGHT = 24
 /** 慢动作倍率：产物内 CSS / Web Animations 的播放速率按 1/倍率 放慢 */
 export const VISUALIZATION_SLOW_MOTION_SCALE = 4

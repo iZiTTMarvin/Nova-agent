@@ -43,6 +43,8 @@ export interface VisualizationFrameHandlers {
   onAnimated: () => void
   onRuntimeError: (message: string) => void
   onUserEvent: (name: string, data: unknown) => void
+  /** 内容高于宿主给的高度上限：产物内部会出现滚动区，宿主据此提示 */
+  onOverflow?: (overflowing: boolean) => void
 }
 
 export interface VisualizationFrameProps extends VisualizationFrameHandlers {
@@ -94,6 +96,7 @@ export const VisualizationFrame: React.FC<VisualizationFrameProps> = React.memo(
           return
         case 'resize':
           applyHeight(message.payload.height)
+          handlers.onOverflow?.(message.payload.height > maxHeight)
           return
         case 'animated':
           handlers.onAnimated()

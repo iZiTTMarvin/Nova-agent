@@ -289,6 +289,20 @@ describe('VisualizationCard', () => {
     expect(frameIn(container)).toBe(frame)
   })
 
+  it('内容高于内联高度上限时提示去展开视图看完整内容', () => {
+    const { container, frame } = mountPresented('长图')
+    ready(frame)
+    expect(container.querySelector('[data-testid="visualization-overflow"]')).toBeNull()
+
+    send(frame.contentWindow, 'resize', { height: VISUALIZATION_MAX_INLINE_HEIGHT + 400 })
+    const footer = container.querySelector('[data-testid="visualization-overflow"]')!
+    expect(footer.textContent).toContain('可在卡片内滚动查看')
+    expect(frame.style.height).toBe(`${VISUALIZATION_MAX_INLINE_HEIGHT}px`)
+
+    act(() => textButton(footer, '展开查看')!.click())
+    expect(document.querySelectorAll('[data-testid="visualization-frame"]')).toHaveLength(2)
+  })
+
   it('导出交给主进程，并以状态提示反馈结果', async () => {
     const invoke = vi.fn().mockResolvedValue({ status: 'saved', filePath: 'C:/out/图.html' })
     Object.assign(window, { api: { invoke } })

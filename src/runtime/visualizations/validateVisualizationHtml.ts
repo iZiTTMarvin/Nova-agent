@@ -25,6 +25,17 @@ const STATIC_IMPORT_PATTERN = /(?:^|[;\n}])\s*(?:import|export)\s*(?:[\w*{}\s,$]
 const NETWORK_CALL_PATTERN =
   /\b(?:fetch|EventSource|WebSocket|sendBeacon)\s*\(\s*['"`]((?:https?|wss?):\/\/[^'"`]*)|\.open\(\s*['"](?:GET|POST|PUT|PATCH|DELETE|HEAD)['"]\s*,\s*['"`]((?:https?:)?\/\/[^'"`]*)/gi
 
+/** CSS 规则块：选择器 + 声明 */
+const CSS_RULE_PATTERN = /([^{}]+)\{([^{}]*)\}/g
+/** 根元素的复合选择器：:root / html / body，可带类、属性或伪类（html.dark、:root[data-theme]） */
+const ROOT_COMPOUND_PATTERN = /^(?::root|html|body)(?:[.#[:]\S*)?$/i
+const CSS_COMBINATOR_PATTERN = /\s*[>+~]\s*|\s+/
+/** 颜色字面量：十六进制、颜色函数与常见颜色关键字 */
+const COLOR_LITERAL_PATTERN =
+  /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\s*\(|\b(?:white|black|red|green|blue|gray|grey|orange|yellow|purple|pink|cyan|magenta|silver|navy|teal|olive|maroon|lime|aqua|fuchsia)\b/i
+const PALETTE_HINT =
+  '颜色写死不会跟随深浅色主题，请删掉这里的颜色，改用 var(--viz-bg)、var(--viz-surface)、var(--viz-fg)、var(--viz-muted)、var(--viz-border)、var(--viz-accent)、var(--viz-series-1..6)'
+
 export async function validateVisualizationHtml(html: string): Promise<string[]> {
   if (!html.trim()) return ['html 为空']
   const bytes = Buffer.byteLength(html, 'utf8')
@@ -79,6 +90,7 @@ function inspectElement(element: Element, report: (message: string) => boolean):
     if (!value) continue
     if (name === 'style') {
       if (inspectCss(value, report)) return true
+      if (inspectRootInlineStyle(tag, value, report)) return true
       continue
     }
     if (name === 'srcset' || name === 'imagesrcset') {
@@ -104,7 +116,84 @@ function inspectCss(css: string, report: (message: string) => boolean): boolean 
       return true
     }
   }
+  return inspectRootPalette(css, report)
+}
+
+/**
+ * 根级规则里写死颜色 = 自带调色板。
+ *
+ * 主题变量由宿主按 --viz-* 注入；产物自己定义 :root 调色板后，宿主换肤对它完全无效，
+ * 页面会永远停在作者写死的那套颜色上。这类写法按外联资源同样的方式拦下并给出改法。
+ */
+function inspectRootPalette(css: string, report: (message: string) => boolean): boolean {
+  const source = stripCssNoise(css)
+  for (const match of source.matchAll(CSS_RULE_PATTERN)) {
+    // 规则前可能残留不带花括号的语句（@charset、@import），选择器从最后一个分号之后算起
+    const selector = match[1].slice(match[1].lastIndexOf(';') + 1).trim()
+    if (!isRootSelector(selector)) continue
+    const literal = findColorLiteral(match[2])
+    if (!literal) continue
+    return report(`自带调色板（${snippet(selector)} { ${snippet(literal)} }）：${PALETTE_HINT}`)
+  }
   return false
+}
+
+/** 只认落在根元素本身的选择器；body .card 这类后代规则是普通样式，不算调色板 */
+function isRootSelector(selector: string): boolean {
+  return selector.split(',').some(part => {
+    const compounds = part.trim().split(CSS_COMBINATOR_PATTERN).filter(Boolean)
+    return compounds.length > 0 && compounds.every(compound => ROOT_COMPOUND_PATTERN.test(compound))
+  })
+}
+
+/** <html style="..."> / <body style="..."> 里的写死颜色同样属于自带调色板 */
+function inspectRootInlineStyle(tag: string, value: string, report: (message: string) => boolean): boolean {
+  if (tag !== 'html' && tag !== 'body') return false
+  const literal = findColorLiteral(stripCssNoise(value))
+  if (!literal) return false
+  return report(`自带调色板（<${tag} style="${snippet(value)}">）：${PALETTE_HINT}`)
+}
+
+/** 注释、url() 与引号内容里的字符不参与颜色判定 */
+function stripCssNoise(css: string): string {
+  return css
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/url\([^)]*\)/gi, ' ')
+    .replace(/'[^']*'/g, "''")
+    .replace(/"[^"]*"/g, '""')
+}
+
+/** 第一条带颜色字面量的声明 */
+function findColorLiteral(declarations: string): string | null {
+  for (const declaration of declarations.split(';')) {
+    const colon = declaration.indexOf(':')
+    if (colon < 0) continue
+    const property = declaration.slice(0, colon).trim()
+    const value = declaration.slice(colon + 1).trim()
+    if (!property || !value) continue
+    if (!COLOR_LITERAL_PATTERN.test(stripVarCalls(value))) continue
+    return `${property}: ${value}`
+  }
+  return null
+}
+
+/** var() 引用的是主题变量，其中的兜底色只在变量缺失时生效，不算写死 */
+function stripVarCalls(value: string): string {
+  const lower = value.toLowerCase()
+  let result = ''
+  let index = 0
+  for (let start = lower.indexOf('var(', index); start >= 0; start = lower.indexOf('var(', index)) {
+    result += `${value.slice(index, start)}var()`
+    let depth = 0
+    for (index = start + 3; index < value.length; index++) {
+      if (value[index] === '(') depth++
+      else if (value[index] === ')' && --depth === 0) {
+        index++
+        break
+      }
+    }
+  }
+  return result + value.slice(index)
 }
 
 function inspectScript(code: string, type: string | null, report: (message: string) => boolean): boolean {

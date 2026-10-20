@@ -12,6 +12,7 @@ import {
   type VisualizationTheme
 } from '../../shared/visualization'
 import { buildVisualizationBridgeScript, type VisualizationBridgeConfig } from './visualizationBridgeScript'
+import { VISUALIZATION_BASE_STYLE } from './visualizationStyles'
 import type { VisualizationSnapshotRead } from './VisualizationStore'
 
 const CONTENT_POLICY = [
@@ -29,12 +30,6 @@ const CONTENT_POLICY = [
 
 export const VISUALIZATION_RESPONSE_CSP = [...CONTENT_POLICY, 'sandbox allow-scripts'].join('; ')
 const EXPORT_CSP = CONTENT_POLICY.join('; ')
-
-/** 零特异性：作者任意选择器都能覆盖 */
-const BASE_STYLE =
-  ':where(html){background:var(--viz-bg,Canvas);color:var(--viz-fg,CanvasText);' +
-  'font-family:var(--viz-font-sans,system-ui,sans-serif);line-height:1.5}' +
-  ':where(body){margin:0;padding:16px}'
 
 const DOCTYPE_PATTERN = /^\s*<!doctype[^>]*>/i
 
@@ -64,7 +59,7 @@ export async function resolveVisualizationDocument(reader: VisualizationSnapshot
 }
 
 export function buildServedVisualizationDocument(html: string, config: Omit<VisualizationBridgeConfig, 'status'>): string {
-  return injectHead(html, `<style>${BASE_STYLE}</style>${bridgeTag({ ...config, status: 'ok' })}`)
+  return injectHead(html, `<style>${VISUALIZATION_BASE_STYLE}</style>${bridgeTag({ ...config, status: 'ok' })}`)
 }
 
 /** 快照缺失或损坏时同样返回带桥的文档：宿主经 ready 得知状态，无需另行探测 */
@@ -72,14 +67,14 @@ export function buildVisualizationStatusDocument(
   config: Omit<VisualizationBridgeConfig, 'status'> & { status: keyof typeof STATUS_TEXT }
 ): string {
   const text = STATUS_TEXT[config.status]
-  return injectHead(`<!doctype html><title>${text}</title><p>${text}</p>`, `<style>${BASE_STYLE}</style>${bridgeTag(config)}`)
+  return injectHead(`<!doctype html><title>${text}</title><p>${text}</p>`, `<style>${VISUALIZATION_BASE_STYLE}</style>${bridgeTag(config)}`)
 }
 
 export function buildExportedVisualizationDocument(html: string, theme: VisualizationTheme): string {
   const head =
     '<meta charset="utf-8">' +
     `<meta http-equiv="Content-Security-Policy" content="${EXPORT_CSP}">` +
-    `<style>${BASE_STYLE}</style>` +
+    `<style>${VISUALIZATION_BASE_STYLE}</style>` +
     bridgeTag({ status: 'ok', theme, motionScale: 1, maxHeight: VISUALIZATION_MAX_INLINE_HEIGHT })
   return injectHead(html, head)
 }

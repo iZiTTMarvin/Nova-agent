@@ -42,4 +42,32 @@ describe('validateVisualizationHtml', () => {
     expect(oversized).toHaveLength(1)
     expect(oversized[0]).toContain('超过 2 MiB 上限')
   })
+
+  it.each([
+    [':root 自带调色板', '<style>:root{--bg:#0f1419;--surface:#1a2332}</style>'],
+    ['body 写死背景色', '<style>body{background:#0f1419}</style>'],
+    ['html 行内颜色', '<html style="background:#fff"><body>x</body></html>'],
+    ['rgb() 写法', '<style>:root{--fg:rgb(230,237,243)}</style>'],
+    ['颜色关键字', '<style>body{color:white}</style>'],
+    ['hsl() 写法', '<style>:root{--accent:hsl(30 90% 55%)}</style>'],
+    ['oklch() 写法', '<style>:root{--bg:oklch(20% 0.02 250)}</style>'],
+    ['带属性的根选择器', '<style>:root[data-theme=dark]{--bg:#000}</style>'],
+    ['媒体查询里的根调色板', '<style>@media (prefers-color-scheme:dark){html body{background:#000}}</style>']
+  ])('拒绝%s：写死的颜色不会跟随深浅色主题', async (_label, html) => {
+    const violations = await validateVisualizationHtml(`<!doctype html>${html}`)
+    expect(violations.join('\n')).toContain('自带调色板')
+    expect(violations.join('\n')).toContain('var(--viz-bg)')
+  })
+
+  it('主题变量（含兜底色）、后代规则与非根规则里的颜色、非颜色字面量都不受影响', async () => {
+    const html = `<!doctype html><html><head><style>
+      :root{--radius:12px;--gap:8px;--brand-font:"Black";--mask:url("#clip")}
+      body{background:var(--viz-bg, #fff);color:var(--viz-fg, rgb(20, 20, 20))}
+      body .card{background:#1a2332}
+      body > header{border-bottom:1px solid #ddd}
+      .card{background:#1a2332;border:1px solid var(--viz-border)}
+      .dot{fill:var(--viz-accent)}
+    </style></head><body><p>x</p></body></html>`
+    expect(await validateVisualizationHtml(html)).toEqual([])
+  })
 })

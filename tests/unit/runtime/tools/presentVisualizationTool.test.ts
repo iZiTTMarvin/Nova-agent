@@ -65,6 +65,18 @@ describe('present_visualization', () => {
     expect(await snapshotCount()).toBe(0)
   })
 
+  it('自带调色板被拒绝时返回可修正的原因，不写快照', async () => {
+    const tool = createPresentVisualizationTool({ getStore: () => store })
+    const result = await tool.execute(
+      { title: '全景图', html: '<style>:root{--bg:#0f1419}</style><p>x</p>' },
+      context()
+    )
+    expect(result.success).toBe(false)
+    expect(result.error).toContain('自带调色板')
+    expect(result.error).toContain('var(--viz-bg)')
+    expect(await snapshotCount()).toBe(0)
+  })
+
   it.each([
     ['缺少标题', { html: HTML }, context()],
     ['缺少 html', { title: '图' }, context()],

@@ -118,6 +118,32 @@ const ANIMATED_HTML = `<!doctype html>
 </body>
 </html>`
 
+/** 折叠卡片与高卡片同处一行的网格：折叠那张必须按自己的内容高度排布 */
+const COLLAPSIBLE_GRID_HTML = `<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<style>
+  .viz-grid { grid-template-columns: repeat(3, 1fr); }
+  .tall { height: 320px; }
+  .collapsed .body { max-height: 0; overflow: hidden; }
+</style>
+</head>
+<body>
+  <div class="viz-grid">
+    <div class="viz-card tall">高卡片</div>
+    <div class="viz-card collapsed">折叠卡片<div class="body">展开后才有内容</div></div>
+  </div>
+</body>
+</html>`
+
+/** 高度远超内联上限的页面：卡片应提示去展开视图看完整内容 */
+const OVERFLOW_HTML = `<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"></head>
+<body><div style="height:2000px">长内容</div></body>
+</html>`
+
 function toolCallDelta(part: { id?: string; name?: string; arguments: string }): Delta {
   return {
     choices: [
@@ -315,4 +341,55 @@ test('流式生成占位到成品；慢放、展开与导出共用同一快照�
   } finally {
     await rm(exportDir, { recursive: true, force: true })
   }
+})
+
+test('同一网格里的折叠卡片按自身内容排布，不被同排最高卡片撑成空白', async ({ nova }) => {
+  nova.provider.enqueue(
+    {
+      kind: 'tool',
+      name: 'present_visualization',
+      arguments: { title: '折叠网格', html: COLLAPSIBLE_GRID_HTML },
+      callId: 'call_viz_collapsed'
+    },
+    { kind: 'text', text: 'NOVA_E2E_VIZ_COLLAPSED_DONE' }
+  )
+  await nova.sendPrompt('展示折叠卡片网格')
+  await expect(nova.page.getByText('NOVA_E2E_VIZ_COLLAPSED_DONE', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+
+  const card = nova.page.getByTestId('visualization-card')
+  await expect(card).toHaveAttribute('data-state', 'ok')
+  const frame = await contentFrameOf(card.getByTestId('visualization-frame'))
+  const heights = await frame.evaluate(() =>
+    [...document.querySelectorAll('.viz-card')].map(node => Math.round(node.getBoundingClientRect().height))
+  )
+  expect(heights).toHaveLength(2)
+  expect(heights[0]).toBeGreaterThan(300)
+  // 网格默认 stretch：没有 align-items:start 时折叠卡片会被拉到与高卡片同高
+  expect(heights[1]).toBeLessThan(heights[0] / 3)
+})
+
+test('内容高于内联上限时给出展开提示，卡片不被撑开', async ({ nova }) => {
+  nova.provider.enqueue(
+    {
+      kind: 'tool',
+      name: 'present_visualization',
+      arguments: { title: '超长页面', html: OVERFLOW_HTML },
+      callId: 'call_viz_overflow'
+    },
+    { kind: 'text', text: 'NOVA_E2E_VIZ_OVERFLOW_DONE' }
+  )
+  await nova.sendPrompt('展示超长可视化')
+  await expect(nova.page.getByText('NOVA_E2E_VIZ_OVERFLOW_DONE', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+
+  const card = nova.page.getByTestId('visualization-card')
+  await expect(card).toHaveAttribute('data-state', 'ok')
+  const frameElement = card.getByTestId('visualization-frame')
+  await expect.poll(() => frameElement.evaluate(element => element.getBoundingClientRect().height)).toBe(1200)
+
+  const overflow = card.getByTestId('visualization-overflow')
+  await expect(overflow).toContainText('可在卡片内滚动查看')
+  await overflow.getByRole('button', { name: '展开查看' }).click()
+  await expect(nova.page.locator('dialog.visualization-dialog')).toBeVisible()
 })

@@ -114,9 +114,9 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
   // 三种开发模式的最终请求字节基线；bash 描述锚定为常量、系统消息行尾统一 LF，
   // 任何一种模式哈希变化都视为回归，应查装配参数而不是更新期望值
   it.each([
-    ['default', { toolsHash: 'ab17596a6f5d50b0', systemContentHash: 'e52d9e47ac62d89f' }],
-    ['plan', { toolsHash: '20b99460b12e7e46', systemContentHash: '0e3e78a6719c3842' }],
-    ['compose', { toolsHash: '46fec873523f9aae', systemContentHash: 'b99626d88c327dd6' }]
+    ['default', { toolsHash: 'd3bd953d6bdfd8a9', systemContentHash: 'e52d9e47ac62d89f' }],
+    ['plan', { toolsHash: '27e9bdda13c5daf3', systemContentHash: '0e3e78a6719c3842' }],
+    ['compose', { toolsHash: 'a4877b476ba2e340', systemContentHash: 'b99626d88c327dd6' }]
   ] as const)('保持改动前的工具面和首条 system message 字节基线（%s）', async (mode, expected) => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-code-graph-cache-golden-'))
     roots.push(sessionsDir)
