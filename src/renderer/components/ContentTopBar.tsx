@@ -13,6 +13,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
 import { exportSession } from '../features/chat/exportSession'
+import { confirmDialog } from '../features/confirm/confirmDialog'
 import { InspectorToggleButton } from '../features/inspector/InspectorToggleButton'
 import './ContentTopBar.css'
 
@@ -76,17 +77,20 @@ const SessionMoreMenu: React.FC = () => {
   if (!currentSession || currentSession.kind !== 'primary') return null
 
   const handleDelete = async () => {
-    const response = await window.api.invoke('dialog:confirm', {
+    const response = await confirmDialog({
+      type: 'warning',
       title: '删除会话',
       message: '确定要删除这个会话吗？',
-      detail: '删除后无法恢复。'
+      detail: '删除后无法恢复。',
+      buttons: ['取消', '删除'],
+      defaultId: 0
     })
     if (response !== 1) return
     try {
       await deleteSession(currentSession.id)
     } catch (err) {
       // 主进程拒绝（如会话正在运行）：给出可见反馈，不能静默关闭确认框
-      await window.api.invoke('dialog:confirm', {
+      await confirmDialog({
         type: 'error',
         title: '无法删除会话',
         message: err instanceof Error ? err.message : '删除会话失败',
@@ -114,7 +118,7 @@ const SessionMoreMenu: React.FC = () => {
         label={currentSession.memoryOptOut ? '允许本会话记忆' : '本会话不记忆'}
         onClick={() => {
           void window.api.invoke('session:set-memory-opt-out', { sessionId: currentSession.id, optOut: !currentSession.memoryOptOut }).catch(err => {
-            void window.api.invoke('dialog:confirm', { type: 'error', title: '无法更新记忆设置', message: err instanceof Error ? err.message : '更新失败', buttons: ['确定'], defaultId: 0, cancelId: 0 })
+            void confirmDialog({ type: 'error', title: '无法更新记忆设置', message: err instanceof Error ? err.message : '更新失败', buttons: ['确定'], defaultId: 0, cancelId: 0 })
           })
         }}
       />}

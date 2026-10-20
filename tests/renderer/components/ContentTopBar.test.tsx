@@ -28,6 +28,10 @@ vi.mock('../../../src/renderer/features/chat/SessionBreadcrumb', () => ({
 }))
 
 const mockInvoke = vi.fn()
+const { mockConfirm } = vi.hoisted(() => ({ mockConfirm: vi.fn() }))
+vi.mock('../../../src/renderer/features/confirm/confirmDialog', () => ({
+  confirmDialog: mockConfirm
+}))
 
 describe('ContentTopBar 布局开关', () => {
   beforeEach(() => {
@@ -110,6 +114,7 @@ describe('ContentTopBar 布局开关', () => {
 describe('ContentTopBar 删除会话错误反馈', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockConfirm.mockReset()
     resetLayoutStoreForTests()
     resetChatStoreForTests()
     mockInvoke.mockResolvedValue(false)
@@ -138,13 +143,9 @@ describe('ContentTopBar 删除会话错误反馈', () => {
   })
 
   it('删除被主进程拒绝时展示错误对话框，不静默关闭', async () => {
-    let dialogCalls = 0
+    // 第一次是删除确认（确认删除），第二次是错误提示（直接返回）
+    mockConfirm.mockResolvedValueOnce(1).mockResolvedValueOnce(0)
     mockInvoke.mockImplementation(async (channel: string) => {
-      if (channel === 'dialog:confirm') {
-        dialogCalls += 1
-        // 第一次是删除确认（确认删除），第二次是错误提示（直接返回）
-        return dialogCalls === 1 ? 1 : 0
-      }
       if (channel === 'workspace:delete-session') {
         throw new Error('该会话或其子任务的 Agent 正在运行，请先停止再删除')
       }
@@ -170,21 +171,15 @@ describe('ContentTopBar 删除会话错误反馈', () => {
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 50))
     })
-    const errorDialogs = mockInvoke.mock.calls.filter(
-      ([channel, opts]) =>
-        channel === 'dialog:confirm' &&
-        typeof opts === 'object' &&
-        opts !== null &&
-        (opts as { type?: string }).type === 'error'
-    )
+    const errorDialogs = mockConfirm.mock.calls.filter(([opts]) => opts.type === 'error')
     expect(errorDialogs).toHaveLength(1)
-    expect((errorDialogs[0][1] as { message?: string }).message).toContain('请先停止再删除')
+    expect(errorDialogs[0][0].message).toContain('请先停止再删除')
     renderer.unmount()
   })
 
   it('删除成功后不弹错误框（主路径不回归）', async () => {
+    mockConfirm.mockResolvedValue(1)
     mockInvoke.mockImplementation(async (channel: string) => {
-      if (channel === 'dialog:confirm') return 1
       if (channel === 'workspace:delete-session') {
         return {
           currentSessionId: null,
@@ -214,13 +209,7 @@ describe('ContentTopBar 删除会话错误反馈', () => {
       await new Promise(resolve => setTimeout(resolve, 50))
     })
 
-    const errorDialogs = mockInvoke.mock.calls.filter(
-      ([channel, opts]) =>
-        channel === 'dialog:confirm' &&
-        typeof opts === 'object' &&
-        opts !== null &&
-        (opts as { type?: string }).type === 'error'
-    )
+    const errorDialogs = mockConfirm.mock.calls.filter(([opts]) => opts.type === 'error')
     expect(errorDialogs).toHaveLength(0)
     expect(
       mockInvoke.mock.calls.some(([channel]) => channel === 'workspace:delete-session')

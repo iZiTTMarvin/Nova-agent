@@ -204,18 +204,6 @@ export interface IpcCommands {
     }
     result: LearningCommandReceipt
   }
-  'dialog:confirm': {
-    params: {
-      type?: 'none' | 'info' | 'error' | 'question' | 'warning'
-      buttons?: string[]
-      defaultId?: number
-      cancelId?: number
-      title?: string
-      message: string
-      detail?: string
-    }
-    result: number
-  }
   'send-message': {
     params: {
       sessionId: string

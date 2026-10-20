@@ -48,6 +48,7 @@ import {
   switchToLearningSurface
 } from '../features/learning/learningSurfaceSwitch'
 import { exportSession } from '../features/chat/exportSession'
+import { confirmDialog } from '../features/confirm/confirmDialog'
 import type { AppUpdateSnapshot } from '../../shared/update'
 import { UpdateIndicator } from '../features/update/UpdateIndicator'
 import { useDraggableReorderList } from '../hooks/useDraggableReorderList'
@@ -285,10 +286,13 @@ const SidebarSessions = React.memo(function SidebarSessions({
   }
 
   const handleDeleteProject = async (projectPath: string, projectSessions: PrimarySession[]) => {
-    const response = await window.api.invoke('dialog:confirm', {
+    const response = await confirmDialog({
+      type: 'warning',
       title: '删除项目',
       message: `确定要删除项目“${getProjectName(projectPath)}”吗？`,
-      detail: `这将删除该项目下的所有会话（共 ${projectSessions.length} 个任务），删除后无法恢复。`
+      detail: `这将删除该项目下的所有会话（共 ${projectSessions.length} 个任务），删除后无法恢复。`,
+      buttons: ['取消', '删除'],
+      defaultId: 0
     })
     if (response !== 1) return
     try {
@@ -298,11 +302,12 @@ const SidebarSessions = React.memo(function SidebarSessions({
         await deleteSession(session.id)
       }
     } catch (err) {
-      await window.api.invoke('dialog:confirm', {
+      await confirmDialog({
         type: 'error',
         title: '无法删除项目',
         message: err instanceof Error ? err.message : '删除项目会话失败',
-        detail: '请先停止运行中的任务，再重试删除。'
+        detail: '请先停止运行中的任务，再重试删除。',
+        buttons: ['确定']
       })
     }
   }
@@ -530,16 +535,19 @@ const SidebarSessions = React.memo(function SidebarSessions({
   }
 
   const handleDelete = async (sessionId: string) => {
-    const response = await window.api.invoke('dialog:confirm', {
+    const response = await confirmDialog({
+      type: 'warning',
       title: '删除会话',
       message: '确定要删除这个会话吗？',
-      detail: '删除后无法恢复。'
+      detail: '删除后无法恢复。',
+      buttons: ['取消', '删除'],
+      defaultId: 0
     })
     if (response !== 1) return
     try {
       await deleteSession(sessionId)
     } catch (err) {
-      await window.api.invoke('dialog:confirm', {
+      await confirmDialog({
         type: 'error',
         title: '无法删除会话',
         message: err instanceof Error ? err.message : '删除会话失败',
@@ -713,7 +721,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                 onClick={() => {
                   setOpenMenuSessionId(null)
                   void window.api.invoke('session:set-memory-opt-out', { sessionId: session.id, optOut: !session.memoryOptOut }).catch(err => {
-                    void window.api.invoke('dialog:confirm', { type: 'error', title: '无法更新记忆设置', message: err instanceof Error ? err.message : '更新失败', buttons: ['确定'], defaultId: 0, cancelId: 0 })
+                    void confirmDialog({ type: 'error', title: '无法更新记忆设置', message: err instanceof Error ? err.message : '更新失败', buttons: ['确定'], defaultId: 0, cancelId: 0 })
                   })
                 }}
               />}

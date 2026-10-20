@@ -13,6 +13,7 @@ import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
 import { BrainIcon, CloseIcon, EditIcon, FolderIcon, GlobeIcon, SparklesIcon } from '../../components/Icons'
 import { useSettingsStore } from '../../stores/useSettingsStore'
+import { confirmDialog } from '../confirm/confirmDialog'
 import { formatSettingsDateTime } from './formatDateTime'
 import { SettingsRow, SettingsSection } from './settingsKit'
 import { containsSensitiveMemoryText } from '../../../shared/memory/sensitiveText'
@@ -120,7 +121,7 @@ export const MemorySettingsPanel: React.FC = () => {
   }
 
   const organizeFile = async (relPath: string) => {
-    const response = await window.api.invoke('dialog:confirm', { type: 'question', title: '整理记忆', message: '将调用模型合并相似条目，可能产生 API 费用。', buttons: ['取消', '立即整理'], defaultId: 0, cancelId: 0 })
+    const response = await confirmDialog({ type: 'question', title: '整理记忆', message: '将调用模型合并相似条目，可能产生 API 费用。', buttons: ['取消', '立即整理'], defaultId: 0, cancelId: 0 })
     if (response !== 1) return
     try {
       const result = await window.api.invoke('memory:consolidate', { scopeKind: recordScope, relPath })
@@ -216,7 +217,7 @@ export const MemorySettingsPanel: React.FC = () => {
   const handleSwitchRecordScope = async (scopeKind: MemoryScopeKindDto): Promise<boolean> => {
     if (scopeKind === recordScope) return true
     if (isDirty) {
-      const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '未保存的更改', message: '切换范围会放弃当前文件的修改，是否继续？', buttons: ['继续编辑', '放弃改动'], defaultId: 0, cancelId: 0 })
+      const response = await confirmDialog({ type: 'warning', title: '未保存的更改', message: '切换范围会放弃当前文件的修改，是否继续？', buttons: ['继续编辑', '放弃改动'], defaultId: 0, cancelId: 0 })
       if (response !== 1) return false
     }
     setSelectedPath(null); setContent(''); setBaselineContent(''); setFileEditorOpen(false); setFiles([]); setRecords([])
@@ -227,7 +228,7 @@ export const MemorySettingsPanel: React.FC = () => {
   const handleForgetRecord = async (record: MemoryEntryDto) => {
     if (forgettingId !== null) return
     const epoch = requestContext.current.epoch
-    const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '彻底遗忘记忆', message: '将清除这条记忆及其证据、索引和派生视图。', detail: '已保存的会话记忆快照和整理、迁移备份会一并清除；聊天记录里已出现过的内容不会改动。', buttons: ['取消', '遗忘'], defaultId: 0, cancelId: 0 })
+    const response = await confirmDialog({ type: 'warning', title: '彻底遗忘记忆', message: '将清除这条记忆及其证据、索引和派生视图。', detail: '已保存的会话记忆快照和整理、迁移备份会一并清除；聊天记录里已出现过的内容不会改动。', buttons: ['取消', '遗忘'], defaultId: 0, cancelId: 0 })
     if (response !== 1) return
     if (epoch !== requestContext.current.epoch) return
     setForgettingId(record.id)
@@ -294,7 +295,7 @@ export const MemorySettingsPanel: React.FC = () => {
       return true
     }
     if (isDirty) {
-      const response = await window.api.invoke('dialog:confirm', {
+      const response = await confirmDialog({
         type: 'warning',
         title: '未保存的更改',
         message: '当前文件有未保存的修改，确定要放弃吗？',
@@ -329,7 +330,7 @@ export const MemorySettingsPanel: React.FC = () => {
 
   const handleCloseFileEditor = async (): Promise<void> => {
     if (isDirty) {
-      const response = await window.api.invoke('dialog:confirm', {
+      const response = await confirmDialog({
         type: 'warning',
         title: '未保存的更改',
         message: '当前记忆文件有未保存的修改，确定要关闭编辑器吗？',
@@ -401,7 +402,7 @@ export const MemorySettingsPanel: React.FC = () => {
     setError(null)
     try {
       if (containsSensitiveMemoryText(content)) {
-        const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '记忆中可能含有密钥',
+        const response = await confirmDialog({ type: 'warning', title: '记忆中可能含有密钥',
           message: '保存的内容可能包含密钥、认证信息或私密数据。记忆可能在后续对话中发送给模型。',
           detail: '只有你确认后才会保存。建议先移除敏感内容。', buttons: ['取消', '仍然保存'], defaultId: 0, cancelId: 0 })
         if (response !== 1 || epoch !== requestContext.current.epoch) return
@@ -699,7 +700,7 @@ export const MemorySettingsPanel: React.FC = () => {
                 type="button"
                 isDisabled={!currentProject || stats?.readOnly}
                 onClick={() => void (async () => {
-                  const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '清除操作摘要', message: '永久清除当前项目的操作摘要？主题记忆不会受影响。', buttons: ['取消', '清除'], defaultId: 0, cancelId: 0 })
+                  const response = await confirmDialog({ type: 'warning', title: '清除操作摘要', message: '永久清除当前项目的操作摘要？主题记忆不会受影响。', buttons: ['取消', '清除'], defaultId: 0, cancelId: 0 })
                   if (response !== 1) return
                   try { await window.api.invoke('memory:clear-episodic'); await loadMemoryData(); await refreshPreview() }
                   catch (err) { setError(err instanceof Error ? err.message : '清除摘要失败') }
@@ -718,7 +719,7 @@ export const MemorySettingsPanel: React.FC = () => {
               <div key={dir.oldHash} className="memory-settings-panel__advanced-row">
                 <span className="settings-panel__muted">未关联的旧记忆：<code className="memory-settings-panel__meta-code">{dir.oldHash}</code> · {dir.fileCount} 个文件</span>
                 <Button label={`删除旧记忆 ${dir.oldHash}`} variant="secondary" size="sm" onClick={() => void (async () => {
-                  const response = await window.api.invoke('dialog:confirm', { type: 'warning', title: '删除旧记忆', message: `永久删除未关联目录 ${dir.oldHash}？`, buttons: ['取消', '删除'], defaultId: 0, cancelId: 0 })
+                  const response = await confirmDialog({ type: 'warning', title: '删除旧记忆', message: `永久删除未关联目录 ${dir.oldHash}？`, buttons: ['取消', '删除'], defaultId: 0, cancelId: 0 })
                   if (response !== 1) return
                   try { await window.api.invoke('memory:delete-legacy', { oldHash: dir.oldHash }); setLegacy(await window.api.invoke('memory:list-legacy')) }
                   catch (err) { setError(err instanceof Error ? err.message : '删除失败') }

@@ -96,6 +96,11 @@ vi.mock('@astryxdesign/core/DropdownMenu', () => ({
   )
 }))
 
+const { mockConfirm } = vi.hoisted(() => ({ mockConfirm: vi.fn() }))
+vi.mock('../../../src/renderer/features/confirm/confirmDialog', () => ({
+  confirmDialog: mockConfirm
+}))
+
 const sampleSession: PrimarySession = {
   id: 'sess-1',
   kind: 'primary',
@@ -127,6 +132,7 @@ describe('Sidebar 项目树交互与悬浮窗优化', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     mockInvoke.mockReset()
+    mockConfirm.mockReset()
     mockInvoke.mockResolvedValue(undefined)
     resetChatStoreForTests()
     resetSettingsStoreForTests()
@@ -328,7 +334,7 @@ describe('Sidebar 项目树交互与悬浮窗优化', () => {
     const deleteSession = vi.fn(async (_sessionId: string) => {})
     useChatStore.setState({ sessions: [sessA, sessB], currentSessionId: sessA.id, deleteSession })
     useSettingsStore.setState({ currentProject: 'D:/test-workspace' })
-    mockInvoke.mockImplementation(async (channel: string) => (channel === 'dialog:confirm' ? 1 : undefined))
+    mockConfirm.mockResolvedValue(1)
 
     const renderer = renderDom(<Sidebar />)
     const searchActionBtn = Array.from(renderer.container.querySelectorAll('button'))
@@ -353,7 +359,7 @@ describe('Sidebar 项目树交互与悬浮窗优化', () => {
     })
 
     await waitFor(() => deleteSession.mock.calls.length === 2)
-    expect(mockInvoke).toHaveBeenCalledWith('dialog:confirm', expect.objectContaining({
+    expect(mockConfirm).toHaveBeenCalledWith(expect.objectContaining({
       detail: expect.stringContaining('共 2 个任务')
     }))
     expect(deleteSession.mock.calls.map(([id]) => id).sort()).toEqual(['sess-a', 'sess-b'])

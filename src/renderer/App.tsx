@@ -14,6 +14,7 @@ import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
 import { BrowserWorkspaceBody } from './features/browser/BrowserWorkspaceBody'
 import { startBrowserStore } from './features/browser/useBrowserStore'
 import { ContentTopBar } from './components/ContentTopBar'
+import { ConfirmDialogHost } from './features/confirm/ConfirmDialogHost'
 import { useTodoStore } from './features/todo/useTodoStore'
 import { useComposeStageStore } from './features/compose/useComposeStageStore'
 import { useRunStore } from './stores/useRunStore'
@@ -370,6 +371,8 @@ function App(): React.ReactNode {
         <Suspense fallback={null}>
           <SettingsModal />
         </Suspense>
+        {/* 确认框按需打开，原生 top layer 中后开的叠在设置模态之上 */}
+        <ConfirmDialogHost />
       </AppShell>
     </Theme>
   )

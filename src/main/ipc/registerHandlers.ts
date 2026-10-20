@@ -13,7 +13,6 @@ import { registerSubagentsHandler } from './subagentsHandler'
 import { registerWorkspaceHandler } from './workspaceHandler'
 import { registerGitHandler } from './gitHandler'
 import { registerPermissionHandler } from './permissionHandler'
-import { registerDialogHandler } from './dialogHandler'
 import { registerUpdaterHandler } from './updaterHandler'
 import { registerStorageHandler } from './storageHandler'
 import { registerMemoryHandler } from './memoryHandler'
@@ -78,8 +77,6 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   registerDevDiagnosticsHandlers()
   // 诊断包导出（日志脱敏打包，供用户反馈问题）
   registerDiagnosticsHandler()
-  // 注册异步对话框 IPC（替代阻塞的 window.confirm）
-  registerDialogHandler()
   registerUpdaterHandler()
 
   // 注册模型配置存取 IPC

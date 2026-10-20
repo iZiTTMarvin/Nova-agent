@@ -11,6 +11,10 @@ import type { MemoryEntryDto, MemoryFileDto } from '../../../src/shared/memory/t
 import { renderDom, act } from './renderDom'
 
 const mockInvoke = vi.fn()
+const { mockConfirm } = vi.hoisted(() => ({ mockConfirm: vi.fn() }))
+vi.mock('../../../src/renderer/features/confirm/confirmDialog', () => ({
+  confirmDialog: mockConfirm
+}))
 
 function recordDto(overrides: Partial<MemoryEntryDto> = {}): MemoryEntryDto {
   return {
@@ -70,8 +74,9 @@ function setupInvokeMock(options: {
   let projectRecords = options.projectRecords ?? [recordDto()]
   let globalRecords = options.globalRecords ?? []
   mockInvoke.mockReset()
+  mockConfirm.mockReset()
+  mockConfirm.mockResolvedValue(1)
   mockInvoke.mockImplementation((channel: string, params?: { scopeKind?: string; id?: string; pinned?: boolean; decision?: string }) => {
-    if (channel === 'dialog:confirm') return Promise.resolve(1)
     if (channel === 'memory:snapshot-preview') return Promise.resolve({ text: 'preview fixture', globalCoreCount: 1, projectCoreCount: 2, omittedCoreCount: 0 })
     if (channel === 'memory:list-legacy') return Promise.resolve([])
     if (channel === 'settings:get') return Promise.resolve(settingsDto)
@@ -264,7 +269,6 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     setupInvokeMock()
     mockInvoke.mockImplementation((channel: string) => {
       if (channel === 'memory:forget-entry') return Promise.reject(new Error('无权操作其他范围的记忆'))
-      if (channel === 'dialog:confirm') return Promise.resolve(1)
     if (channel === 'memory:snapshot-preview') return Promise.resolve({ text: 'preview fixture', globalCoreCount: 1, projectCoreCount: 2, omittedCoreCount: 0 })
     if (channel === 'memory:list-legacy') return Promise.resolve([])
     if (channel === 'settings:get') return Promise.resolve(settingsDto)
@@ -375,7 +379,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     await click('保存')
     expect(mockInvoke).toHaveBeenCalledWith('memory:write-file', { scopeKind: 'project', relPath: 'notes.md', content: 'new handwritten notes' })
     expect(renderer.container.textContent).toContain('存在 2 个解析问题')
-    mockInvoke.mockImplementation((channel: string, params: unknown) => channel === 'dialog:confirm' ? Promise.resolve(0) : implementation(channel, params))
+    mockConfirm.mockResolvedValue(0)
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'unsaved local draft')
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
@@ -405,9 +409,8 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
 
   it('手写含密钥时取消不保存、保留草稿；确认后保存原内容，确认框不泄露密钥', async () => {
     setupInvokeMock({ files: [{ relPath: 'notes.md', size: 1, mtimeMs: 1, managed: false, readOnly: false, parseIssues: 0, needsOrganization: false }] })
-    const implementation = mockInvoke.getMockImplementation()!
     let response = 0
-    mockInvoke.mockImplementation((channel: string, params: unknown) => channel === 'dialog:confirm' ? Promise.resolve(response) : implementation(channel, params))
+    mockConfirm.mockImplementation(async () => response)
     const { useSettingsStore } = await import('../../../src/renderer/stores/useSettingsStore')
     useSettingsStore.setState({ currentProject: '/tmp/project' })
     const renderer = renderDom(<MemorySettingsPanel />); await flushAsync()
@@ -419,7 +422,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     await click('保存')
     expect(mockInvoke.mock.calls.filter(row => row[0] === 'memory:write-file')).toEqual([])
     expect(textarea.value).toBe(content)
-    const confirmation = mockInvoke.mock.calls.find(row => row[0] === 'dialog:confirm')![1]
+    const confirmation = mockConfirm.mock.calls[0][0]
     expect(confirmation).toMatchObject({ title: '记忆中可能含有密钥', defaultId: 0, cancelId: 0 })
     expect(JSON.stringify(confirmation)).not.toContain('sk-ant-api03-')
     response = 1
