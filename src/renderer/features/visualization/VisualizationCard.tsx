@@ -14,10 +14,10 @@ import {
 import { AlertIcon, ClockIcon, DownloadIcon, ExpandIcon, SparklesIcon, SpinnerIcon } from '../../components/Icons'
 import { VisualizationDialog } from './VisualizationDialog'
 import { VISUALIZATION_PLACEHOLDER_HEIGHT, VisualizationFrame } from './VisualizationFrame'
+import { useVisualizationMessageSubmitter } from './VisualizationMessageContext'
 import {
   formatVisualizationEventMessage,
-  formatVisualizationRepairMessage,
-  submitVisualizationMessage
+  formatVisualizationRepairMessage
 } from './visualizationMessages'
 import { useVisualizationTheme } from './visualizationTheme'
 import './VisualizationCard.css'
@@ -102,15 +102,23 @@ function PresentedVisualization({ uri, title }: { uri: string; title: string }):
       current.includes(message) || current.length >= MAX_COLLECTED_ERRORS ? current : [...current, message]
     )
   }, [])
+  const submit = useVisualizationMessageSubmitter()
   const sendEvent = useCallback(
     (name: string, data: unknown) => {
-      void submitVisualizationMessage(formatVisualizationEventMessage(title, name, data))
+      void submit(formatVisualizationEventMessage(title, name, data), 'event').then(outcome => {
+        if (outcome.status === 'blocked') setNotice(outcome.notice)
+      })
     },
-    [title]
+    [submit, title]
   )
   const requestRepair = (): void => {
     setRepairRequested(true)
-    void submitVisualizationMessage(formatVisualizationRepairMessage(title, errors))
+    void submit(formatVisualizationRepairMessage(title, errors), 'repair').then(outcome => {
+      if (outcome.status !== 'blocked') return
+      // 没发出去就恢复按钮，用户之后还能再请求修复
+      setRepairRequested(false)
+      setNotice(outcome.notice)
+    })
   }
   const retry = (): void => {
     setFrameState('loading')

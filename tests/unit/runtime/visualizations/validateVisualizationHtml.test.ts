@@ -70,4 +70,34 @@ describe('validateVisualizationHtml', () => {
     </style></head><body><p>x</p></body></html>`
     expect(await validateVisualizationHtml(html)).toEqual([])
   })
+
+  it('拒绝超过 8 个步骤平铺在单排胶囊条或缺乏阶段与图形画布的纯文字翻页器，放行分阶段泳道工作台', async () => {
+    const crammedButtons = Array.from({ length: 16 }, (_, i) => `<button type="button">${i + 1}. 步骤</button>`).join('')
+    const crammedHtml = `<!doctype html><body><div class="steps-bar">${crammedButtons}</div><div class="viz-card">正文</div></body>`
+    const crammedViolations = await validateVisualizationHtml(crammedHtml)
+    expect(crammedViolations.join('\n')).toContain('步骤或标签平铺过多')
+    expect(crammedViolations.join('\n')).toContain('.viz-phases')
+
+    const scriptSteps = Array.from({ length: 12 }, (_, i) => `{ step: ${i + 1}, title: '步骤${i + 1}' }`).join(',')
+    const textOnlyDeckHtml = `<!doctype html><body><div id="bar"></div><div class="viz-card" id="detail"></div><script>const steps = [${scriptSteps}];</script></body>`
+    const deckViolations = await validateVisualizationHtml(textOnlyDeckHtml)
+    expect(deckViolations.join('\n')).toContain('多步骤可视化缺少阶段分组与图形画布')
+
+    const structuredWorkbenchHtml = `<!doctype html><body>
+      <div class="viz-workbench">
+        <div class="viz-phases">
+          <button class="viz-phase" data-active="true"><span class="viz-phase-kicker">阶段 1</span><span class="viz-phase-title">输入接纳</span></button>
+          <button class="viz-phase"><span class="viz-phase-kicker">阶段 2</span><span class="viz-phase-title">模型推理</span></button>
+          <button class="viz-phase"><span class="viz-phase-kicker">阶段 3</span><span class="viz-phase-title">工具执行</span></button>
+          <button class="viz-phase"><span class="viz-phase-kicker">阶段 4</span><span class="viz-phase-title">状态落盘</span></button>
+        </div>
+        <div class="viz-split">
+          <div class="viz-canvas"><div class="viz-lanes"><div class="viz-lane"><span class="viz-lane-label">Renderer</span><div class="viz-lane-nodes">${crammedButtons}</div></div></div></div>
+          <div class="viz-inspector"><div class="viz-title">步骤详情</div></div>
+        </div>
+      </div>
+      <script>const steps = [${scriptSteps}];</script>
+    </body></html>`
+    expect(await validateVisualizationHtml(structuredWorkbenchHtml)).toEqual([])
+  })
 })

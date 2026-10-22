@@ -152,6 +152,49 @@ describe('帧内桥运行时', () => {
       { kind: 'error', payload: { message: 'TypeError: x is undefined (3:9)' } }
     ])
   })
+
+  it('测量高度时临时解除 body 或单根容器的 100vh 绑定，随后恢复原样式属性', () => {
+    const { frame, received, send } = mountFrame()
+    const doc = frame.document
+    doc.body.setAttribute('style', 'min-height: 100vh')
+    const wrapper = doc.createElement('div')
+    wrapper.setAttribute('style', 'min-height: 100dvh')
+    doc.body.appendChild(wrapper)
+
+    vi.spyOn(doc.documentElement, 'getBoundingClientRect').mockImplementation(() => {
+      const bodyPinned = doc.body.style.getPropertyValue('min-height') !== '0' && doc.body.style.getPropertyValue('min-height') !== '0px'
+      const wrapperPinned = wrapper.style.getPropertyValue('min-height') !== '0' && wrapper.style.getPropertyValue('min-height') !== '0px'
+      const height = bodyPinned || wrapperPinned ? 820 : 340
+      return { height, width: 700, top: 0, left: 0, right: 700, bottom: height, x: 0, y: 0, toJSON: () => ({}) }
+    })
+
+    send({ kind: 'ack', payload: { theme: theme('dark', '#222222'), motionScale: 1 } })
+    expect(received.at(-1)).toEqual({ kind: 'resize', payload: { height: 340 } })
+    expect(doc.body.getAttribute('style')).toBe('min-height: 100vh')
+    expect(wrapper.getAttribute('style')).toBe('min-height: 100dvh')
+  })
+
+  it('百分比高度同样视为绑定视口，line-height: 100% 不会被误判', () => {
+    const { frame, received, send } = mountFrame()
+    const doc = frame.document
+    doc.body.setAttribute('style', 'margin: 0; height: 100%')
+    const wrapper = doc.createElement('div')
+    wrapper.setAttribute('style', 'line-height: 100%')
+    doc.body.appendChild(wrapper)
+
+    let wrapperUnpinned = false
+    vi.spyOn(doc.documentElement, 'getBoundingClientRect').mockImplementation(() => {
+      if (wrapper.style.getPropertyValue('height') === 'auto') wrapperUnpinned = true
+      const height = doc.body.style.getPropertyValue('height') === 'auto' ? 340 : 820
+      return { height, width: 700, top: 0, left: 0, right: 700, bottom: height, x: 0, y: 0, toJSON: () => ({}) }
+    })
+
+    send({ kind: 'ack', payload: { theme: theme('dark', '#222222'), motionScale: 1 } })
+    expect(received.at(-1)).toEqual({ kind: 'resize', payload: { height: 340 } })
+    expect(wrapperUnpinned).toBe(false)
+    expect(doc.body.getAttribute('style')).toBe('margin: 0; height: 100%')
+    expect(wrapper.getAttribute('style')).toBe('line-height: 100%')
+  })
 })
 
 describe('独立打开的导出文件', () => {

@@ -158,21 +158,31 @@ const BRIDGE_RUNTIME = String.raw`function (config, k) {
   };
 
   var mutationObserver = typeof MutationObserver === 'function' ? new MutationObserver(function () { schedule(); }) : null;
+  var VIEWPORT_UNITS = { percent: 1, vh: 1, dvh: 1, svh: 1, lvh: 1 };
   // 高度或最小高度绑定视口（100vh / 100%）的页面会随帧高无限增长：测量时临时解除绑定，取内容本身的高度
   var pinnedToViewport = function (element) {
-    if (!element || typeof element.computedStyleMap !== 'function') return false;
-    var styles = element.computedStyleMap();
-    return ['height', 'min-height'].some(function (property) {
-      var value = styles.get(property);
-      if (!value || typeof value.unit !== 'string') return false;
-      if (value.unit === 'percent') return value.value >= 100;
-      return value.unit === 'px' && Math.abs(value.value - window.innerHeight) <= 1;
-    });
+    if (!element) return false;
+    if (typeof element.computedStyleMap === 'function') {
+      var styles = element.computedStyleMap();
+      var matched = ['height', 'min-height'].some(function (property) {
+        var value = styles.get(property);
+        if (!value || typeof value.unit !== 'string') return false;
+        if (VIEWPORT_UNITS[value.unit]) return value.value >= 90;
+        return value.unit === 'px' && window.innerHeight > 0 && Math.abs(value.value - window.innerHeight) <= 2;
+      });
+      if (matched) return true;
+    }
+    var inlineStyle = element.getAttribute && element.getAttribute('style');
+    return typeof inlineStyle === 'string' && /(?:^|;)\s*(?:min-)?height\s*:\s*(?:9\d|100)(?:\.\d+)?(?:%|[dsl]?vh)(?![\w.])/i.test(inlineStyle);
   };
   var overflowHeight = 0;
   var overflowFlowHeight = -1;
   var measure = function () {
-    var pinned = [root, document.body].filter(pinnedToViewport);
+    var candidates = [root, document.body];
+    if (document.body && document.body.children.length === 1 && document.body.firstElementChild) {
+      candidates.push(document.body.firstElementChild);
+    }
+    var pinned = candidates.filter(pinnedToViewport);
     var saved = pinned.map(function (element) { return [element, element.getAttribute('style')]; });
     pinned.forEach(function (element) {
       element.style.setProperty('height', 'auto', 'important');

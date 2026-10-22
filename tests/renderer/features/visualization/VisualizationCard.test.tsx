@@ -3,6 +3,10 @@
 import React from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VisualizationCard } from '../../../../src/renderer/features/visualization/VisualizationCard'
+import type {
+  VisualizationMessageKind,
+  VisualizationSubmitOutcome
+} from '../../../../src/renderer/features/visualization/visualizationMessages'
 import {
   buildVisualizationUri,
   formatVisualizationResult,
@@ -13,7 +17,11 @@ import {
 } from '../../../../src/shared/visualization'
 import { act, renderDom, waitFor, type DomRenderResult } from '../../../unit/renderer/renderDom'
 
-const mocks = vi.hoisted(() => ({ submit: vi.fn(async (_text: string) => {}) }))
+const mocks = vi.hoisted(() => ({
+  submit: vi.fn(
+    async (_text: string, _kind: VisualizationMessageKind): Promise<VisualizationSubmitOutcome> => ({ status: 'sent' })
+  )
+}))
 
 vi.mock('../../../../src/renderer/features/visualization/visualizationMessages', async importOriginal => ({
   ...(await importOriginal<typeof import('../../../../src/renderer/features/visualization/visualizationMessages')>()),
@@ -199,7 +207,15 @@ describe('VisualizationCard', () => {
     send(frame.contentWindow, 'event', { name: 'select', data: { stage: 2 } })
     send(frame.contentWindow, 'event', { name: 'select', data: { stage: 3 } })
     expect(mocks.submit).toHaveBeenCalledTimes(1)
-    expect(mocks.submit).toHaveBeenCalledWith('【可视化】漏斗 · select\n{"stage":2}')
+    expect(mocks.submit).toHaveBeenCalledWith('【可视化】漏斗 · select\n{"stage":2}', 'event')
+
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 2_000)
+    try {
+      send(frame.contentWindow, 'event', { name: 'explore', data: { label: 'JWT', prompt: '讲讲' } })
+    } finally {
+      nowSpy.mockRestore()
+    }
+    expect(mocks.submit).toHaveBeenLastCalledWith('【可视化】漏斗 · explore\nJWT：讲讲', 'event')
   })
 
   it('运行错误去重汇总到卡片底部，请求修复只提交一次', () => {
@@ -214,10 +230,35 @@ describe('VisualizationCard', () => {
     act(() => textButton(footer, '让 Nova 修复')!.click())
     expect(mocks.submit).toHaveBeenCalledTimes(1)
     expect(mocks.submit).toHaveBeenCalledWith(
-      '【可视化报错】图\nTypeError: x is undefined (3:7)\nRangeError: bad\n请修复后重新展示。'
+      '【可视化报错】图\nTypeError: x is undefined (3:7)\nRangeError: bad\n请修复后重新展示。',
+      'repair'
     )
     const requested = textButton(footer, '已请求修复')!
     expect(requested.disabled).toBe(true)
+  })
+
+  it('回传被拦截时显示提示，修复按钮恢复可再次点击', async () => {
+    mocks.submit.mockResolvedValue({ status: 'blocked', notice: 'X' })
+    try {
+      const { container, frame } = mountPresented('图')
+      ready(frame)
+      send(frame.contentWindow, 'error', { message: 'TypeError: x is undefined (3:7)' })
+
+      const footer = container.querySelector('[data-testid="visualization-errors"]')!
+      await act(async () => {
+        textButton(footer, '让 Nova 修复')!.click()
+      })
+      await waitFor(() => container.querySelector('.visualization-card__notice')?.textContent === 'X')
+      const repair = textButton(footer, '让 Nova 修复')!
+      expect(repair.disabled).toBe(false)
+
+      await act(async () => {
+        repair.click()
+      })
+      expect(mocks.submit).toHaveBeenCalledTimes(2)
+    } finally {
+      mocks.submit.mockImplementation(async () => ({ status: 'sent' }))
+    }
   })
 
   it('产物出现动画后才提供慢放，切换时经桥下发倍率而不重载帧', () => {
