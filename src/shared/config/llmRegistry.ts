@@ -82,6 +82,12 @@ export const PRESET_PROVIDERS: Record<PresetProviderId, PresetProviderMeta> = {
     baseUrl: 'https://api.minimaxi.com/v1',
     defaultModels: [
       // 官方 204,800（platform.minimax.io，验证 2026-07）
+      { modelId: 'MiniMax-M2.7', displayName: 'MiniMax-M2.7', contextWindow: 204_800 },
+      {
+        modelId: 'MiniMax-M2.7-highspeed',
+        displayName: 'MiniMax-M2.7-highspeed',
+        contextWindow: 204_800
+      },
       { modelId: 'MiniMax-M2.5', displayName: 'MiniMax-M2.5', contextWindow: 204_800 },
       {
         modelId: 'MiniMax-M2.5-highspeed',

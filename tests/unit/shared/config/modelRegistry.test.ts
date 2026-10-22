@@ -44,6 +44,10 @@ describe('lookupModelCapability', () => {
     expect(lookupModelCapability('deepseek-chat')?.contextWindow).toBe(500_000)
     expect(lookupModelCapability('deepseek-reasoner')?.contextWindow).toBe(500_000)
     expect(lookupModelCapability('minimax-m2.5')?.contextWindow).toBe(204_800)
+    expect(lookupModelCapability('MiniMax-M2.7')?.contextWindow).toBe(204_800)
+    expect(lookupModelCapability('MiniMax-M2.7')?.reasoningEfforts).toEqual(['high', 'max'])
+    expect(lookupModelCapability('MiniMax-M2.7-highspeed')?.reasoningEfforts).toEqual(['high', 'max'])
+    expect(lookupModelCapability('minimax/MiniMax-M2.8')?.reasoningEfforts).toEqual(['high', 'max'])
   })
 })
 

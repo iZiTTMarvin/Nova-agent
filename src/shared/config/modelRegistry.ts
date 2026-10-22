@@ -148,6 +148,12 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'minimax-m2.1': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
   'minimax-m2.5': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry + litellm；官方 204800（2026-07）
   'minimax-m2.5-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry；官方 204800（2026-07）
+  'minimax-m2.6': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2.6-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2.7': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2-7': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2.7-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
+  'minimax-m2-7-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
   'minimax-m3': { supportsVision: true, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry Studio + litellm；官方宣称 1M，未在本轮固化工程取值
 
   // ── Moonshot Kimi ───────────────────────────────────────
@@ -162,8 +168,23 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'kimi-latest': { supportsVision: true } // 来源: Cherry Studio + litellm
 }
 
-/** 查注册表。未命中返回 undefined。大小写不敏感。 */
+/** 查注册表。未命中时剥离网关前缀并匹配 MiniMax M2/M3 点版本，其余返回 undefined。大小写不敏感。 */
 export function lookupModelCapability(modelId: string): ModelCapabilityEntry | undefined {
   if (!modelId) return undefined
-  return MODEL_CAPABILITY_REGISTRY[modelId.toLowerCase()]
+  const lower = modelId.trim().toLowerCase()
+  if (!lower) return undefined
+  const direct = MODEL_CAPABILITY_REGISTRY[lower]
+  if (direct) return direct
+
+  const bare = lower.includes('/') ? lower.slice(lower.lastIndexOf('/') + 1) : lower
+  const byBare = MODEL_CAPABILITY_REGISTRY[bare]
+  if (byBare) return byBare
+
+  if (/^minimax-m2(?:[.-]\d+)?(?:-highspeed|-lightning)?$/.test(bare)) {
+    return MODEL_CAPABILITY_REGISTRY['minimax-m2.7']
+  }
+  if (/^minimax-m3(?:[.-]\d+)?(?:-highspeed|-lightning)?$/.test(bare)) {
+    return MODEL_CAPABILITY_REGISTRY['minimax-m3']
+  }
+  return undefined
 }

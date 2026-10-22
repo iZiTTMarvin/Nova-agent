@@ -186,15 +186,17 @@ describe('ReasoningEffortControl', () => {
     renderer.unmount()
   })
 
-  it('MiniMax 只显示 High 与 Max 两个节点', () => {
-    useSettingsStore.setState({ llmRegistry: registryFor('MiniMax-M3') })
-    useWorkspaceStore.setState({ reasoningEffortOverride: null })
+  it('MiniMax 只显示 High 与 Max 两个节点（含 M2.7 变体）', () => {
+    for (const modelId of ['MiniMax-M3', 'MiniMax-M2.7', 'MiniMax-M2.7-highspeed']) {
+      useSettingsStore.setState({ llmRegistry: registryFor(modelId) })
+      useWorkspaceStore.setState({ reasoningEffortOverride: null })
 
-    const renderer = renderDom(<ReasoningEffortControl />)
-    const slider = renderer.container.querySelector<HTMLElement>('[role="slider"]')
-    expect(slider?.getAttribute('aria-valuemax')).toBe('1')
-    expect(slider?.getAttribute('aria-valuetext')).toBe('High')
-    renderer.unmount()
+      const renderer = renderDom(<ReasoningEffortControl />)
+      const slider = renderer.container.querySelector<HTMLElement>('[role="slider"]')
+      expect(slider?.getAttribute('aria-valuemax')).toBe('1')
+      expect(slider?.getAttribute('aria-valuetext')).toBe('High')
+      renderer.unmount()
+    }
   })
 
   it('能力未知或没有当前会话时不展示虚假的调节器', () => {
