@@ -5,6 +5,7 @@ export const LEARN_VISIBLE_TOOL_NAMES: readonly string[] = [
   'grep',
   'find',
   'code_context',
+  'present_visualization',
   'learning_context',
   'learning_checkpoint',
   'learning_assess'

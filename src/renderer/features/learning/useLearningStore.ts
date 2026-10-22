@@ -85,14 +85,31 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
       try {
         if (!get().projection) await get().refresh(sessionId)
         if (!isCurrent(sessionId, generation)) return null
-        const projection = get().projection
+        let projection = get().projection
         if (!projection) throw new Error('学习状态尚未加载，请重试')
-        const receipt = await window.api.invoke('learning:command', {
+        let receipt = await window.api.invoke('learning:command', {
           sessionId,
           command: { commandId: crypto.randomUUID(), sessionId,
             expectedClearGeneration: projection.clearGeneration,
             expectedCursorVersion: projection.cursorVersion, action }
         })
+        if (
+          !receipt.ok &&
+          receipt.code === 'stale' &&
+          (action.type === 'message' || action.type === 'select_node' || action.type === 'explain_change')
+        ) {
+          await get().refresh(sessionId)
+          if (!isCurrent(sessionId, generation)) return null
+          projection = get().projection
+          if (projection) {
+            receipt = await window.api.invoke('learning:command', {
+              sessionId,
+              command: { commandId: crypto.randomUUID(), sessionId,
+                expectedClearGeneration: projection.clearGeneration,
+                expectedCursorVersion: projection.cursorVersion, action }
+            })
+          }
+        }
         if (isCurrent(sessionId, generation)) {
           set({ commandError: receipt.ok ? null : receipt })
         }

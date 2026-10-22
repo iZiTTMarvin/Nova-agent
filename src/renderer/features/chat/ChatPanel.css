@@ -1244,11 +1244,12 @@ button.code-index-status-chip:hover {
 }
 
 .chat-composer__footer-start {
-  flex: 1 1 220px;
+  flex: 0 1 auto;
 }
 
 .chat-composer__footer-end {
-  flex: 1 1 220px;
+  flex: 1 1 auto;
+  margin-left: auto;
   justify-content: flex-end;
   /* 撑满行高：底栏左侧控件换行变高时，小耳的定位锚点仍以卡片内容底边为基准 */
   align-self: stretch;

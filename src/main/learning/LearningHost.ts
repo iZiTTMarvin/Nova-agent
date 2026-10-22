@@ -44,7 +44,8 @@ export async function submitLearningCommandTurn(
   workspaceRoot: string,
   command: LearningCommand,
   ports: LearningDeliveryPorts,
-  deps: SendAgentMessageDeps
+  deps: SendAgentMessageDeps,
+  onAccepted?: () => void
 ): Promise<Awaited<ReturnType<typeof applyLearningCommand>>> {
   const sessionId = command.sessionId
   // 覆盖落库到 run 建立前的异步窗口；所有学习命令只从这个入口接纳。
@@ -54,6 +55,9 @@ export async function submitLearningCommandTurn(
   admittedSessions.add(sessionId)
   try {
     const applied = await applyLearningCommand(progress, workspaceRoot, command, ports)
+    if (applied.receipt.ok) {
+      onAccepted?.()
+    }
     if (applied.receipt.ok && applied.delivery) {
       const { sendAgentMessage } = await import('../agent/turn/AgentTurnService')
       const result = await sendAgentMessage({ sessionId, trustedLearningDelivery: applied.delivery }, deps)

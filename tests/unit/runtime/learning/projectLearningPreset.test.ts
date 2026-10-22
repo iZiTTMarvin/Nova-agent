@@ -9,6 +9,8 @@ describe('projectLearningPreset', () => {
     expect(material).toContain('cursorVersion')
     expect(material).toContain('严禁考察死记硬背')
     expect(material).toContain('不要复述用户原话')
+    expect(material).toContain('present_visualization')
+    expect(material).toContain('默认只讲不考')
     expect(material.toLowerCase()).not.toContain('skill')
   })
 

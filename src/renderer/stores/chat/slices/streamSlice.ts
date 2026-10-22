@@ -19,6 +19,7 @@ import {
   bumpRevision,
   commitMessageList,
   emptyStreamTransientState,
+  reconcileFocusedSession,
   removeLiveTurnEntry,
   stripInlinePseudoToolCalls
 } from '../internal'
@@ -73,8 +74,10 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
   ...initialStreamState(),
 
   handleMessageStart: (messageId: string) => {
-    const { currentSessionId } = get()
+    const { currentSessionId, sessions } = get()
+    const currentSessionMode = sessions.find(session => session.id === currentSessionId)?.mode
     const activeSessionId = currentSessionId || 'session_default'
+    let insertedNewAssistant = false
 
     set(state => {
       const existingIndex = state.messageIndexById[messageId]
@@ -84,6 +87,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         }
       }
 
+      insertedNewAssistant = true
       // 会话切回时 delta 可能先于 message_start 抵达；仅为当前运行中的同一消息补壳，
       // 让重复或乱序事件仍落到同一个 assistant 消息，而不误建历史消息。
       const assistantMsg = createAssistantMessage(activeSessionId, messageId)
@@ -97,6 +101,13 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
         currentGeneratingMessageId: messageId
       }
     })
+
+    // 学习会话的用户消息由主进程受信任投递落盘，回合启动时立即对账一次，使提问气泡与流式回复同屏可见
+    if (insertedNewAssistant && currentSessionId && currentSessionMode === 'learn') {
+      void reconcileFocusedSession({ getState: get, setState: set }, currentSessionId).catch(error => {
+        console.error('[useChatStore] learn 回合起点消息对账失败:', error)
+      })
+    }
   },
 
   handleAttemptFailed: (messageId: string, _attemptId: string) => {

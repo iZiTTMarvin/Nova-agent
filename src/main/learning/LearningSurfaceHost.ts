@@ -229,7 +229,8 @@ export async function submitLearningSurfaceCommand(
       workspaceRoot,
       scoped,
       ports,
-      deps
+      deps,
+      () => notifyLearningSurfaceChanged(sessionId)
     )
     return applied.receipt
   } finally {

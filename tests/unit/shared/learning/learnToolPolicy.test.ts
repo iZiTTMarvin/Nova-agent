@@ -7,6 +7,7 @@ describe('learn 工具门禁', () => {
 
   it('learn 仅暴露白名单工具', () => {
     expect(isToolVisibleInMode('learn', 'read')).toBe(true)
+    expect(isToolVisibleInMode('learn', 'present_visualization')).toBe(true)
     expect(isToolVisibleInMode('learn', 'learning_checkpoint')).toBe(true)
     expect(isToolVisibleInMode('learn', 'bash')).toBe(false)
     expect(isToolVisibleInMode('learn', 'switch_mode')).toBe(false)
@@ -16,6 +17,7 @@ describe('learn 工具门禁', () => {
     expect(policy('bash').allowed).toBe(false)
     expect(policy('write').allowed).toBe(false)
     expect(policy('task').allowed).toBe(false)
+    expect(policy('present_visualization').allowed).toBe(true)
     expect(policy('learning_checkpoint').allowed).toBe(true)
   })
 })

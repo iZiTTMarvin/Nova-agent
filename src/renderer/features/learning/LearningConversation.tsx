@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useMemo, useRef } from 'react'
+import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { CheckIcon, CopyIcon } from '../../components/Icons'
@@ -16,6 +17,10 @@ import { AssistantPendingIndicator } from '../chat/AssistantPendingIndicator'
 import { useEffectiveMessage } from '../chat/useEffectiveMessage'
 import { LearningQuestionRow } from './LearningQuestionRow'
 import {
+  LEARNING_ACTION_QUIZ_LABEL,
+  LEARNING_ACTION_QUIZ_PROMPT,
+  LEARNING_ACTION_VISUALIZE_LABEL,
+  LEARNING_ACTION_VISUALIZE_PROMPT,
   LEARNING_COPY_MESSAGE,
   LEARNING_MESSAGE_COPIED,
   LEARNING_TURN_ERROR,
@@ -36,6 +41,8 @@ interface LearningConversationProps {
   currentGeneratingMessageId: string | null
   sessionId: string
   projection: LearningSurfaceProjection | null
+  actionsDisabled: boolean
+  onSendMessage: (text: string) => void
 }
 
 function messageText(message: ExtendedMessage): string {
@@ -151,13 +158,26 @@ export function LearningConversation({
   isGenerating,
   currentGeneratingMessageId,
   sessionId,
-  projection
+  projection,
+  actionsDisabled,
+  onSendMessage
 }: LearningConversationProps): React.ReactElement {
   const topicStartIds = useMemo(
     () => new Set(projection?.topicStartMessageIds ?? []),
     [projection?.topicStartMessageIds]
   )
   const questions = projection?.questions
+  const lastAssistantId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role === 'assistant') return messages[index].id
+    }
+    return null
+  }, [messages])
+  const hasAwaitingQuestion = Boolean(
+    projection?.questions.some(
+      question => question.checkpointId === projection.currentCheckpointId && question.state === 'awaiting_answer'
+    )
+  )
 
   // 题目行锚定：从助手消息的 learning_checkpoint 工具块取 checkpointId
   const { rowsByMessageId, tailRows } = useMemo(() => {
@@ -222,6 +242,25 @@ export function LearningConversation({
                 !isGenerating ? (
                   <div className="chat-msg__footer chat-msg__footer--assistant">
                     <CopyMessageButton message={message} />
+                    {message.id === lastAssistantId && !hasAwaitingQuestion && !message.isError && !message.interrupted
+                      && messageText(message).trim() && (
+                      <div className="learning-msg__quick-actions">
+                        <Button
+                          label={LEARNING_ACTION_VISUALIZE_LABEL}
+                          variant="ghost"
+                          size="sm"
+                          isDisabled={actionsDisabled}
+                          onClick={() => onSendMessage(LEARNING_ACTION_VISUALIZE_PROMPT)}
+                        />
+                        <Button
+                          label={LEARNING_ACTION_QUIZ_LABEL}
+                          variant="ghost"
+                          size="sm"
+                          isDisabled={actionsDisabled}
+                          onClick={() => onSendMessage(LEARNING_ACTION_QUIZ_PROMPT)}
+                        />
+                      </div>
+                    )}
                     <span className="chat-msg__timestamp">
                       {formatFullTimestamp(message.timestamp)}
                     </span>

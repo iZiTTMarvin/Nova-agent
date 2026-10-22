@@ -9,8 +9,11 @@ import { IconButton } from '@astryxdesign/core/IconButton'
 import { SendIcon, StopIcon } from '../../components/Icons'
 import type { LearningSurfaceProjection } from '../../../shared/learning/surface'
 import { useAgentStore } from '../../stores/useAgentStore'
+import { ContextIndicator } from '../chat/ContextIndicator'
 import { ModelSelector } from '../chat/ModelSelector'
 import { ReasoningEffortControl } from '../chat/ReasoningEffortControl'
+import { CodeIndexStatusChip } from '../chat/CodeIndexStatusChip'
+import { ComposerContextBar } from '../composer-context/ComposerContextBar'
 import { useLearningStore } from './useLearningStore'
 import { LearningQuestionDock } from './LearningQuestionDock'
 import {
@@ -55,10 +58,11 @@ export function LearningComposer({
     const value = text
     const trimmed = value.trim()
     if (!trimmed || disabled) return
+    setDraft(sessionId, null, '')
     void sendCommand({ sessionId, action: { type: 'message', text: trimmed } }).then(receipt => {
-      // 接纳才清空；期间用户又输入了新内容则不覆盖
-      if (receipt?.ok === true && useLearningStore.getState().drafts[sessionId]?.message === value) {
-        setDraft(sessionId, null, '')
+      // 发送立即清空输入框；若服务端拒绝且期间未输入新内容，立即恢复原草稿
+      if (receipt?.ok !== true && !useLearningStore.getState().drafts[sessionId]?.message) {
+        setDraft(sessionId, null, value)
       }
     })
   }
@@ -79,47 +83,53 @@ export function LearningComposer({
   }
 
   return (
-    <div className="chat-composer-box w-full flex flex-col p-3">
-      <ChatComposerInput
-        className="chat-composer__input"
-        handleRef={inputHandleRef}
-        label={LEARNING_COMPOSER_LABEL}
-        placeholder={isGenerating ? LEARNING_COMPOSER_PLACEHOLDER_GENERATING : LEARNING_COMPOSER_PLACEHOLDER}
-        value={text}
-        isDisabled={disabled}
-        onChange={value => setDraft(sessionId, null, value)}
-        onKeyDown={handleKeyDown}
-        hasHistory={false}
-        pasteAsToken={false}
-        maxRows={14}
-      />
-      <div className="flex items-center justify-between mt-2 pt-1">
-        <div aria-hidden="true" />
-        <div className="flex items-center gap-2">
-          <ModelSelector />
-          <ReasoningEffortControl />
-          {isGenerating ? (
-            <IconButton
-              label={LEARNING_STOP_LABEL}
-              icon={<StopIcon size={14} />}
-              variant="destructive"
-              size="md"
-              onClick={() => void cancelExecution()}
-              tooltip={LEARNING_STOP_LABEL}
-            />
-          ) : (
-            <IconButton
-              label={LEARNING_SEND_LABEL}
-              icon={<SendIcon size={14} />}
-              variant="primary"
-              size="md"
-              onClick={send}
-              isDisabled={disabled || !text.trim()}
-              tooltip={LEARNING_SEND_LABEL}
-            />
-          )}
+    <div className="chat-composer-stack w-full">
+      <div className="chat-composer-box w-full flex flex-col p-3">
+        <ChatComposerInput
+          className="chat-composer__input"
+          handleRef={inputHandleRef}
+          label={LEARNING_COMPOSER_LABEL}
+          placeholder={isGenerating ? LEARNING_COMPOSER_PLACEHOLDER_GENERATING : LEARNING_COMPOSER_PLACEHOLDER}
+          value={text}
+          isDisabled={disabled}
+          onChange={value => setDraft(sessionId, null, value)}
+          onKeyDown={handleKeyDown}
+          hasHistory={false}
+          pasteAsToken={false}
+          maxRows={14}
+        />
+        <div className="chat-composer__footer">
+          <div className="chat-composer__footer-start">
+            <CodeIndexStatusChip />
+          </div>
+          <div className="chat-composer__footer-end">
+            <ContextIndicator />
+            <ModelSelector />
+            <ReasoningEffortControl />
+            {isGenerating ? (
+              <IconButton
+                label={LEARNING_STOP_LABEL}
+                icon={<StopIcon size={14} />}
+                variant="destructive"
+                size="md"
+                onClick={() => void cancelExecution()}
+                tooltip={LEARNING_STOP_LABEL}
+              />
+            ) : (
+              <IconButton
+                label={LEARNING_SEND_LABEL}
+                icon={<SendIcon size={14} />}
+                variant="primary"
+                size="md"
+                onClick={send}
+                isDisabled={disabled || !text.trim()}
+                tooltip={LEARNING_SEND_LABEL}
+              />
+            )}
+          </div>
         </div>
       </div>
+      <ComposerContextBar />
     </div>
   )
 }

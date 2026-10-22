@@ -22,6 +22,8 @@ import { useLearningStore } from './useLearningStore'
 import { LearningConversation } from './LearningConversation'
 import { LearningComposer } from './LearningComposer'
 import { LearningEmptyState } from './LearningEmptyState'
+import { VisualizationMessageContext } from '../visualization/VisualizationMessageContext'
+import { createLearningVisualizationSubmitter } from './learningVisualizationSubmitter'
 import { firstOutlineTopic } from './outline/outlineOrder'
 import {
   LEARNING_CONVERSATION_LABEL,
@@ -188,6 +190,7 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
   )
 
   const busy = isGenerating || commandPending
+  const visualizationSubmitter = useMemo(() => createLearningVisualizationSubmitter(sessionId), [sessionId])
   const firstTopic = useMemo(
     () => (projection && projection.tree.nodes.length > 0 ? firstOutlineTopic(projection.tree) : null),
     [projection]
@@ -223,13 +226,17 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
             </div>
           )}
           <div className="chat-messages__flow-inner" ref={contentRef} role="region" aria-label={LEARNING_MESSAGES_LABEL}>
-            <LearningConversation
-              messages={messages}
-              isGenerating={isGenerating}
-              currentGeneratingMessageId={currentGeneratingMessageId}
-              sessionId={sessionId}
-              projection={projection}
-            />
+            <VisualizationMessageContext.Provider value={visualizationSubmitter}>
+              <LearningConversation
+                messages={messages}
+                isGenerating={isGenerating}
+                currentGeneratingMessageId={currentGeneratingMessageId}
+                sessionId={sessionId}
+                projection={projection}
+                actionsDisabled={busy}
+                onSendMessage={handleSuggestionMessage}
+              />
+            </VisualizationMessageContext.Provider>
           </div>
         </div>
       )}

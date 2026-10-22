@@ -11,6 +11,7 @@ import type { LearningAction } from '../../../shared/learning/command'
 import type { LearningQuestionView } from '../../../shared/learning/surface'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { selectSessionIsRunning, useRunStore } from '../../stores/useRunStore'
+import { ComposerContextBar } from '../composer-context/ComposerContextBar'
 import { useLearningStore } from './useLearningStore'
 import {
   LEARNING_ANSWER_LABEL,
@@ -41,8 +42,18 @@ export function LearningQuestionDock({ sessionId, question }: LearningQuestionDo
 
   const submit = (action: LearningAction): void => {
     if (disabled) return
+    const previousAnswer = answer
+    if (action.type === 'answer') {
+      setDraft(sessionId, checkpointId, '')
+    }
     void sendCommand({ sessionId, action }).then(receipt => {
-      if (receipt?.ok && action.type === 'answer') setDraft(sessionId, checkpointId, '')
+      if (
+        receipt?.ok !== true &&
+        action.type === 'answer' &&
+        !useLearningStore.getState().drafts[sessionId]?.answers[checkpointId]
+      ) {
+        setDraft(sessionId, checkpointId, previousAnswer)
+      }
     })
   }
 
@@ -61,72 +72,75 @@ export function LearningQuestionDock({ sessionId, question }: LearningQuestionDo
   }
 
   return (
-    <section
-      className="chat-composer-box learning-dock w-full flex flex-col p-3"
-      aria-label={LEARNING_DOCK_LABEL}
-    >
-      <div className="learning-dock__eyebrow">
-        <BookIcon size={13} className="learning-dock__eyebrow-icon" aria-hidden="true" />
-        <span>{LEARNING_DOCK_EYEBROW}</span>
-      </div>
-      <p className="learning-dock__question">{question.question}</p>
-      <ChatComposerInput
-        className="chat-composer__input"
-        label={LEARNING_ANSWER_LABEL}
-        placeholder={LEARNING_ANSWER_PLACEHOLDER}
-        value={answer}
-        isDisabled={disabled}
-        onChange={value => setDraft(sessionId, checkpointId, value)}
-        onKeyDown={handleKeyDown}
-        hasHistory={false}
-        pasteAsToken={false}
-        maxRows={8}
-      />
-      <div className="learning-dock__actions">
-        <div className="learning-dock__actions-secondary">
-          <Button
-            label={LEARNING_DOCK_HINT}
-            variant="ghost"
-            size="sm"
-            isDisabled={disabled}
-            onClick={() => submit({ type: 'hint', checkpointId })}
-          />
-          <Button
-            label={LEARNING_DOCK_EXPLAIN}
-            variant="ghost"
-            size="sm"
-            isDisabled={disabled}
-            onClick={() => submit({ type: 'explain', checkpointId })}
-          />
-          <Button
-            label={LEARNING_DOCK_SKIP}
-            variant="ghost"
-            size="sm"
-            isDisabled={disabled}
-            onClick={() => submit({ type: 'skip', checkpointId })}
-          />
+    <div className="chat-composer-stack w-full">
+      <section
+        className="chat-composer-box learning-dock w-full flex flex-col p-3"
+        aria-label={LEARNING_DOCK_LABEL}
+      >
+        <div className="learning-dock__eyebrow">
+          <BookIcon size={13} className="learning-dock__eyebrow-icon" aria-hidden="true" />
+          <span>{LEARNING_DOCK_EYEBROW}</span>
         </div>
-        {isRunning ? (
-          <IconButton
-            label={LEARNING_STOP_LABEL}
-            icon={<StopIcon size={14} />}
-            variant="destructive"
-            size="md"
-            className="learning-dock__submit"
-            onClick={() => void cancelExecution()}
-            tooltip={LEARNING_STOP_LABEL}
-          />
-        ) : (
-          <Button
-            label={LEARNING_DOCK_SUBMIT}
-            variant="primary"
-            size="md"
-            className="learning-dock__submit"
-            isDisabled={disabled || !answer.trim()}
-            onClick={submitAnswer}
-          />
-        )}
-      </div>
-    </section>
+        <p className="learning-dock__question">{question.question}</p>
+        <ChatComposerInput
+          className="chat-composer__input"
+          label={LEARNING_ANSWER_LABEL}
+          placeholder={LEARNING_ANSWER_PLACEHOLDER}
+          value={answer}
+          isDisabled={disabled}
+          onChange={value => setDraft(sessionId, checkpointId, value)}
+          onKeyDown={handleKeyDown}
+          hasHistory={false}
+          pasteAsToken={false}
+          maxRows={8}
+        />
+        <div className="learning-dock__actions">
+          <div className="learning-dock__actions-secondary">
+            <Button
+              label={LEARNING_DOCK_HINT}
+              variant="ghost"
+              size="sm"
+              isDisabled={disabled}
+              onClick={() => submit({ type: 'hint', checkpointId })}
+            />
+            <Button
+              label={LEARNING_DOCK_EXPLAIN}
+              variant="ghost"
+              size="sm"
+              isDisabled={disabled}
+              onClick={() => submit({ type: 'explain', checkpointId })}
+            />
+            <Button
+              label={LEARNING_DOCK_SKIP}
+              variant="ghost"
+              size="sm"
+              isDisabled={disabled}
+              onClick={() => submit({ type: 'skip', checkpointId })}
+            />
+          </div>
+          {isRunning ? (
+            <IconButton
+              label={LEARNING_STOP_LABEL}
+              icon={<StopIcon size={14} />}
+              variant="destructive"
+              size="md"
+              className="learning-dock__submit"
+              onClick={() => void cancelExecution()}
+              tooltip={LEARNING_STOP_LABEL}
+            />
+          ) : (
+            <Button
+              label={LEARNING_DOCK_SUBMIT}
+              variant="primary"
+              size="md"
+              className="learning-dock__submit"
+              isDisabled={disabled || !answer.trim()}
+              onClick={submitAnswer}
+            />
+          )}
+        </div>
+      </section>
+      <ComposerContextBar />
+    </div>
   )
 }

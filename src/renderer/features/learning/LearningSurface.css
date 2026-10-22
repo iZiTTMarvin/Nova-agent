@@ -55,6 +55,12 @@
   color: var(--color-warning);
 }
 
+.learning-msg__quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 /* ── 题目行 ────────────────────────────────────────────── */
 
 .learning-question {

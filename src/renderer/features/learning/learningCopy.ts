@@ -43,10 +43,21 @@ export const LEARNING_DOCK_SKIP = '跳过'
 
 /** 无大纲时的三条起点建议，全部作为普通消息发送。 */
 export const LEARNING_START_SUGGESTIONS = [
-  '帮我挑个入门的起点',
-  '这个项目解决什么问题？',
-  '从启动开始讲它怎么跑起来'
+  '画出项目全景与技术栈沙盘',
+  '带我走一遍核心数据生命周期',
+  '模拟答辩老师考考我'
 ] as const
+
+/** 最后一条回复下的快捷动作：文本会原样成为用户气泡，只能用自然口吻。 */
+export const LEARNING_ACTION_VISUALIZE_LABEL = '画图演示'
+export const LEARNING_ACTION_VISUALIZE_PROMPT = '把刚才讲的内容画成一张可交互的图，标出关键模块和数据流向'
+export const LEARNING_ACTION_QUIZ_LABEL = '考考我'
+export const LEARNING_ACTION_QUIZ_PROMPT = '按答辩老师的视角，针对刚才讲的内容考我一道题'
+
+/** 学习会话里可视化卡片点击未发送时的提示。 */
+export const LEARNING_VIZ_AWAITING_NOTICE = '先回答当前问题，或选「直接讲」「跳过」'
+export const LEARNING_VIZ_BUSY_NOTICE = '等这次回答结束后再点'
+export const LEARNING_VIZ_FAILED_NOTICE = '没发出去，稍后再试'
 
 /** 有大纲时第一条建议改为直接选主题。 */
 export function learningTopicSuggestion(topicTitle: string): string {
