@@ -15,6 +15,10 @@ export const VISUALIZATION_SLOW_MOTION_SCALE = 4
 
 /** standard scheme 会把 host 归一为小写：会话 ID 放在路径里才能无损往返，取值与 SessionStore 对齐 */
 const VISUALIZATION_HOST = 'snapshot'
+/** 流式预览共用的外壳地址：所有预览指向同一份主进程装配的空文档，地址不承载内容 */
+const VISUALIZATION_PREVIEW_HOST = 'preview'
+const VISUALIZATION_PREVIEW_PATH = '/stream.html'
+export const VISUALIZATION_PREVIEW_URI = `${VISUALIZATION_SCHEME}://${VISUALIZATION_PREVIEW_HOST}${VISUALIZATION_PREVIEW_PATH}`
 const SESSION_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const SNAPSHOT_PATH_PATTERN = /^\/([A-Za-z0-9_-]{1,128})\/([a-f0-9]{64})\.html$/
@@ -59,6 +63,24 @@ export function parseVisualizationUri(value: string): VisualizationAddress | nul
   }
   const match = SNAPSHOT_PATH_PATTERN.exec(url.pathname)
   return match ? { sessionId: match[1], sha256: match[2] } : null
+}
+
+/** 识别预览外壳地址；查询串只承载帧初始化参数，允许存在 */
+export function isVisualizationPreviewUri(value: string): boolean {
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  return (
+    url.protocol === `${VISUALIZATION_SCHEME}:` &&
+    url.hostname === VISUALIZATION_PREVIEW_HOST &&
+    url.pathname === VISUALIZATION_PREVIEW_PATH &&
+    !url.username &&
+    !url.password &&
+    !url.port
+  )
 }
 
 export interface VisualizationPresentation {

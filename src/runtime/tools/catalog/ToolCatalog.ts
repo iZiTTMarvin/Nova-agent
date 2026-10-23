@@ -59,7 +59,13 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   },
   { name: 'todo_write', capability: 'plan', exposure: 'always', codeMode: 'direct-only' },
   { name: 'askQuestion', capability: 'interaction', exposure: 'always', codeMode: 'direct-only' },
-  { name: 'present_visualization', capability: 'interaction', exposure: 'always', codeMode: 'direct-only' },
+  {
+    name: 'present_visualization',
+    capability: 'interaction',
+    exposure: 'always',
+    codeMode: 'direct-only',
+    registration: 'conditional'
+  },
   { name: 'invoke_skill', capability: 'skill', exposure: 'always', codeMode: 'direct-only' },
   { name: 'agent_list', capability: 'agent', exposure: 'always', codeMode: 'direct-only' },
   { name: 'model_list', capability: 'agent', exposure: 'always', codeMode: 'direct-only' },

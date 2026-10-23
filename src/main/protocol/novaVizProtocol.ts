@@ -11,9 +11,10 @@ import {
   type WebContents,
   type WebContentsWillFrameNavigateEventParams
 } from 'electron'
-import { VISUALIZATION_SCHEME } from '../../shared/visualization'
+import { isVisualizationPreviewUri, VISUALIZATION_SCHEME } from '../../shared/visualization'
 import {
   resolveVisualizationDocument,
+  resolveVisualizationPreviewDocument,
   VISUALIZATION_RESPONSE_CSP,
   type VisualizationSnapshotReader
 } from '../../runtime/visualizations/visualizationDocument'
@@ -31,15 +32,24 @@ export function registerNovaVizHandler(reader: VisualizationSnapshotReader): voi
     if (request.method !== 'GET') {
       return new Response('Method Not Allowed', { status: 405, statusText: 'Method Not Allowed' })
     }
+    // 预览地址返回空壳文档：内容随后经桥通道推送，不走快照存储
+    if (isVisualizationPreviewUri(request.url)) {
+      const preview = resolveVisualizationPreviewDocument(request.url)
+      return htmlResponse(preview.document, preview.csp)
+    }
     const document = await resolveVisualizationDocument(reader, request.url)
-    return new Response(document, {
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        'Content-Security-Policy': VISUALIZATION_RESPONSE_CSP,
-        'Cache-Control': 'no-store',
-        'X-Content-Type-Options': 'nosniff'
-      }
-    })
+    return htmlResponse(document, VISUALIZATION_RESPONSE_CSP)
+  })
+}
+
+function htmlResponse(document: string, csp: string): Response {
+  return new Response(document, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Security-Policy': csp,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff'
+    }
   })
 }
 

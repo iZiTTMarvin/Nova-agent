@@ -17,10 +17,15 @@ import {
   isFrameNavigationAllowed,
   registerNovaVizHandler
 } from '../../../../src/main/protocol/novaVizProtocol'
-import { buildVisualizationUri, VISUALIZATION_SCHEME } from '../../../../src/shared/visualization'
+import {
+  buildVisualizationUri,
+  VISUALIZATION_PREVIEW_URI,
+  VISUALIZATION_SCHEME
+} from '../../../../src/shared/visualization'
 
 const MAIN_FRAME_ID = 1
 const SNAPSHOT = buildVisualizationUri({ sessionId: 's1', sha256: 'd'.repeat(64) })
+const PREVIEW = VISUALIZATION_PREVIEW_URI
 const APP_URL = 'file:///app/index.html'
 
 interface FakeFrame {
@@ -46,6 +51,7 @@ describe('可视化帧导航策略', () => {
 
   it.each([
     ['快照帧自行跳到远程页面', subframeNavigation('https://evil.example', childFrame(SNAPSHOT), childFrame(SNAPSHOT))],
+    ['预览帧自行跳到远程页面', subframeNavigation('https://evil.example', childFrame(PREVIEW), childFrame(PREVIEW))],
     ['快照帧读取另一个快照', subframeNavigation(SNAPSHOT.replace('s1', 's2'), childFrame(SNAPSHOT), childFrame(SNAPSHOT))],
     ['快照帧刷新自身', subframeNavigation(SNAPSHOT, childFrame(SNAPSHOT), childFrame(SNAPSHOT))],
     ['快照内部的嵌套帧导航', subframeNavigation('about:blank', childFrame('about:srcdoc', childFrame(SNAPSHOT), 9), null)],
@@ -110,6 +116,20 @@ describe('nova-viz 协议响应', () => {
     expect(response.headers.get('Cache-Control')).toBe('no-store')
     expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
     expect(await response.text()).toContain('<p>快照</p>')
+  })
+
+  it('预览地址返回预览文档：script-src 只放行 nonce，其余响应头与快照帧一致', async () => {
+    const response = await mocks.handlers.get(VISUALIZATION_SCHEME)!(new Request(`${PREVIEW}?init=%7B%7D`))
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe('text/html; charset=utf-8')
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+    expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff')
+
+    const csp = response.headers.get('Content-Security-Policy') ?? ''
+    const scriptSrc = csp.split(';').map(directive => directive.trim()).find(directive => directive.startsWith('script-src'))
+    expect(scriptSrc).toMatch(/^script-src 'nonce-[^']+'$/)
+    expect(csp).toContain('sandbox allow-scripts')
+    expect(await response.text()).toContain('<body></body>')
   })
 
   it('只响应 GET', async () => {

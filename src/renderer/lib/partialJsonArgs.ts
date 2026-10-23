@@ -20,26 +20,45 @@
  * （实际场景极少，且最终 tool_call 会覆盖兜底）
  */
 export function extractPartialString(partial: string, key: string): string | undefined {
+  const start = findStringValueStart(partial, key)
+  if (start === -1) return undefined
+  return decodeJsonStringFrom(partial, start).value
+}
+
+/** 定位 `"key" : "` 之后字符串值的起点；找不到返回 -1 */
+function findStringValueStart(partial: string, key: string): number {
   const keyToken = `"${key}"`
   const keyIdx = partial.indexOf(keyToken)
-  if (keyIdx === -1) return undefined
+  if (keyIdx === -1) return -1
 
   let i = keyIdx + keyToken.length
   // 跳过 key 和冒号之间的空白
   while (i < partial.length && /\s/.test(partial[i])) i++
-  if (i >= partial.length || partial[i] !== ':') return undefined
+  if (i >= partial.length || partial[i] !== ':') return -1
   i++
   while (i < partial.length && /\s/.test(partial[i])) i++
 
-  if (i >= partial.length || partial[i] !== '"') return undefined
-  i++
+  if (i >= partial.length || partial[i] !== '"') return -1
+  return i + 1
+}
 
+interface DecodedStringChunk {
+  /** 本次新解码出的文本 */
+  value: string
+  /** 最后一个完整解码字符之后的位置；被截断的转义序列（如 `\`、`\u00`）留在 end 之后等下次再解 */
+  end: number
+  /** 是否遇到了闭合引号 */
+  closed: boolean
+}
+
+function decodeJsonStringFrom(partial: string, start: number): DecodedStringChunk {
   let value = ''
+  let i = start
   while (i < partial.length) {
     const ch = partial[i]
     if (ch === '\\') {
       const next = partial[i + 1]
-      if (next === undefined) return value
+      if (next === undefined) return { value, end: i, closed: false }
       switch (next) {
         case '"':  value += '"';  i += 2; break
         case '\\': value += '\\'; i += 2; break
@@ -50,9 +69,9 @@ export function extractPartialString(partial: string, key: string): string | und
         case 'b':  value += '\b'; i += 2; break
         case 'f':  value += '\f'; i += 2; break
         case 'u': {
-          if (i + 6 > partial.length) return value
+          if (i + 6 > partial.length) return { value, end: i, closed: false }
           const hex = partial.slice(i + 2, i + 6)
-          if (!/^[0-9a-fA-F]{4}$/.test(hex)) return value
+          if (!/^[0-9a-fA-F]{4}$/.test(hex)) return { value, end: i, closed: false }
           value += String.fromCharCode(parseInt(hex, 16))
           i += 6
           break
@@ -62,14 +81,52 @@ export function extractPartialString(partial: string, key: string): string | und
           i += 2
       }
     } else if (ch === '"') {
-      return value
+      return { value, end: i + 1, closed: true }
     } else {
       value += ch
       i++
     }
   }
   // 字符串未闭合，返回已累积部分
-  return value
+  return { value, end: i, closed: false }
+}
+
+/**
+ * 同一字段的增量读取器：argumentsRaw 只追加，记住已解码终点后每次只解新增部分，
+ * 总成本与参数长度成正比而不是每次都从头扫描。raw 变短说明换了新的一串累积，从头重来。
+ */
+export function createPartialStringReader(key: string): { read(raw: string): string | undefined; isClosed(): boolean } {
+  let start = -1
+  let end = -1
+  let closed = false
+  let value = ''
+  let lastLength = -1
+  return {
+    read(raw: string): string | undefined {
+      if (raw.length < lastLength) {
+        start = -1
+        end = -1
+        closed = false
+        value = ''
+      }
+      lastLength = raw.length
+      if (closed) return value
+      if (start === -1) {
+        start = findStringValueStart(raw, key)
+        if (start === -1) return undefined
+        end = start
+      }
+      const chunk = decodeJsonStringFrom(raw, end)
+      value += chunk.value
+      end = chunk.end
+      closed = chunk.closed
+      return value
+    },
+    /** 最近一次 read 时字段的字符串值已闭合：值已完整 */
+    isClosed(): boolean {
+      return closed
+    }
+  }
 }
 
 /**

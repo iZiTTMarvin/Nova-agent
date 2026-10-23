@@ -103,6 +103,8 @@ export interface BuiltinToolRegistrationDeps {
   getStageFacts?: (sessionId: string) => ComposeStageFacts
   /** 会话内可视化快照存储；缺省时 present_visualization 返回不可用。 */
   getVisualizationStore?: () => VisualizationStore | null
+  /** 是否注册 present_visualization：可视化讲解只属于学习会话，开发会话保持精简的工具面。 */
+  visualizationEnabled: boolean
 }
 
 /**
@@ -160,11 +162,13 @@ export function registerBuiltinTools(
   toolRegistry.register(historyReadTool)
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
-  toolRegistry.register(
-    createPresentVisualizationTool({
-      getStore: deps.getVisualizationStore ?? (() => null)
-    })
-  )
+  if (deps.visualizationEnabled) {
+    toolRegistry.register(
+      createPresentVisualizationTool({
+        getStore: deps.getVisualizationStore ?? (() => null)
+      })
+    )
+  }
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
   toolRegistry.register(

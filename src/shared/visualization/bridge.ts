@@ -34,6 +34,7 @@ export type HostBridgeMessage =
   | { kind: 'ack'; payload: { theme: VisualizationTheme; motionScale: number } }
   | { kind: 'theme-change'; payload: { theme: VisualizationTheme } }
   | { kind: 'motion-scale'; payload: { motionScale: number } }
+  | { kind: 'preview-html'; payload: { html: string } }
 
 /** 帧内桥脚本与宿主共用同一事件名规则 */
 export const VISUALIZATION_EVENT_NAME_PATTERN = /^[\w.:-]+$/

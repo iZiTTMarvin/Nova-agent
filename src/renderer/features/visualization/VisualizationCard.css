@@ -112,6 +112,77 @@
   font-variant-numeric: tabular-nums;
 }
 
+.visualization-card__progress {
+  flex: none;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 预览内容很短时视口仍保持占位高度，不会先缩后涨 */
+.visualization-card__preview {
+  min-height: 160px;
+}
+
+/* 交接期：预览垫在正式帧上方遮住其加载过程，正式帧就绪后淡出 */
+.visualization-card__preview--overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-card);
+  pointer-events: none;
+  transition: opacity 240ms ease-out;
+}
+
+.visualization-card__preview--fading {
+  opacity: 0;
+}
+
+/* 静态骨架：标题条、两列块与说明行，生成前段就给出版面预期 */
+.visualization-card__skeleton {
+  position: absolute;
+  inset: 18px 20px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0.7;
+}
+
+.visualization-card__skeleton-bar,
+.visualization-card__skeleton-block {
+  display: block;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.visualization-card__skeleton-bar {
+  height: 10px;
+  width: 58%;
+}
+
+.visualization-card__skeleton-bar--title {
+  height: 14px;
+  width: 34%;
+}
+
+.visualization-card__skeleton-row {
+  display: flex;
+  flex: 1;
+  gap: 10px;
+}
+
+.visualization-card__skeleton-block {
+  flex: 1;
+}
+
+.visualization-card__placeholder .visualization-card__meta {
+  align-self: flex-end;
+  margin-bottom: 12px;
+}
+
 .visualization-card__state {
   display: flex;
   align-items: center;
@@ -194,7 +265,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .visualization-frame--ready {
+  .visualization-frame--ready,
+  .visualization-card__preview--overlay {
     transition: none;
   }
 

@@ -62,10 +62,11 @@ export async function validateVisualizationHtml(html: string): Promise<string[]>
 
 const MAX_FLAT_STEP_BUTTONS = 8
 const SCRIPT_STEP_ITEM_PATTERN = /\{\s*(?:['"]?(?:id|step|index|num|phase|stage|title|label|name)['"]?\s*:)/g
-const STRUCTURED_STAGE_PATTERN = /<svg\b|<canvas\b|<table\b|viz-phases\b|viz-lanes\b|viz-lane\b/i
+const STRUCTURED_STAGE_PATTERN = /<svg\b|<canvas\b|<table\b|viz-phases\b|viz-flow\b|viz-lanes\b|viz-lane\b/i
 
 /**
  * 结构与布局反模式闸门：拦截把长链路平铺成单排微型按钮条或无图形画布的纯文字翻页器。
+ * 改法统一指向「阶段标签 + 只画当前阶段 + 详情区」：窄卡片里一屏步骤过多同样不可读。
  */
 function inspectVisualizationStructure(
   document: Document,
@@ -84,7 +85,7 @@ function inspectVisualizationStructure(
     })
     if (tabButtons.length > MAX_FLAT_STEP_BUTTONS) {
       return report(
-        `步骤或标签平铺过多（同一容器内连续排列了 ${tabButtons.length} 个切换按钮）：超过 ${MAX_FLAT_STEP_BUTTONS} 个步骤时禁止塞进单排胶囊条，请拆分为 3–5 个宏观阶段（.viz-phases）并配合泳道/架构画布（<svg> 或 .viz-lanes）+ 右侧详情检视器（.viz-split / .viz-inspector）展示`
+        `步骤或标签平铺过多（同一容器内连续排列了 ${tabButtons.length} 个切换按钮）：一屏不要超过 ${MAX_FLAT_STEP_BUTTONS} 个步骤。请拆成 3–5 个阶段（.viz-phases 标签切换），画布只显示当前阶段的步骤（.viz-flow 或 <svg>），选中步骤的详情放进 .viz-split 里的 .viz-inspector`
       )
     }
   }
@@ -95,7 +96,7 @@ function inspectVisualizationStructure(
       const matches = code.match(SCRIPT_STEP_ITEM_PATTERN)
       if (matches && matches.length > MAX_FLAT_STEP_BUTTONS) {
         return report(
-          `多步骤可视化缺少阶段分组与图形画布（脚本定义了 ${matches.length} 个步骤项，但页面没有 <svg>、.viz-phases 或 .viz-lanes 泳道图）：禁止只渲染步骤胶囊条配文字卡片，请使用 3–5 个宏观阶段（.viz-phases）+ 架构/泳道画布（<svg> 或 .viz-lanes）+ 详情检视器（.viz-inspector）`
+          `多步骤可视化缺少阶段分组与图形画布（脚本定义了 ${matches.length} 个步骤项，但页面没有 <svg>、.viz-phases、.viz-flow 或 .viz-lanes）：不要只渲染步骤胶囊条配文字卡片。请拆成 3–5 个阶段（.viz-phases），画布用 .viz-flow 或 <svg> 只显示当前阶段，选中步骤的详情放进 .viz-inspector`
         )
       }
     }

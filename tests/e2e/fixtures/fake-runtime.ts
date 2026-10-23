@@ -18,11 +18,16 @@ export type FakeTurn =
       name: string
       arguments: JsonObject
       callId?: string
+      /** 提供时按顺序分片发送 JSON.stringify(arguments) 的切片，模拟流式参数 */
+      argumentChunks?: string[]
+      chunkDelayMs?: number
     }
   | {
       kind: 'hold'
       id: string
       text: string
+      /** 等待释放之前先发出的正文；缺省仍发空串占位 */
+      before?: string
       usage?: JsonObject
     }
   | {
@@ -325,27 +330,33 @@ export class FakeRuntime {
       }
 
       if (turn.kind === 'tool') {
-        writeSse(res, {
-          choices: [
-            {
-              index: 0,
-              delta: {
-                tool_calls: [
-                  {
-                    index: 0,
-                    id: turn.callId ?? 'call_e2e',
-                    type: 'function',
-                    function: {
-                      name: turn.name,
-                      arguments: JSON.stringify(turn.arguments)
-                    }
-                  }
-                ]
-              },
-              finish_reason: null
-            }
-          ]
-        })
+        const chunks = turn.argumentChunks ?? [JSON.stringify(turn.arguments)]
+        for (let index = 0; index < chunks.length; index += 1) {
+          if (index > 0 && turn.chunkDelayMs) {
+            await delay(turn.chunkDelayMs, undefined, { signal: abortController.signal })
+          }
+          if (res.destroyed) return
+          writeSse(res, {
+            choices: [
+              {
+                index: 0,
+                delta: {
+                  tool_calls: [
+                    index === 0
+                      ? {
+                          index: 0,
+                          id: turn.callId ?? 'call_e2e',
+                          type: 'function',
+                          function: { name: turn.name, arguments: chunks[index] }
+                        }
+                      : { index: 0, function: { arguments: chunks[index] } }
+                  ]
+                },
+                finish_reason: null
+              }
+            ]
+          })
+        }
         writeSse(res, finishChunk('tool_calls'))
         writeSse(res, '[DONE]')
         finished = true
@@ -356,7 +367,7 @@ export class FakeRuntime {
       if (turn.kind === 'hold') {
         const gate = createDeferred()
         this.holds.set(turn.id, gate)
-        writeSse(res, contentChunk(''))
+        writeSse(res, contentChunk(turn.before ?? ''))
         await gate.promise
         this.holds.delete(turn.id)
         if (res.destroyed) return

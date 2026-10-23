@@ -13,6 +13,7 @@ import {
   parseVisualizationFrameInit,
   VISUALIZATION_BRIDGE_VERSION,
   VISUALIZATION_MAX_INLINE_HEIGHT,
+  VISUALIZATION_PREVIEW_URI,
   VISUALIZATION_SLOW_MOTION_SCALE
 } from '../../../../src/shared/visualization'
 import { act, renderDom, waitFor, type DomRenderResult } from '../../../unit/renderer/renderDom'
@@ -125,7 +126,8 @@ afterEach(() => {
 
 describe('VisualizationCard', () => {
   it('生成中按已到达字符数显示进度；展示后挂载只允许脚本的沙箱帧，并随 src 下发首帧状态', () => {
-    const container = mount(<VisualizationCard status="running" title="请求链路" streamedChars={2345} />)
+    const argumentsRaw = '{"title":"请求链路","html":"' + 'x'.repeat(2300)
+    const container = mount(<VisualizationCard status="running" title="请求链路" argumentsRaw={argumentsRaw} />)
     const card = container.querySelector('[data-testid="visualization-card"]')!
     expect(card.getAttribute('data-state')).toBe('generating')
     expect(card.getAttribute('aria-busy')).toBe('true')
@@ -145,6 +147,90 @@ describe('VisualizationCard', () => {
     expect(frame.style.height).toBe('160px')
     expect(stateOf(container)).toBe('loading')
     expect(button(container, '展开')).toBeNull()
+  })
+
+  it('参数中出现 <body 后挂载预览帧，握手后向其推送已到内容', () => {
+    const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+    const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
+    const frame = frameIn(container)
+    expect(frame.src.startsWith(`${VISUALIZATION_PREVIEW_URI}?`)).toBe(true)
+    expect(container.querySelector('[data-testid="visualization-preview"]')).not.toBeNull()
+
+    const posted = vi.spyOn(frame.contentWindow!, 'postMessage')
+    send(frame.contentWindow, 'ready', { status: 'ok', initialHeight: 40 })
+    expect(posted).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ack' }), '*')
+    expect(posted).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'preview-html', payload: { html: '<!doctype html><body><p>你好' } }),
+      '*'
+    )
+  })
+
+  it('参数收齐（argumentsRaw 消失）后预览保留，头部提示正在发布', () => {
+    const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+    const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
+    const frame = frameIn(container)
+
+    view!.render(<VisualizationCard status="running" title="预览" />)
+
+    expect(frameIn(container)).toBe(frame)
+    expect(container.textContent).toContain('正在发布…')
+  })
+
+  it('参数原文闭合即提示正在发布，并把完整页面推给预览帧', () => {
+    const html = '<!doctype html><body><p>完整</p></body>'
+    const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={'{"title":"预览","html":"<!doctype html><body><p>完'} />)
+    const frame = frameIn(container)
+    send(frame.contentWindow, 'ready', { status: 'ok', initialHeight: 40 })
+    const posted = vi.spyOn(frame.contentWindow!, 'postMessage')
+
+    view!.render(<VisualizationCard status="running" title="预览" argumentsRaw={JSON.stringify({ title: '预览', html })} />)
+
+    expect(container.textContent).toContain('正在发布…')
+    expect(posted).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'preview-html', payload: { html } }), '*')
+  })
+
+  it('交接期预览帧不重建、垫在正式帧上方；正式帧握手后淡出并卸载', () => {
+    vi.useFakeTimers()
+    try {
+      const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+      const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
+      const preview = frameIn(container)
+
+      const { uri, result } = presented('预览')
+      view!.render(<VisualizationCard status="success" title="预览" result={result} argumentsRaw={argumentsRaw} />)
+      const layer = container.querySelector<HTMLElement>('[data-testid="visualization-preview"]')!
+      expect(layer.contains(preview)).toBe(true)
+      expect(layer.classList.contains('visualization-card__preview--overlay')).toBe(true)
+      expect(container.querySelector('.visualization-card__loading')).toBeNull()
+      const final = frameIn(container)
+      expect(final.src.startsWith(`${uri}?`)).toBe(true)
+
+      ready(final)
+      expect(layer.classList.contains('visualization-card__preview--fading')).toBe(true)
+      act(() => {
+        vi.advanceTimersByTime(240)
+      })
+      expect(container.querySelector('[data-testid="visualization-preview"]')).toBeNull()
+      expect(container.querySelectorAll('[data-testid="visualization-frame"]')).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('成功后正式帧沿用预览最后上报的高度', () => {
+    const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+    const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
+    const preview = frameIn(container)
+    send(preview.contentWindow, 'ready', { status: 'ok', initialHeight: 40 })
+    send(preview.contentWindow, 'resize', { height: 520 })
+    expect(preview.style.height).toBe('520px')
+
+    const { uri, result } = presented('预览')
+    view!.render(<VisualizationCard status="success" title="预览" result={result} />)
+    const frame = frameIn(container)
+    expect(frame).not.toBe(preview)
+    expect(frame.src.startsWith(`${uri}?`)).toBe(true)
+    expect(frame.style.height).toBe('520px')
   })
 
   it('结果无法解析时显示失效状态，不挂载帧', () => {

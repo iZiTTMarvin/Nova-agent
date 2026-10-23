@@ -5,11 +5,13 @@ import {
   LEARNING_MAX_OPTION_ID_LENGTH,
   LEARNING_MAX_TEXT_LENGTH
 } from './limits'
+import { parseInterfaceStateReport, type InterfaceStateReport } from '../visualization/interfaceState'
 
+/** 自由文本类动作可附带用户在交互组件上调过的值，投递时附在模型输入后。 */
 export type LearningAction =
   | { type: 'select_node'; nodeId: string }
-  | { type: 'message'; text: string }
-  | { type: 'answer'; checkpointId: string; text: string; optionIds: readonly string[] }
+  | { type: 'message'; text: string; interfaceState?: InterfaceStateReport }
+  | { type: 'answer'; checkpointId: string; text: string; optionIds: readonly string[]; interfaceState?: InterfaceStateReport }
   | { type: 'hint'; checkpointId: string }
   | { type: 'explain'; checkpointId: string }
   | { type: 'skip'; checkpointId: string }
@@ -66,6 +68,11 @@ function parseOptionIds(value: unknown): readonly string[] {
   return ids
 }
 
+function interfaceStateField(value: unknown): { interfaceState?: InterfaceStateReport } {
+  const report = parseInterfaceStateReport(value)
+  return report ? { interfaceState: report } : {}
+}
+
 export function parseLearningAction(raw: unknown): LearningAction {
   if (!raw || typeof raw !== 'object') {
     throw new Error('learning: action 必须是对象')
@@ -81,14 +88,16 @@ export function parseLearningAction(raw: unknown): LearningAction {
     case 'message':
       return {
         type: 'message',
-        text: readBoundedString(value.text, 'text', LEARNING_MAX_TEXT_LENGTH)
+        text: readBoundedString(value.text, 'text', LEARNING_MAX_TEXT_LENGTH),
+        ...interfaceStateField(value.interfaceState)
       }
     case 'answer':
       return {
         type: 'answer',
         checkpointId: readBoundedString(value.checkpointId, 'checkpointId', LEARNING_MAX_NODE_ID_LENGTH),
         text: readBoundedString(value.text, 'text', LEARNING_MAX_TEXT_LENGTH),
-        optionIds: parseOptionIds(value.optionIds ?? [])
+        optionIds: parseOptionIds(value.optionIds ?? []),
+        ...interfaceStateField(value.interfaceState)
       }
     case 'hint':
     case 'explain':

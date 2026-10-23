@@ -28,6 +28,7 @@ import { splitIncrementalMarkdown } from './incrementalMarkdown'
 import { findOpenDisplayMathStart, transformMathSyntax } from './mathSyntax'
 import { MathFence, MathInlineCode, MATH_FENCE_LANGUAGES } from './MathBlock'
 import { MermaidDiagram } from './MermaidDiagram'
+import { useInlineUiScope } from '../inline-ui/InlineUiScope'
 import './MarkdownRenderer.css'
 
 const LANG_EXT_MAP: Record<string, string> = {
@@ -125,6 +126,23 @@ interface MarkdownRendererProps {
   chunkFade?: boolean
 }
 
+/** 内联组件运行时（解析器、组件与样式）只在回答里出现 openui 围栏时才加载，不占首屏体积 */
+const InlineUiBlock = React.lazy(() =>
+  import('../inline-ui/InlineUiBlock').then(module => ({ default: module.InlineUiBlock }))
+)
+
+/** openui 围栏：有交互作用域时渲染内联组件，否则回退为普通代码块 */
+const OpenUiFence: React.FC<{ code: string; interactive: boolean }> = ({ code, interactive }) => {
+  const scope = useInlineUiScope()
+  const fallback = <CodeBlock language="openui" code={code} isStreaming={!interactive} />
+  if (!scope) return fallback
+  return (
+    <React.Suspense fallback={null}>
+      <InlineUiBlock scope={scope} code={code} interactive={interactive} fallback={fallback} />
+    </React.Suspense>
+  )
+}
+
 /** 单块 Markdown 渲染单元；content 不变时 React.memo 短路，不重建 AST */
 const MarkdownChunk = React.memo<{
   content: string
@@ -151,6 +169,9 @@ const COMPLETED_COMPONENTS: MarkdownComponents = {
     if (MATH_FENCE_LANGUAGES.has(lang)) {
       return <MathFence code={code} />
     }
+    if (lang === 'openui') {
+      return <OpenUiFence code={code} interactive={true} />
+    }
     return <CodeBlock language={lang} code={code} isStreaming={false} />
   },
   inlineCode({ children }) {
@@ -174,6 +195,9 @@ const STREAMING_COMPONENTS: MarkdownComponents = {
     }
     if (MATH_FENCE_LANGUAGES.has(lang)) {
       return <MathFence code={code} />
+    }
+    if (lang === 'openui') {
+      return <OpenUiFence code={code} interactive={false} />
     }
     return <CodeBlock language={lang} code={code} isStreaming={true} />
   }

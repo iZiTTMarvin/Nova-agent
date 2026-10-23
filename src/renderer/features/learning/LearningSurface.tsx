@@ -23,6 +23,7 @@ import { LearningConversation } from './LearningConversation'
 import { LearningComposer } from './LearningComposer'
 import { LearningEmptyState } from './LearningEmptyState'
 import { VisualizationMessageContext } from '../visualization/VisualizationMessageContext'
+import { InlineUiHostProvider } from '../inline-ui/InlineUiScope'
 import { createLearningVisualizationSubmitter } from './learningVisualizationSubmitter'
 import { firstOutlineTopic } from './outline/outlineOrder'
 import {
@@ -227,15 +228,17 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
           )}
           <div className="chat-messages__flow-inner" ref={contentRef} role="region" aria-label={LEARNING_MESSAGES_LABEL}>
             <VisualizationMessageContext.Provider value={visualizationSubmitter}>
-              <LearningConversation
-                messages={messages}
-                isGenerating={isGenerating}
-                currentGeneratingMessageId={currentGeneratingMessageId}
-                sessionId={sessionId}
-                projection={projection}
-                actionsDisabled={busy}
-                onSendMessage={handleSuggestionMessage}
-              />
+              <InlineUiHostProvider value={true}>
+                <LearningConversation
+                  messages={messages}
+                  isGenerating={isGenerating}
+                  currentGeneratingMessageId={currentGeneratingMessageId}
+                  sessionId={sessionId}
+                  projection={projection}
+                  actionsDisabled={busy}
+                  onSendMessage={handleSuggestionMessage}
+                />
+              </InlineUiHostProvider>
             </VisualizationMessageContext.Provider>
           </div>
         </div>

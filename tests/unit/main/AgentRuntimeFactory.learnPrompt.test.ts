@@ -213,6 +213,15 @@ describe('AgentRuntimeFactory learn prompt assembly', () => {
     expect(system).toContain('demo-skill')
   })
 
+  it('可视化讲解只属于 learn 会话：开发会话的请求里没有可视化工具与内联组件写法', async () => {
+    const learn = await runOnce('learn', false)
+    const dev = await runOnce('default', false)
+    expect(JSON.stringify(learn.tools)).toContain('"present_visualization"')
+    expect(systemContent(learn)).toContain('```openui')
+    expect(JSON.stringify(dev)).not.toContain('present_visualization')
+    expect(JSON.stringify(dev)).not.toContain('openui')
+  })
+
   it('opt-out 不注册三个记忆工具，普通会话仍注册', async () => {
     const enabled = await runOnce('default', true)
     const excluded = await runOnce('default', true, true)

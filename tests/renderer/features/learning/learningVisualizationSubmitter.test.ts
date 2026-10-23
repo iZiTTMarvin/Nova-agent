@@ -11,6 +11,7 @@ import {
 import { createLearningVisualizationSubmitter } from '../../../../src/renderer/features/learning/learningVisualizationSubmitter'
 import { useLearningStore } from '../../../../src/renderer/features/learning/useLearningStore'
 import { useRunStore } from '../../../../src/renderer/stores/useRunStore'
+import { claimInterfaceState, recordInterfaceState } from '../../../../src/renderer/lib/interfaceStateOutbox'
 
 const SESSION_ID = 'learn-session-1'
 
@@ -135,5 +136,23 @@ describe('createLearningVisualizationSubmitter', () => {
     const outcome = await submit('【可视化】图 · explore\n模块：深入讲讲', 'event')
 
     expect(outcome).toEqual({ status: 'blocked', notice: LEARNING_VIZ_FAILED_NOTICE })
+  })
+
+  it('交互组件改动随 message 命令交出；命令被拒时放回待发箱', async () => {
+    const widget = { title: '缓存命中', values: [{ label: '前缀长度', value: '4k' }] }
+    recordInterfaceState(SESSION_ID, 'block#w', widget)
+    commandHandler = async () => ({ ok: false, code: 'busy', message: '忙' })
+
+    const submit = createLearningVisualizationSubmitter(SESSION_ID)
+    await submit('【可视化】图 · explore\n模块：深入讲讲', 'event')
+    const firstAction = (invoke.mock.calls.find(call => call[0] === 'learning:command')![1] as { command: { action: unknown } }).command.action
+    expect(firstAction).toMatchObject({ type: 'message', interfaceState: { widgets: [widget] } })
+
+    commandHandler = async () => ({ ok: true, commandId: 'cmd-2', cursorVersion: 3, applied: true })
+    invoke.mockClear()
+    expect(await submit('再讲讲', 'event')).toEqual({ status: 'sent' })
+    const retried = (invoke.mock.calls.find(call => call[0] === 'learning:command')![1] as { command: { action: unknown } }).command.action
+    expect(retried).toMatchObject({ interfaceState: { widgets: [widget] } })
+    expect(claimInterfaceState(SESSION_ID)).toBeNull()
   })
 })

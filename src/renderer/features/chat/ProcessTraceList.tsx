@@ -4,6 +4,7 @@
 import React from 'react'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
+import { InlineUiScopeProvider, useInlineUiHost } from '../inline-ui/InlineUiScope'
 import { ToolCallGroup } from './ToolCallGroup'
 import { renderToolBlock } from './renderToolBlock'
 import { isActiveThinkingBlock } from './renderingPolicy'
@@ -49,6 +50,7 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
   // 流式节奏（smooth=打字机平滑 / instant=即时显示）：设置直读，学习模式等轨迹路径共用
   const streamSmoothness = useSettingsStore(state => state.streamSmoothness)
   const streamStyle: 'agile' | 'elegant' = streamSmoothness === 'instant' ? 'agile' : 'elegant'
+  const inlineUiHost = useInlineUiHost()
   return (
     <div className="turn-process-trace-list">
       {segments.map((segment, idx) => {
@@ -80,16 +82,26 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
                 blockIndex: index,
                 blocks
               })
+            const textBlock = (
+              <StreamingTextBlock
+                fullContent={block.content}
+                isStreaming={isTurnActiveForThisMsg}
+                style={streamStyle}
+                enableTypewriter={enableTypewriter}
+                paused={isPausedForInput}
+                onRenderPoolTick={onRenderPoolTick}
+              />
+            )
             return (
               <div key={segmentKey(segment, idx)} className="turn-process-text">
-                <StreamingTextBlock
-                  fullContent={block.content}
-                  isStreaming={isTurnActiveForThisMsg}
-                  style={streamStyle}
-                  enableTypewriter={enableTypewriter}
-                  paused={isPausedForInput}
-                  onRenderPoolTick={onRenderPoolTick}
-                />
+                {/* openui 状态作用域只挂到助手正文文本块；thinking 与工具分支不提供 */}
+                {inlineUiHost && sessionId && index >= 0 ? (
+                  <InlineUiScopeProvider sessionId={sessionId} messageId={messageId} blockIndex={index}>
+                    {textBlock}
+                  </InlineUiScopeProvider>
+                ) : (
+                  textBlock
+                )}
               </div>
             )
           }

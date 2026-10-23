@@ -253,9 +253,11 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
       if (existingBlockIdx !== -1) {
         const existing = blocks[existingBlockIdx]
         if (existing.type === 'tool') {
-          const { argumentsRaw: _drop, ...restBlock } = existing as RendererToolBlock
+          const { argumentsRaw: raw, ...restBlock } = existing as RendererToolBlock
           blocks[existingBlockIdx] = {
             ...restBlock,
+            // 可视化参数里的 html 会被摘要化；收齐的原文留给预览帧画完最后一段，回合结束时随流式字段一起清理
+            ...(toolName === 'present_visualization' && raw !== undefined ? { argumentsRaw: raw } : {}),
             type: 'tool',
             toolCallId,
             toolName,
@@ -562,7 +564,8 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
             const toolBlock = blockIdx !== -1 && sourceBlocks[blockIdx].type === 'tool'
               ? sourceBlocks[blockIdx]
               : null
-            if (toolBlock && toolBlock.argumentsRaw === undefined) continue
+            // 已收到最终参数的块（流式登记已清除）不再接受迟到片段
+            if (toolBlock && (toolBlock.argumentsRaw === undefined || !(delta.toolCallId in nextStreaming))) continue
             let arr = fragmentsById.get(delta.toolCallId)
             if (!arr) {
               arr = []

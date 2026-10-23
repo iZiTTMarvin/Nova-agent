@@ -111,8 +111,23 @@ describe('流式工具调用 store 行为', () => {
     }
   })
 
-  it('start 时 toolName 为空字符串，delta 后 tool_call 覆盖完整 toolName', () => {
-    const msgId = 'msg_empty_name'
+  it('可视化的最终事件保留收齐的参数原文供预览交接，迟到片段不再追加', () => {
+    const msgId = 'msg_viz_handoff'
+    const raw = '{"title":"图","html":"<body>完整</body>"}'
+    useChatStore.getState().handleMessageStart(msgId)
+    useChatStore.getState().handleToolCallStart(msgId, 'tc_viz', 'present_visualization')
+    useChatStore.getState().applyStreamDeltas([{ kind: 'toolCall', messageId: msgId, toolCallId: 'tc_viz', delta: raw }])
+    useChatStore.getState().handleToolCall(msgId, 'tc_viz', 'present_visualization', { title: '图', html: '<body>完整</body>' })
+
+    const block = () => useChatStore.getState().messages[0].blocks![0]
+    expect(block()).toMatchObject({ type: 'tool', status: 'running', argumentsRaw: raw })
+    expect(useChatStore.getState().streamingToolArgs['tc_viz']).toBeUndefined()
+
+    useChatStore.getState().applyStreamDeltas([{ kind: 'toolCall', messageId: msgId, toolCallId: 'tc_viz', delta: '迟到' }])
+    expect(block()).toMatchObject({ argumentsRaw: raw })
+  })
+
+  it('start 时 toolName 为空字符串，delta 后 tool_call 覆盖完整 toolName', () => {    const msgId = 'msg_empty_name'
 
     // 有些模型第一个 chunk 只给 id，name 为空
     useChatStore.getState().handleMessageStart(msgId)

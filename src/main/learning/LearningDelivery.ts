@@ -3,6 +3,7 @@
  * displayText 落盘、显示并作为会话标题来源；modelInput 只进入本轮请求与投递事实。
  */
 import { parseLearningAction, type LearningAction } from '../../shared/learning/command'
+import { formatInterfaceStateNote, type InterfaceStateReport } from '../../shared/visualization/interfaceState'
 
 export interface LearningDeliveryText {
   readonly displayText: string
@@ -28,20 +29,24 @@ export type LearningDevChangeResult =
 
 const FALLBACK_TOPIC_DISPLAY = '开始学习新主题'
 
+function withInterfaceNote(modelInput: string, report: InterfaceStateReport | undefined): string {
+  return report ? `${modelInput}\n\n${formatInterfaceStateNote(report)}` : modelInput
+}
+
 async function describeAction(
   action: LearningAction,
   ports: LearningDeliveryPorts
 ): Promise<LearningDeliveryText> {
   switch (action.type) {
     case 'message':
-      return { displayText: action.text, modelInput: action.text }
+      return { displayText: action.text, modelInput: withInterfaceNote(action.text, action.interfaceState) }
     case 'answer':
-      return { displayText: action.text, modelInput: `[学习回答]\n${action.text}` }
+      return { displayText: action.text, modelInput: withInterfaceNote(`[学习回答]\n${action.text}`, action.interfaceState) }
     case 'select_node': {
       const title = (await ports.loadTopicTitle(action.nodeId).catch(() => null))?.trim()
       return {
         displayText: title ? `开始学习「${title}」` : FALLBACK_TOPIC_DISPLAY,
-        modelInput: `[学习选点] 用户想学${title ? `「${title}」` : '一个新主题'}。先读 learning_context 拿到这个主题的内容，再开讲；主题本身是流程、分层或数据流转时可以配一张交互图。本轮不要主动出题。`
+        modelInput: `[学习选点] 用户想学${title ? `「${title}」` : '一个新主题'}。先读 learning_context 拿到这个主题的内容，再开讲；主题有流程、分层或取舍时按【可视化讲解】把它画出来。本轮不要主动出题。`
       }
     }
     case 'hint':
@@ -52,7 +57,7 @@ async function describeAction(
     case 'explain':
       return {
         displayText: '直接讲讲吧',
-        modelInput: '[学习讲解] 用户想直接听讲解。读 learning_context 里的当前问题，把答案和原因讲清楚并给出代码位置，流程复杂时可以配一张交互图；这次不算用户自己答出来的，讲完不要再出新题。'
+        modelInput: '[学习讲解] 用户想直接听讲解。读 learning_context 里的当前问题，把答案和原因讲清楚并给出代码位置；机制涉及多步流转或可调参数时按【可视化讲解】配图；这次不算用户自己答出来的，讲完不要再出新题。'
       }
     case 'skip':
       return {

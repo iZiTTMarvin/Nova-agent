@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { LearningSurfaceProjection } from '../../../shared/learning/surface'
 import type { LearningAction, LearningCommandReceipt } from '../../../shared/learning/command'
 import type { LearningCommandRejection } from './learningCopy'
+import { claimInterfaceState, type InterfaceStateClaim } from '../../lib/interfaceStateOutbox'
 
 interface SessionDrafts {
   message: string
@@ -77,11 +78,19 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
       }
     },
 
-    async sendCommand({ sessionId, action }) {
+    async sendCommand({ sessionId, action: requested }) {
       if (get().sessionId !== sessionId || commands.has(sessionId)) return null
       const generation = epoch
       commands.add(sessionId)
       set({ commandPending: true, commandError: null })
+      // 自由文本动作顺带交出用户在交互组件上调过的值；命令未被接受时放回待发箱
+      let interfaceClaim: InterfaceStateClaim | null = null
+      let action = requested
+      if (requested.type === 'message' || requested.type === 'answer') {
+        interfaceClaim = claimInterfaceState(sessionId)
+        if (interfaceClaim) action = { ...requested, interfaceState: interfaceClaim.report }
+      }
+      let delivered = false
       try {
         if (!get().projection) await get().refresh(sessionId)
         if (!isCurrent(sessionId, generation)) return null
@@ -110,6 +119,7 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
             })
           }
         }
+        delivered = receipt.ok
         if (isCurrent(sessionId, generation)) {
           set({ commandError: receipt.ok ? null : receipt })
         }
@@ -121,6 +131,7 @@ export const useLearningStore = create<LearningStoreState>((set, get) => {
         }
         return null
       } finally {
+        if (!delivered) interfaceClaim?.release()
         commands.delete(sessionId)
         // 旧回合可以结束，但不能把当前表面重新绑定到旧会话。
         if (get().sessionId === sessionId) {

@@ -45,6 +45,8 @@ export interface VisualizationFrameHandlers {
   onUserEvent: (name: string, data: unknown) => void
   /** 内容高于宿主给的高度上限：产物内部会出现滚动区，宿主据此提示 */
   onOverflow?: (overflowing: boolean) => void
+  /** 每次定高后上报收敛值：预览帧用它把最后高度交接给正式帧 */
+  onHeight?: (height: number) => void
 }
 
 export interface VisualizationFrameProps extends VisualizationFrameHandlers {
@@ -55,21 +57,30 @@ export interface VisualizationFrameProps extends VisualizationFrameHandlers {
   maxHeight: number
   /** 内联帧的高度跨挂载缓存；展开视图宽度不同，不共用缓存 */
   cacheHeight?: boolean
+  /** 高度缓存未命中时的初始高度，预览 → 正式帧交接用 */
+  initialHeight?: number
+  /** 预览帧专属：握手后把最新值推给帧内接收脚本，此后随值变化持续推送 */
+  previewHtml?: string
 }
 
 export const VisualizationFrame: React.FC<VisualizationFrameProps> = React.memo(function VisualizationFrame(props) {
-  const { uri, title, theme, motionScale, maxHeight, cacheHeight = false } = props
+  const { uri, title, theme, motionScale, maxHeight, cacheHeight = false, initialHeight, previewHtml } = props
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const handlersRef = useRef<VisualizationFrameHandlers>(props)
   const stateRef = useRef({ theme, motionScale })
   const postRef = useRef<((message: HostBridgeMessage) => void) | null>(null)
   const readyRef = useRef(false)
+  const previewHtmlRef = useRef(previewHtml)
   const [src] = useState(() => buildVisualizationFrameSrc(uri, { theme, motionScale, maxHeight }))
-  const [height, setHeight] = useState<number | null>(() => (cacheHeight ? inlineHeights.get(uri) ?? null : null))
+  const [height, setHeight] = useState<number | null>(() => {
+    const cached = cacheHeight ? inlineHeights.get(uri) : undefined
+    return cached ?? initialHeight ?? null
+  })
   const [ready, setReady] = useState(false)
 
   useLayoutEffect(() => {
     handlersRef.current = props
+    previewHtmlRef.current = previewHtml
   })
 
   useEffect(() => {
@@ -77,23 +88,30 @@ export const VisualizationFrame: React.FC<VisualizationFrameProps> = React.memo(
     if (!iframe) return
     const post = createVisualizationFramePoster(iframe)
     const hasUserIntent = createUserIntentGate(iframe)
+    // 预览帧只展示生成中的静态结构：即使用户真实点击，回传与外链也不转发
+    const isStaticPreview = (): boolean => previewHtmlRef.current !== undefined
     if (readyRef.current) postRef.current = post
     const applyHeight = (value: number): void => {
       const next = Math.min(Math.max(Math.ceil(value), VISUALIZATION_MIN_HEIGHT), maxHeight)
       setHeight(next)
       if (cacheHeight) rememberInlineHeight(uri, next)
+      handlersRef.current.onHeight?.(next)
     }
     const disconnect = connectVisualizationFrame(iframe, message => {
       const handlers = handlersRef.current
       switch (message.kind) {
-        case 'ready':
+        case 'ready': {
           readyRef.current = true
           postRef.current = post
           post({ kind: 'ack', payload: { ...stateRef.current } })
+          // 握手前到达的预览内容此刻补发，之后由 previewHtml 变化驱动持续推送
+          const pendingHtml = previewHtmlRef.current
+          if (pendingHtml !== undefined) post({ kind: 'preview-html', payload: { html: pendingHtml } })
           applyHeight(message.payload.initialHeight)
           setReady(true)
           handlers.onReady(message.payload.status)
           return
+        }
         case 'resize':
           applyHeight(message.payload.height)
           handlers.onOverflow?.(message.payload.height > maxHeight)
@@ -105,9 +123,11 @@ export const VisualizationFrame: React.FC<VisualizationFrameProps> = React.memo(
           handlers.onRuntimeError(message.payload.message)
           return
         case 'event':
+          if (isStaticPreview()) return
           if (hasUserIntent()) handlers.onUserEvent(message.payload.name, message.payload.data)
           return
         case 'open-external':
+          if (isStaticPreview()) return
           // 交给主窗口的 window open 策略：http(s) 由系统浏览器打开
           if (hasUserIntent()) window.open(message.payload.url, '_blank', 'noopener,noreferrer')
           return
@@ -136,6 +156,11 @@ export const VisualizationFrame: React.FC<VisualizationFrameProps> = React.memo(
     stateRef.current = { ...stateRef.current, motionScale }
     postRef.current?.({ kind: 'motion-scale', payload: { motionScale } })
   }, [motionScale])
+
+  useEffect(() => {
+    if (previewHtml === undefined || !readyRef.current) return
+    postRef.current?.({ kind: 'preview-html', payload: { html: previewHtml } })
+  }, [previewHtml])
 
   return (
     <iframe

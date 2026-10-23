@@ -44,6 +44,7 @@ function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): To
     memoryEnabled: true,
     codeIndexEnabled: true,
     getCodeContextQueryPort: () => null,
+    visualizationEnabled: true,
     ...overrides
   })
   return registry

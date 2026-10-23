@@ -31,6 +31,7 @@ export interface NestedToolActivity {
 
 /** 流式增量阶段携带的额外字段：原始 JSON 字符串；嵌套活动与进程句柄仅 renderer 瞬态 */
 export type RendererToolBlock = ToolBlock & {
+  /** 流式参数原文；可视化块在参数收齐后仍保留到回合结束，供预览帧交接 */
   argumentsRaw?: string
   nestedActivities?: NestedToolActivity[]
   /** 运行中进程会话句柄（bash 让出时工具仍在跑）；随事件更新，不持久化 */

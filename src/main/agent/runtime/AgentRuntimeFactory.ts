@@ -264,6 +264,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getCodeContextQueryPort: getCodeContextQueryPort ?? (() => null),
     getBrowserPort: () => getBrowserSessionHost(),
     getVisualizationStore: () => getVisualizationStoreFor(sessionsDir),
+    visualizationEnabled: session.mode === 'learn',
     saveBrowserCaptureEvidence: async ({ sessionId, mimeType, base64 }) => {
       try {
         return getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`).filePath

@@ -3,6 +3,7 @@ import {
   buildExportedVisualizationDocument,
   buildServedVisualizationDocument,
   resolveVisualizationDocument,
+  resolveVisualizationPreviewDocument,
   VISUALIZATION_RESPONSE_CSP,
   type VisualizationSnapshotReader
 } from '../../../../src/runtime/visualizations/visualizationDocument'
@@ -11,6 +12,7 @@ import { VISUALIZATION_BASE_STYLE } from '../../../../src/runtime/visualizations
 import {
   buildVisualizationFrameSrc,
   buildVisualizationUri,
+  VISUALIZATION_PREVIEW_URI,
   VISUALIZATION_THEME_TOKENS,
   type VisualizationTheme
 } from '../../../../src/shared/visualization'
@@ -65,9 +67,9 @@ describe('帧文档装配', () => {
     }
   })
 
-  it('共享样式零特异性：每条规则都包在 :where() 里，作者自己的选择器始终优先', () => {
+  it('共享样式零特异性：每条规则（含媒体查询内的）都包在 :where() 里，作者自己的选择器始终优先', () => {
     const rules = VISUALIZATION_BASE_STYLE.split('}')
-      .map(rule => rule.trim())
+      .map(rule => rule.trim().replace(/^@media[^{]*\{/, ''))
       .filter(Boolean)
     expect(rules.length).toBeGreaterThan(0)
     for (const rule of rules) {
@@ -113,5 +115,45 @@ describe('resolveVisualizationDocument', () => {
     const document = await resolveVisualizationDocument(reader({ status: 'corrupt' }), uri)
     expect(document).toContain('可视化快照已损坏')
     expect(document).toContain('"status":"corrupt"')
+  })
+})
+
+describe('resolveVisualizationPreviewDocument', () => {
+  const nonceOf = (document: string): string[] =>
+    [...document.matchAll(/<script nonce="([^"]+)"/g)].map(match => match[1])
+
+  it('桥脚本与预览脚本带同一个 nonce，并与 CSP 的 script-src 一致', () => {
+    const { document, csp } = resolveVisualizationPreviewDocument(VISUALIZATION_PREVIEW_URI)
+    const nonces = nonceOf(document)
+    expect(nonces).toHaveLength(2)
+    expect(new Set(nonces).size).toBe(1)
+    expect(csp).toContain(`script-src 'nonce-${nonces[0]}'`)
+    expect(csp).toContain('sandbox allow-scripts')
+    expect(document).toContain('"status":"ok"')
+  })
+
+  it('两次请求生成不同的 nonce', () => {
+    const first = resolveVisualizationPreviewDocument(VISUALIZATION_PREVIEW_URI)
+    const second = resolveVisualizationPreviewDocument(VISUALIZATION_PREVIEW_URI)
+    expect(nonceOf(first.document)[0]).not.toBe(nonceOf(second.document)[0])
+    expect(first.csp).not.toBe(second.csp)
+  })
+
+  it('预览文档不含任何作者内容', () => {
+    const { document, csp } = resolveVisualizationPreviewDocument(VISUALIZATION_PREVIEW_URI)
+    expect(document.endsWith('<body></body>')).toBe(true)
+    const scriptSrc = csp.split(';').map(directive => directive.trim()).find(directive => directive.startsWith('script-src'))
+    expect(scriptSrc).not.toContain('unsafe-inline')
+    expect(csp).toContain("default-src 'none'")
+  })
+
+  it('沿用帧地址里的初始化参数，缺失时取默认值', () => {
+    const framed = resolveVisualizationPreviewDocument(
+      buildVisualizationFrameSrc(VISUALIZATION_PREVIEW_URI, { theme: THEME, motionScale: 4, maxHeight: 500 })
+    )
+    expect(framed.document).toContain('"motionScale":4')
+    expect(framed.document).toContain('"maxHeight":500')
+    const fallback = resolveVisualizationPreviewDocument(VISUALIZATION_PREVIEW_URI)
+    expect(fallback.document).toContain('"motionScale":1')
   })
 })

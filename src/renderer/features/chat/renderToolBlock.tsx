@@ -47,7 +47,7 @@ export function renderToolBlock(
           status={block.status}
           title={typeof block.arguments.title === 'string' ? block.arguments.title : ''}
           result={block.result}
-          streamedChars={block.argumentsRaw?.length}
+          argumentsRaw={block.argumentsRaw}
         />
       </React.Suspense>
     )

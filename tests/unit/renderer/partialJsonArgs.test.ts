@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { extractPartialString, parsePartialToolArgs } from '../../../src/renderer/lib/partialJsonArgs'
+import {
+  createPartialStringReader,
+  extractPartialString,
+  parsePartialToolArgs
+} from '../../../src/renderer/lib/partialJsonArgs'
 
 describe('extractPartialString', () => {
   it('空字符串或缺失 key 返回 undefined', () => {
@@ -94,6 +98,41 @@ describe('extractPartialString', () => {
     // 最终应提取完整值
     expect(lastPath).toBe('big.html')
     expect(lastContent).toBe(targetContent)
+  })
+})
+
+describe('createPartialStringReader', () => {
+  it('按前缀逐步喂入时，每一步结果与 extractPartialString 一致（含切在 \\"、\\u00 中间的切分点）', () => {
+    // 含 \" \\ \n \uXXXX 的字符串值；逐字符前缀覆盖所有切分点
+    const raw = '{"title":"图","html":"<p>a\\u0041b\\nc\\"d\\\\e</p>","done":true}'
+    const reader = createPartialStringReader('html')
+    for (let i = 0; i <= raw.length; i += 1) {
+      const prefix = raw.slice(0, i)
+      expect(reader.read(prefix)).toBe(extractPartialString(prefix, 'html'))
+    }
+    expect(reader.read(raw)).toBe('<p>aAb\nc"d\\e</p>')
+  })
+
+  it('key 尚未出现时返回 undefined，出现后开始累积', () => {
+    const reader = createPartialStringReader('html')
+    expect(reader.read('{"tit')).toBeUndefined()
+    expect(reader.read('{"title":"x"}')).toBeUndefined()
+    expect(reader.read('{"title":"x","html":"<bo')).toBe('<bo')
+  })
+
+  it('字符串闭合后直接返回缓存，后续 raw 增长不再重解', () => {
+    const reader = createPartialStringReader('html')
+    reader.read('{"html":"<p>hi')
+    expect(reader.isClosed()).toBe(false)
+    reader.read('{"html":"<p>hi"}')
+    expect(reader.isClosed()).toBe(true)
+    expect(reader.read('{"html":"<p>hi","title":"x","more":123')).toBe('<p>hi')
+  })
+
+  it('raw 变短时从头重来', () => {
+    const reader = createPartialStringReader('html')
+    expect(reader.read('{"html":"<body><p>abc')).toBe('<body><p>abc')
+    expect(reader.read('{"html":"x')).toBe('x')
   })
 })
 

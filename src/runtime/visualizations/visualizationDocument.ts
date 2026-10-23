@@ -3,7 +3,9 @@
  *
  * 帧内文档的安全边界由响应头 CSP 承担：内联代码可以执行，但不能联网、嵌套页面、提交表单或改写基址；
  * sandbox 指令保证即使被顶层打开也拿不到宿主源。导出文件没有响应头，改用 meta CSP 保持离线。
+ * 预览文档装配的是空壳：作者内容逐段经 postMessage 进入，因此 CSP 只放行带 nonce 的两段装配脚本。
  */
+import { randomBytes } from 'crypto'
 import {
   parseVisualizationFrameInit,
   parseVisualizationUri,
@@ -12,6 +14,7 @@ import {
   type VisualizationTheme
 } from '../../shared/visualization'
 import { buildVisualizationBridgeScript, type VisualizationBridgeConfig } from './visualizationBridgeScript'
+import { buildVisualizationPreviewScript } from './visualizationPreviewScript'
 import { VISUALIZATION_BASE_STYLE } from './visualizationStyles'
 import type { VisualizationSnapshotRead } from './VisualizationStore'
 
@@ -44,12 +47,7 @@ export interface VisualizationSnapshotReader {
 
 /** 帧请求地址 → 帧内文档；地址非法按快照缺失回应 */
 export async function resolveVisualizationDocument(reader: VisualizationSnapshotReader, url: string): Promise<string> {
-  const init = parseVisualizationFrameInit(url)
-  const config = {
-    theme: init?.theme ?? null,
-    motionScale: init?.motionScale ?? 1,
-    maxHeight: init?.maxHeight ?? VISUALIZATION_MAX_INLINE_HEIGHT
-  }
+  const config = resolveFrameConfig(url)
   const address = parseVisualizationUri(url)
   if (!address) return buildVisualizationStatusDocument({ ...config, status: 'missing' })
   const snapshot = await reader.read(address)
@@ -79,8 +77,45 @@ export function buildExportedVisualizationDocument(html: string, theme: Visualiz
   return injectHead(html, head)
 }
 
+/**
+ * 预览外壳：空文档 + 桥脚本 + 预览接收脚本。nonce 每次请求重新生成，
+ * CSP 只放行带 nonce 的脚本，推送进来的任何标记都不会获得执行权。
+ */
+export function resolveVisualizationPreviewDocument(url: string): { document: string; csp: string } {
+  const nonce = randomBytes(16).toString('base64')
+  const config = resolveFrameConfig(url)
+  const document =
+    '<!doctype html><meta charset="utf-8">' +
+    `<style>${VISUALIZATION_BASE_STYLE}</style>` +
+    `<script nonce="${nonce}">${buildVisualizationBridgeScript({ ...config, status: 'ok' })}</script>` +
+    `<script nonce="${nonce}">${buildVisualizationPreviewScript()}</script>` +
+    '<body></body>'
+  const csp = [
+    "default-src 'none'",
+    `script-src 'nonce-${nonce}'`,
+    "style-src 'unsafe-inline'",
+    'img-src data: blob:',
+    'font-src data:',
+    'media-src data: blob:',
+    "form-action 'none'",
+    "base-uri 'none'",
+    'sandbox allow-scripts'
+  ].join('; ')
+  return { document, csp }
+}
+
 function bridgeTag(config: VisualizationBridgeConfig): string {
   return `<script>${buildVisualizationBridgeScript(config)}</script>`
+}
+
+/** 主题、慢放倍率与高度上限随帧地址下发；解析不出时与快照帧取同一份默认值 */
+function resolveFrameConfig(url: string): Omit<VisualizationBridgeConfig, 'status'> {
+  const init = parseVisualizationFrameInit(url)
+  return {
+    theme: init?.theme ?? null,
+    motionScale: init?.motionScale ?? 1,
+    maxHeight: init?.maxHeight ?? VISUALIZATION_MAX_INLINE_HEIGHT
+  }
 }
 
 /**

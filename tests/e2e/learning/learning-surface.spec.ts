@@ -33,6 +33,17 @@ async function contentFrameOf(frame: Locator): Promise<Frame> {
   return content
 }
 
+function userTexts(body: Record<string, unknown>): string[] {
+  const messages = Array.isArray(body.messages) ? (body.messages as Array<{ role?: string; content?: unknown }>) : []
+  return messages.filter(message => message.role === 'user').map(message => JSON.stringify(message.content ?? ''))
+}
+
+/** 生成期的预览帧垫在正式帧上方，正式帧就绪后淡出卸载；退场后卡片里只剩正式帧 */
+async function settledFrame(card: Locator): Promise<Locator> {
+  await expect(card.getByTestId('visualization-preview')).toHaveCount(0)
+  return card.getByTestId('visualization-frame')
+}
+
 const LEARN_VIZ_HTML = `<!doctype html>
 <html lang="zh">
 <head><meta charset="utf-8"></head>
@@ -508,7 +519,7 @@ test.describe('学习表面主路径', () => {
 
     const card = nova.page.getByTestId('visualization-card')
     await expect(card).toHaveAttribute('data-state', 'ok')
-    const frame = await contentFrameOf(card.getByTestId('visualization-frame'))
+    const frame = await contentFrameOf(await settledFrame(card))
 
     await nova.page.waitForTimeout(1_100)
     nova.provider.enqueue({ kind: 'text', text: 'LEARN_VIZ_EVENT_ACK' })
@@ -540,6 +551,58 @@ test.describe('学习表面主路径', () => {
     await expect(card.locator('.visualization-card__notice')).toContainText('先回答当前问题')
     expect(nova.provider.requests).toHaveLength(requestCountBefore)
     expect(await readEditableValue(nova.page.getByLabel('回答'))).toContain('KEEP_MY_ANSWER_DRAFT')
+
+    await expectNoInstructionLeak(nova)
+    expect(nova.pageErrors).toEqual([])
+  })
+
+  test('学习会话里调过的组件值随下一条学习消息回传一次，用户气泡里不显示', async ({ nova }) => {
+    const sessionId = await createLearnSession(nova)
+    const fence = [
+      '```openui',
+      'root = Col([Slider($n, "副本数", 1, 5, 1), Stat("可容忍故障", $n - 1 + " 台")])',
+      '$n = 3',
+      '```'
+    ].join('\n')
+    nova.provider.enqueue({ kind: 'text', text: `调一调副本数：\n\n${fence}\n\nLEARN_OPENUI_SHOWN` })
+    await sendLearningPrompt(nova, '副本数和容错是什么关系')
+    await expect(nova.page.getByText('LEARN_OPENUI_SHOWN', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+
+    const slider = learningMain(nova).locator('[role="slider"]')
+    await expect(slider).toBeEnabled()
+    await slider.focus()
+    await nova.page.keyboard.press('End')
+    await expect(slider).toHaveAttribute('aria-valuenow', '5')
+    await expect(learningMain(nova).locator('.inline-ui__stat-value')).toHaveText('4 台')
+
+    // 学习消息走独立的学习命令通道：组件状态按学习会话认领，随这条提问交给模型
+    const sentWith = async (prompt: string): Promise<Record<string, unknown>> => {
+      const offset = nova.provider.requests.length
+      await sendLearningPrompt(nova, prompt)
+      await expect
+        .poll(() => nova.provider.requests.slice(offset).some(request => userTexts(request.body).at(-1)?.includes(prompt)))
+        .toBe(true)
+      const request = nova.provider.requests.slice(offset).find(item => userTexts(item.body).at(-1)?.includes(prompt))
+      if (!request) throw new Error(`没有找到携带「${prompt}」的模型请求`)
+      return request.body
+    }
+    nova.provider.enqueue({ kind: 'text', text: 'LEARN_OPENUI_ACK' })
+    const withState = userTexts(await sentWith('调到 5 之后呢')).at(-1) ?? ''
+    expect(withState).toContain('[界面状态]')
+    expect(withState).toContain('「交互组件」：副本数 = 5')
+    await expect(nova.page.getByText('LEARN_OPENUI_ACK', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+    const lastBubble = learningMain(nova).getByRole('article', { name: 'Message from user' }).last()
+    await expect(lastBubble).toContainText('调到 5 之后呢')
+    await expect(lastBubble).not.toContainText('界面状态')
+
+    nova.provider.enqueue({ kind: 'text', text: 'LEARN_OPENUI_NEXT' })
+    const nextBody = await sentWith('再讲讲为什么')
+    expect(userTexts(nextBody).at(-1)).not.toContain('[界面状态]')
+    expect(userTexts(nextBody).filter(content => content.includes('[界面状态]'))).toHaveLength(1)
+    await expect(nova.page.getByText('LEARN_OPENUI_NEXT', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
 
     await expectNoInstructionLeak(nova)
     expect(nova.pageErrors).toEqual([])
@@ -836,9 +899,15 @@ test.describe('学习表面主路径', () => {
     const card = cards.first()
     await expect(card).toHaveAttribute('data-state', 'ok')
 
-    const inlineFrameEl = card.getByTestId('visualization-frame')
+    const inlineFrameEl = await settledFrame(card)
     const inlineFrame = await contentFrameOf(inlineFrameEl)
     await expect(inlineFrame.locator('#detailTitle')).toHaveText('1. 入口命令')
+    // 阶段名再长也只在格内折行：阶段条在内联宽度下不出现横向滚动
+    const phaseRailOverflow = await inlineFrame.evaluate(() => {
+      const rail = document.querySelector('.viz-phases')
+      return rail ? rail.scrollWidth - rail.clientWidth : null
+    })
+    expect(phaseRailOverflow).toBe(0)
 
     // 验证本地交互（切换阶段、点击泳道节点、搜索过滤）立即刷新右侧详情面板，且不触发 nova.emit 新回合
     const requestsBeforeLocalInteract = nova.provider.requests.length
@@ -985,7 +1054,7 @@ test.describe('学习表面主路径', () => {
 
     const compareCard = nova.page.getByTestId('visualization-card').nth(1)
     await expect(compareCard).toHaveAttribute('data-state', 'ok')
-    const compareFrame = await contentFrameOf(compareCard.getByTestId('visualization-frame'))
+    const compareFrame = await contentFrameOf(await settledFrame(compareCard))
     await compareFrame.locator('[data-scenario="latency"]').click()
     await expect(compareFrame.locator('#scenarioTitle')).toHaveText('首屏即时反馈场景')
 

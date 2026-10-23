@@ -1,10 +1,11 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import type { Frame, Locator } from '@playwright/test'
 import { expect, test, type NovaHarness } from '../fixtures/nova'
+import { createLearnSession, learningFlow, sendLearningPrompt, waitLearnTurnSettled } from '../learning/learningFlow'
 
 type Delta = Record<string, unknown>
 
@@ -56,10 +57,28 @@ async function contentFrameOf(frame: Locator): Promise<Frame> {
   return content
 }
 
-function lastUserText(body: Record<string, unknown>): string {
+/** 生成期的预览帧垫在正式帧上方，正式帧就绪后淡出卸载；退场后卡片里只剩正式帧 */
+async function settledFrame(card: Locator): Promise<Locator> {
+  await expect(card.getByTestId('visualization-preview')).toHaveCount(0)
+  return card.getByTestId('visualization-frame')
+}
+
+function userTexts(body: Record<string, unknown>): string[] {
   const messages = Array.isArray(body.messages) ? (body.messages as Array<{ role?: string; content?: unknown }>) : []
-  const user = messages.filter(message => message.role === 'user').at(-1)
-  return JSON.stringify(user?.content ?? '')
+  return messages.filter(message => message.role === 'user').map(message => JSON.stringify(message.content ?? ''))
+}
+
+function lastUserText(body: Record<string, unknown>): string {
+  return userTexts(body).at(-1) ?? '""'
+}
+
+/** 可视化只在学习会话里提供：每个用例先建学习会话，回合收尾以运行快照终态为准 */
+async function startLearnSession(nova: NovaHarness): Promise<{ send: (text: string) => Promise<void>; settle: () => Promise<void> }> {
+  const sessionId = await createLearnSession(nova)
+  return {
+    send: text => sendLearningPrompt(nova, text),
+    settle: () => waitLearnTurnSettled(nova, sessionId)
+  }
 }
 
 function sandboxProbeHtml(probe: string): string {
@@ -137,6 +156,56 @@ const COLLAPSIBLE_GRID_HTML = `<!doctype html>
 </body>
 </html>`
 
+/** 按写法说明搭的教材式插图：阶段条、步骤流、详情区与带列标签的对比表 */
+const WIDTHS_HTML = `<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"></head>
+<body>
+<div class="viz-workbench">
+  <div class="viz-phases">
+    <button class="viz-phase is-active" type="button"><span class="viz-phase-kicker">步骤 1–2</span><span class="viz-phase-title">输入与提交</span></button>
+    <button class="viz-phase" type="button"><span class="viz-phase-kicker">步骤 3–5</span><span class="viz-phase-title">路由与建流</span></button>
+    <button class="viz-phase" type="button"><span class="viz-phase-kicker">步骤 6–9</span><span class="viz-phase-title">上下文组装</span></button>
+    <button class="viz-phase" type="button"><span class="viz-phase-kicker">步骤 10–11</span><span class="viz-phase-title">调用模型</span></button>
+    <button class="viz-phase" type="button"><span class="viz-phase-kicker">步骤 12–16</span><span class="viz-phase-title">回传与落库</span></button>
+  </div>
+  <div class="viz-split">
+    <div class="viz-canvas"><div class="viz-flow">
+      <button class="viz-flow-step is-active" type="button"><span class="viz-node-step">1</span><span><span class="viz-flow-title">输入框绑定</span><span class="viz-flow-meta">浏览器 · x-model="chatInput"</span></span></button>
+      <button class="viz-flow-step" type="button"><span class="viz-node-step">2</span><span><span class="viz-flow-title">sendChat() 发起请求</span><span class="viz-flow-meta">浏览器 · fetch POST，先插入占位消息</span></span></button>
+    </div></div>
+    <aside class="viz-inspector">
+      <div class="viz-title">输入框绑定</div>
+      <p class="viz-note">把输入框的值绑定到 chatInput；流式回答进行中提交按钮被禁用，避免并发提问。</p>
+      <dl class="viz-kv"><dt>输入</dt><dd>用户按键</dd><dt>输出</dt><dd>chatInput 字符串</dd></dl>
+      <span class="viz-file-ref">frontend/index.html:211</span>
+    </aside>
+  </div>
+  <table class="viz-table">
+    <thead><tr><th>方案</th><th>平均延迟</th><th>改造成本</th></tr></thead>
+    <tbody>
+      <tr><td data-label="方案">直读数据库</td><td data-label="平均延迟">38 ms，每次都要走一次网络往返</td><td data-label="改造成本">低，沿用现有查询</td></tr>
+      <tr><td data-label="方案">先查缓存</td><td data-label="平均延迟">4 ms，命中后只剩一次内存查找</td><td data-label="改造成本">中，需要处理失效与回填</td></tr>
+    </tbody>
+  </table>
+  <div class="viz-toolbar"><span class="viz-note">1 / 16</span><span class="viz-row"><button class="viz-btn" type="button">上一步</button><button class="viz-btn viz-btn-primary" type="button">下一步</button></span></div>
+</div>
+</body>
+</html>`
+
+/** 帧内出现横向溢出的区域：页面本身和常用容器都不应比可见宽度更宽 */
+function horizontalOverflow(frame: Frame): Promise<string[]> {
+  return frame.evaluate(() => {
+    const targets = [
+      document.documentElement,
+      ...document.querySelectorAll('.viz-phases, .viz-canvas, .viz-flow, .viz-inspector, .viz-table, .viz-toolbar')
+    ]
+    return targets
+      .filter(element => element.scrollWidth > element.clientWidth + 1)
+      .map(element => (element === document.documentElement ? 'page' : element.className))
+  })
+}
+
 /** 高度远超内联上限的页面：卡片应提示去展开视图看完整内容 */
 const OVERFLOW_HTML = `<!doctype html>
 <html lang="zh">
@@ -164,6 +233,16 @@ function toolCallDelta(part: { id?: string; name?: string; arguments: string }):
   }
 }
 
+/** 把参数 JSON 切成若干片：分片发送让生成期间能观察预览逐步长出 */
+function splitArgumentsChunks(raw: string, count: number): string[] {
+  const size = Math.ceil(raw.length / count)
+  const chunks: string[] = []
+  for (let index = 0; index < raw.length; index += size) {
+    chunks.push(raw.slice(index, index + size))
+  }
+  return chunks
+}
+
 const TOOL_CALLS_FINISH: Delta = { choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }
 
 /** 作者源码中某段代码的行列号（从 1 起），即报错应指向的位置 */
@@ -178,6 +257,7 @@ test('可视化在无权限沙箱帧内渲染：按内容定高、报错指向�
   const probe = await startProbeServer()
   try {
     const openedLinks = await stubOpenExternal(nova)
+    const learn = await startLearnSession(nova)
     const html = sandboxProbeHtml(probe.origin)
     nova.provider.enqueue(
       {
@@ -189,13 +269,14 @@ test('可视化在无权限沙箱帧内渲染：按内容定高、报错指向�
       { kind: 'text', text: 'NOVA_E2E_VIZ_SHOWN' }
     )
 
-    await nova.sendPrompt('展示沙箱探针可视化')
+    await learn.send('展示沙箱探针可视化')
     await expect(nova.page.getByText('NOVA_E2E_VIZ_SHOWN', { exact: false })).toBeVisible()
-    await nova.waitUntilIdle()
+    await learn.settle()
+    const requestsAfterTurn = nova.provider.requests.length
 
     const card = nova.page.getByTestId('visualization-card')
     await expect(card).toHaveAttribute('data-state', 'ok')
-    const frameElement = card.getByTestId('visualization-frame')
+    const frameElement = await settledFrame(card)
     await expect(frameElement).toHaveAttribute('sandbox', 'allow-scripts')
     const frame = await contentFrameOf(frameElement)
 
@@ -207,7 +288,7 @@ test('可视化在无权限沙箱帧内渲染：按内容定高、报错指向�
     // 联网、导航、无手势回传与弹窗都发生在加载后 300ms 内：留足时间让放行的请求落地
     await nova.page.waitForTimeout(1_000)
     expect(probe.hits).toEqual([])
-    expect(nova.provider.requests).toHaveLength(2)
+    expect(nova.provider.requests).toHaveLength(requestsAfterTurn)
     expect(await openedLinks()).toEqual([])
     await expect(frame.locator('#status')).toBeVisible()
     const errors = card.getByTestId('visualization-errors')
@@ -247,12 +328,12 @@ test('可视化在无权限沙箱帧内渲染：按内容定高、报错指向�
     await nova.page.waitForTimeout(1_100)
     nova.provider.enqueue({ kind: 'text', text: 'NOVA_E2E_VIZ_EVENT_ACK' })
     await frame.locator('#pick').click()
-    await nova.provider.waitForRequestCount(3)
-    const eventMessage = lastUserText(nova.provider.requests[2].body)
+    await nova.provider.waitForRequestCount(requestsAfterTurn + 1)
+    const eventMessage = lastUserText(nova.provider.requests[requestsAfterTurn].body)
     expect(eventMessage).toContain('【可视化】E2E 可视化 · pick')
     expect(eventMessage).toContain('{\\"id\\":2}')
     await expect(nova.page.getByText('NOVA_E2E_VIZ_EVENT_ACK', { exact: false })).toBeVisible()
-    await nova.waitUntilIdle()
+    await learn.settle()
 
     expect(nova.provider.requests.some(request => JSON.stringify(request.body).includes('· auto'))).toBe(false)
     expect(probe.hits).toEqual([])
@@ -276,6 +357,7 @@ test('流式生成占位到成品；慢放、展开与导出共用同一快照�
       (dialog.showSaveDialog as unknown as { novaE2eStub?: boolean }).novaE2eStub === true
     )
     expect(dialogStubbed, '主进程 dialog.showSaveDialog 无法替换').toBe(true)
+    const learn = await startLearnSession(nova)
 
     const args = JSON.stringify({ title: '流式可视化', html: ANIMATED_HTML })
     const firstCut = args.indexOf('"html":"') + '"html":"'.length + 20
@@ -293,16 +375,16 @@ test('流式生成占位到成品；慢放、展开与导出共用同一快照�
       { kind: 'text', text: 'NOVA_E2E_VIZ_STREAM_DONE' }
     )
 
-    await nova.sendPrompt('流式展示动画可视化')
+    await learn.send('流式展示动画可视化')
     const card = nova.page.getByTestId('visualization-card')
     await expect(card).toHaveAttribute('data-state', 'generating')
     await expect(card).toContainText('流式可视化')
     await expect(card).toContainText(/正在生成 · \d+ 字符/)
     await expect(card).toHaveAttribute('data-state', 'ok')
     await expect(nova.page.getByText('NOVA_E2E_VIZ_STREAM_DONE', { exact: false })).toBeVisible()
-    await nova.waitUntilIdle()
+    await learn.settle()
 
-    const inlineFrameElement = card.getByTestId('visualization-frame')
+    const inlineFrameElement = await settledFrame(card)
     const inlineFrame = await contentFrameOf(inlineFrameElement)
     const playbackRate = (target: Frame) => target.evaluate(() => document.getAnimations()[0]?.playbackRate ?? null)
     const slowMotion = card.getByRole('button', { name: '慢放' })
@@ -344,6 +426,7 @@ test('流式生成占位到成品；慢放、展开与导出共用同一快照�
 })
 
 test('同一网格里的折叠卡片按自身内容排布，不被同排最高卡片撑成空白', async ({ nova }) => {
+  const learn = await startLearnSession(nova)
   nova.provider.enqueue(
     {
       kind: 'tool',
@@ -353,13 +436,13 @@ test('同一网格里的折叠卡片按自身内容排布，不被同排最高�
     },
     { kind: 'text', text: 'NOVA_E2E_VIZ_COLLAPSED_DONE' }
   )
-  await nova.sendPrompt('展示折叠卡片网格')
+  await learn.send('展示折叠卡片网格')
   await expect(nova.page.getByText('NOVA_E2E_VIZ_COLLAPSED_DONE', { exact: false })).toBeVisible()
-  await nova.waitUntilIdle()
+  await learn.settle()
 
   const card = nova.page.getByTestId('visualization-card')
   await expect(card).toHaveAttribute('data-state', 'ok')
-  const frame = await contentFrameOf(card.getByTestId('visualization-frame'))
+  const frame = await contentFrameOf(await settledFrame(card))
   const heights = await frame.evaluate(() =>
     [...document.querySelectorAll('.viz-card')].map(node => Math.round(node.getBoundingClientRect().height))
   )
@@ -369,7 +452,259 @@ test('同一网格里的折叠卡片按自身内容排布，不被同排最高�
   expect(heights[1]).toBeLessThan(heights[0] / 3)
 })
 
+test('流式预览期间恶意页面执行不了脚本也联不了网，被发布闸门打回后预览随卡片退出', async ({ nova }) => {
+  const probe = await startProbeServer()
+  try {
+    const openedLinks = await stubOpenExternal(nova)
+    const learn = await startLearnSession(nova)
+    const title = '逃逸探针'
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="0;url=${probe.origin}/refresh">
+<style>.box{height:96px;border:1px solid var(--viz-border)}</style>
+</head><body>
+<p id="marker">NOVA_E2E_SEEN</p>
+<a id="remote" href="${probe.origin}/link">远程链接</a>
+<div class="box">NOVA_E2E_PREVIEW_GREW</div>
+<img src="${probe.origin}/img" onerror="fetch('${probe.origin}/onerror')">
+</body></html>`
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'present_visualization',
+        arguments: { title, html },
+        callId: 'call_viz_escape',
+        argumentChunks: splitArgumentsChunks(JSON.stringify({ title, html }), 12),
+        chunkDelayMs: 300
+      },
+      { kind: 'text', text: 'NOVA_E2E_VIZ_REJECTED' }
+    )
+
+    await learn.send('展示逃逸探针可视化')
+    const card = nova.page.getByTestId('visualization-card')
+    const preview = card.getByTestId('visualization-preview')
+    await expect(preview).toBeVisible()
+    const previewFrame = await contentFrameOf(preview.getByTestId('visualization-frame'))
+    // 生成尚未结束，预览帧里已经能看到到达的节点
+    await expect(previewFrame.locator('#marker')).toHaveText('NOVA_E2E_SEEN')
+    // 预览只展示结构：生成中真实点击外链也不交给系统浏览器
+    await previewFrame.locator('#remote').click()
+    await expect(card).toHaveAttribute('data-state', 'generating')
+
+    // img 的远程地址与 meta refresh 触发发布闸门：打回后预览随卡片退回轨迹行
+    await expect(nova.page.getByText('NOVA_E2E_VIZ_REJECTED', { exact: false })).toBeVisible()
+    await learn.settle()
+    await expect(card).toHaveCount(0)
+    // 工具轨迹默认收在「已工作 X 秒」折叠头里，先展开再定位被打回的那一行
+    await nova.page.locator('.turn-process-tree__header').last().click()
+    const rejectedRow = nova.page.locator('.tool-trace-row--error').filter({ hasText: '逃逸探针' })
+    await expect(rejectedRow.first()).toBeVisible()
+
+    expect(await openedLinks()).toEqual([])
+    expect(probe.hits).toEqual([])
+    expect(nova.pageErrors).toEqual([])
+  } finally {
+    await probe.close()
+  }
+})
+
+test('合法页面的流式预览先长出，成功后交接给正式快照帧且高度不回落', async ({ nova }) => {
+  const learn = await startLearnSession(nova)
+  const title = '高页面'
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><style>
+.block{height:140px;margin-bottom:12px;border:1px solid var(--viz-border);border-radius:var(--viz-radius)}
+</style></head><body>
+<div class="block">NOVA_E2E_TALL_BLOCK_1</div>
+<div class="block">NOVA_E2E_TALL_BLOCK_2</div>
+<div class="block">NOVA_E2E_TALL_BLOCK_3</div>
+<div class="block">NOVA_E2E_TALL_BLOCK_4</div>
+</body></html>`
+  // 每次 rAF 采样当前帧或占位的高度：预览 → 正式帧之间任何回落都会留下记录
+  await nova.page.evaluate(() => {
+    const samples: number[] = []
+    ;(window as unknown as { __vizHeights?: number[] }).__vizHeights = samples
+    const tick = (): void => {
+      const card = document.querySelector('[data-testid="visualization-card"]')
+      const target = card?.querySelector('iframe') ?? card?.querySelector('.visualization-card__placeholder')
+      if (target) samples.push(target.getBoundingClientRect().height)
+      requestAnimationFrame(tick)
+    }
+    requestAnimationFrame(tick)
+  })
+
+  nova.provider.enqueue(
+    {
+      kind: 'tool',
+      name: 'present_visualization',
+      arguments: { title, html },
+      callId: 'call_viz_tall',
+      argumentChunks: splitArgumentsChunks(JSON.stringify({ title, html }), 8),
+      chunkDelayMs: 300
+    },
+    { kind: 'text', text: 'NOVA_E2E_VIZ_TALL_DONE' }
+  )
+
+  await learn.send('展示高页面可视化')
+  const card = nova.page.getByTestId('visualization-card')
+  const preview = card.getByTestId('visualization-preview')
+  await expect(preview).toBeVisible()
+  const previewFrame = await contentFrameOf(preview.getByTestId('visualization-frame'))
+  await expect(previewFrame.locator('.block').first()).toContainText('NOVA_E2E_TALL_BLOCK_1')
+
+  await expect(card).toHaveAttribute('data-state', 'ok')
+  await expect(nova.page.getByText('NOVA_E2E_VIZ_TALL_DONE', { exact: false })).toBeVisible()
+  await learn.settle()
+
+  // 成功后预览卸载，正式帧指向快照地址
+  await expect(preview).toHaveCount(0)
+  const frame = card.getByTestId('visualization-frame')
+  await expect(frame).toHaveAttribute('src', /^nova-viz:\/\/snapshot\//)
+  const snapshotFrame = await contentFrameOf(frame)
+  await expect(snapshotFrame.locator('.block')).toHaveCount(4)
+
+  const heights = await nova.page.evaluate(
+    () => (window as unknown as { __vizHeights?: number[] }).__vizHeights ?? []
+  )
+  const firstGrown = heights.findIndex(height => height > 240)
+  expect(firstGrown, '预览帧高度从未超过 240px').toBeGreaterThanOrEqual(0)
+  expect(
+    Math.min(...heights.slice(firstGrown)),
+    '预览长大后到正式帧就绪期间高度回落到 160px 以下'
+  ).toBeGreaterThan(160)
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('openui 围栏在开发对话里只是代码块；学习会话里流式尾部禁用，封口后可交互，回合结束后值保持', async ({ nova }) => {
+  const fence = [
+    '```openui',
+    'root = Col([Slider($v, "并发", 1, 16, 1), Stat("吞吐", @Round($v * 120) + " msg/s")])',
+    '$v = 4',
+    '```'
+  ].join('\n')
+
+  // 开发对话没有界面状态回传，同样的围栏按普通代码块显示
+  nova.provider.enqueue({ kind: 'text', text: `开发对话里的估算：\n\n${fence}\n\nNOVA_E2E_OPENUI_DEV` })
+  await nova.sendPrompt('开发对话里展示 openui 围栏')
+  await expect(nova.page.getByText('NOVA_E2E_OPENUI_DEV', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+  await expect(nova.page.locator('.md-code-block__lang', { hasText: 'openui' })).toBeVisible()
+  await expect(nova.page.locator('[role="slider"]')).toHaveCount(0)
+
+  const learn = await startLearnSession(nova)
+  const flow = learningFlow(nova)
+
+  // 第一轮：围栏未闭合，块落在活动尾部，控件禁用
+  nova.provider.enqueue({
+    kind: 'hold',
+    id: 'openui-unclosed',
+    before: `先给一个估算：\n\n${fence.slice(0, -3)}`,
+    text: '```\n\n第一轮收尾 NOVA_E2E_OPENUI_R1'
+  })
+  await learn.send('展示 openui 组件第一轮')
+  const tailSlider = flow.locator('[role="slider"]')
+  await expect(tailSlider).toBeVisible()
+  await expect(tailSlider).toHaveAttribute('aria-disabled', 'true')
+  nova.provider.release('openui-unclosed')
+  await expect(nova.page.getByText('NOVA_E2E_OPENUI_R1', { exact: false })).toBeVisible()
+  await learn.settle()
+  expect(nova.pageErrors).toEqual([])
+
+  // 第二轮：围栏已闭合并带空行，块落在封口区，可交互
+  nova.provider.enqueue({
+    kind: 'hold',
+    id: 'openui-sealed',
+    before: `再看这个估算：\n\n${fence}\n\n`,
+    text: '第二轮收尾 NOVA_E2E_OPENUI_R2'
+  })
+  await learn.send('展示 openui 组件第二轮')
+  // 第一轮的块也在会话里，定位限定在第二轮的文本块内；打字机放出期间块先处于活动尾部
+  const round2 = flow.locator('.turn-process-text', { hasText: '再看这个估算' })
+  const slider = round2.locator('[role="slider"]')
+  const metric = round2.locator('.inline-ui__stat-value')
+  await expect(slider).toBeVisible()
+  await expect(slider).toBeEnabled()
+  await expect(metric).toHaveText('480 msg/s')
+  await slider.focus()
+  await nova.page.keyboard.press('End')
+  await expect(slider).toHaveAttribute('aria-valuenow', '16')
+  await expect(metric).toHaveText('1,920 msg/s')
+  nova.provider.release('openui-sealed')
+  await expect(nova.page.getByText('NOVA_E2E_OPENUI_R2', { exact: false })).toBeVisible()
+  await learn.settle()
+
+  // 回合结束整块重挂后，滑块值与派生指标不变；值随下一条学习消息回传由学习表面用例保护
+  await expect(metric).toHaveText('1,920 msg/s')
+  await expect(slider).toHaveAttribute('aria-valuenow', '16')
+
+  // 调完立刻刷新：落盘合并窗口还没到期，最后一次操作也要留住
+  await slider.focus()
+  await nova.page.keyboard.press('Home')
+  await expect(slider).toHaveAttribute('aria-valuenow', '1')
+  await nova.page.reload()
+  await nova.page.waitForFunction(() => Boolean((window as typeof window & { api?: unknown }).api))
+  const restored = learningFlow(nova).locator('.turn-process-text', { hasText: '再看这个估算' })
+  await expect(restored.locator('[role="slider"]')).toHaveAttribute('aria-valuenow', '1')
+  await expect(restored.locator('.inline-ui__stat-value')).toHaveText('120 msg/s')
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('窄卡片、常规内联与展开视图三档宽度下，阶段条、步骤、详情与对比表都不需要横向滚动', async ({ nova }, testInfo) => {
+  const learn = await startLearnSession(nova)
+  nova.provider.enqueue(
+    {
+      kind: 'tool',
+      name: 'present_visualization',
+      arguments: { title: '一条消息的流转', html: WIDTHS_HTML },
+      callId: 'call_viz_widths'
+    },
+    { kind: 'text', text: 'NOVA_E2E_VIZ_WIDTHS_DONE' }
+  )
+  await learn.send('展示三档宽度可视化')
+  await expect(nova.page.getByText('NOVA_E2E_VIZ_WIDTHS_DONE', { exact: false })).toBeVisible()
+  await learn.settle()
+
+  const card = nova.page.getByTestId('visualization-card')
+  await expect(card).toHaveAttribute('data-state', 'ok')
+  const frameElement = await settledFrame(card)
+  const frame = await contentFrameOf(frameElement)
+  const shotDir = path.resolve(__dirname, '../../../test-results/e2e/visualization-widths')
+  await mkdir(shotDir, { recursive: true })
+  const capture = async (name: string, target: Locator): Promise<void> => {
+    const file = path.join(shotDir, `${name}.png`)
+    await target.screenshot({ path: file, animations: 'disabled' })
+    await testInfo.attach(`${name}.png`, { path: file, contentType: 'image/png' })
+  }
+
+  const inlineWidth = await frame.evaluate(() => document.documentElement.clientWidth)
+  expect(await horizontalOverflow(frame)).toEqual([])
+  await capture('inline', card)
+
+  // 小窗口里卡片只有约 380px：对比表逐行变成带列标签的卡片
+  await frameElement.evaluate(element => { (element as HTMLElement).style.width = '380px' })
+  await expect.poll(() => frame.evaluate(() => document.documentElement.clientWidth)).toBe(380)
+  expect(await horizontalOverflow(frame)).toEqual([])
+  await expect(frame.locator('.viz-table thead')).toBeHidden()
+  // 窄帧会变高：截图时临时拉高窗口，让整张卡片入镜
+  const viewport = nova.page.viewportSize()
+  if (viewport) await nova.page.setViewportSize({ width: viewport.width, height: 1600 })
+  await capture('narrow-380', frameElement)
+  if (viewport) await nova.page.setViewportSize(viewport)
+  await frameElement.evaluate(element => { (element as HTMLElement).style.removeProperty('width') })
+
+  await card.getByRole('button', { name: '展开' }).click()
+  const dialog = nova.page.locator('dialog.visualization-dialog')
+  const expandedElement = dialog.getByTestId('visualization-frame')
+  await expect(expandedElement).toHaveClass(/visualization-frame--ready/)
+  const expanded = await contentFrameOf(expandedElement)
+  expect(await expanded.evaluate(() => document.documentElement.clientWidth)).toBeGreaterThan(inlineWidth)
+  expect(await horizontalOverflow(expanded)).toEqual([])
+  await capture('expanded', dialog)
+  expect(nova.pageErrors).toEqual([])
+})
+
 test('内容高于内联上限时给出展开提示，卡片不被撑开', async ({ nova }) => {
+  const learn = await startLearnSession(nova)
   nova.provider.enqueue(
     {
       kind: 'tool',
@@ -379,13 +714,13 @@ test('内容高于内联上限时给出展开提示，卡片不被撑开', async
     },
     { kind: 'text', text: 'NOVA_E2E_VIZ_OVERFLOW_DONE' }
   )
-  await nova.sendPrompt('展示超长可视化')
+  await learn.send('展示超长可视化')
   await expect(nova.page.getByText('NOVA_E2E_VIZ_OVERFLOW_DONE', { exact: false })).toBeVisible()
-  await nova.waitUntilIdle()
+  await learn.settle()
 
   const card = nova.page.getByTestId('visualization-card')
   await expect(card).toHaveAttribute('data-state', 'ok')
-  const frameElement = card.getByTestId('visualization-frame')
+  const frameElement = await settledFrame(card)
   await expect.poll(() => frameElement.evaluate(element => element.getBoundingClientRect().height)).toBe(1200)
 
   const overflow = card.getByTestId('visualization-overflow')

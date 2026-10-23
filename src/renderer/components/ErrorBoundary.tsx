@@ -3,6 +3,10 @@ import { Button } from '@astryxdesign/core/Button'
 
 interface Props {
   children: ReactNode
+  /** 提供时出错只渲染它（局部降级）；不提供时保持整页降级 */
+  fallback?: ReactNode
+  /** 局部降级后该值变化即重试渲染（如流式内容又追加了一段） */
+  resetKey?: unknown
 }
 
 interface State {
@@ -24,12 +28,17 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('[ErrorBoundary] 渲染层未捕获异常', error, info.componentStack)
   }
 
+  componentDidUpdate(prevProps: Props): void {
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) this.setState({ error: null })
+  }
+
   private handleReload = (): void => {
     window.location.reload()
   }
 
   render(): ReactNode {
     if (this.state.error) {
+      if (this.props.fallback !== undefined) return this.props.fallback
       return (
         <div
           style={{
