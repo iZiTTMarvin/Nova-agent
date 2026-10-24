@@ -60,6 +60,10 @@ export const INSPECTOR_WIDTH_DEFAULT = 420
 export const INSPECTOR_COLLAPSE_THRESHOLD_PX = 180
 /** 浏览器页签激活时面板的最小宽度（地址栏与舞台的可用下限）。 */
 export const BROWSER_PANE_WIDTH_MIN = 360
+/** 阅读柱宽下限 = global.css 的 --chat-content-max-width 初始值 48rem（root 16px）。
+   拖拽只能从此值向宽调；实际上限由容器剩余宽度在使用处钳制，这里只兜防呆上限。 */
+export const CHAT_CONTENT_WIDTH_MIN = 768
+export const CHAT_CONTENT_WIDTH_MAX = 3840
 
 const DEFAULTS = {
   sidebarCollapsed: false,
@@ -76,6 +80,8 @@ const DEFAULTS = {
   detailReturnState: null as DetailReturnState | null,
   learnInspectorOpen: false,
   learnInspectorTab: 'outline' as LearnInspectorTab,
+  // 用户拖出的阅读柱宽（px）；null = 跟随默认 --chat-content-max-width
+  chatContentWidth: null as number | null,
   // 已打开的视图标签（每种视图至多一个）；为空即面板首页（启动器）。不进持久化，每次启动回首页
   inspectorTabs: [] as readonly InspectorTab[],
   learnInspectorTabs: [] as readonly LearnInspectorTab[],
@@ -177,6 +183,7 @@ function loadPersistedLayout(): Pick<
   | 'inspectorTab'
   | 'learnInspectorOpen'
   | 'learnInspectorTab'
+  | 'chatContentWidth'
   | 'pinnedSessionOrder'
   | 'pinnedProjectOrder'
 > {
@@ -219,6 +226,12 @@ function loadPersistedLayout(): Pick<
   const pinnedSessionOrder = parseStringArray(readStored('pinnedSessionOrder'))
   const pinnedProjectOrder = parseStringArray(readStored('pinnedProjectOrder'))
 
+  const chatContentWidthRaw = readStored('chatContentWidth')
+  const chatContentWidthN = chatContentWidthRaw === null ? NaN : Number(chatContentWidthRaw)
+  const chatContentWidth = Number.isFinite(chatContentWidthN)
+    ? clamp(chatContentWidthN, CHAT_CONTENT_WIDTH_MIN, CHAT_CONTENT_WIDTH_MAX)
+    : DEFAULTS.chatContentWidth
+
   return {
     sidebarCollapsed,
     sidebarWidth,
@@ -227,6 +240,7 @@ function loadPersistedLayout(): Pick<
     inspectorTab,
     learnInspectorOpen,
     learnInspectorTab,
+    chatContentWidth,
     pinnedSessionOrder,
     pinnedProjectOrder
   }
@@ -247,6 +261,7 @@ export interface LayoutStoreState {
   detailReturnState: DetailReturnState | null
   learnInspectorOpen: boolean
   learnInspectorTab: LearnInspectorTab
+  chatContentWidth: number | null
   inspectorTabs: readonly InspectorTab[]
   learnInspectorTabs: readonly LearnInspectorTab[]
   pinnedSessionOrder: readonly string[]
@@ -275,6 +290,7 @@ export interface LayoutStoreState {
   closeLearnInspectorTab: (tab: LearnInspectorTab) => void
   openOutline: () => void
   closeLearnInspector: () => void
+  setChatContentWidth: (w: number) => void
 }
 
 const persisted = loadPersistedLayout()
@@ -512,6 +528,12 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   closeLearnInspector: () => {
     writeStored('learnInspectorOpen', 'false')
     set({ learnInspectorOpen: false })
+  },
+
+  setChatContentWidth: (w) => {
+    const chatContentWidth = clamp(w, CHAT_CONTENT_WIDTH_MIN, CHAT_CONTENT_WIDTH_MAX)
+    writeStored('chatContentWidth', String(chatContentWidth))
+    set({ chatContentWidth })
   }
 }))
 
@@ -551,6 +573,7 @@ export function resetLayoutStoreForTests(): void {
         'inspectorTab',
         'learnInspectorOpen',
         'learnInspectorTab',
+        'chatContentWidth',
         'pinnedSessionOrder',
         'pinnedProjectOrder'
       ]) {

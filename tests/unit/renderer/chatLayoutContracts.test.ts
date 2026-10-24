@@ -82,4 +82,26 @@ describe('chat panel layout contracts', () => {
     expect(composerInner).toMatch(/width:\s*100%/)
     expect(css).not.toContain('.chat-panel--reading-width-frozen')
   })
+
+  it('pins the reading-width handle to the column edge without stealing layout', () => {
+    const handle = rule('.chat-width-handle')
+    // 绝对定位热区：不占文档流、纵贯面板、命中即 col-resize
+    expect(handle).toMatch(/position:\s*absolute/)
+    expect(handle).toMatch(/top:\s*0/)
+    expect(handle).toMatch(/bottom:\s*0/)
+    expect(handle).toMatch(/cursor:\s*col-resize/)
+    // 右缘锚定阅读柱左缘外侧；柱宽变量变化时手柄位置跟随
+    expect(handle).toMatch(/right:\s*calc\(50%\s*\+\s*var\(--chat-content-max-width\)\s*\/\s*2/)
+    // 悬浮状态面板把柱左移时手柄用同一 --status-shift 公式跟随
+    expect(handle).toMatch(/--status-shift:\s*round\(\s*nearest,[\s\S]*?1px\s*\)/)
+    expect(handle).toMatch(/transform:\s*translate3d\(calc\(-1\s*\*\s*var\(--status-shift,\s*0px\)\),\s*0,\s*0\)/)
+    // 热区自身不可见；可见部分是指针 Y 处的渐隐指示条，只在 hover/拖拽中出现
+    expect(handle).not.toMatch(/background:\s*var\(--color-overlay-hover\)/)
+    const indicator = rule('.chat-width-handle::after')
+    expect(indicator).toMatch(/top:\s*clamp\([\s\S]*?var\(--chat-handle-y/)
+    expect(indicator).toMatch(/background:\s*linear-gradient\(/)
+    expect(indicator).toMatch(/pointer-events:\s*none/)
+    expect(indicator).toMatch(/opacity:\s*0/)
+    expect(rule('.chat-width-handle--active::after')).toMatch(/opacity:\s*1/)
+  })
 })

@@ -1591,3 +1591,56 @@ button.code-index-status-chip:hover {
     transition: none;
   }
 }
+
+/* ── 阅读区宽度手柄（开发/学习表面共用） ──────────────────────
+   阅读柱左缘外 24px 起、向外 10px 的隐形热区：全高可命中但永不可见；
+   hover/拖拽中只在指针 Y 处浮现一颗玻璃把手（::after 跟 --chat-handle-y），移开即隐。
+   柱左缘外不足 48px（24 间距 + 24 安全区）时热区收缩为 0，窄窗下不留误命中区域。
+   --status-shift 与 .chat-messages__flow-inner 同公式：悬浮状态面板把柱左移时手柄跟随柱缘。 */
+.chat-width-handle {
+  --status-shift: round(
+    nearest,
+    min(
+      max(0px, calc((100cqi - 48px - var(--chat-content-max-width)) / 2)),
+      max(0px, calc(var(--status-clearance, 0px) - max(0px, (100cqi - 48px - var(--chat-content-max-width)) / 2)))
+    ),
+    1px
+  );
+  /* 指针距热区顶部的 px 位置，由组件 mousemove 写入；默认居中 */
+  --chat-handle-y: 50%;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 1;
+  width: min(10px, calc(50% - var(--chat-content-max-width) / 2 - var(--status-shift, 0px) - 48px));
+  right: calc(50% + var(--chat-content-max-width) / 2 + 24px);
+  transform: translate3d(calc(-1 * var(--status-shift, 0px)), 0, 0);
+  cursor: col-resize;
+}
+
+/* 指示条：滚动条 thumb 形态的 3px 竖线，实心核上下各 28px 渐隐、两端不封口；
+   clamp 保证完整落在热区内，定位走 top/translate，仅自身重排 */
+.chat-width-handle::after {
+  content: '';
+  position: absolute;
+  top: clamp(48px, var(--chat-handle-y), calc(100% - 48px));
+  left: 50%;
+  width: 3px;
+  height: 96px;
+  transform: translate(-50%, -50%);
+  background: linear-gradient(
+    to bottom,
+    transparent 0,
+    var(--text-muted) 28px,
+    var(--text-muted) 68px,
+    transparent 96px
+  );
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  pointer-events: none;
+}
+
+.chat-width-handle:hover::after,
+.chat-width-handle--active::after {
+  opacity: 1;
+}

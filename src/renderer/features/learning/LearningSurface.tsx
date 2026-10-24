@@ -26,6 +26,7 @@ import { VisualizationMessageContext } from '../visualization/VisualizationMessa
 import { InlineUiHostProvider } from '../inline-ui/InlineUiScope'
 import { createLearningVisualizationSubmitter } from './learningVisualizationSubmitter'
 import { firstOutlineTopic } from './outline/outlineOrder'
+import { ChatContentWidthHandle } from '../chat/ChatContentWidthHandle'
 import {
   LEARNING_CONVERSATION_LABEL,
   LEARNING_MESSAGES_LABEL,
@@ -299,6 +300,9 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
           </div>
         </div>
       </div>
+
+      {/* 阅读区宽度手柄：与开发表面共用同一份宽度偏好 */}
+      <ChatContentWidthHandle />
     </div>
   )
 }

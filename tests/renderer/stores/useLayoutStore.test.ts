@@ -45,6 +45,7 @@ describe('useLayoutStore', () => {
     expect(s.reviewTarget).toBeNull()
     expect(s.inspectorSurface).toBe('standard')
     expect(s.planTarget).toBeNull()
+    expect(s.chatContentWidth).toBeNull()
   })
 
   it('计划视图复用 Inspector 并在关闭后恢复此前 surface', () => {
@@ -149,6 +150,12 @@ describe('useLayoutStore', () => {
     expect(useLayoutStore.getState().inspectorWidth).toBe(320)
     useLayoutStore.getState().setInspectorWidth(999)
     expect(useLayoutStore.getState().inspectorWidth).toBe(720)
+
+    // 阅读柱宽下限即默认 768px：拖拽只能向宽调，不能低于当前版式
+    useLayoutStore.getState().setChatContentWidth(100)
+    expect(useLayoutStore.getState().chatContentWidth).toBe(768)
+    useLayoutStore.getState().setChatContentWidth(960)
+    expect(useLayoutStore.getState().chatContentWidth).toBe(960)
   })
 
   it('selectReviewFile：有 target 时更新 filePath；null 时 no-op', () => {
@@ -167,6 +174,7 @@ describe('useLayoutStore', () => {
     useLayoutStore.getState().toggleSidebar()
     useLayoutStore.getState().setSidebarWidth(300)
     useLayoutStore.getState().setInspectorWidth(500)
+    useLayoutStore.getState().setChatContentWidth(960)
     useLayoutStore.getState().openReview({ messageId: 'm3' })
     // openReview 会写入 tab=review；最后再切到 files 验证 setter 持久化
     useLayoutStore.getState().setInspectorTab('files')
@@ -175,6 +183,7 @@ describe('useLayoutStore', () => {
     expect(localStorage.getItem('nova.layout.sidebarWidth')).toBe('300')
     expect(localStorage.getItem('nova.layout.inspectorWidth')).toBe('500')
     expect(localStorage.getItem('nova.layout.inspectorTab')).toBe('files')
+    expect(localStorage.getItem('nova.layout.chatContentWidth')).toBe('960')
     expect(localStorage.getItem('nova.layout.inspectorOpen')).toBeNull()
     expect(localStorage.getItem('nova.layout.reviewTarget')).toBeNull()
 

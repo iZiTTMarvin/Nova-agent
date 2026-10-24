@@ -1,5 +1,7 @@
 .subagent-session-header {
   position: relative;
+  /* 盖过阅读区宽度手柄（z-index 1）的顶段：返回按钮保持可命中，手柄高亮也止于本行下缘 */
+  z-index: 2;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;

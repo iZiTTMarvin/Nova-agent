@@ -67,6 +67,7 @@ import { createComposerSkillTrigger, skillComposerToken } from '../skills/compos
 import { createComposerFileTrigger } from './composerFileTrigger'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import { WelcomeHero } from './WelcomeHero'
+import { ChatContentWidthHandle } from './ChatContentWidthHandle'
 import './composerShell.css'
 import './ChatPanel.css'
 import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
@@ -1171,6 +1172,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           />
         </Suspense>
       )}
+
+      {/* 阅读区宽度手柄：贴阅读柱左缘的隐形热区 */}
+      <ChatContentWidthHandle />
     </div>
   )
 }

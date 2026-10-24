@@ -31,6 +31,11 @@ export interface UseSplitPaneResizeOptions {
   onDragSessionChange?: (active: boolean) => void
   /** 拖拽帧或双击改宽后同步更新附属 DOM（如内层容器宽度），避免等松手才一帧跳变 */
   onLiveWidthChange?: (width: number) => void
+  /** 自定义宽度写入；缺省直接写 shell.style.width（实体外壳）。
+     阅读区这类「宽度由 CSS 变量驱动」的场景可改写变量，保持单一数据来源。 */
+  applyWidth?: (shell: HTMLElement, width: number) => void
+  /** clientX 位移 → 宽度增量倍率；内容居中、单侧手柄对称伸缩时传 2。默认 1。 */
+  deltaScale?: number
 }
 
 export interface SplitPaneResizeControls {
@@ -50,7 +55,9 @@ export function useSplitPaneResize({
   onCommitWidth,
   onCollapse,
   onDragSessionChange,
-  onLiveWidthChange
+  onLiveWidthChange,
+  applyWidth,
+  deltaScale
 }: UseSplitPaneResizeOptions): SplitPaneResizeControls {
   const [dragging, setDragging] = useState(false)
   const dragStartX = useRef(0)
@@ -73,6 +80,10 @@ export function useSplitPaneResize({
   getCurrentWidthRef.current = getCurrentWidth
   const widthMaxRef = useRef(widthMax)
   widthMaxRef.current = widthMax
+  const applyWidthRef = useRef(applyWidth)
+  applyWidthRef.current = applyWidth
+  const deltaScaleRef = useRef(deltaScale ?? 1)
+  deltaScaleRef.current = deltaScale ?? 1
 
   const notifyDragSession = useCallback((active: boolean) => {
     if (active === dragSessionActive.current) return
@@ -91,7 +102,7 @@ export function useSplitPaneResize({
         direction === 'left'
           ? clientX - dragStartX.current
           : dragStartX.current - clientX
-      return dragStartWidth.current + delta
+      return dragStartWidth.current + delta * deltaScaleRef.current
     },
     [direction]
   )
@@ -103,14 +114,21 @@ export function useSplitPaneResize({
     [resolveMaxWidth, widthMin]
   )
 
+  /** 统一的实际宽度写入点：默认改外壳 style.width，外部可注入 applyWidth 改写别的目标。 */
+  const writeShellWidth = useCallback((el: HTMLElement, width: number) => {
+    const custom = applyWidthRef.current
+    if (custom) custom(el, width)
+    else el.style.width = `${width}px`
+  }, [])
+
   const applyShellWidth = useCallback(
     (clientX: number) => {
       const nextWidth = clampWidth(rawWidthFromClientX(clientX))
       const el = shellRef.current
-      if (el) el.style.width = `${nextWidth}px`
+      if (el) writeShellWidth(el, nextWidth)
       onLiveWidthChangeRef.current?.(nextWidth)
     },
-    [shellRef, clampWidth, rawWidthFromClientX]
+    [shellRef, clampWidth, rawWidthFromClientX, writeShellWidth]
   )
 
   const clearGlobalDragStyles = useCallback(() => {
@@ -141,9 +159,9 @@ export function useSplitPaneResize({
     const clampedDefault = clampWidth(defaultWidth)
     onCommitWidthRef.current(clampedDefault)
     const el = shellRef.current
-    if (el) el.style.width = `${clampedDefault}px`
+    if (el) writeShellWidth(el, clampedDefault)
     onLiveWidthChangeRef.current?.(clampedDefault)
-  }, [clampWidth, defaultWidth, shellRef])
+  }, [clampWidth, defaultWidth, shellRef, writeShellWidth])
 
   useEffect(() => {
     if (!dragging) return
@@ -201,7 +219,7 @@ export function useSplitPaneResize({
         rafId.current = null
       }
       const el = shellRef.current
-      if (el) el.style.width = `${dragStartWidth.current}px`
+      if (el) writeShellWidth(el, dragStartWidth.current)
       onLiveWidthChangeRef.current?.(dragStartWidth.current)
       onCommitWidthRef.current(dragStartWidth.current)
       notifyDragSession(false)
