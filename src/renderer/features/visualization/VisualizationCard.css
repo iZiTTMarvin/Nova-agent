@@ -112,14 +112,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.visualization-card__progress {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-muted);
-  font-size: 0.76rem;
-  font-variant-numeric: tabular-nums;
-}
-
 /* 预览内容很短时视口仍保持占位高度，不会先缩后涨 */
 .visualization-card__preview {
   min-height: 160px;

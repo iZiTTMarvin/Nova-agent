@@ -15,17 +15,9 @@ const BODY_START = /<body[\s>]/i
 /** 参数对象可能已闭合：跳过节流立即解码，收尾不必再等一个节流窗口 */
 const MAYBE_COMPLETE = /\}\s*$/
 
-export interface StreamingVisualizationPreview {
-  /** 出现 <body 之后才有值；参数收齐后冻结为完整页面 */
-  readonly html: string | null
-  /** 参数已收齐，卡片可以提示「正在发布」 */
-  readonly complete: boolean
-}
-
-const EMPTY_PREVIEW: StreamingVisualizationPreview = { html: null, complete: false }
-
-export function useStreamingVisualizationHtml(argumentsRaw: string | undefined): StreamingVisualizationPreview {
-  const [preview, setPreview] = useState<StreamingVisualizationPreview>(EMPTY_PREVIEW)
+/** 返回值在出现 <body 之后才非空；参数收齐后冻结为完整页面 */
+export function useStreamingVisualizationHtml(argumentsRaw: string | undefined): string | null {
+  const [preview, setPreview] = useState<string | null>(null)
   const readerRef = useRef<ReturnType<typeof createPartialStringReader> | null>(null)
   if (readerRef.current === null) readerRef.current = createPartialStringReader('html')
   const reader = readerRef.current
@@ -51,15 +43,11 @@ export function useStreamingVisualizationHtml(argumentsRaw: string | undefined):
         cappedRef.current = true
         return
       }
-      const complete = reader.isClosed()
-      if (complete) {
+      if (reader.isClosed()) {
         frozenRef.current = true
         clearTimer()
       }
-      setPreview(current => {
-        const html = BODY_START.test(value) ? value : current.html
-        return current.html === html && current.complete === complete ? current : { html, complete }
-      })
+      if (BODY_START.test(value)) setPreview(value)
     }
 
     if (frozenRef.current) return
@@ -68,7 +56,6 @@ export function useStreamingVisualizationHtml(argumentsRaw: string | undefined):
       clearTimer()
       decode()
       frozenRef.current = true
-      setPreview(current => (current.complete ? current : { html: current.html, complete: true }))
       return
     }
 

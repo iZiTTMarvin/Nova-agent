@@ -12,7 +12,7 @@ import { Button } from '@astryxdesign/core/Button'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { Selector } from '@astryxdesign/core/Selector'
-import type { InlineUiNode, InlineUiPrimitive } from './inlineUiLanguage'
+import { walkAskLabel, type InlineUiAsk, type InlineUiNode, type InlineUiPrimitive, type InlineUiWalkStep } from './inlineUiLanguage'
 import { useVisualizationTheme } from '../visualization/visualizationTheme'
 
 type NodeOf<T extends InlineUiNode['type']> = Extract<InlineUiNode, { type: T }>
@@ -21,12 +21,15 @@ export interface InlineUiHandlers {
   readonly interactive: boolean
   readonly onSetVar: (variable: string, value: InlineUiPrimitive) => void
   readonly onButton: (node: NodeOf<'button'>) => void
+  /** 组件自带的追问入口（如 Walkthrough 的「深入讲讲这一步」） */
+  readonly onAsk: (ask: InlineUiAsk) => void
 }
 
 const HandlersContext = createContext<InlineUiHandlers>({
   interactive: false,
   onSetVar: () => {},
-  onButton: () => {}
+  onButton: () => {},
+  onAsk: () => {}
 })
 
 const useHandlers = (): InlineUiHandlers => useContext(HandlersContext)
@@ -163,6 +166,8 @@ function NodeView({ node, index }: { node: InlineUiNode; index: number }): React
       return <FlowView node={node} style={style} />
     case 'steps':
       return <StepsView node={node} style={style} />
+    case 'walkthrough':
+      return <WalkthroughView node={node} style={style} />
     case 'flashcard':
       return <FlashcardView node={node} style={style} />
     case 'slider': {
@@ -446,6 +451,163 @@ function StepsView({ node, style }: { node: NodeOf<'steps'>; style: CSSPropertie
         )
       })}
     </ol>
+  )
+}
+
+/**
+ * 分阶段讲解：阶段进度条 → 阶段说明 → 本阶段步骤与详情 → 跨阶段翻页。
+ * 生成中跟随最新写完的一步，用户看着讲解一步步长出来；可交互后回到
+ * $step（未绑定时为本地状态）指向的那一步。
+ */
+function WalkthroughView({ node, style }: { node: NodeOf<'walkthrough'>; style: CSSProperties }): React.ReactElement {
+  const { interactive, onSetVar, onAsk } = useHandlers()
+  const [localStep, setLocalStep] = useState(0)
+  const flat = node.phases.flatMap((phase, p) => phase.steps.map(step => ({ step, phase: p })))
+  const total = flat.length
+  const requested = !interactive ? total - 1 : node.current !== null ? (node.current.value ?? 0) : localStep
+  const active = Math.min(total - 1, Math.max(0, Math.trunc(requested)))
+  const phaseIndex = flat[active].phase
+  const phase = node.phases[phaseIndex]
+  const firstOf = (p: number): number => flat.findIndex(item => item.phase === p)
+  const phaseStart = firstOf(phaseIndex)
+  const go = (index: number): void => {
+    if (!interactive || index < 0 || index >= total || index === active) return
+    if (node.current !== null) onSetVar(node.current.variable, index)
+    else setLocalStep(index)
+  }
+  const nextCrossesPhase = active < total - 1 && flat[active + 1].phase !== phaseIndex
+  return (
+    <div className="inline-ui__walk inline-ui__item" style={style}>
+      <ol className="inline-ui__walk-phases" style={{ '--iu-phases': node.phases.length } as CSSProperties}>
+        {node.phases.map((item, i) => (
+          <li
+            key={i}
+            className="inline-ui__walk-phase"
+            data-state={i < phaseIndex ? 'done' : i === phaseIndex ? 'active' : 'todo'}
+            style={stagger(i)}
+          >
+            <button
+              type="button"
+              disabled={!interactive}
+              aria-current={i === phaseIndex ? 'step' : undefined}
+              aria-label={`阶段 ${i + 1}：${item.title}`}
+              onClick={() => go(firstOf(i))}
+            >
+              <span className="inline-ui__walk-phase-bar" aria-hidden="true" />
+              <span className="inline-ui__walk-phase-label">
+                <span className="inline-ui__walk-phase-index">{i + 1}</span>
+                <span className="inline-ui__walk-phase-title">{item.title}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div key={phaseIndex} className="inline-ui__walk-head">
+        <div className="inline-ui__walk-kicker">{`阶段 ${phaseIndex + 1} / ${node.phases.length}`}</div>
+        <div className="inline-ui__walk-phase-name">{phase.title}</div>
+        {phase.summary !== null && <div className="inline-ui__walk-summary">{phase.summary}</div>}
+        {phase.io !== null && (
+          <div className="inline-ui__walk-io">
+            <span className="inline-ui__walk-io-label">数据流</span>
+            <code>{phase.io}</code>
+          </div>
+        )}
+      </div>
+      <div className="inline-ui__walk-body">
+        <ol className="inline-ui__walk-steps">
+          {phase.steps.map((item, i) => {
+            const global = phaseStart + i
+            const state = global < active ? ' is-done' : global === active ? ' is-current' : ''
+            return (
+              <li key={`${phaseIndex}-${i}`} style={stagger(i)}>
+                <button
+                  type="button"
+                  className={`inline-ui__walk-step${state}`}
+                  disabled={!interactive}
+                  aria-current={global === active ? 'step' : undefined}
+                  onClick={() => go(global)}
+                >
+                  <span className="inline-ui__walk-step-index">{global + 1}</span>
+                  <span className="inline-ui__walk-step-text">
+                    <span className="inline-ui__walk-step-title">{item.title}</span>
+                    {item.meta !== null && <span className="inline-ui__walk-step-meta">{item.meta}</span>}
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ol>
+        <WalkDetail key={active} step={flat[active].step} interactive={interactive} onAsk={onAsk} />
+      </div>
+      <div className="inline-ui__walk-footer">
+        <span className="inline-ui__walk-position">{`第 ${active + 1} / ${total} 步`}</span>
+        <span className="inline-ui__walk-transport">
+          <Button label="上一步" variant="secondary" size="sm" isDisabled={!interactive || active <= 0} onClick={() => go(active - 1)} />
+          <Button
+            label={nextCrossesPhase ? '下一阶段' : '下一步'}
+            variant="primary"
+            size="sm"
+            isDisabled={!interactive || active >= total - 1}
+            onClick={() => go(active + 1)}
+          />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function WalkDetail({ step, interactive, onAsk }: {
+  step: InlineUiWalkStep
+  interactive: boolean
+  onAsk: (ask: InlineUiAsk) => void
+}): React.ReactElement {
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const sourceId = useId()
+  const ask = step.ask
+  return (
+    // 只在可交互时播报：生成中每写完一步都会换内容，播报会刷屏
+    <div className="inline-ui__walk-detail" aria-live={interactive ? 'polite' : undefined}>
+      <div className="inline-ui__walk-detail-title">{step.title}</div>
+      {step.meta !== null && <div className="inline-ui__walk-detail-meta">{step.meta}</div>}
+      {step.detail !== null && <p className="inline-ui__walk-detail-text">{step.detail}</p>}
+      {step.data !== null && (
+        <dl className="inline-ui__kv inline-ui__walk-data">
+          {step.data.map((row, i) => (
+            <div key={i} className="inline-ui__kv-row">
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {step.code !== null && (
+        <div className={`inline-ui__walk-source${sourceOpen ? ' is-open' : ''}`}>
+          <button
+            type="button"
+            className="inline-ui__walk-source-head"
+            aria-expanded={sourceOpen}
+            aria-controls={sourceId}
+            onClick={() => setSourceOpen(value => !value)}
+          >
+            <span className="inline-ui__chevron" aria-hidden="true" />
+            <span>{step.file ?? '查看源码'}</span>
+          </button>
+          {sourceOpen && <pre id={sourceId}><code>{step.code}</code></pre>}
+        </div>
+      )}
+      {ask !== null && (
+        <span className="inline-ui__walk-ask">
+          <Button
+            label="深入讲讲这一步"
+            variant="secondary"
+            size="sm"
+            isDisabled={!interactive}
+            tooltip={interactive ? `将发送：${ask}` : '生成中'}
+            onClick={() => onAsk({ label: walkAskLabel(step), prompt: ask })}
+          />
+        </span>
+      )}
+    </div>
   )
 }
 

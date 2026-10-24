@@ -15,6 +15,7 @@ import {
   parseInlineUi,
   renderInlineUi,
   runInlineUiActions,
+  type InlineUiAsk,
   type InlineUiNode,
   type InlineUiPrimitive,
   type InlineUiVars
@@ -119,6 +120,16 @@ const InlineUiBlockInner: React.FC<InlineUiBlockProps> = ({ scope, code, interac
     }, ASK_NOTICE_MS)
   }
 
+  // 同一块两次追问至少间隔 1 秒；blocked 只显示提示，不碰草稿
+  const ask = ({ label, prompt }: InlineUiAsk): void => {
+    const now = Date.now()
+    if (now - lastAskAtRef.current < ASK_MIN_INTERVAL_MS) return
+    lastAskAtRef.current = now
+    void submitter(formatVisualizationEventMessage(label, 'explore', { prompt }), 'event').then(result => {
+      if (result.status === 'blocked') showNotice(result.notice)
+    })
+  }
+
   const handlers: InlineUiHandlers = {
     interactive,
     onSetVar: (variable: string, value: InlineUiPrimitive) => {
@@ -130,15 +141,10 @@ const InlineUiBlockInner: React.FC<InlineUiBlockProps> = ({ scope, code, interac
       const outcome = runInlineUiActions(button.actions, program, vars)
       if (!outcome) return
       if (outcome.vars !== vars) commit(outcome.vars)
-      if (!outcome.ask) return
-      // 同一块两次追问至少间隔 1 秒；blocked 只显示提示，不碰草稿
-      const now = Date.now()
-      if (now - lastAskAtRef.current < ASK_MIN_INTERVAL_MS) return
-      lastAskAtRef.current = now
-      const { label, prompt } = outcome.ask
-      void submitter(formatVisualizationEventMessage(label, 'explore', { prompt }), 'event').then(result => {
-        if (result.status === 'blocked') showNotice(result.notice)
-      })
+      if (outcome.ask) ask(outcome.ask)
+    },
+    onAsk: (request: InlineUiAsk) => {
+      if (interactive) ask(request)
     }
   }
 

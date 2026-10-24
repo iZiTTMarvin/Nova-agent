@@ -58,11 +58,16 @@
   min-width: 0;
 }
 
+/* 含表格、代码块或长段落的卡片在 768px 聊天列里至少占满一行，防止 Row([Card(表格), Card(长文)]) 被硬挤成双栏 */
+.inline-ui__row > .inline-ui__card:has(.inline-ui__table-wrap, .inline-ui__code, .inline-ui__callout),
+.inline-ui__row > .inline-ui__table-wrap {
+  flex: 1 1 100%;
+}
+
 .inline-ui__row > .inline-ui__badge,
 .inline-ui__row > .inline-ui__control:has(> button) {
   flex: 0 0 auto;
 }
-
 .inline-ui__grid {
   display: grid;
   grid-template-columns: repeat(var(--iu-cols, 2), minmax(0, 1fr));
@@ -231,22 +236,41 @@
 .inline-ui__progress-fill { background: var(--iu-tone); }
 
 /* ---------- 表格 ---------- */
-.inline-ui__table-wrap { overflow-x: auto; }
+.inline-ui__table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
 
 .inline-ui__table {
+  width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .inline-ui__table th,
 .inline-ui__table td {
   text-align: left;
-  padding: 5px 12px 5px 0;
+  padding: 6px 12px 6px 0;
   border-bottom: 1px solid var(--border-strong);
+  vertical-align: top;
+}
+
+.inline-ui__table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.inline-ui__table th:first-child,
+.inline-ui__table td:first-child {
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.inline-ui__table th { color: var(--text-secondary); font-weight: 600; }
+.inline-ui__table th:last-child,
+.inline-ui__table td:last-child {
+  padding-right: 0;
+}
 
 .inline-ui__table-row--highlight td {
   background: color-mix(in srgb, var(--iu-accent) 10%, transparent);
@@ -489,6 +513,234 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 
 .inline-ui__step-detail { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
 
+/* ---------- 分阶段讲解 ---------- */
+.inline-ui__walk {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  min-width: 0;
+}
+
+/* 阶段条按阶段数等分整行，任何宽度都不横向滚动 */
+.inline-ui__walk-phases {
+  display: grid;
+  grid-template-columns: repeat(var(--iu-phases, 1), minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inline-ui__walk-phase > button {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  padding: 0 0 2px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inline-ui__walk-phase > button:disabled { cursor: default; }
+.inline-ui__walk-phase > button:not(:disabled):hover { color: var(--text-primary); }
+
+.inline-ui__walk-phase-bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  transition: background-color 220ms ease;
+}
+
+.inline-ui__walk-phase-label { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; }
+.inline-ui__walk-phase-index { flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px; }
+.inline-ui__walk-phase-title { min-width: 0; line-height: 1.35; overflow-wrap: anywhere; }
+
+.inline-ui__walk-phase[data-state='done'] .inline-ui__walk-phase-bar { background: color-mix(in srgb, var(--iu-accent) 45%, transparent); }
+.inline-ui__walk-phase[data-state='done'] > button { color: var(--text-secondary); }
+.inline-ui__walk-phase[data-state='active'] .inline-ui__walk-phase-bar { background: var(--iu-accent); }
+.inline-ui__walk-phase[data-state='active'] > button { color: var(--text-primary); font-weight: 600; }
+
+.inline-ui__walk-head { display: flex; flex-direction: column; gap: 3px; animation: inline-ui-fade 200ms ease both; }
+.inline-ui__walk-kicker { font-size: 11px; color: var(--text-muted); }
+.inline-ui__walk-phase-name { font-size: 15px; font-weight: 600; }
+.inline-ui__walk-summary { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+
+.inline-ui__walk-io {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.inline-ui__walk-io-label { color: var(--text-muted); }
+
+.inline-ui__walk-io code {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+/* 宽时步骤列表与详情并排，窄时详情排到列表下方 */
+.inline-ui__walk-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+@container (min-width: 560px) {
+  .inline-ui__walk-body { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
+}
+
+.inline-ui__walk-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inline-ui__walk-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.inline-ui__walk-step:disabled { cursor: default; }
+.inline-ui__walk-step:not(:disabled):hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.inline-ui__walk-step.is-current {
+  border-color: var(--iu-accent);
+  background: color-mix(in srgb, var(--iu-accent) 8%, transparent);
+  color: var(--text-primary);
+}
+
+.inline-ui__walk-step-index {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.inline-ui__walk-step.is-done .inline-ui__walk-step-index { background: color-mix(in srgb, var(--iu-accent) 20%, transparent); color: var(--iu-accent); }
+.inline-ui__walk-step.is-current .inline-ui__walk-step-index { background: var(--iu-accent); color: var(--bg-card); }
+
+.inline-ui__walk-step-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.inline-ui__walk-step-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
+.inline-ui__walk-step-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
+
+.inline-ui__walk-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  background: var(--surface-muted);
+  animation: inline-ui-fade 200ms ease both;
+}
+
+.inline-ui__walk-detail-title { font-size: 14px; font-weight: 600; }
+.inline-ui__walk-detail-meta { margin-top: -6px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.inline-ui__walk-detail-text { margin: 0; font-size: 13px; line-height: 1.65; }
+.inline-ui__walk-data { padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-card); }
+
+.inline-ui__walk-source {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  overflow: hidden;
+}
+
+.inline-ui__walk-source-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.inline-ui__walk-source-head:hover { color: var(--text-primary); }
+.inline-ui__walk-source.is-open .inline-ui__chevron { transform: rotate(45deg); }
+
+.inline-ui__walk-source pre {
+  margin: 0;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border-subtle);
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.inline-ui__walk-ask { align-self: flex-start; }
+
+.inline-ui__walk-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.inline-ui__walk-position { font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.inline-ui__walk-transport { display: flex; gap: 6px; }
+
+.inline-ui__walk-phase > button:focus-visible,
+.inline-ui__walk-step:focus-visible,
+.inline-ui__walk-source-head:focus-visible {
+  outline: 2px solid var(--border-focus, var(--iu-accent));
+  outline-offset: 2px;
+}
+
+/* 窄卡片里只给当前阶段留名字，其余阶段只剩编号 */
+@container (max-width: 460px) {
+  .inline-ui__walk { padding: 10px; }
+  .inline-ui__walk-phase:not([data-state='active']) .inline-ui__walk-phase-title { display: none; }
+}
+
 /* ---------- 折叠、标签页、闪卡 ---------- */
 .inline-ui__collapsible {
   border: 1px solid var(--border-subtle);
@@ -675,6 +927,12 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 }
 
 .inline-ui--animate .inline-ui__flow--col .inline-ui__flow-arrow { animation-name: inline-ui-grow-y; }
+
+.inline-ui--animate .inline-ui__walk-phase,
+.inline-ui--animate .inline-ui__walk-steps > li {
+  animation: inline-ui-enter 280ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-delay: calc(var(--iu-i, 0) * 40ms);
+}
 
 @keyframes inline-ui-enter {
   from { opacity: 0; transform: translateY(6px); }

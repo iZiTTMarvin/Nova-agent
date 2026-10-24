@@ -130,6 +130,57 @@ describe('InlineUiBlock', () => {
     expect(sent[0]).toContain('现在卡在哪？')
   })
 
+  it('Walkthrough 流式中阶段与步骤按书写顺序长出，详情跟随最新写完的一步', () => {
+    const head = [
+      'root = Walkthrough([prep, loop], $step)',
+      '$step = 0',
+      'prep = {title: "装配", summary: "拼消息", io: "query → messages", steps: [s1, s2]}',
+      's1 = {title: "初始化", detail: "放入系统指令"}'
+    ].join('\n')
+    view = renderDom(wrap('s6:m1:0', `${head}\ns2 = {title: "附工具", det`, false))
+    // 半截语句被跳过：只有一个阶段、详情是已写完的第 1 步
+    expect(view.container.querySelectorAll('.inline-ui__walk-phase')).toHaveLength(1)
+    expect(view.container.querySelector('.inline-ui__walk-detail-title')?.textContent).toBe('初始化')
+
+    const more = `${head}\ns2 = {title: "附工具", detail: "带上工具清单"}\nloop = {title: "往返", steps: [s3]}\ns3 = {title: "请求模型"}`
+    view.render(wrap('s6:m1:0', more, false))
+    expect(view.container.querySelectorAll('.inline-ui__walk-phase')).toHaveLength(2)
+    expect(view.container.querySelector('.inline-ui__walk-detail-title')?.textContent).toBe('请求模型')
+    expect(view.container.querySelector('.inline-ui__walk-position')?.textContent).toBe('第 3 / 3 步')
+  })
+
+  it('Walkthrough 完成后从 $step 开始，翻页跨阶段并回传当前步骤；「深入讲讲」发出该步追问', async () => {
+    const code = [
+      'root = Walkthrough([prep, loop], $step)',
+      '$step = 0',
+      'prep = {title: "装配", steps: [s1, s2]}',
+      's1 = {title: "初始化", detail: "放入系统指令"}',
+      's2 = {title: "附工具"}',
+      'loop = {title: "往返", steps: [s3]}',
+      's3 = {title: "请求模型", ask: "返回 tool_calls 时怎么继续？"}'
+    ].join('\n')
+    const sent: string[] = []
+    view = renderDom(wrap('s7:m1:0', code, true, async text => { sent.push(text); return { status: 'sent' as const } }))
+    const detailTitle = (): string | null | undefined => view!.container.querySelector('.inline-ui__walk-detail-title')?.textContent
+    expect(detailTitle()).toBe('初始化')
+    clickButton(view.container, '下一步')
+    expect(detailTitle()).toBe('附工具')
+    // 下一步落在下一阶段时按钮改称「下一阶段」
+    clickButton(view.container, '下一阶段')
+    expect(detailTitle()).toBe('请求模型')
+    expect(view.container.querySelector('.inline-ui__walk-kicker')?.textContent).toBe('阶段 2 / 2')
+    expect(view.container.querySelector('.inline-ui__walk-phase[data-state="done"]')).not.toBeNull()
+    expect(claimInterfaceState('s7')?.report).toEqual({
+      widgets: [{ title: '交互组件', values: [{ label: '当前步骤', value: '第 3 步 · 请求模型' }] }]
+    })
+
+    const ask = Array.from(view.container.querySelectorAll('button')).find(b => b.textContent?.includes('深入讲讲这一步'))
+    await act(async () => { ask!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
+    expect(sent).toHaveLength(1)
+    expect(sent[0]).toContain('【可视化】请求模型 · explore')
+    expect(sent[0]).toContain('返回 tool_calls 时怎么继续？')
+  })
+
   it('没有作用域时经 MarkdownRenderer 渲染为普通代码块', () => {
     view = renderDom(<MarkdownRenderer content={'```openui\nroot = Text("hi")\n```'} />)
     expect(view.container.querySelector('.md-code-block')).not.toBeNull()

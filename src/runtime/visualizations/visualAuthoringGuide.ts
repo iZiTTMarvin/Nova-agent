@@ -3,53 +3,46 @@
  *
  * 可视化只在学习会话里提供，写法整段放进稳定的系统提示，每轮讲解都能直接用。
  * 示例必须能被 Renderer 的 openui 解析器完整渲染，由测试防止说明与实现漂移。
+ *
+ * 流程、链路与生命周期一律走 openui：它写在回答正文里，逐字流式；
+ * 工具参数是否流式取决于服务商，部分服务商要等整段 HTML 写完才一次性回传。
  */
 
 const HTML_GUIDE = `## Full visual (present_visualization)
 One self-contained HTML document rendered in a sandboxed card inside the chat. Make it read like a clean textbook figure, not a dashboard.
 
-Size and layout
-- The card is 560–700px wide in the chat column and shrinks to about 380px in a small window; the expanded view is wider. Design for 380–700px first: everything must read at 380px without horizontal scrolling.
-- No fixed widths, min-widths or offsets above 200px (no "grid-template-columns: 150px 1fr", no "padding-left: 160px" to line things up). Use flex-wrap, minmax(0, 1fr) and repeat(auto-fit, minmax(min(100%, 200px), 1fr)). Inline SVG uses viewBox="0 0 680 H" with width="100%" so it scales.
-- Height follows the content (inline up to 1200px, then the card scrolls); never use 100vh or height:100%. Aim to stay under about 700px.
-- The card header already shows the title: start with the figure, not a repeated heading or a row of badges; one short line of context at most.
+Size, spatial allocation and density
+- The inline card sits inside a 768px chat column (560–736px wide, down to ~380px in a small window); only the expanded dialog reaches 860–1150px. Design for a single full-width column first: never force a two-column split (no "grid-template-columns: 2fr 1fr", "65% 35%" or "460px 1fr") inside the inline card.
+- Never put a multi-column table and a long analysis card side-by-side in a Row or custom two-column grid. Use .viz-split: its .viz-canvas takes 100% width inline while .viz-inspector stacks cleanly below as a compact detail bar, and only moves beside the stage when expanded (>=860px).
+- No fixed widths, min-widths or offsets above 180px. Inline SVG uses viewBox="0 0 680 H" with width="100%" so it scales.
+- Height follows the content (inline up to 1200px, then the card scrolls); never use 100vh or height:100%. Aim to stay under about 640px.
+- The card header already shows the title: start with the figure or top tabs, not a repeated heading; one short line of context at most.
 
-Restraint
-- One idea per visual: at most one control row (phase tabs or Prev/Next), one stage and one detail area. No search box for fewer than 20 items, no legend explaining arrows, no decorative stats.
-- At most about 7 nodes visible at once. Node labels stay short (a title of up to ~12 characters plus one meta line); explanations, payloads and file paths go in the detail area, not on the stage.
-- Flat: 1px var(--viz-border) borders, no shadows or gradients, at most two levels of nested boxes. var(--viz-accent) marks only the active or selected item; use 2–3 series colors at most, each with a meaning.
+Restraint and visual hierarchy
+- One idea per visual: at most one control/tab row, one full-width main stage (.viz-canvas) and one compact detail bar (.viz-inspector). No search box for fewer than 20 items, no legend explaining arrows.
+- Avoid nested boxes: .viz-canvas has no outer border; place either a .viz-grid of cards, a .viz-lanes stack, an SVG or a .viz-table directly inside it—never wrap a table or grid inside another bordered grey card.
+- Progressive disclosure: keep grid cards and table cells concise (1 short phrase of ~12–20 chars per card/cell); put multi-sentence trade-offs, regex/config rules and file:line lists in the single .viz-inspector below, updated on click.
+- Flat: 1px var(--viz-border) borders, no shadows or gradients. var(--viz-accent) marks only the active or selected item; use data-tone="success" | "warning" | "danger" on .viz-badge for status pills.
 
-Archetypes
-1. Flow / request lifecycle / state machine. Up to 7 steps: one .viz-flow (vertical steps with connectors, reads at any width) or a left-to-right SVG. More steps: group them into 3–5 phases with titles of up to 6 characters; .viz-phases tabs share the width evenly and choose a phase, the stage shows only that phase's steps, and Prev/Next walks every step across phases. Never put 9+ steps on screen at once, and never build a text-only slide deck.
-2. Architecture / module map / tech stack: a layered SVG (at most 5 nodes per row) or .viz-lanes (one lane per layer, at most 5 lanes); clicking a module highlights its edges and fills the detail area.
-3. Trade-off / comparison: .viz-table (at most 4 columns; give every <td> data-label="its column header" so a narrow card shows each row as a labelled card) or .viz-grid cards, scenario buttons and a one-line verdict.
-4. Metrics / capacity / performance: an SVG chart or simulator with .viz-controls and .viz-stat.
-The detail area is a .viz-inspector placed after the stage inside .viz-split: it sits beside the stage when the card is wide and right below it when narrow. Keep it short: a one-sentence role, input → output (.viz-kv), 1–2 .viz-file-ref, optionally a few lines of .viz-code.
-
-Skeleton for a long flow (step data lives in the script; render the first phase statically so the page reads before any script runs):
-<div class="viz-workbench">
-  <div class="viz-phases"><button class="viz-phase is-active" type="button"><span class="viz-phase-kicker">1</span><span class="viz-phase-title">输入与提交</span></button> … one button per phase</div>
-  <div class="viz-split">
-    <div class="viz-canvas"><div class="viz-flow">
-      <button class="viz-flow-step is-active" type="button"><span class="viz-node-step">1</span><span><span class="viz-flow-title">输入框绑定</span><span class="viz-flow-meta">前端 · chatInput</span></span></button> … only this phase's steps
-    </div></div>
-    <aside class="viz-inspector"><div class="viz-title">输入框绑定</div><p class="viz-note">一句话说清它负责什么</p><dl class="viz-kv"><dt>输入</dt><dd>按键</dd><dt>输出</dt><dd>chatInput</dd></dl><span class="viz-file-ref">frontend/index.html:211</span></aside>
-  </div>
-  <div class="viz-toolbar"><span class="viz-note">1 / 16</span><span class="viz-row"><button class="viz-btn" type="button">上一步</button><button class="viz-btn viz-btn-primary" type="button">下一步</button></span></div>
-</div>
-
+Archetypes (flows, request chains and lifecycles are never drawn here: use the inline Walkthrough or Flow widget, which streams into the reply while you write)
+1. Tech stack / dependency audit: optional top .viz-kpis summary row (2–3 .viz-card items with .viz-stat), then a 2-column .viz-grid of compact dependency cards (each .viz-card has .viz-card-head with package name + .viz-badge[data-tone="success"|"warning"], a one-line role and version in .viz-muted), plus a full-width .viz-inspector below showing the selected item's detailed reason, file:line and follow-up button.
+2. Architecture / module map: a layered SVG (at most 5 nodes per row) or .viz-lanes (one lane per layer, at most 5 lanes) taking full width; clicking a module highlights its edges and updates the .viz-inspector below.
+3. Trade-off / comparison: a full-width .viz-table (at most 4 columns; keep the first and last columns short, give every <td> data-label="its column header" for narrow cards) or .viz-grid cards, scenario buttons and a one-line verdict in .viz-inspector.
+4. Metrics / capacity / performance: an SVG chart or simulator with .viz-controls and .viz-kpis.
+The detail area is a .viz-inspector placed after .viz-canvas inside .viz-split: keep it concise (title, 1–2 sentences of explanation, optional .viz-kv or 1–2 .viz-file-ref, and an optional follow-up button).
 Interaction contract
-- Local interactions (select a node, switch phase, filter, toggle a view, Prev/Next) update the DOM/SVG and the detail area immediately and never call nova.emit. Mark the selection with the is-active class or data-active="true".
-- nova.emit(name, data) is only for an explicit follow-up button (e.g. "深入讲讲这一步" at the bottom of the detail area) that should send a new chat turn; pass { label, prompt }.
+- Local interactions (select a node, switch a view, filter) update the DOM/SVG and the detail area immediately and never call nova.emit. Mark the selection with the is-active class or data-active="true".
+- nova.emit(name, data) is only for an explicit follow-up button (e.g. "深入讲讲" at the bottom of the detail area) that should send a new chat turn; pass { label, prompt }.
 
 Sandbox and theme
 - Inline everything (<style>, <script>, SVG, data: URLs). CDN scripts, web fonts, remote images and network requests all fail.
 - Colors come only from theme variables: --viz-bg, --viz-surface, --viz-fg, --viz-muted, --viz-border, --viz-accent, --viz-on-accent, --viz-success, --viz-warning, --viz-danger, --viz-series-1 … --viz-series-6, plus --viz-font-sans, --viz-font-mono, --viz-radius. A hardcoded color on :root, html or body is rejected. To follow light/dark in scripts, read nova.theme.tokens and redraw in nova.on('theme', fn).
-- Built-in zero-specificity classes match both themes and already adapt to narrow cards: .viz-workbench .viz-toolbar .viz-split .viz-canvas .viz-inspector .viz-phases .viz-phase .viz-phase-kicker .viz-phase-title .viz-flow .viz-flow-step .viz-flow-title .viz-flow-meta .viz-lanes .viz-lane .viz-lane-label .viz-lane-nodes .viz-node .viz-node-step .viz-arrow .viz-card .viz-title .viz-muted .viz-note .viz-grid .viz-row .viz-stat .viz-stat-label .viz-stat-value .viz-badge .viz-file-ref .viz-kv .viz-code .viz-search .viz-meter .viz-btn .viz-btn-primary .viz-controls .viz-table .viz-s1..s6. Prefer them over hand-written layout CSS; in grids of collapsible cards use .viz-grid or align-items:start.
+- Built-in zero-specificity classes match both themes and already adapt to narrow cards: .viz-workbench .viz-toolbar .viz-split .viz-canvas .viz-inspector .viz-phases .viz-phase .viz-phase-kicker .viz-phase-title .viz-flow .viz-flow-step .viz-flow-title .viz-flow-meta .viz-lanes .viz-lane .viz-lane-label .viz-lane-nodes .viz-node .viz-node-step .viz-arrow .viz-card .viz-card-head .viz-title .viz-muted .viz-note .viz-grid .viz-kpis .viz-row .viz-stat .viz-stat-label .viz-stat-value .viz-badge .viz-file-ref .viz-kv .viz-code .viz-search .viz-meter .viz-btn .viz-btn-primary .viz-controls .viz-table .viz-s1..s6. Prefer them over hand-written layout CSS; in grids of collapsible cards use .viz-grid or align-items:start.
+- Never redeclare a built-in class in your <style>: their layout rules work together, and a partial override such as ".viz-split { display:flex }" or ".viz-split { grid-template-columns: 2fr 1fr }" is rejected by the validator. Give custom parts your own class names.
 - CSS and Web Animations slow down automatically in slow-motion mode; scale requestAnimationFrame speed by 1 / nova.motionScale.
 
-Streaming order (the user watches the page build while you write)
-- <style> in <head> first, then the complete visible <body> skeleton with real labels and data, and every <script> at the very end. The page must already read correctly before any script runs; scripts only add interaction.
+Order
+- <style> in <head> first, then the complete visible <body> with real labels and data, and every <script> at the very end. The page must already read correctly before any script runs; scripts only add interaction.
 - Each call publishes its own card, so finish the page before calling. Once it is shown, don't restate its contents in text.`
 
 const OPENUI_REFERENCE = `## Inline widget (\`\`\`openui block inside your reply)
@@ -59,20 +52,26 @@ Syntax
 - One statement per line (a statement continues while brackets are open). Lines starting with // are comments.
 - \`name = expr\` defines a value or component; names may be used before they are defined. \`root\` is rendered.
 - \`$name = literal\` declares an interactive variable (number, string or boolean; the type is fixed). Controls bind to it; everything that reads it updates live.
-- Expressions: numbers, "strings", true/false/null, [arrays], {key: value}, names, $vars, a.b, a[i], list.length, + - * / %, == != < <= > >=, && || !, cond ? a : b. + with a string concatenates. Mistakes never crash; they show as "—".
+- Expressions: numbers, "strings" (\\n for a line break), true/false/null, [arrays], {key: value}, names, $vars, a.b, a[i], list.length, + - * / %, == != < <= > >=, && || !, cond ? a : b. + with a string concatenates. Mistakes never crash; they show as "—".
 
 Components (positional arguments; ? = optional; tone = "neutral" | "info" | "success" | "warning" | "danger")
 - Layout: Col(children), Row(children), Grid(children, columns?), Card(children, title?), Tabs([{label, content}], $tab?), Collapsible(title, children, open?)
 - Content: Text(text, "title" | "body" | "strong" | "muted"), Callout(text, tone?, title?), Badge(text, tone?), List(items, ordered?), KV([{label, value}] or {key: value}), Code(code, lang?), Divider()
 - Data: Stat(label, value, tone?, hint?), Progress(label, value, max?, tone?), Table(headers, rows, highlightRow?), Bars([{label, value}], unit?), Chart("bar" | "line" | "area", [{label, value}] or {labels, series: [{name, values}]}, unit?), Chart("pie" | "donut", [{label, value}], unit?)
-- Teaching: Flow([{title, detail}], $step?, "row" | "col"), Steps([{title, detail}], $step?), Flashcard(front, back). With a numeric $step, Flow becomes a clickable walkthrough with a detail panel and prev/next buttons.
+- Teaching: Flow([{title, detail}], $step?, "row" | "col"), Steps([{title, detail}], $step?), Walkthrough(phases, $step?), Flashcard(front, back). With a numeric $step, Flow becomes a clickable walkthrough with a detail panel and prev/next buttons.
 - Input: Slider($n, label, min, max, step?, unit?), Choice($s, options, label?), Select($s, options, label?), Switch($b, label), Input($s, label, placeholder?), Button(label, action or [actions], "primary" | "secondary")
+
+Walkthrough draws a phase progress bar, the current phase's summary and data flow, its step list beside a detail panel, and Prev/Next across phases.
+- phases: [{title, summary?, io?, steps}], 3–5 phases with titles of up to 6 characters, at most 6 steps each. summary is one line on what the phase achieves; io is the data entering → leaving it, written "a → b".
+- steps: [{title, meta?, detail?, data?, code?, file?, ask?}]. title up to ~12 characters; meta = "layer · file:line"; detail = one or two sentences on what happens and why; data = what the data looks like after this step ({key: value}); code = the key source lines and file = their path:line; ask = a follow-up question, shown as a "深入讲讲这一步" button.
+- Give every phase and every step its own statement in execution order (as in the example), so each step appears the moment you finish writing it.
 
 Functions: @Round / @Floor / @Ceil(x, digits?), @Abs(x), @Sqrt(x), @Pow(x, y), @Min / @Max(list or numbers), @Clamp(x, lo, hi), @Sum / @Avg(list, itemExpr?), @Len(x), @Range(start, end, step?) (inclusive), @Each(list, itemExpr), @Filter(list, cond), @Join(list, sep?), @Format(x, digits?, unit?), @Percent(ratio, digits?). Inside @Each / @Filter / @Sum / @Avg the current element is \`item\` and its position \`index\`.
 Actions (Button only, run in order on click): @Set($v, expr), @Reset(), @AskNova(label, prompt) — sends prompt as the user's next question.
 
-Rules
-- Put widgets only in your final answer, after all tool calls. Keep each block under about 80 lines; at most 150 nodes; lists beyond 50 items are cut. No colors, HTML, links or images.
+Rules and layout discipline
+- Put widgets only in your final answer, after all tool calls. Keep each block under about 80 lines (a Walkthrough may run longer); at most 150 nodes; lists beyond 50 items are cut. No colors, HTML, links or images.
+- Respect the 768px chat column: Row(...) is only for 2–3 compact controls or Stat items. Never place a Table or Code block inside Row([Card(Table...), Card(...)])—stack Table, Callout and detail cards vertically in Col(...) or switch views with Tabs(...). Keep Table to at most 4 columns with concise cell text.
 - Use real names, files and numbers from the conversation; never placeholder labels like "Step 1" or "Module A".
 - When the user changed a widget before sending a message, the message carries a short "[界面状态]" note with the changed values; act on it without repeating it.`
 
@@ -102,9 +101,9 @@ const OPENUI_EXAMPLES: readonly OpenUiExample[] = [
     ].join('\n')
   },
   {
-    title: 'Step-by-step walkthrough',
+    title: 'Short flow (up to 6 steps)',
     code: [
-      'root = Col([Text("一条消息从输入框到屏幕", "title"), Flow(steps, $step), Progress("进度", ($step + 1) / @Len(steps) * 100)])',
+      'root = Col([Text("一条消息从输入框到屏幕", "title"), Flow(steps, $step)])',
       '$step = 0',
       'steps = [',
       '  {title: "输入框", detail: "按下 Enter 后，界面把文字和图片交给发送逻辑，并先在列表里显示这条消息"},',
@@ -112,6 +111,21 @@ const OPENUI_EXAMPLES: readonly OpenUiExample[] = [
       '  {title: "Agent 循环", detail: "主进程拼好上下文调用模型；模型要用工具就执行工具，再把结果交回模型"},',
       '  {title: "流式回传", detail: "模型每吐出一段文字就推回界面，所以回答是一点点出现的"}',
       ']'
+    ].join('\n')
+  },
+  {
+    title: 'Phased walkthrough (lifecycle, request chain, more than 6 steps)',
+    code: [
+      'root = Walkthrough([prepare, loop, finish], $step)',
+      '$step = 0',
+      'prepare = {title: "上下文装配", summary: "把用户问题和系统指令拼成模型能读的消息", io: "query: string → messages: ChatMessage[]", steps: [initMessages, attachTools]}',
+      'initMessages = {title: "初始化 messages", meta: "Agent · agent.ts:54", detail: "系统指令放第一条，用户问题放第二条；之后每一轮都往这个数组里追加", data: {messages: "Array(2)", "[0]": "system · 系统指令", "[1]": "user · query"}, code: "const messages = [\\n  { role: \'system\', content: systemPrompt },\\n  { role: \'user\', content: query }\\n]", file: "src/agent.ts:54", ask: "messages 数组之后还会被谁改写？"}',
+      'attachTools = {title: "附上工具清单", meta: "ToolRegistry · registry.ts:31", detail: "把已注册工具的名字、说明和参数格式一起发给模型，模型才知道能调用什么", data: {tools: "Array(4) · read / write / bash / grep"}}',
+      'loop = {title: "模型往返", summary: "模型决定直接回答还是先调用工具", io: "messages → assistant 回复或 tool_calls", steps: [callModel, runTool]}',
+      'callModel = {title: "请求模型", meta: "LLMClient · llm.ts:88", detail: "把整个 messages 数组和工具清单发给模型，流式读取它的回复", ask: "模型返回 tool_calls 时，这一轮怎么继续？"}',
+      'runTool = {title: "执行工具", meta: "Agent · agent.ts:102", detail: "按模型给的参数执行工具，把结果作为 tool 消息追加回 messages，再请求一次模型", data: {messages: "Array(4) · 新增 assistant 与 tool"}}',
+      'finish = {title: "输出回答", summary: "没有新的工具调用时结束循环", io: "assistant 回复 → 终端输出", steps: [printAnswer]}',
+      'printAnswer = {title: "打印最终回答", meta: "CLI · index.ts:40", detail: "最后一条 assistant 消息的文字就是答案，原样打印给用户"}'
     ].join('\n')
   },
   {
@@ -138,9 +152,8 @@ export function renderLearnVisualGuide(): string {
 }
 
 const HARD_RULES =
-  'Hard rules: inline everything (no network); colors only via var(--viz-*) theme variables, never on :root/html/body; layouts must read in a 380–700px wide card (no fixed widths); write <style> first, the visible <body> next and every <script> last. Each call publishes its own card, so finish the page before calling; once it is shown, do not restate its contents in text.'
-
-export const PRESENT_VISUALIZATION_DESCRIPTION = `Show the user an interactive visual — phased flow walkthrough, architecture map, comparison, simulator or chart — rendered inline in the chat from one self-contained HTML document.
+  'Hard rules: not for flows, request chains or lifecycles (use the inline Walkthrough or Flow widget); inline everything (no network); colors only via var(--viz-*) theme variables, never on :root/html/body; design for a single full-width column in the 380–736px inline card (never force a two-column split like 2fr 1fr or put a table beside a long text card; use .viz-split so .viz-inspector stacks below inline); never redeclare built-in .viz-* classes; write <style> first, the visible <body> next and every <script> last. Each call publishes its own card, so finish the page before calling; once it is shown, do not restate its contents in text.'
+export const PRESENT_VISUALIZATION_DESCRIPTION = `Show the user an interactive visual — architecture map, comparison, simulator or chart — rendered inline in the chat from one self-contained HTML document.
 
 When to use it, the archetypes, layout, sandbox and theme rules and the built-in classes are in your instructions under 可视化讲解 and 可视化写法.
 ${HARD_RULES}`

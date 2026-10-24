@@ -36,6 +36,12 @@ const COLOR_LITERAL_PATTERN =
 const PALETTE_HINT =
   '颜色写死不会跟随深浅色主题，请删掉这里的颜色，改用 var(--viz-bg)、var(--viz-surface)、var(--viz-fg)、var(--viz-muted)、var(--viz-border)、var(--viz-accent)、var(--viz-series-1..6)'
 
+const BUILTIN_LAYOUT_CLASS_PATTERN =
+  /\.(viz-(?:workbench|toolbar|split|canvas|inspector|phases|phase|flow|flow-step|lanes|lane|lane-label|lane-nodes|node|card|card-head|grid|kpis|row|stat|table))\b/i
+const GRID_TEMPLATE_COLUMNS_PATTERN = /(?:^|;)\s*grid-template-columns\s*:\s*([^;]+)/i
+const FLEX_BASIS_COLUMN_PATTERN =
+  /(?:^|;)\s*(?:flex\s*:\s*0\s+(?:0|1)\s+(?:(?:[2-9]\d\d|\d{4,})px|(?:[3-8]\d)(?:\.\d+)?%)|(?:width|min-width)\s*:\s*(?:(?:[3-9]\d\d|\d{4,})px|(?:3[5-9]|[4-8]\d)(?:\.\d+)?%))/i
+const AUTO_RESPONSIVE_GRID_PATTERN = /\bauto-(?:fit|fill)\b/i
 export async function validateVisualizationHtml(html: string): Promise<string[]> {
   if (!html.trim()) return ['html 为空']
   const bytes = Buffer.byteLength(html, 'utf8')
@@ -62,7 +68,7 @@ export async function validateVisualizationHtml(html: string): Promise<string[]>
 
 const MAX_FLAT_STEP_BUTTONS = 8
 const SCRIPT_STEP_ITEM_PATTERN = /\{\s*(?:['"]?(?:id|step|index|num|phase|stage|title|label|name)['"]?\s*:)/g
-const STRUCTURED_STAGE_PATTERN = /<svg\b|<canvas\b|<table\b|viz-phases\b|viz-flow\b|viz-lanes\b|viz-lane\b/i
+const STRUCTURED_STAGE_PATTERN = /<svg\b|<canvas\b|<table\b|viz-phases\b|viz-flow\b|viz-lanes\b|viz-lane\b|viz-grid\b/i
 
 /**
  * 结构与布局反模式闸门：拦截把长链路平铺成单排微型按钮条或无图形画布的纯文字翻页器。
@@ -137,6 +143,7 @@ function inspectElement(element: Element, report: (message: string) => boolean):
     if (!value) continue
     if (name === 'style') {
       if (inspectCss(value, report)) return true
+      if (inspectInlineGridColumns(tag, value, report)) return true
       if (inspectRootInlineStyle(tag, value, report)) return true
       continue
     }
@@ -163,7 +170,8 @@ function inspectCss(css: string, report: (message: string) => boolean): boolean 
       return true
     }
   }
-  return inspectRootPalette(css, report)
+  if (inspectRootPalette(css, report)) return true
+  return inspectLayoutCss(css, report)
 }
 
 /**
@@ -199,6 +207,87 @@ function inspectRootInlineStyle(tag: string, value: string, report: (message: st
   const literal = findColorLiteral(stripCssNoise(value))
   if (!literal) return false
   return report(`自带调色板（<${tag} style="${snippet(value)}">）：${PALETTE_HINT}`)
+}
+
+/**
+ * 布局约束闸门：内联卡片在聊天列里只有 380–766px 宽。
+ * 1. 覆写内置布局类（如 .viz-split { grid-template-columns: 1.8fr 1fr }）会破坏窄卡单列堆叠与宽屏分栏的响应式契约；
+ * 2. 在自定义类上写死非对称双栏（如 grid-template-columns: 2fr 1fr / 65% 35% / 460px 1fr）会把窄卡硬劈成左右两栏，
+ *    造成左侧多列表格中文频繁折行、右侧长文堆叠、局部密度严重失衡。
+ */
+function inspectLayoutCss(css: string, report: (message: string) => boolean): boolean {
+  const source = stripCssNoise(css)
+  for (const match of source.matchAll(CSS_RULE_PATTERN)) {
+    const prefix = match[1]
+    const selector = prefix.slice(Math.max(prefix.lastIndexOf(';'), prefix.lastIndexOf('{')) + 1).trim()
+    const declarations = match[2]
+    const builtinMatch = BUILTIN_LAYOUT_CLASS_PATTERN.exec(selector)
+    if (
+      builtinMatch &&
+      builtinMatch[1] !== 'viz-grid' &&
+      /(?:^|;)\s*(?:display|grid-template-columns|width|min-width|max-width|flex)\s*:/i.test(declarations)
+    ) {
+      return report(
+        `覆写内置布局类（${snippet(selector)}）：内置 .${builtinMatch[1]} 已自动适配窄卡单列堆叠与展开态宽屏分栏，请删掉对 .viz-split 等内置类的重声明`
+      )
+    }
+    if (isRigidTwoColumnSplit(declarations)) {
+      return report(
+        `固定比例或定宽分栏布局（${snippet(selector)} { ${snippet(declarations)} }）：聊天列内联卡片宽度不足以并排容纳表格与长文，会导致列宽挤压、中文频繁折行与左右密度失衡。请改用内置 .viz-split（内联自动上下堆叠、展开态自动左右并排）或 .viz-grid 自适应卡片网格`
+      )
+    }
+  }
+  return false
+}
+
+function inspectInlineGridColumns(tag: string, value: string, report: (message: string) => boolean): boolean {
+  const source = stripCssNoise(value)
+  if (!isRigidTwoColumnSplit(source)) return false
+  return report(
+    `行内固定双栏布局（<${tag} style="${snippet(value)}">）：请改用内置 .viz-split（内联自动上下堆叠、展开态自动并排）或 .viz-grid`
+  )
+}
+
+/** 识别把容器硬劈成非对称左右两栏或固定像素宽分栏的 grid-template-columns */
+function isRigidTwoColumnSplit(declarations: string): boolean {
+  if (FLEX_BASIS_COLUMN_PATTERN.test(declarations)) return true
+  const match = GRID_TEMPLATE_COLUMNS_PATTERN.exec(declarations)
+  if (!match) return false
+  const value = match[1].trim()
+  if (AUTO_RESPONSIVE_GRID_PATTERN.test(value) || /\brepeat\s*\(/i.test(value)) return false
+  // 提取顶层轨道（忽略括号内的逗号与空格）
+  const tracks: string[] = []
+  let current = ''
+  let depth = 0
+  for (const ch of value) {
+    if (ch === '(') depth++
+    else if (ch === ')' && depth > 0) depth--
+    if (depth === 0 && /\s/.test(ch)) {
+      if (current) {
+        tracks.push(current)
+        current = ''
+      }
+    } else {
+      current += ch
+    }
+  }
+  if (current) tracks.push(current)
+  if (tracks.length < 2) return false
+  // 任何轨道带 >=180px 的固定像素或百分比分栏（如 460px 1fr、65% 35%、1fr 280px），或非等宽 fr 双栏（如 2fr 1fr、1.8fr 1fr）
+  const hasWideFixedTrack = tracks.some(track => {
+    const pxMatches = [...track.matchAll(/(\d+(?:\.\d+)?)px/gi)].map(m => Number(m[1]))
+    if (pxMatches.some(px => px >= 180)) return true
+    return /\b\d+(?:\.\d+)?%/.test(track)
+  })
+  if (hasWideFixedTrack) return true
+  const frValues = tracks.map(track => {
+    const m = /^(\d+(?:\.\d+)?)fr$/i.exec(track.trim())
+    return m ? Number(m[1]) : null
+  })
+  if (frValues.length === 2 && frValues[0] !== null && frValues[1] !== null && frValues[0] !== frValues[1]) {
+    return true
+  }
+  return false
 }
 
 /** 注释、url() 与引号内容里的字符不参与颜色判定 */

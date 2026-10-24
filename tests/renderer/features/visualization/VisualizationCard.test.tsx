@@ -125,13 +125,14 @@ afterEach(() => {
 })
 
 describe('VisualizationCard', () => {
-  it('生成中按已到达字符数显示进度；展示后挂载只允许脚本的沙箱帧，并随 src 下发首帧状态', () => {
+  it('生成中只显示骨架、不报字符数；展示后挂载只允许脚本的沙箱帧，并随 src 下发首帧状态', () => {
     const argumentsRaw = '{"title":"请求链路","html":"' + 'x'.repeat(2300)
     const container = mount(<VisualizationCard status="running" title="请求链路" argumentsRaw={argumentsRaw} />)
     const card = container.querySelector('[data-testid="visualization-card"]')!
     expect(card.getAttribute('data-state')).toBe('generating')
     expect(card.getAttribute('aria-busy')).toBe('true')
-    expect(card.textContent).toContain('正在生成 · 2.3k 字符')
+    expect(card.querySelector('.visualization-card__skeleton')).not.toBeNull()
+    expect(card.textContent).not.toContain('字符')
     expect(container.querySelector('iframe')).toBeNull()
 
     const { uri, result } = presented('请求链路')
@@ -165,7 +166,7 @@ describe('VisualizationCard', () => {
     )
   })
 
-  it('参数收齐（argumentsRaw 消失）后预览保留，头部提示正在发布', () => {
+  it('参数收齐（argumentsRaw 消失）后预览保留', () => {
     const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
     const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
     const frame = frameIn(container)
@@ -173,10 +174,9 @@ describe('VisualizationCard', () => {
     view!.render(<VisualizationCard status="running" title="预览" />)
 
     expect(frameIn(container)).toBe(frame)
-    expect(container.textContent).toContain('正在发布…')
   })
 
-  it('参数原文闭合即提示正在发布，并把完整页面推给预览帧', () => {
+  it('参数原文闭合即把完整页面推给预览帧', () => {
     const html = '<!doctype html><body><p>完整</p></body>'
     const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={'{"title":"预览","html":"<!doctype html><body><p>完'} />)
     const frame = frameIn(container)
@@ -185,7 +185,6 @@ describe('VisualizationCard', () => {
 
     view!.render(<VisualizationCard status="running" title="预览" argumentsRaw={JSON.stringify({ title: '预览', html })} />)
 
-    expect(container.textContent).toContain('正在发布…')
     expect(posted).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'preview-html', payload: { html } }), '*')
   })
 

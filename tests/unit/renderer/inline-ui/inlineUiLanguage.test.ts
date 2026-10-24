@@ -67,7 +67,7 @@ describe('inlineUiLanguage', () => {
       1 + ('children' in n ? n.children.reduce((sum, c) => sum + count(c), 0) : 0)
     expect(count(big!)).toBeLessThanOrEqual(150)
 
-    // Table 20 列 × 50 行（用名字引用避免测试代码超 8000 字符）
+    // Table 20 列 × 50 行（用名字引用让测试代码保持简短）
     const headers = Array.from({ length: 30 }, (_, i) => `"h${i}"`).join(', ')
     const rowRefs = Array.from({ length: 60 }, () => 'h').join(', ')
     const table = render(`h = [${headers}]\nr = [${rowRefs}]\nroot = Table(h, r)`)

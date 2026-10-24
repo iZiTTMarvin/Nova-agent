@@ -1,5 +1,5 @@
 /**
- * 会话内可视化卡片：生成中显示进度与流式预览，展示后挂载沙箱帧，并承载慢放、展开、导出与报错修复。
+ * 会话内可视化卡片：生成中显示骨架或流式预览，展示后挂载沙箱帧，并承载慢放、展开、导出与报错修复。
  * props 只收原始值：流式 tick 重建工具块对象时，内容未变的卡片不重渲染。
  *
  * 生成中与展示后共用同一棵结构：预览帧在交接期间不重挂载，垫在正式帧上方，
@@ -38,7 +38,7 @@ export interface VisualizationCardProps {
   status: 'running' | 'success' | 'error'
   title: string
   result?: string
-  /** 流式参数原文：预览的 HTML 与进度字符数都从这里派生 */
+  /** 流式参数原文：预览的 HTML 从这里派生 */
   argumentsRaw?: string
 }
 
@@ -54,13 +54,9 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
   const theme = useVisualizationTheme()
   const preview = useStreamingVisualizationHtml(argumentsRaw)
   const lastPreviewHeightRef = useRef<number | undefined>(undefined)
-  const sawArgumentsRawRef = useRef(false)
   const recordPreviewHeight = useCallback((height: number) => {
     lastPreviewHeightRef.current = height
   }, [])
-  useEffect(() => {
-    if (argumentsRaw !== undefined) sawArgumentsRawRef.current = true
-  }, [argumentsRaw])
 
   const [attempt, setAttempt] = useState(0)
   const [frameState, setFrameState] = useState<FrameState>('loading')
@@ -134,13 +130,7 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
 
   const ready = presentation !== null && frameState === 'ok'
   const showPreview =
-    preview.html !== null && !handoffDone && frameState !== 'timeout' && (generating || presentation !== null)
-  const progress =
-    preview.complete || (argumentsRaw === undefined && sawArgumentsRawRef.current)
-      ? '正在发布…'
-      : argumentsRaw !== undefined
-        ? formatProgress(argumentsRaw.length)
-        : '正在生成…'
+    preview !== null && !handoffDone && frameState !== 'timeout' && (generating || presentation !== null)
 
   const sharedActions = ready ? (
     <>
@@ -190,7 +180,6 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
             : presentation ? <SparklesIcon size={15} /> : <AlertIcon size={15} />}
         </span>
         <span className="visualization-card__title" title={displayTitle}>{displayTitle || '可视化'}</span>
-        {generating && preview.html !== null && <span className="visualization-card__progress">{progress}</span>}
         {notice && <span className="visualization-card__notice" role="status">{notice}</span>}
         {presentation && (
           <div className="visualization-card__actions">
@@ -239,7 +228,7 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
             <SpinnerIcon size={15} className="visualization-card__spinner" />
           </div>
         ) : null}
-        {showPreview && preview.html !== null ? (
+        {showPreview && preview !== null ? (
           <div className={previewClassName} data-testid="visualization-preview" aria-hidden={presentation ? true : undefined}>
             <VisualizationFrame
               uri={VISUALIZATION_PREVIEW_URI}
@@ -247,7 +236,7 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
               theme={theme}
               motionScale={1}
               maxHeight={VISUALIZATION_MAX_INLINE_HEIGHT}
-              previewHtml={preview.html}
+              previewHtml={preview}
               onReady={noopHandler}
               onTimeout={noopHandler}
               onAnimated={noopHandler}
@@ -262,8 +251,7 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
             className={`visualization-card__placeholder${generating ? ' visualization-card__placeholder--live' : ''}`}
             style={{ height: VISUALIZATION_PLACEHOLDER_HEIGHT }}
           >
-            {generating && <PlaceholderSkeleton />}
-            <span className="visualization-card__meta">{generating ? progress : '可视化结果无法解析'}</span>
+            {generating ? <PlaceholderSkeleton /> : <span className="visualization-card__meta">可视化结果无法解析</span>}
           </div>
         ) : null}
       </div>
@@ -308,11 +296,6 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
     </section>
   )
 })
-
-function formatProgress(chars: number | undefined): string {
-  if (!chars) return '正在生成…'
-  return chars < 1000 ? `正在生成 · ${chars} 字符` : `正在生成 · ${(chars / 1000).toFixed(1)}k 字符`
-}
 
 /** 页面骨架：标题条 + 两列块 + 一行说明，暗示正在搭版面而不是空等 */
 function PlaceholderSkeleton(): React.ReactElement {

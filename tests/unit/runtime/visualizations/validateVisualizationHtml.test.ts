@@ -100,4 +100,32 @@ describe('validateVisualizationHtml', () => {
     </body></html>`
     expect(await validateVisualizationHtml(structuredWorkbenchHtml)).toEqual([])
   })
+
+  it.each([
+    ['覆写内置 .viz-split 为双栏', '<style>.viz-split { grid-template-columns: 1.8fr 1fr; }</style>', '覆写内置布局类'],
+    ['自定义 2fr 1fr 非对称双栏', '<style>.sandbox-layout { display: grid; grid-template-columns: 2fr 1fr; }</style>', '固定比例或定宽分栏布局'],
+    ['自定义 65% 35% 百分比双栏', '<style>.sandbox-layout { display: grid; grid-template-columns: 65% 35%; }</style>', '固定比例或定宽分栏布局'],
+    ['自定义 460px 1fr 定宽双栏', '<style>.sandbox-layout { display: grid; grid-template-columns: 460px 1fr; }</style>', '固定比例或定宽分栏布局'],
+    ['行内 2fr 1fr 固定双栏', '<div style="display:grid;grid-template-columns:2fr 1fr"></div>', '行内固定双栏布局'],
+    ['flex 定宽 460px 分栏', '<style>.left-col { flex: 0 0 460px; }</style>', '固定比例或定宽分栏布局']
+  ])('拒绝会破坏窄卡阅读节奏的布局写法：%s', async (_label, snippetHtml, expectedText) => {
+    const violations = await validateVisualizationHtml(`<!doctype html><body>${snippetHtml}</body>`)
+    expect(violations.join('\n')).toContain(expectedText)
+    expect(violations.join('\n')).toContain('.viz-split')
+  })
+
+  it('放行自适应 .viz-grid、repeat(auto-fit, ...) 与内置 .viz-split', async () => {
+    const html = `<!doctype html><html><head><style>
+      .custom-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 10px; }
+    </style></head><body>
+      <div class="viz-workbench">
+        <div class="viz-kpis"><div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">6</span><span class="viz-stat-label">声明依赖</span></div></div></div>
+        <div class="viz-split">
+          <div class="viz-canvas"><div class="viz-grid"><div class="viz-card">openai</div></div></div>
+          <div class="viz-inspector"><div class="viz-title">详情</div></div>
+        </div>
+      </div>
+    </body></html>`
+    expect(await validateVisualizationHtml(html)).toEqual([])
+  })
 })

@@ -9,14 +9,15 @@
 export type InlineUiPrimitive = number | string | boolean
 export type InlineUiVars = Readonly<Record<string, InlineUiPrimitive>>
 
-export const MAX_INLINE_UI_CODE_CHARS = 8000
+/** 容得下一份十几步、每步带源码摘录的 Walkthrough；解析是线性的，流式重解析的成本可以忽略 */
+export const MAX_INLINE_UI_CODE_CHARS = 24_000
 
 /** 语言里全部组件与函数名；写法说明列出的名字必须与这里一致（测试守卫） */
 export const INLINE_UI_COMPONENTS = [
   'Col', 'Row', 'Grid', 'Card', 'Tabs', 'Collapsible',
   'Text', 'Callout', 'Badge', 'List', 'KV', 'Code', 'Divider',
   'Stat', 'Progress', 'Table', 'Bars', 'Chart',
-  'Flow', 'Steps', 'Flashcard',
+  'Flow', 'Steps', 'Walkthrough', 'Flashcard',
   'Slider', 'Choice', 'Select', 'Switch', 'Input', 'Button'
 ] as const
 export const INLINE_UI_FUNCTIONS = [
@@ -75,6 +76,28 @@ export interface InlineUiFlowItem {
   readonly detail: string | null
 }
 
+export interface InlineUiWalkStep {
+  readonly title: string
+  /** 所在层与源码位置，如「Agent · agent.ts:454」 */
+  readonly meta: string | null
+  readonly detail: string | null
+  /** 这一步之后数据的样子 */
+  readonly data: { label: string; value: string }[] | null
+  readonly code: string | null
+  /** 源码摘录的出处，作为折叠标题 */
+  readonly file: string | null
+  /** 「深入讲讲这一步」要发出的追问；为空时不显示按钮 */
+  readonly ask: string | null
+}
+
+export interface InlineUiWalkPhase {
+  readonly title: string
+  readonly summary: string | null
+  /** 进出这一阶段的数据，写成「a → b」 */
+  readonly io: string | null
+  readonly steps: InlineUiWalkStep[]
+}
+
 export type InlineUiNode =
   | { type: 'col' | 'row'; children: InlineUiNode[] }
   | { type: 'grid'; children: InlineUiNode[]; columns: number }
@@ -96,6 +119,8 @@ export type InlineUiNode =
   | { type: 'pie'; items: { label: string; value: number; display: string }[]; donut: boolean; unit: string | null }
   | { type: 'flow'; items: InlineUiFlowItem[]; current: { variable: string; value: number | null } | null; direction: 'row' | 'col' }
   | { type: 'steps'; steps: InlineUiFlowItem[]; current: { variable: string; value: number | null } | null }
+  /** current 是跨阶段的全局步骤下标 */
+  | { type: 'walkthrough'; phases: InlineUiWalkPhase[]; current: { variable: string; value: number | null } | null }
   | { type: 'flashcard'; front: string; back: string }
   | { type: 'slider'; variable: string; label: string | null; min: number | null; max: number | null; step: number; unit: string | null; value: number | null; valid: boolean }
   | { type: 'choice' | 'select'; variable: string; options: string[]; label: string | null; value: string | null }
@@ -125,6 +150,9 @@ const MAX_TABS = 6
 const MAX_SERIES = 6
 const MAX_ACTIONS = 8
 const MAX_SLIDER_STEPS = 10000
+const MAX_WALK_PHASES = 6
+const MAX_WALK_PHASE_STEPS = 8
+const MAX_WALK_DATA_ROWS = 8
 const ASK_LABEL_CHARS = 40
 const ASK_PROMPT_CHARS = 500
 
@@ -769,6 +797,43 @@ function currentStep(arg: Expr | undefined, ctx: EvalCtx): { variable: string; v
   return { variable, value: typeof value === 'number' ? value : null }
 }
 
+const optionalPlain = (v: unknown, max = MAX_TEXT_CHARS): string | null =>
+  typeof v === 'string' || typeof v === 'number' ? truncTo(text(v), max) || null : null
+
+function walkStep(item: unknown): InlineUiWalkStep | null {
+  if (!isRecord(item)) return null
+  const data = item.data === undefined || item.data === null ? null : kvItems(item.data)
+  return {
+    title: text(item.title ?? null),
+    meta: optionalPlain(item.meta),
+    detail: optionalPlain(item.detail),
+    data: data && data.length > 0 ? data.slice(0, MAX_WALK_DATA_ROWS) : null,
+    code: typeof item.code === 'string' && item.code !== '' ? truncTo(item.code, MAX_CODE_CHARS) : null,
+    file: optionalPlain(item.file, 120),
+    ask: optionalPlain(item.ask, ASK_PROMPT_CHARS)
+  }
+}
+
+/**
+ * 阶段与步骤允许先引用后定义：尚未写出的名字求值为 null，在这里滤掉，
+ * 流式期间阶段条和步骤因此按书写顺序逐个长出来。
+ */
+function walkPhases(v: unknown): InlineUiWalkPhase[] | null {
+  if (!Array.isArray(v)) return null
+  const phases: InlineUiWalkPhase[] = []
+  for (const item of v) {
+    if (phases.length >= MAX_WALK_PHASES) break
+    if (!isRecord(item) || !Array.isArray(item.steps)) continue
+    const steps = item.steps.map(walkStep).filter((s): s is InlineUiWalkStep => s !== null).slice(0, MAX_WALK_PHASE_STEPS)
+    if (steps.length === 0) continue
+    phases.push({ title: text(item.title ?? null), summary: optionalPlain(item.summary), io: optionalPlain(item.io, 200), steps })
+  }
+  return phases
+}
+
+/** 追问的显示名取步骤标题，长度与 @AskNova 的上限一致 */
+export const walkAskLabel = (step: InlineUiWalkStep): string => step.title.slice(0, ASK_LABEL_CHARS)
+
 function chartSeries(data: unknown): { labels: string[]; series: { name: string; values: (number | null)[] }[] } | null {
   // 单系列：[{label, value}]
   if (Array.isArray(data)) {
@@ -968,6 +1033,10 @@ function evalComponent(rawName: string, args: Expr[], ctx: EvalCtx): InlineUiNod
     case 'Steps': {
       const steps = flowItems(arg(0))
       return steps === null ? null : brand({ type: 'steps', steps, current: currentStep(args[1], ctx) })
+    }
+    case 'Walkthrough': {
+      const phases = walkPhases(arg(0))
+      return phases === null || phases.length === 0 ? null : brand({ type: 'walkthrough', phases, current: currentStep(args[1], ctx) })
     }
     case 'Flashcard':
       return brand({ type: 'flashcard', front: text(arg(0)), back: text(arg(1)) })

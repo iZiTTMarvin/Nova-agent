@@ -608,6 +608,47 @@ test.describe('学习表面主路径', () => {
     expect(nova.pageErrors).toEqual([])
   })
 
+  test('分阶段讲解随正文流式逐步长出，回答完成后可跨阶段翻页并追问', async ({ nova }) => {
+    const sessionId = await createLearnSession(nova)
+    const lines = [
+      'root = Walkthrough([prep, loop], $step)',
+      '$step = 0',
+      'prep = {title: "装配", summary: "把问题拼成消息", io: "query → messages", steps: [s1, s2]}',
+      's1 = {title: "初始化消息", meta: "Agent · agent.ts:54", detail: "系统指令放第一条，用户问题放第二条", data: {messages: "Array(2)"}, code: "const messages = []", file: "src/agent.ts:54"}',
+      's2 = {title: "附工具", detail: "带上工具清单"}',
+      'loop = {title: "往返", summary: "模型决定回答还是调用工具", steps: [s3]}',
+      's3 = {title: "请求模型", detail: "把消息发给模型", ask: "WALK_ASK_PROMPT 返回 tool_calls 怎么继续？"}'
+    ]
+    const chunks = ['讲一遍生命周期：\n\n```openui\n', ...lines.map(line => `${line}\n`), '```\n\nLEARN_WALK_DONE']
+    nova.provider.enqueue({ kind: 'text', text: chunks.join(''), chunks, chunkDelayMs: 400 })
+    await sendLearningPrompt(nova, '一次提问的数据生命周期')
+
+    // 流式中：先只有第一阶段，详情跟随刚写完的一步；之后第二阶段出现
+    const walk = learningMain(nova).locator('.inline-ui__walk')
+    await expect(walk.locator('.inline-ui__walk-phase')).toHaveCount(1)
+    await expect(walk.locator('.inline-ui__walk-detail-title')).toHaveText('附工具')
+    await expect(walk.locator('.inline-ui__walk-phase')).toHaveCount(2)
+    await expect(nova.page.getByText('LEARN_WALK_DONE', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+
+    await expect(walk.locator('.inline-ui__walk-position')).toHaveText('第 1 / 3 步')
+    await walk.getByRole('button', { name: 'src/agent.ts:54' }).click()
+    await expect(walk.locator('.inline-ui__walk-source pre')).toContainText('const messages = []')
+    await walk.getByRole('button', { name: '下一步' }).click()
+    await walk.getByRole('button', { name: '下一阶段' }).click()
+    await expect(walk.locator('.inline-ui__walk-kicker')).toHaveText('阶段 2 / 2')
+
+    const offset = nova.provider.requests.length
+    nova.provider.enqueue({ kind: 'text', text: 'LEARN_WALK_ASKED' })
+    await walk.getByRole('button', { name: '深入讲讲这一步' }).click()
+    await expect
+      .poll(() => nova.provider.requests.slice(offset).some(request => userTexts(request.body).at(-1)?.includes('WALK_ASK_PROMPT')))
+      .toBe(true)
+    await expect(nova.page.getByText('LEARN_WALK_ASKED', { exact: false })).toBeVisible()
+
+    expect(nova.pageErrors).toEqual([])
+  })
+
   test('学习输入框对齐开发体验：发送即刻清空草稿并上屏用户气泡、支持 MiniMax-M2.7 思考强度与 16 步阶段泳道沙盘', async ({
     nova
   }, testInfo) => {
@@ -1064,6 +1105,156 @@ test.describe('学习表面主路径', () => {
       path: compareShotPath,
       contentType: 'image/png'
     })
+
+    // 第四轮：验证「技术栈与依赖沙盘」——拦截 2fr 1fr 非对称双栏反模式，放行「顶部三指标 + 两列紧凑依赖卡网格 + 底部单栏详情」
+    const imbalancedSplitHtml = `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><style>.bad-split { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }</style></head>
+<body><div class="bad-split"><div>左侧挤扁表格</div><div>右侧长篇安全说明</div></div></body></html>`
+
+    const techStackSandboxHtml = `<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<style>
+  .dep-card { cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
+  .dep-ver { font-family: var(--viz-font-mono); font-size: .78rem; color: var(--viz-muted); }
+  .inspector-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+</style>
+</head>
+<body>
+<div class="viz-workbench">
+  <div class="viz-phases" role="tablist">
+    <button class="viz-phase is-active" role="tab" aria-selected="true" type="button"><span class="viz-phase-title">依赖分析</span></button>
+    <button class="viz-phase" role="tab" aria-selected="false" type="button"><span class="viz-phase-title">安全检查</span></button>
+    <button class="viz-phase" role="tab" aria-selected="false" type="button"><span class="viz-phase-title">关键取舍</span></button>
+  </div>
+
+  <div class="viz-kpis">
+    <div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">6</span><span class="viz-stat-label">声明依赖</span></div></div>
+    <div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">3</span><span class="viz-stat-label">实际使用</span></div></div>
+    <div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">3</span><span class="viz-stat-label">疑似冗余</span></div></div>
+  </div>
+
+  <div class="viz-split">
+    <div class="viz-canvas">
+      <div class="viz-grid" id="depGrid">
+        <button class="viz-card dep-card" data-dep="openai" type="button">
+          <div class="viz-card-head"><span class="viz-title">openai</span><span class="viz-badge" data-tone="success">在用</span></div>
+          <p class="viz-note">大模型 API 调用</p>
+          <span class="dep-ver">^4.55.0</span>
+        </button>
+        <button class="viz-card dep-card" data-dep="chalk" type="button">
+          <div class="viz-card-head"><span class="viz-title">chalk</span><span class="viz-badge" data-tone="success">在用</span></div>
+          <p class="viz-note">终端彩色日志</p>
+          <span class="dep-ver">^5.3.0</span>
+        </button>
+        <button class="viz-card dep-card" data-dep="dotenv" type="button">
+          <div class="viz-card-head"><span class="viz-title">dotenv</span><span class="viz-badge" data-tone="success">在用</span></div>
+          <p class="viz-note">读取环境变量</p>
+          <span class="dep-ver">^16.4.5</span>
+        </button>
+        <button class="viz-card dep-card" data-dep="node-fetch" type="button">
+          <div class="viz-card-head"><span class="viz-title">node-fetch</span><span class="viz-badge" data-tone="warning">未接线</span></div>
+          <p class="viz-note">HTTP 请求</p>
+          <span class="dep-ver">^3.3.2</span>
+        </button>
+        <button class="viz-card dep-card" data-dep="systeminformation" type="button">
+          <div class="viz-card-head"><span class="viz-title">systeminformation</span><span class="viz-badge" data-tone="warning">未接线</span></div>
+          <p class="viz-note">系统信息读取</p>
+          <span class="dep-ver">^5.21.20</span>
+        </button>
+        <button class="viz-card dep-card is-active" data-dep="tiktoken" type="button">
+          <div class="viz-card-head"><span class="viz-title">tiktoken</span><span class="viz-badge" data-tone="warning">未接线</span></div>
+          <p class="viz-note">Token 数量估算</p>
+          <span class="dep-ver">^1.0.20</span>
+        </button>
+      </div>
+    </div>
+
+    <aside class="viz-inspector" id="depInspector">
+      <div class="inspector-bar">
+        <span class="viz-title" id="depDetailTitle">tiktoken</span>
+        <span class="viz-file-ref" id="depDetailFile">src/agent.ts:118</span>
+      </div>
+      <p class="viz-note" id="depDetailDesc">当前项目使用简单的字符数与消息条数估算上下文容量，未实际引入 tiktoken 分词器。</p>
+    </aside>
+  </div>
+</div>
+<script>
+  var DETAILS = {
+    openai: { file: 'src/llm.ts:14', desc: '唯一的 LLM 通信通道：负责发送 messages 与接收流式文本或 tool_calls。' },
+    chalk: { file: 'src/logger.ts:8', desc: '用于 CLI 终端输出着色，区分日志级别标签与工具执行成功/失败图标。' },
+    dotenv: { file: 'src/config.ts:5', desc: '启动时读取 .env 注入 process.env，由配置层统一读取 API Key。' },
+    'node-fetch': { file: 'package.json:18', desc: '名义上给 HTTP 工具准备，实际运行直接使用 Node 18 全局 fetch。' },
+    systeminformation: { file: 'package.json:19', desc: '名义上用于系统信息采集，实际环境探针由 node:os 直接手写完成。' },
+    tiktoken: { file: 'src/agent.ts:118', desc: '当前项目使用简单的字符数与消息条数估算上下文容量，未实际引入 tiktoken 分词器。' }
+  };
+  document.querySelectorAll('[data-dep]').forEach(function (card) {
+    card.addEventListener('click', function () {
+      var key = card.getAttribute('data-dep');
+      var info = DETAILS[key];
+      if (!info) return;
+      document.querySelectorAll('[data-dep]').forEach(function (c) { c.classList.toggle('is-active', c === card); });
+      document.getElementById('depDetailTitle').textContent = key;
+      document.getElementById('depDetailFile').textContent = info.file;
+      document.getElementById('depDetailDesc').textContent = info.desc;
+    });
+  });
+</script>
+</body>
+</html>`
+
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'present_visualization',
+        arguments: { title: '失衡双栏反例', html: imbalancedSplitHtml },
+        callId: 'call_bad_split'
+      },
+      {
+        kind: 'tool',
+        name: 'present_visualization',
+        arguments: { title: 'miniagent-ts · 项目分析', html: techStackSandboxHtml },
+        callId: 'call_tech_stack_sandbox'
+      },
+      { kind: 'text', text: '上面展示了 miniagent-ts 的声明依赖、实际接线情况与取舍说明。' }
+    )
+    await sendLearningPrompt(nova, '盘点一下 miniagent-ts 的技术栈与实际依赖')
+    await expect(
+      nova.page.getByText('上面展示了 miniagent-ts 的声明依赖、实际接线情况与取舍说明', { exact: false })
+    ).toBeVisible({ timeout: 30_000 })
+    await waitLearnTurnSettled(nova, sessionId)
+
+    // 只有第 3 张合规卡片被挂载（bad_split 被闸门拦截自愈）
+    await expect(nova.page.getByTestId('visualization-card')).toHaveCount(3)
+    const techCard = nova.page.getByTestId('visualization-card').nth(2)
+    await expect(techCard).toHaveAttribute('data-state', 'ok')
+    const techFrame = await contentFrameOf(await settledFrame(techCard))
+
+    // 验证在内联聊天列宽度下，.viz-split 为上下单列堆叠（inspector 位于 canvas 正下方，不抢左右宽度）
+    const splitLayout = await techFrame.evaluate(() => {
+      const canvas = document.querySelector('.viz-canvas')!.getBoundingClientRect()
+      const inspector = document.querySelector('.viz-inspector')!.getBoundingClientRect()
+      return {
+        canvasWidth: Math.round(canvas.width),
+        inspectorWidth: Math.round(inspector.width),
+        stackedVertically: inspector.top >= canvas.bottom - 2
+      }
+    })
+    expect(splitLayout.stackedVertically).toBe(true)
+    expect(splitLayout.canvasWidth).toBe(splitLayout.inspectorWidth)
+
+    // 切换到深色主题截取与用户参考图 2 对齐的「技术栈与依赖沙盘」内联卡片截图
+    await nova.page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
+    await expect(nova.page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    await nova.page.waitForTimeout(150)
+    const techShotPath = path.join(screenshotDir, 'intelligent-ui-5-dark-tech-stack-sandbox.png')
+    await techCard.screenshot({ path: techShotPath, animations: 'disabled' })
+    await testInfo.attach('intelligent-ui-5-dark-tech-stack-sandbox.png', {
+      path: techShotPath,
+      contentType: 'image/png'
+    })
+    await nova.page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'))
 
     expect(nova.pageErrors).toEqual([])
   })
