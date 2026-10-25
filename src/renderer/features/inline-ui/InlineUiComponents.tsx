@@ -5,7 +5,7 @@
  * 不接收 URL、原始样式或颜色字符串。内联样式只有应用算出的数字（宽度百分比、
  * 列数、入场错峰序号）和应用主题的系列色。
  */
-import React, { createContext, useContext, useId, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import React, { createContext, useContext, useId, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
 import { Slider } from '@astryxdesign/core/Slider'
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
 import { Button } from '@astryxdesign/core/Button'
@@ -162,6 +162,8 @@ function NodeView({ node, index }: { node: InlineUiNode; index: number }): React
       return <ChartView node={node} style={style} />
     case 'pie':
       return <PieView node={node} style={style} />
+    case 'architecture':
+      return <ArchitectureView node={node} style={style} />
     case 'flow':
       return <FlowView node={node} style={style} />
     case 'steps':
@@ -375,17 +377,94 @@ function FlashcardView({ node, style }: { node: NodeOf<'flashcard'>; style: CSSP
   )
 }
 
+function ArchitectureView({ node, style }: { node: NodeOf<'architecture'>; style: CSSProperties }): React.ReactElement {
+  const { interactive, onSetVar, onAsk } = useHandlers()
+  const [localModule, setLocalModule] = useState(0)
+  const flat = node.layers.flatMap(layer => layer.nodes)
+  const total = flat.length
+  const requested = !interactive ? total - 1 : node.current !== null ? (node.current.value ?? 0) : localModule
+  const active = Math.min(total - 1, Math.max(0, Math.trunc(requested)))
+  const go = (index: number): void => {
+    if (!interactive || index === active) return
+    if (node.current !== null) onSetVar(node.current.variable, index)
+    else setLocalModule(index)
+  }
+  return (
+    <div className="inline-ui__architecture inline-ui__item" style={style}>
+      <div className="inline-ui__architecture-canvas">
+        {node.layers.map((layer, layerIndex) => {
+          const layerStart = node.layers.slice(0, layerIndex).reduce((sum, item) => sum + item.nodes.length, 0)
+          return (
+            <React.Fragment key={`${layer.title}-${layerIndex}`}>
+              <div className="inline-ui__architecture-layer">
+                <div className="inline-ui__architecture-label">{layer.title}</div>
+                <div className="inline-ui__architecture-nodes">
+                  {layer.nodes.map((item, nodeIndex) => {
+                    const global = layerStart + nodeIndex
+                    return (
+                      <button
+                        key={global}
+                        type="button"
+                        className={`inline-ui__architecture-node${global === active ? ' is-current' : ''}`}
+                        disabled={!interactive}
+                        aria-pressed={global === active}
+                        onClick={() => go(global)}
+                      >
+                        {item.title}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+              {layerIndex < node.layers.length - 1 && (
+                <div className="inline-ui__architecture-connector">
+                  <div className="inline-ui__architecture-connector-axis">
+                    {layer.relation !== null && <span className="inline-ui__architecture-relation">{layer.relation}</span>}
+                    <span className="inline-ui__architecture-arrow" aria-hidden="true" />
+                  </div>
+                </div>
+              )}
+            </React.Fragment>
+          )
+        })}
+      </div>
+      <WalkDetail key={active} step={flat[active]} interactive={interactive} onAsk={onAsk} askLabel="深入讲讲这个模块" />
+    </div>
+  )
+}
+
+const FLOW_NODE_MIN_WIDTH = 144
+const FLOW_ARROW_GAP = 30
+
 function FlowView({ node, style }: { node: NodeOf<'flow'>; style: CSSProperties }): React.ReactElement {
   const { interactive, onSetVar } = useHandlers()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [availableWidth, setAvailableWidth] = useState<number | null>(null)
   const current = node.current
   const clickable = interactive && current !== null
   const active = current?.value ?? null
   const activeItem = active !== null ? node.items[active] : undefined
+
+  useLayoutEffect(() => {
+    const element = rootRef.current
+    if (!element) return
+    setAvailableWidth(element.getBoundingClientRect().width)
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width
+      if (width !== undefined) setAvailableWidth(width)
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  const rowBudget = node.items.length * FLOW_NODE_MIN_WIDTH + Math.max(0, node.items.length - 1) * FLOW_ARROW_GAP
+  const direction = node.direction === 'row' && node.items.length > 1 && availableWidth !== null && availableWidth >= rowBudget ? 'row' : 'col'
   const go = (index: number): void => {
     if (clickable && current !== null && index >= 0 && index < node.items.length) onSetVar(current.variable, index)
   }
   return (
-    <div className={`inline-ui__flow inline-ui__flow--${node.direction} inline-ui__item`} style={style}>
+    <div ref={rootRef} className={`inline-ui__flow inline-ui__flow--${direction} inline-ui__item`} style={style}>
       <ol className="inline-ui__flow-track">
         {node.items.map((item, i) => {
           const state = active === null ? '' : i === active ? ' is-current' : i < active ? ' is-done' : ''
@@ -556,10 +635,11 @@ function WalkthroughView({ node, style }: { node: NodeOf<'walkthrough'>; style: 
   )
 }
 
-function WalkDetail({ step, interactive, onAsk }: {
+function WalkDetail({ step, interactive, onAsk, askLabel = '深入讲讲这一步' }: {
   step: InlineUiWalkStep
   interactive: boolean
   onAsk: (ask: InlineUiAsk) => void
+  askLabel?: string
 }): React.ReactElement {
   const [sourceOpen, setSourceOpen] = useState(false)
   const sourceId = useId()
@@ -598,7 +678,7 @@ function WalkDetail({ step, interactive, onAsk }: {
       {ask !== null && (
         <span className="inline-ui__walk-ask">
           <Button
-            label="深入讲讲这一步"
+            label={askLabel}
             variant="secondary"
             size="sm"
             isDisabled={!interactive}

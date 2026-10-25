@@ -342,41 +342,49 @@
 .inline-ui__legend-value { font-family: var(--font-mono); }
 
 /* ---------- 流程与步骤 ---------- */
-.inline-ui__flow { display: flex; flex-direction: column; gap: 10px; }
+.inline-ui__flow { display: flex; flex-direction: column; align-self: stretch; gap: 12px; width: 100%; min-width: 0; }
 
 .inline-ui__flow-track {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: stretch;
-  gap: 6px 0;
+  display: grid;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.inline-ui__flow--col .inline-ui__flow-track { flex-direction: column; }
+.inline-ui__flow--row .inline-ui__flow-track {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  column-gap: 30px;
+  align-items: stretch;
+}
 
-.inline-ui__flow-step { display: flex; align-items: center; min-width: 0; }
-.inline-ui__flow--col .inline-ui__flow-step { flex-direction: column; align-items: flex-start; }
+.inline-ui__flow--col .inline-ui__flow-track { display: flex; flex-direction: column; align-items: center; }
+
+.inline-ui__flow-step { position: relative; display: flex; min-width: 0; }
+.inline-ui__flow--col .inline-ui__flow-step { flex-direction: column; align-items: center; width: 100%; }
 
 .inline-ui__flow-node {
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 84px;
-  max-width: 200px;
-  padding: 8px 10px;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  min-height: 56px;
+  padding: 10px 12px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-card);
   color: var(--text-primary);
   font: inherit;
-  text-align: left;
+  text-align: center;
   transition: border-color 180ms ease, box-shadow 220ms ease, background-color 180ms ease, opacity 180ms ease;
 }
 
-.inline-ui__flow--col .inline-ui__flow-node { max-width: none; width: 100%; }
+.inline-ui__flow--row .inline-ui__flow-node { height: 100%; }
+.inline-ui__flow--col .inline-ui__flow-node { max-width: 420px; }
 
 button.inline-ui__flow-node { cursor: pointer; }
 button.inline-ui__flow-node:disabled { cursor: default; }
@@ -405,8 +413,8 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
   transition: background-color 180ms ease, color 180ms ease;
 }
 
-.inline-ui__flow-title { font-size: 12px; font-weight: 600; line-height: 1.4; }
-.inline-ui__flow-detail { font-size: 11px; color: var(--text-secondary); line-height: 1.45; }
+.inline-ui__flow-title { font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.inline-ui__flow-detail { font-size: 12px; color: var(--text-secondary); line-height: 1.5; overflow-wrap: anywhere; }
 
 .inline-ui__flow-step.is-current .inline-ui__flow-node {
   border-color: var(--iu-accent);
@@ -416,16 +424,18 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 .inline-ui__flow-step.is-current .inline-ui__flow-index { background: var(--iu-accent); color: var(--bg-card); }
 .inline-ui__flow-step.is-done .inline-ui__flow-index { background: color-mix(in srgb, var(--iu-accent) 22%, transparent); color: var(--iu-accent); }
 
-.inline-ui__flow-arrow {
-  position: relative;
-  flex: 0 0 22px;
+.inline-ui__flow-arrow { display: block; flex: none; background: var(--border-strong); }
+
+.inline-ui__flow--row .inline-ui__flow-arrow {
+  position: absolute;
+  left: calc(100% + 4px);
+  top: calc(50% - 1px);
+  width: 22px;
   height: 2px;
-  margin: 0 4px;
-  background: var(--border-strong);
   transform-origin: left center;
 }
 
-.inline-ui__flow-arrow::after {
+.inline-ui__flow--row .inline-ui__flow-arrow::after {
   content: '';
   position: absolute;
   right: -1px;
@@ -435,39 +445,120 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
   border-bottom: 4px solid transparent;
 }
 
-.inline-ui__flow--col .inline-ui__flow-arrow {
-  flex-basis: 14px;
-  width: 2px;
-  height: 14px;
-  margin: 3px 0 3px 18px;
-  transform-origin: center top;
-}
+.inline-ui__flow--col .inline-ui__flow-arrow { position: relative; width: 2px; height: 14px; margin: 3px 0; transform-origin: center top; }
 
 .inline-ui__flow--col .inline-ui__flow-arrow::after {
-  right: auto;
-  top: auto;
+  content: '';
+  position: absolute;
   bottom: -1px;
   left: -3px;
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
   border-top: 6px solid var(--border-strong);
-  border-bottom: none;
 }
+
 
 .inline-ui__flow-inspector {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--iu-accent) 7%, var(--surface-muted));
 }
 
-.inline-ui__flow-inspector-body { min-width: 0; animation: inline-ui-fade 220ms ease both; }
+.inline-ui__flow-inspector-body { flex: 1 1 260px; min-width: 0; animation: inline-ui-fade 220ms ease both; }
 .inline-ui__flow-inspector-title { font-size: 13px; font-weight: 600; }
-.inline-ui__flow-inspector-detail { margin-top: 2px; font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
-.inline-ui__flow-transport { display: flex; gap: 6px; flex: 0 0 auto; }
+.inline-ui__flow-inspector-detail { margin-top: 3px; font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+.inline-ui__flow-transport { display: flex; gap: 8px; flex: 0 0 auto; margin-left: auto; }
+
+.inline-ui__architecture { display: flex; flex-direction: column; align-self: stretch; gap: 12px; width: 100%; min-width: 0; }
+.inline-ui__architecture-canvas { display: flex; flex-direction: column; min-width: 0; }
+
+.inline-ui__architecture-layer {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+.inline-ui__architecture-label { color: var(--text-secondary); font-size: 12px; font-weight: 600; line-height: 1.4; }
+
+.inline-ui__architecture-nodes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inline-ui__architecture-node {
+  appearance: none;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 min(144px, 100%);
+  align-items: center;
+  justify-content: center;
+  width: min(144px, 100%);
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.inline-ui__architecture-node:disabled { cursor: default; }
+.inline-ui__architecture-node:not(:disabled):hover { border-color: var(--iu-accent); }
+.inline-ui__architecture-node.is-current { border-color: var(--iu-accent); background: color-mix(in srgb, var(--iu-accent) 10%, var(--bg-card)); }
+.inline-ui__architecture-node:focus-visible { outline: 2px solid var(--border-focus, var(--iu-accent)); outline-offset: 2px; }
+
+.inline-ui__architecture-connector {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  padding: 0 12px;
+}
+
+.inline-ui__architecture-connector-axis { grid-column: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.inline-ui__architecture-relation { color: var(--text-muted); font-size: 11px; line-height: 1.4; text-align: center; }
+
+.inline-ui__architecture-arrow {
+  position: relative;
+  display: block;
+  width: 2px;
+  height: 14px;
+  margin: 3px 0;
+  background: var(--border-strong);
+}
+
+.inline-ui__architecture-arrow::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: -3px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 6px solid var(--border-strong);
+}
+
+@container (max-width: 520px) {
+  .inline-ui__architecture-layer { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .inline-ui__architecture-connector { grid-template-columns: minmax(0, 1fr); }
+  .inline-ui__architecture-connector-axis { grid-column: 1; }
+}
 
 .inline-ui__steps {
   display: flex;

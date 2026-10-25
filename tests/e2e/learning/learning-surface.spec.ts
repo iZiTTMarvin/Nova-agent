@@ -608,6 +608,135 @@ test.describe('学习表面主路径', () => {
     expect(nova.pageErrors).toEqual([])
   })
 
+  test('学习内联图使用确定性几何布局并保留模块交互', async ({ nova }, testInfo) => {
+    test.setTimeout(120_000)
+    await nova.page.setViewportSize({ width: 1440, height: 1000 })
+    await nova.invoke('settings:set', { theme: 'dark' })
+    await nova.page.reload()
+    const sessionId = await createLearnSession(nova)
+    const code = [
+      'root = Col([shortFlow, longFlow, architecture])',
+      'shortFlow = Flow([{title: "CLI", detail: "接收提问"}, {title: "请求模型", detail: "装配上下文"}, {title: "回灌并继续", detail: "写回工具结果"}, {title: "渲染回答", detail: "显示最终内容"}], $short)',
+      'longFlow = Flow(longSteps, $long)',
+      'architecture = Architecture(layers, $module)',
+      '$short = 0',
+      '$long = 0',
+      '$module = 0',
+      'longSteps = [',
+      '  {title: "CLI 收下提问", detail: "接收原始输入"},',
+      '  {title: "拼系统提示", detail: "装配系统提示"},',
+      '  {title: "请求模型", detail: "发起模型请求"},',
+      '  {title: "抠出工具调用", detail: "解析工具调用"},',
+      '  {title: "过闸再执行", detail: "检查后执行"},',
+      '  {title: "回灌再问一轮", detail: "写回结果并继续"}',
+      ']',
+      'layers = [entry, orchestration, capability, support]',
+      'entry = {title: "入口层", relation: "调用 / 委托", nodes: [cli, index]}',
+      'cli = {title: "cli.ts", detail: "接收命令行输入"}',
+      'index = {title: "index.ts", detail: "组装应用入口"}',
+      'orchestration = {title: "编排层", relation: "注册 / 取用", nodes: [agent, orchestrator]}',
+      'agent = {title: "agent.ts", detail: "驱动模型与工具循环"}',
+      'orchestrator = {title: "orchestrator.ts", detail: "负责拆分任务并协调子代理", meta: "编排层 · 核心协调", file: "src/orchestrator.ts:42", ask: "ARCH_ASK_PROMPT 编排器如何处理失败？"}',
+      'capability = {title: "能力层", relation: "读取配置 / 打日志 / 落盘", nodes: [registry, tools, skills]}',
+      'registry = {title: "tools/registry.ts", detail: "登记工具"}',
+      'tools = {title: "tools / 内置 22 个", detail: "提供内置能力"}',
+      'skills = {title: "skills.ts", detail: "装载技能"}',
+      'support = {title: "支撑层", nodes: [config, logger, jsonUtils, memory]}',
+      'config = {title: "config.ts", detail: "读取配置"}',
+      'logger = {title: "logger.ts", detail: "记录日志"}',
+      'jsonUtils = {title: "utils/json_utils.ts", detail: "处理 JSON"}',
+      'memory = {title: "memory.ts", detail: "保存记忆"}'
+    ].join('\n')
+    const fence = ['```openui', code, '```'].join('\n')
+    nova.provider.enqueue({ kind: 'text', text: `显示固定学习图：\n\n${fence}\n\nDETERMINISTIC_VISUALS_DONE` })
+    await sendLearningPrompt(nova, '检查学习图布局')
+    await expect(nova.page.getByText('DETERMINISTIC_VISUALS_DONE', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+
+    const inline = learningMain(nova).locator('.inline-ui')
+    const shortFlow = inline.locator('.inline-ui__flow').nth(0)
+    const longFlow = inline.locator('.inline-ui__flow').nth(1)
+    const architecture = inline.locator('.inline-ui__architecture')
+    const expectEqualNodeWidths = async (scope: Locator, selector: string): Promise<void> => {
+      const widths = await scope.locator(selector).evaluateAll(elements =>
+        elements.map(element => element.getBoundingClientRect().width)
+      )
+      expect(widths.length).toBeGreaterThan(0)
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1)
+    }
+
+    await expect(shortFlow).toHaveClass(/inline-ui__flow--row/)
+    await expectEqualNodeWidths(shortFlow, '.inline-ui__flow-node')
+    await expect(longFlow).toHaveClass(/inline-ui__flow--col/)
+    await expectEqualNodeWidths(longFlow, '.inline-ui__flow-node')
+    const longBox = await longFlow.boundingBox()
+    if (!longBox) throw new Error('长流程尚未完成布局')
+    const longCenters = await longFlow.locator('.inline-ui__flow-node').evaluateAll(elements =>
+      elements.map(element => {
+        const rect = element.getBoundingClientRect()
+        return rect.left + rect.width / 2
+      })
+    )
+    for (const center of longCenters) {
+      expect(Math.abs(center - (longBox.x + longBox.width / 2))).toBeLessThanOrEqual(1)
+    }
+
+    await expect(architecture).toHaveCount(1)
+    await expect(architecture.locator('.inline-ui__architecture-node')).toHaveCount(11)
+    await expectEqualNodeWidths(architecture, '.inline-ui__architecture-node')
+    const centerDeltas = await architecture.locator('.inline-ui__architecture-layer').evaluateAll(layers =>
+      layers.flatMap(layer => {
+        const area = layer.querySelector('.inline-ui__architecture-nodes')
+        if (!area) return []
+        const areaRect = area.getBoundingClientRect()
+        const rows = new Map<number, { left: number; right: number }>()
+        for (const node of area.querySelectorAll('.inline-ui__architecture-node')) {
+          const rect = node.getBoundingClientRect()
+          const key = Math.round(rect.top)
+          const row = rows.get(key) ?? { left: rect.left, right: rect.right }
+          row.left = Math.min(row.left, rect.left)
+          row.right = Math.max(row.right, rect.right)
+          rows.set(key, row)
+        }
+        return [...rows.values()].map(row => Math.abs((row.left + row.right - areaRect.left - areaRect.right) / 2))
+      })
+    )
+    for (const delta of centerDeltas) expect(delta).toBeLessThanOrEqual(1)
+
+    await expect(architecture.locator('.inline-ui__walk-detail-title')).toHaveText('cli.ts')
+    await architecture.getByRole('button', { name: 'orchestrator.ts', exact: true }).click()
+    await expect(architecture.locator('.inline-ui__walk-detail-title')).toHaveText('orchestrator.ts')
+    await expect(architecture.locator('.inline-ui__walk-detail-text')).toContainText('协调子代理')
+
+    const screenshotDir = path.resolve(__dirname, '../../../test-results/e2e/deterministic-learning-visuals')
+    await mkdir(screenshotDir, { recursive: true })
+    for (const [name, locator] of [['architecture', architecture], ['flow', longFlow]] as const) {
+      const file = path.join(screenshotDir, `${name}.png`)
+      await locator.screenshot({ path: file, animations: 'disabled' })
+      await testInfo.attach(`${name}.png`, { path: file, contentType: 'image/png' })
+    }
+
+    const offset = nova.provider.requests.length
+    nova.provider.enqueue({ kind: 'text', text: 'ARCH_ASK_DONE' })
+    await architecture.getByRole('button', { name: '深入讲讲这个模块' }).click()
+    await expect
+      .poll(() => nova.provider.requests.slice(offset).some(request => userTexts(request.body).at(-1)?.includes('ARCH_ASK_PROMPT')))
+      .toBe(true)
+    await expect(nova.page.getByText('ARCH_ASK_DONE', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+
+    await inline.evaluate(element => { (element as HTMLElement).style.width = '380px' })
+    await expect(shortFlow).toHaveClass(/inline-ui__flow--col/)
+    await expectEqualNodeWidths(architecture, '.inline-ui__architecture-node')
+    expect(await inline.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
+    const detailBox = await longFlow.locator('.inline-ui__flow-inspector-body').boundingBox()
+    const transportBox = await longFlow.locator('.inline-ui__flow-transport').boundingBox()
+    if (!detailBox || !transportBox) throw new Error('紧凑流程详情尚未完成布局')
+    expect(transportBox.y).toBeGreaterThanOrEqual(detailBox.y + detailBox.height - 1)
+    await inline.evaluate(element => { (element as HTMLElement).style.removeProperty('width') })
+    expect(nova.pageErrors).toEqual([])
+  })
+
   test('分阶段讲解随正文流式逐步长出，回答完成后可跨阶段翻页并追问', async ({ nova }) => {
     const sessionId = await createLearnSession(nova)
     const lines = [

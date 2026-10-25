@@ -4,7 +4,7 @@
  * 可视化只在学习会话里提供，写法整段放进稳定的系统提示，每轮讲解都能直接用。
  * 示例必须能被 Renderer 的 openui 解析器完整渲染，由测试防止说明与实现漂移。
  *
- * 流程、链路与生命周期一律走 openui：它写在回答正文里，逐字流式；
+ * 流程、链路、生命周期与常规分层架构一律走 openui：它写在回答正文里，逐字流式；
  * 工具参数是否流式取决于服务商，部分服务商要等整段 HTML 写完才一次性回传。
  */
 
@@ -24,9 +24,9 @@ Restraint and visual hierarchy
 - Progressive disclosure: keep grid cards and table cells concise (1 short phrase of ~12–20 chars per card/cell); put multi-sentence trade-offs, regex/config rules and file:line lists in the single .viz-inspector below, updated on click.
 - Flat: 1px var(--viz-border) borders, no shadows or gradients. var(--viz-accent) marks only the active or selected item; use data-tone="success" | "warning" | "danger" on .viz-badge for status pills.
 
-Archetypes (flows, request chains and lifecycles are never drawn here: use the inline Walkthrough or Flow widget, which streams into the reply while you write)
+Archetypes (flows, request chains and lifecycles use the inline Walkthrough or Flow widget; ordinary layered architecture maps use Architecture)
 1. Tech stack / dependency audit: optional top .viz-kpis summary row (2–3 .viz-card items with .viz-stat), then a 2-column .viz-grid of compact dependency cards (each .viz-card has .viz-card-head with package name + .viz-badge[data-tone="success"|"warning"], a one-line role and version in .viz-muted), plus a full-width .viz-inspector below showing the selected item's detailed reason, file:line and follow-up button.
-2. Architecture / module map: a layered SVG (at most 5 nodes per row) or .viz-lanes (one lane per layer, at most 5 lanes) taking full width; clicking a module highlights its edges and updates the .viz-inspector below.
+2. Custom simulation / special figure: use free SVG or HTML only when Architecture, Chart, Flow and the other inline components cannot express the required interaction or drawing. Do not fall back to free coordinates for an ordinary layered topology.
 3. Trade-off / comparison: a full-width .viz-table (at most 4 columns; keep the first and last columns short, give every <td> data-label="its column header" for narrow cards) or .viz-grid cards, scenario buttons and a one-line verdict in .viz-inspector.
 4. Metrics / capacity / performance: an SVG chart or simulator with .viz-controls and .viz-kpis.
 The detail area is a .viz-inspector placed after .viz-canvas inside .viz-split: keep it concise (title, 1–2 sentences of explanation, optional .viz-kv or 1–2 .viz-file-ref, and an optional follow-up button).
@@ -58,8 +58,12 @@ Components (positional arguments; ? = optional; tone = "neutral" | "info" | "suc
 - Layout: Col(children), Row(children), Grid(children, columns?), Card(children, title?), Tabs([{label, content}], $tab?), Collapsible(title, children, open?)
 - Content: Text(text, "title" | "body" | "strong" | "muted"), Callout(text, tone?, title?), Badge(text, tone?), List(items, ordered?), KV([{label, value}] or {key: value}), Code(code, lang?), Divider()
 - Data: Stat(label, value, tone?, hint?), Progress(label, value, max?, tone?), Table(headers, rows, highlightRow?), Bars([{label, value}], unit?), Chart("bar" | "line" | "area", [{label, value}] or {labels, series: [{name, values}]}, unit?), Chart("pie" | "donut", [{label, value}], unit?)
-- Teaching: Flow([{title, detail}], $step?, "row" | "col"), Steps([{title, detail}], $step?), Walkthrough(phases, $step?), Flashcard(front, back). With a numeric $step, Flow becomes a clickable walkthrough with a detail panel and prev/next buttons.
+- Teaching: Flow([{title, detail}], $step?, "row" | "col"), Architecture(layers, $module?), Steps([{title, detail}], $step?), Walkthrough(phases, $step?), Flashcard(front, back). With a numeric $step, Flow becomes a clickable walkthrough with a detail panel and prev/next buttons. Flow lays out horizontally only when every node keeps its readable width, otherwise it becomes a centered vertical chain.
 - Input: Slider($n, label, min, max, step?, unit?), Choice($s, options, label?), Select($s, options, label?), Switch($b, label), Input($s, label, placeholder?), Button(label, action or [actions], "primary" | "secondary")
+
+Architecture draws equal-width module nodes in centered layers, with a shared detail viewer. $module is the selected node index across all layers.
+- layers: [{title, relation?, nodes}], at most 5 layers and 5 nodes per layer. relation describes how this layer reaches the next. Nodes use the Walkthrough step fields below: title, meta?, detail?, data?, code?, file?, ask?.
+- Give every layer and every node its own statement in dependency order so completed modules appear during streaming. Keep node titles short; put responsibilities, upstream/downstream details and source context in the detail viewer.
 
 Walkthrough draws a phase progress bar, the current phase's summary and data flow, its step list beside a detail panel, and Prev/Next across phases.
 - phases: [{title, summary?, io?, steps}], 3–5 phases with titles of up to 6 characters, at most 6 steps each. summary is one line on what the phase achieves; io is the data entering → leaving it, written "a → b".
@@ -114,6 +118,17 @@ const OPENUI_EXAMPLES: readonly OpenUiExample[] = [
     ].join('\n')
   },
   {
+    title: 'Layered architecture',
+    code: [
+      'root = Architecture([entry, core], $module)',
+      '$module = 0',
+      'entry = {title: "入口层", relation: "调用", nodes: [cli]}',
+      'cli = {title: "cli.ts", detail: "接收命令行输入并分发命令", file: "src/cli.ts:28", ask: "入口如何校验空输入？"}',
+      'core = {title: "编排层", nodes: [agent]}',
+      'agent = {title: "agent.ts", meta: "Agent 循环", detail: "驱动模型请求、工具执行和结果回灌"}'
+    ].join('\n')
+  },
+  {
     title: 'Phased walkthrough (lifecycle, request chain, more than 6 steps)',
     code: [
       'root = Walkthrough([prepare, loop, finish], $step)',
@@ -152,8 +167,8 @@ export function renderLearnVisualGuide(): string {
 }
 
 const HARD_RULES =
-  'Hard rules: not for flows, request chains or lifecycles (use the inline Walkthrough or Flow widget); inline everything (no network); colors only via var(--viz-*) theme variables, never on :root/html/body; design for a single full-width column in the 380–736px inline card (never force a two-column split like 2fr 1fr or put a table beside a long text card; use .viz-split so .viz-inspector stacks below inline); never redeclare built-in .viz-* classes; write <style> first, the visible <body> next and every <script> last. Each call publishes its own card, so finish the page before calling; once it is shown, do not restate its contents in text.'
-export const PRESENT_VISUALIZATION_DESCRIPTION = `Show the user an interactive visual — architecture map, comparison, simulator or chart — rendered inline in the chat from one self-contained HTML document.
+  'Hard rules: not for flows, request chains, lifecycles or ordinary layered architecture maps (use the inline Walkthrough, Flow or Architecture widget); inline everything (no network); colors only via var(--viz-*) theme variables, never on :root/html/body; design for a single full-width column in the 380–736px inline card (never force a two-column split like 2fr 1fr or put a table beside a long text card; use .viz-split so .viz-inspector stacks below inline); never redeclare built-in .viz-* classes; write <style> first, the visible <body> next and every <script> last. Each call publishes its own card, so finish the page before calling; once it is shown, do not restate its contents in text.'
+export const PRESENT_VISUALIZATION_DESCRIPTION = `Show the user an interactive visual — dependency audit, comparison, simulator or custom chart — rendered inline in the chat from one self-contained HTML document.
 
 When to use it, the archetypes, layout, sandbox and theme rules and the built-in classes are in your instructions under 可视化讲解 and 可视化写法.
 ${HARD_RULES}`

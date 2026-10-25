@@ -57,6 +57,13 @@ function collectControls(node: InlineUiNode, out: Map<string, ControlLabel>): vo
           typeof value === 'number' ? (tabs[value]?.label ?? inlineUiText(value)) : inlineUiText(value))
       }
       break
+    case 'architecture':
+      if (node.current) {
+        const modules = node.layers.flatMap(layer => layer.nodes)
+        put(node.current.variable, '当前模块', value =>
+          typeof value === 'number' && modules[value] ? modules[value].title : inlineUiText(value))
+      }
+      break
     case 'steps': case 'flow': {
       const items = node.type === 'steps' ? node.steps : node.items
       if (node.current) {

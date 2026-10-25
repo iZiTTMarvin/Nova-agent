@@ -181,6 +181,11 @@ const WIDTHS_HTML = `<!doctype html>
       <span class="viz-file-ref">frontend/index.html:211</span>
     </aside>
   </div>
+<div class="viz-lanes" id="geometry-lanes">
+  <div class="viz-lane"><span class="viz-lane-label">入口层</span><div class="viz-lane-nodes"><button class="viz-node">cli.ts</button><button class="viz-node">index.ts</button></div></div>
+  <div class="viz-lane"><span class="viz-lane-label">编排层</span><div class="viz-lane-nodes"><button class="viz-node">agent.ts</button><button class="viz-node">orchestrator.ts</button></div></div>
+  <div class="viz-lane"><span class="viz-lane-label">支撑层</span><div class="viz-lane-nodes"><button class="viz-node">config.ts</button><button class="viz-node">logger.ts</button><button class="viz-node">utils/json_utils.ts</button><button class="viz-node">memory.ts</button></div></div>
+</div>
   <table class="viz-table">
     <thead><tr><th>方案</th><th>平均延迟</th><th>改造成本</th></tr></thead>
     <tbody>
@@ -650,7 +655,7 @@ test('openui 围栏在开发对话里只是代码块；学习会话里流式尾�
   expect(nova.pageErrors).toEqual([])
 })
 
-test('窄卡片、常规内联与展开视图三档宽度下，阶段条、步骤、详情与对比表都不需要横向滚动', async ({ nova }, testInfo) => {
+test('窄卡片、常规内联与展开视图三档宽度下，阶段条、步骤、分层模块、详情与对比表都不拥挤或横向溢出', async ({ nova }, testInfo) => {
   const learn = await startLearnSession(nova)
   nova.provider.enqueue(
     {
@@ -668,6 +673,30 @@ test('窄卡片、常规内联与展开视图三档宽度下，阶段条、步�
   const card = nova.page.getByTestId('visualization-card')
   await expect(card).toHaveAttribute('data-state', 'ok')
   const frameElement = await settledFrame(card)
+  const expectLaneGeometry = async (target: Frame): Promise<void> => {
+    const metrics = await target.locator('#geometry-lanes').evaluate(root => {
+      const nodes = [...root.querySelectorAll('.viz-lane-nodes > .viz-node')]
+      const widths = nodes.map(node => node.getBoundingClientRect().width)
+      const centerDeltas = [...root.querySelectorAll('.viz-lane')].flatMap(lane => {
+        const area = lane.querySelector('.viz-lane-nodes')
+        if (!area) return []
+        const areaRect = area.getBoundingClientRect()
+        const rows = new Map<number, { left: number; right: number }>()
+        for (const node of area.querySelectorAll('.viz-node')) {
+          const rect = node.getBoundingClientRect()
+          const key = Math.round(rect.top)
+          const row = rows.get(key) ?? { left: rect.left, right: rect.right }
+          row.left = Math.min(row.left, rect.left)
+          row.right = Math.max(row.right, rect.right)
+          rows.set(key, row)
+        }
+        return [...rows.values()].map(row => Math.abs((row.left + row.right - areaRect.left - areaRect.right) / 2))
+      })
+      return { widthDelta: Math.max(...widths) - Math.min(...widths), centerDeltas }
+    })
+    expect(metrics.widthDelta).toBeLessThanOrEqual(1)
+    for (const delta of metrics.centerDeltas) expect(delta).toBeLessThanOrEqual(1)
+  }
   const frame = await contentFrameOf(frameElement)
   const shotDir = path.resolve(__dirname, '../../../test-results/e2e/visualization-widths')
   await mkdir(shotDir, { recursive: true })
@@ -679,12 +708,14 @@ test('窄卡片、常规内联与展开视图三档宽度下，阶段条、步�
 
   const inlineWidth = await frame.evaluate(() => document.documentElement.clientWidth)
   expect(await horizontalOverflow(frame)).toEqual([])
+  await expectLaneGeometry(frame)
   await capture('inline', card)
 
   // 小窗口里卡片只有约 380px：对比表逐行变成带列标签的卡片
   await frameElement.evaluate(element => { (element as HTMLElement).style.width = '380px' })
   await expect.poll(() => frame.evaluate(() => document.documentElement.clientWidth)).toBe(380)
   expect(await horizontalOverflow(frame)).toEqual([])
+  await expectLaneGeometry(frame)
   await expect(frame.locator('.viz-table thead')).toBeHidden()
   // 窄帧会变高：截图时临时拉高窗口，让整张卡片入镜
   const viewport = nova.page.viewportSize()
@@ -700,6 +731,7 @@ test('窄卡片、常规内联与展开视图三档宽度下，阶段条、步�
   const expanded = await contentFrameOf(expandedElement)
   expect(await expanded.evaluate(() => document.documentElement.clientWidth)).toBeGreaterThan(inlineWidth)
   expect(await horizontalOverflow(expanded)).toEqual([])
+  await expectLaneGeometry(expanded)
   await capture('expanded', dialog)
   expect(nova.pageErrors).toEqual([])
 })

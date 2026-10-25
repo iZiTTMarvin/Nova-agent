@@ -17,7 +17,7 @@ export const INLINE_UI_COMPONENTS = [
   'Col', 'Row', 'Grid', 'Card', 'Tabs', 'Collapsible',
   'Text', 'Callout', 'Badge', 'List', 'KV', 'Code', 'Divider',
   'Stat', 'Progress', 'Table', 'Bars', 'Chart',
-  'Flow', 'Steps', 'Walkthrough', 'Flashcard',
+  'Flow', 'Architecture', 'Steps', 'Walkthrough', 'Flashcard',
   'Slider', 'Choice', 'Select', 'Switch', 'Input', 'Button'
 ] as const
 export const INLINE_UI_FUNCTIONS = [
@@ -76,6 +76,12 @@ export interface InlineUiFlowItem {
   readonly detail: string | null
 }
 
+export interface InlineUiArchitectureLayer {
+  readonly title: string
+  readonly relation: string | null
+  readonly nodes: InlineUiWalkStep[]
+}
+
 export interface InlineUiWalkStep {
   readonly title: string
   /** 所在层与源码位置，如「Agent · agent.ts:454」 */
@@ -117,6 +123,7 @@ export type InlineUiNode =
   | { type: 'bars'; items: { label: string; value: number | null; display: string }[]; unit: string | null }
   | { type: 'chart'; kind: 'bar' | 'line' | 'area'; labels: string[]; series: { name: string; values: (number | null)[] }[]; unit: string | null }
   | { type: 'pie'; items: { label: string; value: number; display: string }[]; donut: boolean; unit: string | null }
+  | { type: 'architecture'; layers: InlineUiArchitectureLayer[]; current: { variable: string; value: number | null } | null }
   | { type: 'flow'; items: InlineUiFlowItem[]; current: { variable: string; value: number | null } | null; direction: 'row' | 'col' }
   | { type: 'steps'; steps: InlineUiFlowItem[]; current: { variable: string; value: number | null } | null }
   /** current 是跨阶段的全局步骤下标 */
@@ -153,6 +160,8 @@ const MAX_SLIDER_STEPS = 10000
 const MAX_WALK_PHASES = 6
 const MAX_WALK_PHASE_STEPS = 8
 const MAX_WALK_DATA_ROWS = 8
+const MAX_ARCHITECTURE_LAYERS = 5
+const MAX_ARCHITECTURE_LAYER_NODES = 5
 const ASK_LABEL_CHARS = 40
 const ASK_PROMPT_CHARS = 500
 
@@ -831,6 +840,19 @@ function walkPhases(v: unknown): InlineUiWalkPhase[] | null {
   return phases
 }
 
+function architectureLayers(v: unknown): InlineUiArchitectureLayer[] | null {
+  if (!Array.isArray(v)) return null
+  const layers: InlineUiArchitectureLayer[] = []
+  for (const item of v) {
+    if (layers.length >= MAX_ARCHITECTURE_LAYERS) break
+    if (!isRecord(item) || !Array.isArray(item.nodes)) continue
+    const nodes = item.nodes.map(walkStep).filter((s): s is InlineUiWalkStep => s !== null).slice(0, MAX_ARCHITECTURE_LAYER_NODES)
+    if (nodes.length === 0) continue
+    layers.push({ title: text(item.title ?? null), relation: optionalPlain(item.relation, 120), nodes })
+  }
+  return layers
+}
+
 /** 追问的显示名取步骤标题，长度与 @AskNova 的上限一致 */
 export const walkAskLabel = (step: InlineUiWalkStep): string => step.title.slice(0, ASK_LABEL_CHARS)
 
@@ -1024,6 +1046,11 @@ function evalComponent(rawName: string, args: Expr[], ctx: EvalCtx): InlineUiNod
       if (kind !== 'bar' && kind !== 'line' && kind !== 'area') return null
       const data = chartSeries(arg(1))
       return data === null ? null : brand({ type: 'chart', kind, labels: data.labels, series: data.series, unit })
+    }
+    case 'Architecture': {
+      const layers = architectureLayers(arg(0))
+      if (layers === null || layers.length === 0) return null
+      return brand({ type: 'architecture', layers, current: currentStep(args[1], ctx) })
     }
     case 'Flow': {
       const items = flowItems(arg(0))
