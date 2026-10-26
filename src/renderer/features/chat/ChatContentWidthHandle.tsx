@@ -2,6 +2,7 @@
  * 阅读区宽度手柄：挂在 .chat-panel 左缘的隐形拖拽热区（开发/学习两个表面共用）。
  * 拖拽改写外壳上的 --chat-content-max-width —— 阅读柱、composer 与状态面板让位公式
  * 都吃这个变量，一处写入全链路同步；偏好经 useLayoutStore 持久化，两个表面共享一份。
+ * 只在已进入会话（enabled）时挂载并发布宽度：空会话保持默认阅读宽、不留拖拽热区。
  * 复用分栏手势引擎：向左拖变宽、deltaScale=2 让柱体绕中心对称伸缩，手柄始终贴着指针。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode, type WheelEvent } from 'react'
@@ -18,16 +19,24 @@ function resolveContentWidth(panelWidth: number, preference: number | null): num
   return Math.min(Math.max(preference ?? CHAT_CONTENT_WIDTH_MIN, CHAT_CONTENT_WIDTH_MIN), max)
 }
 
-export function ChatContentWidthHandle(): ReactNode {
+/**
+ * @param enabled 是否已进入会话（空会话为 false）。为 false 时不渲染热区，
+ *   并把宽度变量还原成样式表默认值，让空会话回到改造前的默认版式。
+ */
+export function ChatContentWidthHandle({ enabled }: { enabled: boolean }): ReactNode {
   const handleRef = useRef<HTMLDivElement>(null)
-  // 外壳 = .chat-panel（本组件是其直接子元素），mount 后回填
+  // 外壳 = .chat-panel（本组件是其直接子元素）。停用后没有 DOM 可反查父节点，
+  // 故缓存上一次解析结果，用来把停用时的宽度还原掉
   const shellRef = useRef<HTMLElement | null>(null)
 
-  /** 把解析后的宽度写进外壳变量；无偏好时还原到样式表默认值。 */
+  const enabledRef = useRef(enabled)
+  enabledRef.current = enabled
+
+  /** 把解析后的宽度写进外壳变量；停用或无偏好时还原到样式表默认值。 */
   const publish = useCallback(() => {
     const panel = shellRef.current
     if (!panel) return
-    const preference = useLayoutStore.getState().chatContentWidth
+    const preference = enabledRef.current ? useLayoutStore.getState().chatContentWidth : null
     if (preference === null) {
       panel.style.removeProperty('--chat-content-max-width')
       return
@@ -56,18 +65,19 @@ export function ChatContentWidthHandle(): ReactNode {
   // 拖拽本手柄期间跳过，避免外部动画与拖拽写入互相覆盖
   const draggingRef = useRef(dragging)
   draggingRef.current = dragging
-  // layout effect：已有宽偏好时首帧就按偏好排，避免先画默认宽再跳变
+  // layout effect：已有宽偏好且阅读柱在场时首帧就按偏好排，避免先画默认宽再跳变
   useLayoutEffect(() => {
-    const panel = handleRef.current?.parentElement ?? null
-    shellRef.current = panel
+    const panel = handleRef.current?.parentElement ?? shellRef.current
     if (!panel) return
+    shellRef.current = panel
     publish()
+    if (!enabled) return
     const observer = new ResizeObserver(() => {
       if (!draggingRef.current) publish()
     })
     observer.observe(panel)
     return () => observer.disconnect()
-  }, [publish])
+  }, [enabled, publish])
 
   // 热区压在滚动容器上方但不是其子节点：滚轮停在条上时转发给消息流，不留滚动死角
   const onWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
@@ -91,6 +101,8 @@ export function ChatContentWidthHandle(): ReactNode {
     window.addEventListener('mousemove', onMove)
     return () => window.removeEventListener('mousemove', onMove)
   }, [dragging, trackHandleY])
+
+  if (!enabled) return null
 
   return (
     <div

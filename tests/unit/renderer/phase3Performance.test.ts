@@ -104,6 +104,8 @@ describe('长对话流式渲染性能回归', () => {
     resetSettingsStoreForTests()
 
     resetAgentStoreForTests()
+    // 阅读宽度手柄用 ResizeObserver 跟随容器宽度；jsdom 未实现
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   })
 
   it('50 条历史消息下单次流式 thinking delta（applyStreamDeltas）不应出现 >50ms 长任务', () => {

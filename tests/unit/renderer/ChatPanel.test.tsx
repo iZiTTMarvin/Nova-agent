@@ -13,6 +13,7 @@ import {
 import { useAgentStore, resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentStore'
 import { useRunStore, selectSessionIsRunning } from '../../../src/renderer/stores/useRunStore'
 import { useWorkspaceStore } from '../../../src/renderer/stores/useWorkspaceStore'
+import { resetLayoutStoreForTests, useLayoutStore } from '../../../src/renderer/stores/useLayoutStore'
 import type { ExtendedMessage } from '../../../src/renderer/stores/types'
 
 /**
@@ -69,6 +70,11 @@ function makeAssistantMessage(id: string): ExtendedMessage {
     _revision: 0
   }
 }
+
+// 阅读宽度手柄用 ResizeObserver 跟随容器宽度；jsdom 未实现，渲染 ChatPanel 的用例都要它
+beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+})
 
 describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
   beforeEach(() => {
@@ -742,5 +748,53 @@ sendInFlight: false})
     expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(false)
     expect(state.sendInFlight).toBe(false)
     renderer.unmount()
+  })
+})
+
+describe('ChatPanel → 阅读区宽度手柄只随阅读柱出现', () => {
+  beforeEach(() => {
+    resetChatStoreForTests()
+    useRunStore.getState().resetForTests()
+    resetSettingsStoreForTests()
+    resetAgentStoreForTests()
+    resetLayoutStoreForTests()
+    mockInvoke.mockResolvedValue(undefined)
+    Object.assign(window, {
+      api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
+      nova: {
+        skill: {
+          onChange: vi.fn(() => () => {}),
+          list: vi.fn(() =>
+            Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })
+          ),
+          reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] }))
+        }
+      }
+    })
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    useWorkspaceStore.setState({ isSessionLoading: false })
+  })
+
+  it('空会话不挂载手柄也不写宽度变量，首条消息进来才出现', () => {
+    // 面板 1600px、偏好 1000px：读出的值要能被断言成偏好本身，而不是被 jsdom 的 0 宽钳死
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(1600)
+    act(() => {
+      useChatStore.setState({ currentSessionId: 'sess_1', messages: [] })
+    })
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const shell = renderer.container.querySelector<HTMLElement>('.chat-panel')!
+
+    act(() => useLayoutStore.getState().setChatContentWidth(1000))
+    expect(shell.querySelector('.chat-width-handle')).toBeNull()
+    expect(shell.style.getPropertyValue('--chat-content-max-width')).toBe('')
+
+    act(() => {
+      useChatStore.setState({ messages: [makeAssistantMessage('msg_1')] })
+    })
+    expect(shell.querySelector('.chat-width-handle')).not.toBeNull()
+    expect(shell.style.getPropertyValue('--chat-content-max-width')).toBe('1000px')
+    renderer.unmount()
+    vi.restoreAllMocks()
   })
 })

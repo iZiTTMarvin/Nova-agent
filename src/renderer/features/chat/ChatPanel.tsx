@@ -1173,8 +1173,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
         </Suspense>
       )}
 
-      {/* 阅读区宽度手柄：贴阅读柱左缘的隐形热区 */}
-      <ChatContentWidthHandle />
+      {/* 阅读区宽度手柄：贴阅读柱左缘的隐形热区，空会话（尚无消息）不挂载 */}
+      <ChatContentWidthHandle enabled={!isEmptyState} />
     </div>
   )
 }

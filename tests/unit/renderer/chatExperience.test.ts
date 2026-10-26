@@ -69,6 +69,8 @@ describe('聊天体验回归', () => {
     })
     vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1))
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    // 阅读宽度手柄用 ResizeObserver 跟随容器宽度；jsdom 未实现
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
     Object.defineProperty(document, 'visibilityState', {
       configurable: true,
       value: 'visible'

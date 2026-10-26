@@ -301,8 +301,8 @@ export function LearningSurface({ sessionId }: { sessionId: string }): React.Rea
         </div>
       </div>
 
-      {/* 阅读区宽度手柄：与开发表面共用同一份宽度偏好 */}
-      <ChatContentWidthHandle />
+      {/* 阅读区宽度手柄：与开发表面共用同一份宽度偏好，空会话不挂载 */}
+      <ChatContentWidthHandle enabled={!isEmptyState} />
     </div>
   )
 }
