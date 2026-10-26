@@ -115,4 +115,27 @@ describe('请求级思考强度覆盖（ChatOptions.reasoningEffort）', () => {
     expect(high).toBe(max)
     expect(high).not.toBe(auto)
   })
+
+  it('MiniMax 新型号各档位编码与请求路由一致', async () => {
+    const client = new OpenAICompatibleModelClient({
+      baseUrl: 'https://api.minimax.io/v1', apiKey: 'test-key', modelId: 'MiniMax-M3.1-Flash'
+    })
+    const routes = new Set<string>()
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const body = await drainBody(client, { reasoningEffort: effort })
+      expect(body.reasoning_effort).toBe(effort)
+      routes.add(client.measureRequest([{ role: 'user', content: 'hi' }], undefined, { reasoningEffort: effort }).routeId)
+    }
+    expect(routes.size).toBe(5)
+    expect(await drainBody(client)).not.toHaveProperty('reasoning_effort')
+  })
+
+  it('GLM 旧别名与实际 High 共享请求路由', () => {
+    const client = new OpenAICompatibleModelClient({
+      baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: 'test-key', modelId: 'glm-5.2'
+    })
+    const messages = [{ role: 'user' as const, content: 'hi' }]
+    expect(client.measureRequest(messages, undefined, { reasoningEffort: 'low' }).routeId)
+      .toBe(client.measureRequest(messages, undefined, { reasoningEffort: 'high' }).routeId)
+  })
 })

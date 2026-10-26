@@ -7,6 +7,7 @@ import {
   projectSubagentExecutionResult
 } from '../../../runtime/subagents'
 import { parseFollowupArguments } from '../../../shared/subagents'
+import { resolveReasoningSelection } from '../../../shared/config'
 import { buildSessionDiffState } from '../../../runtime/checkpoints/sessionDiffState'
 import { countEntryChanges } from '../../../shared/diff/compute'
 import { isTerminalRunStatus, type RunSnapshot } from '../../../shared/run/types'
@@ -226,7 +227,7 @@ export class SubagentProjectionService {
         ? { execution: snapshot.dispatch.execution }
         : {}),
       ...(effectiveModel ? { model: effectiveModel } : {}),
-      ...(header ? { reasoningEffort: header.reasoningEffort } : {}),
+      ...(header ? { reasoningEffort: resolveReasoningSelection(header) } : {}),
       ...(snapshot?.dispatch?.sourceChildRunId
         ? { resumedFromRunId: snapshot.dispatch.sourceChildRunId }
         : {})

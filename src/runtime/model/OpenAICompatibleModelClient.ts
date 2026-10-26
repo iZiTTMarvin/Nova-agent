@@ -200,7 +200,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
       this.effectiveReasoningEffort(options)
     )
     if (reasoningParams) {
-      Object.assign(body, this.applyThinkingCapabilityFilter(reasoningParams, requestDisabled))
+      Object.assign(body, this.applyThinkingCapabilityFilter({ ...reasoningParams }, requestDisabled))
     }
 
     if (tools && tools.length > 0) {

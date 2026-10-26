@@ -8,8 +8,16 @@ import { lookupModelCapability } from './modelRegistry'
 /** 缓存策略：auto = 前缀稳定即自动命中；anthropic = 显式 cache_control 标记 */
 export type CacheStrategy = 'auto' | 'anthropic'
 
-/** 'auto' 不发送参数，其余值显式控制推理深度。 */
-export type ReasoningEffort = 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+/** auto 沿用服务商默认；enabled/none 只用于支持开关的模型。 */
+export type ReasoningEffort = 'auto' | 'enabled' | 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = [
+  'auto', 'enabled', 'none', 'low', 'medium', 'high', 'xhigh', 'max'
+]
+
+export function isReasoningEffort(value: unknown): value is ReasoningEffort {
+  return typeof value === 'string' && REASONING_EFFORT_VALUES.some(effort => effort === value)
+}
 
 /**
  * 缓存档案标识（与 runtime/model/cacheProfile.ts 对齐）。

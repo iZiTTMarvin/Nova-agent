@@ -87,7 +87,7 @@ describe('buildSubagentCatalog', () => {
     expect(entries[1]).toMatchObject({
       profileId: 'unbound',
       status: 'available',
-      model: { reasoningEffort: 'medium' }
+      model: { reasoningEffort: 'auto' }
     })
     expect(JSON.stringify(entries)).not.toContain('secret-isolated-test-value')
   })

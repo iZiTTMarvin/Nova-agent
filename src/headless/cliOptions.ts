@@ -1,4 +1,5 @@
 import { resolve } from 'path'
+import { isReasoningEffort, type ReasoningEffort } from '../shared/config'
 import type { PermissionMode } from '../shared/session/types'
 import { resolveHeadlessMaxToolRounds } from './roundBudget'
 
@@ -9,7 +10,7 @@ export interface CliOptions {
   baseUrl: string
   /** 显式指定的权限模式；headless 无默认值，缺参即启动失败。 */
   permissionMode: PermissionMode
-  reasoningEffort: 'low' | 'medium' | 'high' | 'max'
+  reasoningEffort: ReasoningEffort
   maxToolRounds: number
   deadlineSeconds?: number
   instructionFile?: string
@@ -94,7 +95,7 @@ function parseArgs(argv: string[]): CliOptions {
   const workdir = resolve(values.get('workdir') ?? process.cwd())
   const logsDir = resolve(values.get('logs-dir') ?? resolve(workdir, '.nova-headless'))
   const effort = values.get('reasoning-effort') ?? 'max'
-  if (!['low', 'medium', 'high', 'max'].includes(effort)) {
+  if (!isReasoningEffort(effort)) {
     throw new Error(`不支持的 reasoning effort: ${effort}`)
   }
   const deadlineValue = values.get('deadline-seconds')

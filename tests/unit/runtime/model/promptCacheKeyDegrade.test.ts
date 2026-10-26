@@ -138,7 +138,7 @@ describe('会话级能力记忆（capability downgrade）', () => {
     const client = new OpenAICompatibleModelClient({
       baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
       apiKey: 'test-key',
-      modelId: 'glm-4',
+      modelId: 'glm-5.2',
       cacheProfile: 'glm',
       reasoningEffort: 'auto'
     })

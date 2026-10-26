@@ -15,6 +15,7 @@ import type {
   SubagentSessionHeader
 } from '../../../shared/subagents'
 import { resolveCacheProfile } from '../../../runtime/model/cacheProfile'
+import { normalizeReasoningEffort } from '../../../shared/config'
 
 export interface ResolvedChildModel {
   readonly header: SubagentSessionHeader
@@ -47,8 +48,8 @@ export function resolveChildModelFromProfile(
       ? { providerId: model.providerId, modelEntryId: model.modelEntryId }
       : registry.activeModel
   const resolved = resolveAvailableModel(registry, ref)
-  const reasoningEffort: SubagentSessionHeader['reasoningEffort'] =
-    options.reasoningEffortOverride ?? model?.reasoningEffort ?? resolveModelReasoningEffort(resolved.entry)
+  const requestedEffort = options.reasoningEffortOverride ?? model?.reasoningEffort ?? resolveModelReasoningEffort(resolved.entry)
+  const reasoningEffort = normalizeReasoningEffort(resolved.entry.modelId, requestedEffort) ?? requestedEffort
   if (reasoningEffort !== 'auto') {
     const supported = getSupportedReasoningEfforts(resolved.entry)
     if (!supported) {
@@ -84,7 +85,10 @@ export function resolveChildModelFromHeader(
       `子代理模型 ${header.providerId}/${header.modelEntryId} 的 modelId 已变化，无法恢复；请重新派遣`
     )
   }
-  return buildResolvedChildModel(resolved, header)
+  return buildResolvedChildModel(resolved, {
+    ...header,
+    reasoningEffort: normalizeReasoningEffort(header.modelId, header.reasoningEffort) ?? header.reasoningEffort
+  })
 }
 
 function buildResolvedChildModel(

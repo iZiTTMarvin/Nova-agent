@@ -34,6 +34,7 @@ import type {
 } from '../../../../src/shared/subagents'
 import type { PrepareSubagentTurnInput } from '../../../../src/runtime/subagents'
 import * as atomicFile from '../../../../src/runtime/storage/atomicFile'
+import { normalizeReasoningEffort } from '../../../../src/shared/config'
 
 const profile = {
   id: 'explore',
@@ -391,6 +392,30 @@ describe('SubagentExecutionService', () => {
     expect(replayed).toEqual(firstResult)
     expect(prepareTurn).toHaveBeenCalledTimes(1)
     expect(sessionStore.list().filter((item) => item.kind === 'subagent')).toHaveLength(1)
+  })
+
+  it.each([
+    ['glm-5.2', 'medium', 'max'],
+    ['MiniMax-M3', 'max', 'none'],
+    ['MiniMax-M2.7', 'high', 'none']
+  ] as const)('%s 别名覆盖的并发重试和终态重放复用原执行', async (modelId, effort, conflict) => {
+    let release!: () => void
+    const wait = new Promise<void>(resolve => { release = resolve })
+    const { service, prepareTurn } = createService({
+      wait,
+      resolveExecutionTarget: () => ({
+        ...modelHeader, modelId, reasoningEffort: normalizeReasoningEffort(modelId, effort)!
+      })
+    })
+    const request = command({ reasoningEffort: effort })
+    const context = { invocationRef: invocationRef() }
+    const first = service.spawn(request, context)
+    expect(service.spawn(request, context)).toBe(first)
+    release()
+    const result = await first
+    expect(await service.spawn(request, context)).toEqual(result)
+    await expect(service.spawn({ ...request, reasoningEffort: conflict }, context)).rejects.toThrow(/模型覆盖冲突/)
+    expect(prepareTurn).toHaveBeenCalledTimes(1)
   })
 
   it('全局 profile 修改或模型不可用后，终态重放仍使用持久化结果', async () => {

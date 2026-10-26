@@ -28,6 +28,7 @@ import {
   listSelectableModels
 } from '../../../shared/config/llmRegistry'
 import { ChevronIcon } from '../../components/Icons'
+import { reasoningSelectionLabel } from '../../../shared/config/reasoning'
 
 type Selection =
   | { kind: 'preset'; presetId: PresetProviderId }
@@ -37,15 +38,6 @@ const FOLLOW_ACTIVE_MODEL = 'follow-active'
 
 function toModelOptionValue(ref: { providerId: string; modelEntryId: string }): string {
   return `${ref.providerId}::${ref.modelEntryId}`
-}
-
-const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
-  auto: '自动',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '极高',
-  max: '最高'
 }
 
 export const LlmSettingsPanel: React.FC = () => {
@@ -699,9 +691,7 @@ const ModelEntryRow: React.FC<{
             label="思考强度"
             options={supportedEfforts.map(value => ({
               value,
-              label: value === 'auto' && effectiveEffort !== 'auto'
-                ? `自动（默认 ${REASONING_EFFORT_LABELS[effectiveEffort]}）`
-                : REASONING_EFFORT_LABELS[value]
+              label: reasoningSelectionLabel(entry.modelId, value)
             }))}
             value={configuredValue}
             onChange={value =>

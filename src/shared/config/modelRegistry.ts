@@ -10,6 +10,7 @@
  * 维护：新模型上线并确认能力后在此添加一条精确 modelId；拿不准的不收录。
  */
 import type { ReasoningEffort } from './types'
+import type { ReasoningCapability } from './reasoning'
 
 export interface ModelCapabilityEntry {
   /** 是否支持图片输入。true=明确支持；false=明确不支持 */
@@ -20,10 +21,55 @@ export interface ModelCapabilityEntry {
    * 未设时走 resolveContextWindow → inferContextWindow 兜底。
    */
   contextWindow?: number
-  /** 已确认的可区分强度；空数组表示无档位，缺省表示能力未知。 */
-  reasoningEfforts?: readonly Exclude<ReasoningEffort, 'auto'>[]
-  /** 服务商未收到显式覆盖时使用的已知默认强度。 */
-  defaultReasoningEffort?: Exclude<ReasoningEffort, 'auto'>
+  reasoning?: ReasoningCapability
+}
+
+const VERIFIED_AT = '2026-10-26'
+const OPENAI_SOURCE = 'https://platform.openai.com/docs/guides/reasoning'
+const GLM_SOURCE = 'https://docs.bigmodel.cn/cn/guide/capabilities/thinking'
+const MINIMAX_SOURCE = 'https://platform.minimax.io/docs/api-reference/text-openai-api'
+const DEEPSEEK_SOURCE = 'https://api-docs.deepseek.com/guides/thinking_mode'
+
+function effortCapability(
+  levels: readonly Exclude<ReasoningEffort, 'auto' | 'none' | 'enabled'>[],
+  defaultEffort: Exclude<ReasoningEffort, 'auto' | 'enabled'>,
+  source = OPENAI_SOURCE,
+  canDisable = false
+): ReasoningCapability {
+  return { kind: 'effort', protocol: 'effort', levels, default: defaultEffort, canDisable, source, verifiedAt: VERIFIED_AT }
+}
+
+const GLM_52_REASONING: ReasoningCapability = {
+  kind: 'effort', protocol: 'glm', levels: ['high', 'max'], default: 'max', canDisable: true,
+  aliases: { low: 'high', medium: 'high', xhigh: 'max' }, source: GLM_SOURCE, verifiedAt: VERIFIED_AT
+}
+const GLM_53_REASONING: ReasoningCapability = {
+  kind: 'effort', protocol: 'glm', levels: ['low', 'high', 'max'], default: 'max',
+  source: GLM_SOURCE, verifiedAt: VERIFIED_AT
+}
+const GLM_TOGGLE: ReasoningCapability = {
+  kind: 'toggle', protocol: 'glm', default: 'enabled', source: GLM_SOURCE, verifiedAt: VERIFIED_AT
+}
+const MINIMAX_FIXED: ReasoningCapability = {
+  kind: 'fixed', protocol: 'minimax', source: MINIMAX_SOURCE, verifiedAt: VERIFIED_AT
+}
+const MINIMAX_TOGGLE: ReasoningCapability = {
+  kind: 'toggle', protocol: 'minimax', default: 'enabled', source: MINIMAX_SOURCE, verifiedAt: VERIFIED_AT
+}
+const DEEPSEEK_REASONING: ReasoningCapability = {
+  kind: 'effort', protocol: 'thinking', levels: ['low', 'high', 'max'], default: 'high', canDisable: true,
+  source: DEEPSEEK_SOURCE, verifiedAt: VERIFIED_AT
+}
+const KIMI_SOURCE = 'https://platform.kimi.ai/docs/api/models-overview.md'
+const KIMI_REASONING: ReasoningCapability = {
+  kind: 'effort', protocol: 'effort', levels: ['low', 'high', 'max'], default: 'max',
+  source: KIMI_SOURCE, verifiedAt: VERIFIED_AT
+}
+const KIMI_TOGGLE: ReasoningCapability = {
+  kind: 'toggle', protocol: 'thinking', default: 'enabled', source: KIMI_SOURCE, verifiedAt: VERIFIED_AT
+}
+const KIMI_FIXED: ReasoningCapability = {
+  kind: 'fixed', protocol: 'thinking', source: KIMI_SOURCE, verifiedAt: VERIFIED_AT
 }
 
 /** 精确 modelId → 能力。查找时统一 toLowerCase 全等匹配。 */
@@ -36,21 +82,22 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'gpt-4-turbo': { supportsVision: true }, // 来源: Cherry Studio + litellm
   'gpt-5': { supportsVision: true }, // 来源: Cherry Studio + litellm
   'gpt-5-mini': { supportsVision: true }, // 来源: Cherry Studio + litellm
-  'gpt-5.1': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
-  'gpt-5.2': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
-  'gpt-5.4': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
+  'gpt-5.1': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high'], 'none', 'https://developers.openai.com/api/docs/models/gpt-5.1', true) },
+  'gpt-5.2': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh'], 'none', 'https://developers.openai.com/api/docs/models/gpt-5.2', true) },
+  'gpt-5.4': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh'], 'none', 'https://developers.openai.com/api/docs/models/gpt-5.4', true) },
   'gpt-5.4-mini': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-4-mini）
   'gpt-5.4-pro': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-4-pro）
-  'gpt-5.5': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
+  'gpt-5.5': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh'], 'medium', 'https://developers.openai.com/api/docs/models/gpt-5.5', true) },
   'gpt-5.5-pro': { supportsVision: true }, // 来源: litellm（Cherry 写作 gpt-5-5-pro）
-  'gpt-5.6-sol': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'low' }, // 来源: OpenAI Codex model metadata；Ultra 属于产品编排模式，不混入 reasoning slider
-  'gpt-5.6-terra': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
-  'gpt-5.6-luna': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI Codex model metadata
-  'gpt-6-astra': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultReasoningEffort: 'low' }, // 来源: OpenAI Codex model metadata
-  o1: { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
-  o3: { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
-  'o3-mini': { supportsVision: false, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
-  'o4-mini': { supportsVision: true, reasoningEfforts: ['low', 'medium', 'high'], defaultReasoningEffort: 'medium' }, // 来源: OpenAI reasoning guide
+  'gpt-5.6-sol': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh', 'max'], 'medium', OPENAI_SOURCE, true) },
+  'gpt-5.6-terra': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh', 'max'], 'medium', OPENAI_SOURCE, true) },
+  'gpt-5.6-luna': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh', 'max'], 'medium', OPENAI_SOURCE, true) },
+  'gpt-6-astra': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high', 'xhigh', 'max'], 'low') },
+  'gpt-6.1-sol': { reasoning: effortCapability(['low', 'medium', 'high', 'xhigh', 'max'], 'medium') },
+  o1: { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high'], 'medium') },
+  o3: { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high'], 'medium') },
+  'o3-mini': { supportsVision: false, reasoning: effortCapability(['low', 'medium', 'high'], 'medium') },
+  'o4-mini': { supportsVision: true, reasoning: effortCapability(['low', 'medium', 'high'], 'medium') },
 
   // ── Anthropic ───────────────────────────────────────────
   'claude-sonnet-4': { supportsVision: true }, // 来源: Cherry Studio + litellm
@@ -78,15 +125,16 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   // ── 智谱 GLM ────────────────────────────────────────────
   // 纯文本主型号（纠偏：模糊兜底无法识别 glm-5.x）
   // contextWindow：官方有 1M 变体（如 glm-5.2[1m]），默认 API 窗口未单独核实，留空走兜底（2026-07）
-  'glm-5': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text
-  'glm-5.1': { supportsVision: false }, // 来源: Cherry Studio（id: glm-5-1）inputModalities=text
-  'glm-5-1': { supportsVision: false }, // 来源: Cherry Studio 连字符别名
-  'glm-5.2': { supportsVision: false, reasoningEfforts: ['low', 'medium', 'high', 'max'] }, // 来源: 智谱官方 thinking 文档（2026-09）
-  'glm-5-2': { supportsVision: false, reasoningEfforts: ['low', 'medium', 'high', 'max'] }, // 来源: 智谱官方 thinking 文档（2026-09）
-  'glm-5.3': { supportsVision: false, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3 文档（2026-09）
-  'glm-5-3': { supportsVision: false, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3 文档（2026-09）
-  'glm-5.3-flash': { supportsVision: true, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3-Flash 文档（2026-09）
-  'glm-5-3-flash': { supportsVision: true, reasoningEfforts: ['low', 'high', 'max'] }, // 来源: 智谱官方 GLM-5.3-Flash 文档（2026-09）
+  'glm-5': { supportsVision: false, reasoning: GLM_TOGGLE },
+  'glm-5.1': { supportsVision: false, reasoning: GLM_TOGGLE },
+  'glm-5-1': { supportsVision: false, reasoning: GLM_TOGGLE },
+  'glm-5.2': { supportsVision: false, reasoning: GLM_52_REASONING },
+  'glm-5-2': { supportsVision: false, reasoning: GLM_52_REASONING },
+  'glm-5.3': { supportsVision: false, reasoning: GLM_53_REASONING },
+  'glm-5-3': { supportsVision: false, reasoning: GLM_53_REASONING },
+  'glm-5.3-flash': { supportsVision: true, reasoning: GLM_53_REASONING },
+  'glm-5-3-flash': { supportsVision: true, reasoning: GLM_53_REASONING },
+  'glm-4.6': { reasoning: GLM_TOGGLE },
   // 视觉变体
   'glm-4v': { supportsVision: true }, // 来源: Cherry Studio
   'glm-4v-flash': { supportsVision: true }, // 来源: Cherry Studio
@@ -117,58 +165,57 @@ export const MODEL_CAPABILITY_REGISTRY: Record<string, ModelCapabilityEntry> = {
   'deepseek-v4-flash': {
     supportsVision: false,
     contextWindow: 500_000,
-    reasoningEfforts: ['low', 'high', 'max'],
-    defaultReasoningEffort: 'high'
+    reasoning: DEEPSEEK_REASONING
   }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）；档位见官方 thinking_mode 文档
   'deepseek-v4-pro': {
     supportsVision: false,
     contextWindow: 500_000,
-    reasoningEfforts: ['low', 'high', 'max'],
-    defaultReasoningEffort: 'high'
+    reasoning: DEEPSEEK_REASONING
   }, // 来源: Cherry Studio + litellm；官方 1M → Nova 500K（2026-07）；档位见官方 thinking_mode 文档
   // 旧名：官方已路由到 v4-flash；同样按 Nova 工程上限 500K
   'deepseek-chat': {
     supportsVision: false,
     contextWindow: 500_000,
-    reasoningEfforts: ['low', 'high', 'max'],
-    defaultReasoningEffort: 'high'
+    reasoning: DEEPSEEK_REASONING
   }, // 官方 1M（同 V4）；Nova 500K（2026-07）；档位见官方 thinking_mode 文档
   'deepseek-reasoner': {
     supportsVision: false,
     contextWindow: 500_000,
-    reasoningEfforts: ['low', 'high', 'max'],
-    defaultReasoningEffort: 'high'
+    reasoning: DEEPSEEK_REASONING
   }, // 官方 1M（同 V4）；Nova 500K（2026-07）；档位见官方 thinking_mode 文档
 
   // ── MiniMax（纠偏：模糊兜底把全部 minimax 判 true）──────
   // 官方上下文窗口 204,800（platform.minimax.io 文本生成文档，验证 2026-07）；
-  // 官方 thinking 只有开关（adaptive/disabled），reasoning_effort 未在文档列出、会被网关忽略：
-  // 这里登记的是产品侧可选强度，wire 上 High/Max 都保持 adaptive 思考。
-  'minimax-m2': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2.1': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2.5': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry + litellm；官方 204800（2026-07）
-  'minimax-m2.5-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry；官方 204800（2026-07）
-  'minimax-m2.6': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2.6-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2.7': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2-7': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2.7-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m2-7-highspeed': { supportsVision: false, contextWindow: 204_800, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' },
-  'minimax-m3': { supportsVision: true, reasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high' }, // 来源: Cherry Studio + litellm；官方宣称 1M，未在本轮固化工程取值
+  'minimax-m2': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.1': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.5': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.5-highspeed': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.6': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.6-highspeed': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.7': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2-7': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2.7-highspeed': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m2-7-highspeed': { supportsVision: false, contextWindow: 204_800, reasoning: MINIMAX_FIXED },
+  'minimax-m3': { supportsVision: true, reasoning: MINIMAX_TOGGLE },
+  'minimax-m3.1-flash': { reasoning: { kind: 'effort', protocol: 'minimax', levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max', source: MINIMAX_SOURCE, verifiedAt: VERIFIED_AT } },
 
   // ── Moonshot Kimi ───────────────────────────────────────
   'kimi-k2': { supportsVision: false }, // 来源: Cherry Studio inputModalities=text
   'kimi-k2.5': { supportsVision: true }, // 来源: litellm（Cherry 写作 kimi-k2-5）
   'kimi-k2-5': { supportsVision: true }, // 来源: Cherry Studio 连字符别名
-  'kimi-k2.6': { supportsVision: true }, // 来源: litellm（Cherry 写作 kimi-k2-6）
-  'kimi-k2-6': { supportsVision: true }, // 来源: Cherry Studio 连字符别名
+  'kimi-k2.6': { supportsVision: true, reasoning: KIMI_TOGGLE },
+  'kimi-k2-6': { supportsVision: true, reasoning: KIMI_TOGGLE },
   // Cherry id 为 kimi-k2-7-code；litellm fireworks kimi-k2p7-code=true；API 常用点号写法
-  'kimi-k2.7-code': { supportsVision: true }, // 来源: Cherry Studio（kimi-k2-7-code）+ litellm fireworks kimi-k2p7-code
-  'kimi-k2-7-code': { supportsVision: true }, // 来源: Cherry Studio 连字符别名
+  'kimi-k2.7-code': { supportsVision: true, reasoning: KIMI_FIXED },
+  'kimi-k2-7-code': { supportsVision: true, reasoning: KIMI_FIXED },
+  'kimi-k2.7-code-highspeed': { reasoning: KIMI_FIXED },
+  'kimi-k3': { reasoning: KIMI_REASONING },
+  'kimi-k3.1-pro': { reasoning: KIMI_REASONING },
+  'kimi-k3.1-pro-highspeed': { reasoning: KIMI_REASONING },
   'kimi-latest': { supportsVision: true } // 来源: Cherry Studio + litellm
 }
 
-/** 查注册表。未命中时剥离网关前缀并匹配 MiniMax M2/M3 点版本，其余返回 undefined。大小写不敏感。 */
+/** 精确查找，允许网关前缀；未知点版本不继承其他型号的能力。 */
 export function lookupModelCapability(modelId: string): ModelCapabilityEntry | undefined {
   if (!modelId) return undefined
   const lower = modelId.trim().toLowerCase()
@@ -180,11 +227,5 @@ export function lookupModelCapability(modelId: string): ModelCapabilityEntry | u
   const byBare = MODEL_CAPABILITY_REGISTRY[bare]
   if (byBare) return byBare
 
-  if (/^minimax-m2(?:[.-]\d+)?(?:-highspeed|-lightning)?$/.test(bare)) {
-    return MODEL_CAPABILITY_REGISTRY['minimax-m2.7']
-  }
-  if (/^minimax-m3(?:[.-]\d+)?(?:-highspeed|-lightning)?$/.test(bare)) {
-    return MODEL_CAPABILITY_REGISTRY['minimax-m3']
-  }
   return undefined
 }

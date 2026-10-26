@@ -8,6 +8,8 @@ import type { ReasoningEffort } from '../../shared/config/types'
 
 const FIRST_BYTE_MS_BY_EFFORT: Readonly<Record<ReasoningEffort, number>> = {
   auto: 60_000,
+  enabled: 150_000,
+  none: 60_000,
   low: 60_000,
   medium: 90_000,
   high: 150_000,

@@ -50,6 +50,12 @@ export {
 } from './llmRegistry'
 
 export { resolveSupportsVision, resolveContextWindow, inferContextWindow, DEFAULT_CONTEXT_WINDOW } from './types'
+export { REASONING_EFFORT_VALUES, isReasoningEffort } from './types'
+export {
+  resolveReasoningCapability, resolveReasoningSelection, normalizeReasoningEffort,
+  getReasoningChoices, getReasoningDefault, reasoningSelectionLabel, REASONING_LABELS,
+  type ReasoningLevel
+} from './reasoning'
 export {
   lookupModelCapability,
   MODEL_CAPABILITY_REGISTRY,

@@ -6,6 +6,8 @@
  */
 import type { ModelConfig, ModelRouteRef, ReasoningEffort } from './types'
 import { lookupModelCapability } from './modelRegistry'
+import { isReasoningEffort } from './types'
+import { getReasoningChoices, resolveReasoningSelection } from './reasoning'
 export type { ReasoningEffort } from './types'
 
 /** 预设服务商 ID */
@@ -327,7 +329,8 @@ export function resolveBackgroundModelRef(registry: LlmRegistry): ActiveModelRef
 export function resolveBackgroundModelConfig(registry: LlmRegistry): ModelConfig | null {
   const resolved = resolveModelReference(registry, resolveBackgroundModelRef(registry))
   if (resolved.status !== 'available') return null
-  const lowest = lookupModelCapability(resolved.entry.modelId)?.reasoningEfforts?.[0] ?? 'low'
+  const capability = lookupModelCapability(resolved.entry.modelId)?.reasoning
+  const lowest = capability?.kind === 'effort' ? capability.levels[0] : 'auto'
   return { ...resolved.config, reasoningEffort: lowest }
 }
 
@@ -445,33 +448,19 @@ export function getModelDisplayName(registry: LlmRegistry, ref?: ActiveModelRef)
 
 /** 未登记能力时返回 null；仅返回 auto 表示已知不提供可区分档位。 */
 export function getSupportedReasoningEfforts(entry: ModelEntry): readonly ReasoningEffort[] | null {
-  const efforts = lookupModelCapability(entry.modelId)?.reasoningEfforts
-  return efforts ? ['auto', ...efforts] : null
+  return getReasoningChoices(entry.modelId)
 }
 
 function normalizeConfiguredReasoningEffort(entry: ModelEntry): ReasoningEffort {
-  const configured = isReasoningEffort(entry.reasoningEffort) ? entry.reasoningEffort : 'auto'
-  if (configured === 'auto') return 'auto'
-  const supported = getSupportedReasoningEfforts(entry)
-  return supported && !supported.includes(configured) ? 'auto' : configured
-}
-
-function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return value === 'auto' || value === 'low' || value === 'medium' ||
-    value === 'high' || value === 'xhigh' || value === 'max'
+  return resolveReasoningSelection({
+    modelId: entry.modelId,
+    reasoningEffort: isReasoningEffort(entry.reasoningEffort) ? entry.reasoningEffort : 'auto'
+  })
 }
 
 /** 解析单个模型条目的有效默认强度；非法值与已知不支持的配置回落为 auto。 */
 export function resolveModelReasoningEffort(entry: ModelEntry): ReasoningEffort {
-  const configured = normalizeConfiguredReasoningEffort(entry)
-  const capability = lookupModelCapability(entry.modelId)
-  if (configured === 'auto') {
-    return capability?.defaultReasoningEffort ?? 'auto'
-  }
-  const supported = getSupportedReasoningEfforts(entry)
-  return supported && !supported.includes(configured)
-    ? capability?.defaultReasoningEffort ?? 'auto'
-    : configured
+  return normalizeConfiguredReasoningEffort(entry)
 }
 
 /** 获取活跃模型的有效默认思考强度；已知不支持的配置回落为 auto。 */

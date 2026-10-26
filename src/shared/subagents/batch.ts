@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from '../config'
+import { isReasoningEffort, type ReasoningEffort } from '../config'
 import type { SubagentExecutionFailure, SubagentExecutionResult, SubagentExecutionStatus } from './types'
 
 export const BATCH_MAX_ITEMS = 4
@@ -72,11 +72,6 @@ export function formatBatchSubagentOutput(
   return { output, hasFailure, error }
 }
 
-const REASONING_EFFORT_VALUES = ['auto', 'low', 'medium', 'high', 'max'] as const
-
-function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return typeof value === 'string' && (REASONING_EFFORT_VALUES as readonly string[]).includes(value)
-}
 
 export function decodeBatchInput(input: unknown): BatchSubagentInput {
   if (!isObject(input)) {
@@ -149,7 +144,7 @@ export function decodeBatchInput(input: unknown): BatchSubagentInput {
     let reasoningEffort: ReasoningEffort | undefined
     if (raw.reasoningEffort !== undefined) {
       if (!isReasoningEffort(raw.reasoningEffort)) {
-        issues.push({ field: `${prefix}.reasoningEffort`, message: `${prefix}.reasoningEffort 必须是 auto/low/medium/high/max 之一` })
+        issues.push({ field: `${prefix}.reasoningEffort`, message: `${prefix}.reasoningEffort 不是有效的思考控制选项` })
       } else {
         reasoningEffort = raw.reasoningEffort
       }

@@ -75,6 +75,19 @@ function registry(): LlmRegistry {
 }
 
 describe('child model routing', () => {
+  it.each([
+    ['glm-5.2', 'medium', 'high'],
+    ['MiniMax-M3', 'max', 'enabled'],
+    ['MiniMax-M2.7', 'high', 'auto']
+  ] as const)('%s 恢复时使用规范强度且不改写出生 header', (modelId, legacy, normalized) => {
+    const reg = registry()
+    reg.providers[0].models[0].modelId = modelId
+    const header = { providerId: 'provider-a', modelEntryId: 'model-a', modelId, reasoningEffort: legacy }
+    const result = resolveChildModelFromHeader(reg, header)
+    expect(result.header.reasoningEffort).toBe(normalized)
+    expect(result.modelConfig.reasoningEffort ?? 'auto').toBe(normalized)
+    expect(header.reasoningEffort).toBe(legacy)
+  })
   it('profile binding wins over active model and uses entry capabilities', () => {
     const reg = registry()
     reg.providers[0]!.models[0]!.reasoningEffort = undefined

@@ -13,6 +13,19 @@ import type {
 } from '../../../src/shared/subagents'
 
 describe('SubagentProjectionService', () => {
+  it.each([
+    ['glm-5.2', 'medium', 'high'],
+    ['MiniMax-M3', 'max', 'enabled'],
+    ['MiniMax-M2.7', 'high', 'auto']
+  ] as const)('%s 历史 header 投影有效强度并保留出生记录', (modelId, legacy, normalized) => {
+    const header = { providerId: 'provider', modelEntryId: 'entry', modelId, reasoningEffort: legacy }
+    const child = createChild('legacy', 'legacy-run', undefined, header)
+    const service = new SubagentProjectionService({ sessionStore, runCoordinator: coordinator })
+    expect(service.getByParentToolCallId(parentSessionId, 'legacy')?.reasoningEffort).toBe(normalized)
+    const stored = sessionStore.loadMetadata(child.id)
+    if (stored?.kind !== 'subagent') throw new Error('expected subagent')
+    expect(stored.subagent.header).toEqual(header)
+  })
   let tempRoot: string
   let workspace: string
   let sessionStore: SessionStore
@@ -400,7 +413,7 @@ describe('SubagentProjectionService', () => {
     const child = createChild('call-effort', 'run-child-effort', undefined, {
       providerId: 'child-provider',
       modelEntryId: 'child-entry',
-      modelId: 'child-model',
+      modelId: 'glm-5.2',
       reasoningEffort: 'high'
     })
     coordinator.startRun({

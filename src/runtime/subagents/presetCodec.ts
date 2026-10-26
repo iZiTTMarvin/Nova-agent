@@ -3,7 +3,7 @@
  * 类型化诊断都在这里产生。IPC 保存、磁盘读取与运行时 profile 解析前校验
  * 都收敛到本模块，调用方不得复制规则。
  */
-import type { ReasoningEffort } from '../../shared/config'
+import { isReasoningEffort, type ReasoningEffort } from '../../shared/config'
 import type {
   LegacySubagentModelReference,
   SubagentModelBinding,
@@ -540,14 +540,8 @@ function readRequiredString(
 
 function readOptionalReasoningEffort(value: unknown): ReasoningEffort | undefined {
   if (value === undefined) return undefined
-  if (
-    value !== 'auto' &&
-    value !== 'low' &&
-    value !== 'medium' &&
-    value !== 'high' &&
-    value !== 'max'
-  ) {
-    throw new Error('子代理 profile.model.reasoningEffort 必须是 auto/low/medium/high/max')
+  if (!isReasoningEffort(value)) {
+    throw new Error('子代理 profile.model.reasoningEffort 不是有效的思考控制选项')
   }
   return value
 }

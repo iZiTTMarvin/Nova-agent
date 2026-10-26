@@ -18,7 +18,7 @@ import type {
   SubagentSessionHeader,
   SubagentSessionMetadata
 } from '../../shared/subagents'
-import type { ReasoningEffort } from '../../shared/config/llmRegistry'
+import { isReasoningEffort } from '../../shared/config'
 import type { Mode, PermissionMode } from '../../shared/session/types'
 import { parseStrictMode } from '../../shared/session/mode'
 import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, SESSION_BACKUP_FILE, extractTextFromSerializableContent, generateSessionTitleFromText, SESSION_MIGRATED_EMPTY_TITLE } from './types'
@@ -579,15 +579,6 @@ function isSubagentProfileSnapshot(value: unknown): value is SubagentProfileSnap
   return isSubagentProfileModel(value.model)
 }
 
-function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return (
-    value === 'auto' ||
-    value === 'low' ||
-    value === 'medium' ||
-    value === 'high' ||
-    value === 'max'
-  )
-}
 
 function isSubagentProfileModel(
   value: unknown

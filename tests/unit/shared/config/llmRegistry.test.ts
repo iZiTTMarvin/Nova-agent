@@ -204,7 +204,7 @@ describe('llmRegistry', () => {
     const result = validateLlmRegistry(raw)
     expect(result.valid).toBe(true)
     if (result.valid) {
-      expect(result.registry.providers[0].models[0].reasoningEffort).toBe('medium')
+      expect(result.registry.providers[0].models[0].reasoningEffort).toBe('high')
     }
   })
 
@@ -357,7 +357,7 @@ describe('backgroundModel', () => {
     expect(resolveBackgroundModelRef(registry)).toEqual(registry.backgroundModel)
     const config = resolveBackgroundModelConfig(registry)
     expect(config?.modelId).toBe('minimax-m2.5')
-    expect(config?.reasoningEffort).toBe('high')
+    expect(config?.reasoningEffort).toBe('auto')
   })
 
   it('后台模型被停用或退役时回落当前模型', () => {

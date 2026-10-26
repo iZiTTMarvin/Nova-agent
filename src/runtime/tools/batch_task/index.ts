@@ -1,4 +1,5 @@
 import type { ToolContext, ToolExecutor, ToolResult } from '../types'
+import { REASONING_EFFORT_VALUES } from '../../../shared/config'
 import {
   assertBatchInputReadonlyEligibility,
   BatchReadonlyEligibilityError,
@@ -50,7 +51,7 @@ export function createBatchTaskTool(deps: BatchTaskToolDeps): ToolExecutor {
               },
               reasoningEffort: {
                 type: 'string',
-                enum: ['auto', 'low', 'medium', 'high', 'max'],
+                enum: [...REASONING_EFFORT_VALUES],
                 description: 'Optional reasoning-effort override'
               }
             },

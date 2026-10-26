@@ -361,6 +361,30 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     expect(registry.activeModel).toEqual({ providerId: 'provider', modelEntryId: 'gpt' })
   })
 
+  it.each([
+    ['glm-5.2', 'medium', 'high'],
+    ['MiniMax-M3', 'max', 'enabled'],
+    ['MiniMax-M2.7', 'high', 'auto']
+  ] as const)('%s 启动和切会话归一旧覆盖并持久化，新会话继承规范值', (modelId, legacy, normalized) => {
+    const registry = modelRegistry()
+    registry.providers[0].models[1].modelId = modelId
+    modelConfigMocks.loadLlmRegistry.mockReturnValue(registry)
+    const session = store.create('/ws', 'default', {
+      modelOverride: { providerId: 'provider', modelEntryId: 'minimax' },
+      reasoningEffortOverride: legacy
+    })
+    const load = vi.spyOn(store, 'load')
+    service.initOnStartup()
+    expect(service.getState().reasoningEffortOverride).toBe(normalized)
+    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe(normalized)
+    store.updateReasoningEffortOverride(session.id, legacy)
+    expect(service.selectSession(session.id).reasoningEffortOverride).toBe(normalized)
+    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe(normalized)
+    expect(load).not.toHaveBeenCalled()
+    const created = service.createSession({ workspaceRoot: '/ws' })
+    expect(created.reasoningEffortOverride).toBe(normalized)
+  })
+
   it('生成中仍可切换模型与思考强度，不重扫会话列表也不读对话记录', () => {
     const registry = modelRegistry()
     modelConfigMocks.loadLlmRegistry.mockReturnValue(registry)
@@ -383,9 +407,9 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
     expect(store.loadMetadata(session.id)?.modelOverride)
       .toEqual({ providerId: 'provider', modelEntryId: 'minimax' })
 
-    const effort = service.setReasoningEffortOverride({ effort: 'max' })
-    expect(effort.reasoningEffortOverride).toBe('max')
-    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe('max')
+    const effort = service.setReasoningEffortOverride({ effort: 'enabled' })
+    expect(effort.reasoningEffortOverride).toBe('enabled')
+    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe('enabled')
 
     expect(listSpy).not.toHaveBeenCalled()
     expect(loadSpy).not.toHaveBeenCalled()
@@ -402,7 +426,7 @@ describe('WorkspaceService switchBranch / Tier 2', () => {
 
     expect(() => service.setReasoningEffortOverride({ effort: 'xhigh' }))
       .toThrow('当前模型不支持思考强度 xhigh')
-    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe('high')
+    expect(store.loadMetadata(session.id)?.reasoningEffortOverride).toBe('enabled')
   })
 
   it('切走后不再为过期会话全量计算上下文', async () => {

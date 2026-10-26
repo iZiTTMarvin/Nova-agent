@@ -1,4 +1,5 @@
 import {
+  normalizeReasoningEffort,
   resolveModelReasoningEffort,
   resolveModelReference,
   type ActiveModelRef,
@@ -52,8 +53,10 @@ function buildCatalogEntry(
     return unavailable(spec, resolved.status, model)
   }
 
-  const reasoningEffort =
-    model?.reasoningEffort ?? resolveModelReasoningEffort(resolved.entry)
+  const requested = model?.reasoningEffort
+  const reasoningEffort = requested === undefined
+    ? resolveModelReasoningEffort(resolved.entry)
+    : normalizeReasoningEffort(resolved.entry.modelId, requested) ?? requested
   return {
     profileId: spec.id,
     name: spec.name,

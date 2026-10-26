@@ -76,8 +76,8 @@ describe('task tool spawn adapter', () => {
         },
         reasoningEffort: {
           type: 'string',
-          description: 'Optional reasoning-effort override (auto/low/medium/high/max); changes only the reasoning effort',
-          enum: ['auto', 'low', 'medium', 'high', 'max']
+          description: 'Optional reasoning control; use model_list to check supported choices',
+          enum: ['auto', 'enabled', 'none', 'low', 'medium', 'high', 'xhigh', 'max']
         }
       },
       required: ['subagent_type', 'task'],

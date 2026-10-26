@@ -1,4 +1,5 @@
 import * as path from 'path'
+import { isReasoningEffort, normalizeReasoningEffort } from '../../shared/config'
 import { isDeepStrictEqual } from 'util'
 import type { AgentEvent, AgentLoop, EventBus } from '../agent'
 import {
@@ -1284,8 +1285,6 @@ function validateBackgroundSpawn(
   }
 }
 
-const REASONING_EFFORT_VALUES = ['auto', 'low', 'medium', 'high', 'max'] as const
-
 function validateSpawnModelOverride(command: SpawnSubagentCommand): void {
   if (command.modelOverride) {
     const providerId = command.modelOverride.providerId?.trim()
@@ -1295,8 +1294,8 @@ function validateSpawnModelOverride(command: SpawnSubagentCommand): void {
     }
   }
   if (command.reasoningEffort !== undefined) {
-    if (!(REASONING_EFFORT_VALUES as readonly string[]).includes(command.reasoningEffort)) {
-      throw new Error('reasoningEffort 必须是 auto/low/medium/high/max 之一')
+    if (!isReasoningEffort(command.reasoningEffort)) {
+      throw new Error('reasoningEffort 不是有效的思考控制选项')
     }
   }
 }
@@ -1317,8 +1316,10 @@ function isSameModelOverride(
       return false
     }
   }
-  if (effort !== undefined && header.reasoningEffort !== effort) {
-    return false
+  if (effort !== undefined) {
+    const requested = normalizeReasoningEffort(header.modelId, effort) ?? effort
+    const frozen = normalizeReasoningEffort(header.modelId, header.reasoningEffort) ?? header.reasoningEffort
+    if (requested !== frozen) return false
   }
   return true
 }

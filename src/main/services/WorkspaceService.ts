@@ -21,6 +21,7 @@ import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain,
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
 import { assertSessionModeMutable, parseStrictMode } from '../../shared/session/mode'
 import type { LlmRegistry, ReasoningEffort, ActiveModelRef } from '../../shared/config/llmRegistry'
+import { normalizeReasoningEffort } from '../../shared/config'
 import {
   getSupportedReasoningEfforts,
   resolveModelReference,
@@ -141,6 +142,20 @@ export class WorkspaceService {
     }
     if (!registry) return null
     return resolveSessionModelRef(registry, session?.modelOverride)
+  }
+
+  /** 旧覆盖在进入工作区状态前归一，仅在值变化时写回元数据。 */
+  private normalizeSessionReasoning(session: SessionData | null): SessionData | null {
+    if (!session || session.kind !== 'primary' || !session.reasoningEffortOverride) return session
+    const ref = this.resolveEffectiveModelRef(session)
+    if (!ref) return session
+    const registry = loadLlmRegistry(app.getPath('userData'))
+    const resolved = registry ? resolveModelReference(registry, ref) : null
+    const normalized = resolved?.status === 'available'
+      ? normalizeReasoningEffort(resolved.entry.modelId, session.reasoningEffortOverride) ?? null
+      : null
+    if (normalized === session.reasoningEffortOverride) return session
+    return this.deps.getSessionStore().updateReasoningEffortOverride(session.id, normalized)
   }
 
   /**
@@ -284,7 +299,7 @@ export class WorkspaceService {
     if (selected?.kind !== 'primary') selected = sessions.find(session => session.kind === 'primary') ?? null
     const previousRoot = this.state.currentProjectPath
     // 选中详情只读元数据（白名单与思考强度），不读对话正文
-    const selectedDetail = selected ? store.loadMetadata(selected.id) : null
+    const selectedDetail = this.normalizeSessionReasoning(selected ? store.loadMetadata(selected.id) : null)
     this.state = {
       currentSessionId: selected?.id ?? null,
       currentProjectPath: selected?.workspaceRoot ?? null,
@@ -525,7 +540,7 @@ export class WorkspaceService {
       if (remaining.length > 0) {
         // 切到剩余的第一条
         const next = remaining[0]
-        const detail = store.loadMetadata(next.id)
+        const detail = this.normalizeSessionReasoning(store.loadMetadata(next.id))
         if (detail) {
           // readState 已按会话隔离，切换不清空：切到正在后台跑的会话若清空 readState，
           // 会让该 turn 后续 edit 全部撞「File has not been read yet」。
@@ -602,21 +617,9 @@ export class WorkspaceService {
   refreshModelSelection(): WorkspaceState {
     const store = this.deps.getSessionStore()
     const sessionId = this.state.currentSessionId
-    const session = sessionId ? store.loadMetadata(sessionId) : null
+    const session = this.normalizeSessionReasoning(sessionId ? store.loadMetadata(sessionId) : null)
     const activeModelRef = session ? this.resolveEffectiveModelRef(session) : null
-    let reasoningEffortOverride = session?.reasoningEffortOverride ?? null
-
-    if (session && activeModelRef && reasoningEffortOverride) {
-      const registry = loadLlmRegistry(app.getPath('userData'))
-      const resolved = registry ? resolveModelReference(registry, activeModelRef) : null
-      const supported = resolved?.status === 'available'
-        ? getSupportedReasoningEfforts(resolved.entry)
-        : null
-      if (!supported?.includes(reasoningEffortOverride)) {
-        reasoningEffortOverride = null
-        store.updateReasoningEffortOverride(session.id, null)
-      }
-    }
+    const reasoningEffortOverride = session?.reasoningEffortOverride ?? null
 
     this.state = {
       ...this.state,
@@ -634,7 +637,7 @@ export class WorkspaceService {
     const store = this.deps.getSessionStore()
     const previousRoot = this.state.currentProjectPath
     this.maybeLeaveCurrentSession(store, sessionId)
-    const meta = store.loadMetadata(sessionId)
+    const meta = this.normalizeSessionReasoning(store.loadMetadata(sessionId))
     if (!meta) {
       throw new Error(`会话 ${sessionId} 不存在`)
     }
@@ -893,10 +896,9 @@ export class WorkspaceService {
       throw new Error('所选模型不可用（可能已被删除、禁用或未配置密钥）')
     }
 
-    const supported = getSupportedReasoningEfforts(resolved.entry)
     const currentEffort = target.reasoningEffortOverride
-    const nextEffort = currentEffort && supported?.includes(currentEffort)
-      ? currentEffort
+    const nextEffort = currentEffort
+      ? normalizeReasoningEffort(resolved.entry.modelId, currentEffort) ?? null
       : null
 
     const session = store.updateModelSelection(sessionId, params.ref, nextEffort)

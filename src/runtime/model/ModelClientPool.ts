@@ -23,6 +23,7 @@ import type { ModelClient, ChatOptions } from './ModelClient'
 import type { ModelConfig } from '../../shared/config'
 import { resolveCacheProfile } from './cacheProfile'
 import { resolveTransportTimeouts } from './transportTimeouts'
+import { getReasoningDefault } from '../../shared/config/reasoning'
 import type { ModelTransportTimeouts } from './ModelTransport'
 
 /** 单个 provider 槽位：config + 已创建的 client */
@@ -99,7 +100,10 @@ export class ModelClientPool implements ModelClient {
       cacheProfile: config.cacheProfile,
       cacheStrategy: config.cacheStrategy
     })
-    return resolveTransportTimeouts(reasoningEffort, profile.id)
+    return resolveTransportTimeouts(
+      reasoningEffort === 'auto' ? getReasoningDefault(config.modelId) ?? 'auto' : reasoningEffort,
+      profile.id
+    )
   }
 
   /** 实现 ModelClient.chat：委托给当前 active client；显式给定的超时（诊断探针）不覆盖 */

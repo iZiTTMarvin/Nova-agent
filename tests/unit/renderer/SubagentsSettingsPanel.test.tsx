@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { SubagentsSettingsPanel } from '../../../src/renderer/features/settings/SubagentsSettingsPanel'
 import { resetSettingsStoreForTests, useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
 import type { SubagentListItem, SubagentsListResult } from '../../../src/shared/settings/types'
+import { createCustomProvider } from '../../../src/shared/config'
 import { act, renderDom } from './renderDom'
 
 const builtin: SubagentListItem = {
@@ -75,6 +76,39 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
   beforeEach(() => {
     resetSettingsStoreForTests()
     useSettingsStore.setState({ currentProject: 'D:\\workspace', llmRegistry: null })
+  })
+
+  it.each([
+    ['glm-5.2', 'medium', 'high'],
+    ['MiniMax-M3', 'max', 'enabled'],
+    ['MiniMax-M2.7', 'high', 'auto']
+  ] as const)('%s 旧预设编辑其他字段后保存规范强度', async (modelId, legacy, normalized) => {
+    const provider = createCustomProvider('Models', 'https://models.example/v1')
+    provider.id = 'provider'
+    provider.apiKey = 'test-key'
+    provider.models = [{ id: 'entry', modelId }]
+    useSettingsStore.setState({ llmRegistry: {
+      version: 2, providers: [provider], activeModel: { providerId: 'provider', modelEntryId: 'entry' }
+    } })
+    const saved: SubagentListItem = {
+      ...builtin, id: 'legacy', builtin: false, origin: 'global',
+      model: { providerId: 'provider', modelEntryId: 'entry', reasoningEffort: legacy }
+    }
+    const invoke = vi.fn((channel: string, payload?: { preset?: SubagentListItem }) => {
+      if (channel === 'subagents:list') return Promise.resolve({ ...listResult, items: [saved] })
+      if (channel === 'subagents:update') return Promise.resolve({ ...saved, ...payload?.preset })
+      return Promise.resolve(undefined)
+    })
+    global.window.api = { invoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() } as never
+    const { container, unmount } = renderDom(<SubagentsSettingsPanel />)
+    await flush()
+    await changeInput(input(container, '显示名称'), '改名后的助手')
+    await act(async () => button(container, '保存更改').click())
+    const update = invoke.mock.calls.find(call => call[0] === 'subagents:update')
+    expect(update?.[1]?.preset).toMatchObject({
+      name: '改名后的助手', model: { reasoningEffort: normalized }
+    })
+    unmount()
   })
 
   it('通过两步向导创建，提交期间禁止重复请求，成功后进入权威详情', async () => {

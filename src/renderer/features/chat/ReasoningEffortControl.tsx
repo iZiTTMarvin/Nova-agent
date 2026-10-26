@@ -2,8 +2,7 @@
  * ReasoningEffortControl — Composer 的思考强度选择器。
  *
  * 触发器显示当前生效档位；浮层以连续拖动、离散落档的方式选择推理强度，
- * 节点由当前模型的真实能力决定（如 MiniMax 只有 High / Max 两个节点）。
- * 档位少于两个时不渲染：没有可选的意义，也不暴露无效参数。
+ * 节点由当前模型的真实能力决定；默认、开关与强度沿用同一轨道交互。
  *
  * 选择写回会话级覆盖（选回模型默认档时清除覆盖）；覆盖不再适用于当前模型时自动清除。
  */
@@ -21,17 +20,12 @@ import {
 } from '../../../shared/config/llmRegistry'
 import { ChevronIcon, InfoIcon, ThinkIcon } from '../../components/Icons'
 import './ReasoningEffortControl.css'
+import { resolveReasoningSelection, getReasoningDefault, REASONING_LABELS } from '../../../shared/config/reasoning'
 
 /** 档位标签：统一首字母大写英文，跨模型可辨且不随界面语言漂移。 */
-const EFFORT_LABELS: Record<Exclude<ReasoningEffort, 'auto'>, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'XHigh',
-  max: 'Max'
-}
+const EFFORT_LABELS = REASONING_LABELS
 
-type ConcreteEffort = Exclude<ReasoningEffort, 'auto'>
+type ConcreteEffort = ReasoningEffort
 
 export const ReasoningEffortControl: React.FC = () => {
   const llmRegistry = useSettingsStore(state => state.llmRegistry)
@@ -51,26 +45,28 @@ export const ReasoningEffortControl: React.FC = () => {
 
   const tiers = useMemo<readonly ConcreteEffort[]>(() => {
     if (!entry) return []
-    return (getSupportedReasoningEfforts(entry) ?? [])
-      .filter((value): value is ConcreteEffort => value !== 'auto')
+    return (getSupportedReasoningEfforts(entry) ?? []).filter(value => value !== 'auto')
   }, [entry])
 
-  const defaultEffort = entry ? resolveModelReasoningEffort(entry) : 'auto'
+  const configuredEffort = entry ? resolveModelReasoningEffort(entry) : 'auto'
+  const defaultEffort = configuredEffort === 'auto' && entry
+    ? getReasoningDefault(entry.modelId) ?? 'auto'
+    : configuredEffort
 
-  /** 当前生效档位：会话覆盖可用时按覆盖，否则模型默认档，最后兜底到最低档。 */
+  /** 默认与显式选择共用请求解析规则，不把服务商默认冒充最低强度。 */
   const effectiveTier = useMemo<ConcreteEffort | null>(() => {
-    if (tiers.length === 0) return null
-    if (override && override !== 'auto' && tiers.includes(override)) return override
-    if (defaultEffort !== 'auto' && tiers.includes(defaultEffort)) return defaultEffort
-    return tiers[0] ?? null
-  }, [defaultEffort, override, tiers])
+    if (!entry) return null
+    const selected = resolveReasoningSelection(entry, override ?? undefined)
+    return selected === 'auto' ? getReasoningDefault(entry.modelId) ?? null : selected
+  }, [entry, override])
 
-  if (!currentSessionId || !entry || !currentRef || tiers.length < 2 || !effectiveTier) return null
+  if (!currentSessionId || !entry || !currentRef || !effectiveTier || tiers.length === 0) return null
 
   return (
     <ReasoningEffortSlider
       key={JSON.stringify([currentSessionId, currentRef.providerId, currentRef.modelEntryId, tiers, defaultEffort])}
       tiers={tiers}
+      modelId={entry.modelId}
       effectiveTier={effectiveTier}
       defaultEffort={defaultEffort}
       setReasoningEffortOverride={setReasoningEffortOverride}
@@ -79,6 +75,7 @@ export const ReasoningEffortControl: React.FC = () => {
 }
 
 interface ReasoningEffortSliderProps {
+  modelId: string
   tiers: readonly ConcreteEffort[]
   effectiveTier: ConcreteEffort
   defaultEffort: ReasoningEffort
@@ -86,7 +83,7 @@ interface ReasoningEffortSliderProps {
 }
 
 const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
-  tiers, effectiveTier, defaultEffort, setReasoningEffortOverride
+  modelId, tiers, effectiveTier, defaultEffort, setReasoningEffortOverride
 }) => {
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
@@ -105,8 +102,7 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
   const shownTier = tiers[shownIndex] ?? effectiveTier
   const shownLabel = EFFORT_LABELS[shownTier]
   const triggerLabel = EFFORT_LABELS[tiers[pendingIndex ?? activeIndex] ?? effectiveTier]
-  const isHighest = shownIndex === tiers.length - 1
-  const defaultLabel = defaultIndex >= 0 ? EFFORT_LABELS[tiers[defaultIndex] as ConcreteEffort] : null
+  const isHighest = shownIndex === tiers.length - 1 && shownTier !== 'auto' && shownTier !== 'enabled' && shownTier !== 'none'
 
   const commitTier = useCallback((tier: ConcreteEffort) => {
     const version = ++requestVersion.current
@@ -186,7 +182,7 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
   }, [shownIndex, commitTier, tiers])
 
   const sliderStyle: React.CSSProperties & { '--effort-ratio': number } = {
-    '--effort-ratio': previewIndex === null ? shownIndex / (tiers.length - 1) : dragRatioRef.current
+    '--effort-ratio': previewIndex === null ? shownIndex / Math.max(1, tiers.length - 1) : dragRatioRef.current
   }
 
   const panel = (
@@ -213,7 +209,8 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
         className={`effort-slider${dragging ? ' effort-slider--dragging' : ''}${isHighest ? ' effort-slider--stellar' : ''}`}
         style={sliderStyle}
         role="slider"
-        tabIndex={0}
+        tabIndex={tiers.length > 1 ? 0 : -1}
+        aria-disabled={tiers.length === 1}
         aria-label="思考强度"
         aria-valuemin={0}
         aria-valuemax={tiers.length - 1}
@@ -234,7 +231,7 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
           <span
             key={tier}
             className={`effort-slider__stop${index <= shownIndex ? ' effort-slider__stop--active' : ''}${index === defaultIndex ? ' effort-slider__stop--default' : ''}`}
-            style={{ left: `${(index / (tiers.length - 1)) * 100}%` }}
+            style={{ left: `${(index / Math.max(1, tiers.length - 1)) * 100}%` }}
             aria-hidden="true"
           />
         ))}
@@ -247,10 +244,6 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
             <path d="M12 1.5c1.2 5.6 4.2 8.6 9.8 9.8-5.6 1.2-8.6 4.2-9.8 9.8-1.2-5.6-4.2-8.6-9.8-9.8 5.6-1.2 8.6-4.2 9.8-9.8Z" />
           </svg>
         </div>
-      </div>
-      <div className="effort-panel__footer">
-        <span>模型默认</span>
-        <span>{defaultLabel ?? 'Auto'}</span>
       </div>
       {saveError && <div className="effort-panel__error" role="alert">{saveError}</div>}
     </div>

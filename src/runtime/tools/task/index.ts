@@ -1,4 +1,4 @@
-import type { ReasoningEffort } from '../../../shared/config'
+import { REASONING_EFFORT_VALUES, isReasoningEffort, type ReasoningEffort } from '../../../shared/config'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import { SUBAGENT_WALL_CLOCK_TIMEOUT_MS, type SpawnSubagentPort } from '../../subagents'
 import { buildSubagentToolResult } from '../../subagents/resultText'
@@ -8,11 +8,6 @@ function failure(error: string): ToolResult {
   return { success: false, output: '', error }
 }
 
-const REASONING_EFFORT_VALUES: readonly ReasoningEffort[] = ['auto', 'low', 'medium', 'high', 'max'] as const
-
-function isReasoningEffort(value: unknown): value is ReasoningEffort {
-  return typeof value === 'string' && (REASONING_EFFORT_VALUES as readonly string[]).includes(value)
-}
 
 function parseModelOverride(raw: unknown): { providerId: string; modelEntryId: string } | undefined {
   if (raw === undefined || raw === null) return undefined
@@ -58,8 +53,8 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
         },
         reasoningEffort: {
           type: 'string',
-          description: 'Optional reasoning-effort override (auto/low/medium/high/max); changes only the reasoning effort',
-          enum: ['auto', 'low', 'medium', 'high', 'max']
+          description: 'Optional reasoning control; use model_list to check supported choices',
+          enum: [...REASONING_EFFORT_VALUES]
         }
       },
       required: ['subagent_type', 'task'],
@@ -90,7 +85,7 @@ export function createTaskTool(deps: TaskToolDeps): ToolExecutor {
       let reasoningEffort: ReasoningEffort | undefined
       if (args.reasoningEffort !== undefined) {
         if (!isReasoningEffort(args.reasoningEffort)) {
-          return failure('reasoningEffort 必须是 auto/low/medium/high/max 之一')
+          return failure('reasoningEffort 不是有效的思考控制选项')
         }
         reasoningEffort = args.reasoningEffort
       }

@@ -6,7 +6,7 @@ test('思考强度点击和拖动松手后不闪回旧档位', async ({ nova }) 
     providers: [{
       id: 'effort-provider', name: 'Effort', baseUrl: nova.provider.baseUrl,
       apiKey: 'nova-e2e-key', enabled: true,
-      models: [{ id: 'minimax', modelId: 'MiniMax-M3', displayName: 'MiniMax-M3' }]
+      models: [{ id: 'minimax', modelId: 'glm-5.2', displayName: 'GLM-5.2', reasoningEffort: 'high' }]
     }],
     activeModel: { providerId: 'effort-provider', modelEntryId: 'minimax' }
   })
@@ -25,8 +25,8 @@ test('思考强度点击和拖动松手后不闪回旧档位', async ({ nova }) 
   for (const gesture of ['click', 'drag']) {
     for (let index = 0; index < 6; index += 1) {
       const target = index % 2 === 0 ? 'Max' : 'High'
-      const previousX = index % 2 === 0 ? box.x + 1 : box.x + box.width - 1
-      const targetX = index % 2 === 0 ? box.x + box.width - 1 : box.x + 1
+      const previousX = index % 2 === 0 ? box.x + box.width / 2 : box.x + box.width - 1
+      const targetX = index % 2 === 0 ? box.x + box.width - 1 : box.x + box.width / 2
       await slider.evaluate(element => element.setAttribute('data-label-history', ''))
       await nova.page.mouse.move(gesture === 'drag' ? previousX : targetX, box.y + box.height / 2)
       await nova.page.mouse.down()
@@ -65,12 +65,12 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   await expect(nova.page.getByLabel('消息输入')).toBeVisible()
 
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('GPT-5.4')
-  await expect(nova.page.getByRole('button', { name: '思考强度：Medium' })).toBeVisible()
+  await expect(nova.page.getByRole('button', { name: '思考强度：关闭' })).toBeVisible()
 
-  await nova.page.getByRole('button', { name: '思考强度：Medium' }).click()
+  await nova.page.getByRole('button', { name: '思考强度：关闭' }).click()
   const slider = nova.page.getByRole('slider', { name: '思考强度' })
-  await expect(slider).toHaveAttribute('aria-valuemax', '3')
-  await expect(nova.page.locator('.effort-slider__stop')).toHaveCount(4)
+  await expect(slider).toHaveAttribute('aria-valuemax', '4')
+  await expect(nova.page.locator('.effort-slider__stop')).toHaveCount(5)
   await expect(nova.page.locator('.effort-slider__stop--default')).toHaveCount(1)
   await slider.press('End')
   await expect(slider).toHaveClass(/effort-slider--stellar/)
@@ -93,7 +93,7 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   await expect(nova.page.getByRole('menuitem', { name: 'MiniMax-M3', exact: true })).toBeVisible()
   await nova.page.getByRole('menuitem', { name: 'MiniMax-M3', exact: true }).click()
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('MiniMax-M3')
-  await expect(nova.page.getByRole('button', { name: '思考强度：High' })).toBeVisible()
+  await expect(nova.page.getByRole('button', { name: '思考强度：开启' })).toBeVisible()
   expect((await nova.getWorkspace()).activeModelRef).toEqual(minimaxRef)
 
   const requestCountBeforeSwitchProbe = nova.provider.requests.length
@@ -121,15 +121,30 @@ test('模型与思考强度按会话持久化，新会话继承当前显示值',
   await nova.page.getByRole('menuitem', { name: 'MiniMax-M3', exact: true }).click()
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('MiniMax-M3')
 
-  await nova.page.getByRole('button', { name: '思考强度：High' }).click()
+  await nova.page.getByRole('button', { name: '思考强度：开启' }).click()
   await expect(nova.page.getByRole('slider', { name: '思考强度' }))
     .toHaveAttribute('aria-valuemax', '1')
   await expect(nova.page.locator('.effort-slider__stop')).toHaveCount(2)
+  const toggleSlider = nova.page.getByRole('slider', { name: '思考强度' })
+  await toggleSlider.press('Home')
+  await expect(toggleSlider).toHaveAttribute('aria-valuetext', '关闭')
+  expect((await nova.getWorkspace()).reasoningEffortOverride).toBe('none')
+  await toggleSlider.press('ArrowRight')
+  await expect(toggleSlider).toHaveAttribute('aria-valuetext', '开启')
+  const toggleBox = await toggleSlider.boundingBox()
+  if (!toggleBox) throw new Error('Missing toggle slider')
+  await nova.page.mouse.move(toggleBox.x + toggleBox.width - 1, toggleBox.y + toggleBox.height / 2)
+  await nova.page.mouse.down()
+  await nova.page.mouse.move(toggleBox.x + 1, toggleBox.y + toggleBox.height / 2)
+  await nova.page.mouse.up()
+  await expect(toggleSlider).toHaveAttribute('aria-valuetext', '关闭')
+  await toggleSlider.press('End')
+  await expect(toggleSlider).toHaveAttribute('aria-valuetext', '开启')
   await nova.page.screenshot({ path: testInfo.outputPath('model-reasoning-controls.png') })
 
   await nova.page.reload()
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('MiniMax-M3')
-  await expect(nova.page.getByRole('button', { name: '思考强度：High' })).toBeVisible()
+  await expect(nova.page.getByRole('button', { name: '思考强度：开启' })).toBeVisible()
 
   await nova.selectSession(original.currentSessionId!)
   await expect(nova.page.getByRole('button', { name: '切换模型' })).toContainText('GPT-5.4')

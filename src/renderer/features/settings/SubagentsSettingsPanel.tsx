@@ -6,6 +6,7 @@ import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import {
   getSupportedReasoningEfforts,
+  normalizeReasoningEffort,
   listSelectableModels,
   type LlmRegistry
 } from '../../../shared/config'
@@ -185,9 +186,18 @@ export const SubagentsSettingsPanel: React.FC = () => {
     loading: true
   })
   const { items, tools, diagnostics, route, loading } = catalog
-  const [draft, setDraft] = useState<SubagentPresetDraft>(() =>
+  const [rawDraft, setDraft] = useState<SubagentPresetDraft>(() =>
     createDraft('', FALLBACK_TEMPLATE, [])
   )
+  const draft = useMemo(() => {
+    const binding = rawDraft.preset.model
+    if (!binding || !('modelEntryId' in binding) || binding.reasoningEffort === undefined) return rawDraft
+    const entry = llmRegistry?.providers.find(provider => provider.id === binding.providerId)
+      ?.models.find(model => model.id === binding.modelEntryId)
+    const effort = entry ? normalizeReasoningEffort(entry.modelId, binding.reasoningEffort) : undefined
+    if (effort === undefined || effort === binding.reasoningEffort) return rawDraft
+    return { ...rawDraft, preset: { ...rawDraft.preset, model: { ...binding, reasoningEffort: effort } } }
+  }, [rawDraft, llmRegistry])
   const [fieldErrors, setFieldErrors] = useState<SubagentFieldErrors>({})
   const [saving, setSaving] = useState(false)
   const [actionId, setActionId] = useState<string | null>(null)
