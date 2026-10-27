@@ -368,7 +368,12 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       session.mode,
       toolRegistry.getToolDefinitions(),
       toolAvailability
-    ).filter(def => sandboxToolNames.has(def.name))
+    )
+      .filter(def => sandboxToolNames.has(def.name))
+      .map(def => ({
+        ...def,
+        codeModeResultSchema: toolRegistry.getTool(def.name)?.codeModeResultSchema
+      }))
     sdkSection = `\n\n${renderCodeModeSdkSection(sandboxToolDefinitions)}`
   }
 

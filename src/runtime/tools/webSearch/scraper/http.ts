@@ -20,6 +20,32 @@ export interface ScraperFetchOptions {
   body?: string
 }
 
+/** 限制远端响应体积；流式协议可在完整消息到达后主动结束读取。 */
+export async function readScraperText(
+  response: Response,
+  maxBytes: number,
+  isComplete?: (body: string) => boolean
+): Promise<string> {
+  if (!response.body) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let bytes = 0
+  let body = ''
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) return body + decoder.decode()
+      bytes += chunk.value.byteLength
+      if (bytes > maxBytes) throw new Error('搜索响应过大')
+      body += decoder.decode(chunk.value, { stream: true })
+      if (isComplete?.(body)) return body
+    }
+  } finally {
+    await reader.cancel().catch(() => undefined)
+    reader.releaseLock()
+  }
+}
+
 /**
  * 在受控作用域内完成请求与正文消费；超时和父 signal 持续到消费者结束。
  * 消费者返回或抛错后，未读完的响应正文会立即取消，Response 不会逃逸作用域。

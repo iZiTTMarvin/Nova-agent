@@ -9,8 +9,7 @@
 import { parentPort, workerData } from 'node:worker_threads'
 import { executeInQuickJsSandbox } from './QuickJsSandboxHost'
 import { loadQuickJsModule } from './quickJsModule'
-import type { CodeModeHostToWorkerMessage } from './protocol'
-import type { CodeRuntimeLimits } from '../limits'
+import type { CodeModeExecutePayload, CodeModeHostToWorkerMessage } from './protocol'
 import type { CodeRuntimeExecutionResult, CodeRuntimeToolCallResolution } from '../types'
 
 const port = parentPort
@@ -34,7 +33,7 @@ let currentAbortController: AbortController | null = null
 
 port.on('message', (message: CodeModeHostToWorkerMessage) => {
   if (message.kind === 'execute') {
-    void handleExecute(message.requestId, message.source, message.toolNames, message.limits)
+    void handleExecute(message)
     return
   }
   if (message.kind === 'resolveToolCall') {
@@ -47,12 +46,8 @@ port.on('message', (message: CodeModeHostToWorkerMessage) => {
   }
 })
 
-async function handleExecute(
-  requestId: number,
-  source: string,
-  toolNames: readonly string[],
-  limits: CodeRuntimeLimits
-): Promise<void> {
+async function handleExecute(message: CodeModeExecutePayload): Promise<void> {
+  const { requestId, source, toolNames, limits, timeoutExtension } = message
   pendingToolCalls = new Map()
   const abortController = new AbortController()
   currentAbortController = abortController
@@ -63,6 +58,7 @@ async function handleExecute(
       source,
       toolNames,
       limits,
+      timeoutExtension,
       signal: abortController.signal,
       isAborted: () => Atomics.load(sharedAbortFlag, 0) === 1,
       dispatchToolCall: async request =>

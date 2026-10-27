@@ -77,15 +77,111 @@ describe('OpenAICompatibleModelClient 流式工具调用增量 yield', () => {
     modelId: 'test-model'
   }
 
-  let originalFetch: typeof globalThis.fetch
+  const originalFetch = globalThis.fetch
 
   afterEach(() => {
     globalThis.fetch = originalFetch
   })
 
+  async function collectToolStream(chunks: string[]): Promise<ChatEvent[]> {
+    const client = new OpenAICompatibleModelClient(config, {
+      fetchImpl: async () => new Response(createSSEStream(chunks), {
+        headers: { 'Content-Type': 'text/event-stream' }
+      })
+    })
+    const events: ChatEvent[] = []
+    const tools = ['ls', 'web_search', 'foofoo'].map(name => ({ name, description: name, parameters: { type: 'object' } }))
+    for await (const event of client.chat([{ role: 'user', content: 'test' }], tools)) events.push(event)
+    return events
+  }
+
+  it.each([undefined, null, ''])('重复 id 的分片不以 %s 名称覆盖调用，也不丢失参数', async name => {
+    const events = await collectToolStream([
+      toolCallStart(0, 'call_repeat', 'ls', '{"path":'),
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{
+        index: 0, id: 'call_repeat', function: { name, arguments: '"."}' }
+      }] } }] }),
+      toolCallStart(0, 'call_repeat', '', ''),
+      messageEnd()
+    ])
+    expect(events.filter(e => e.type === 'tool_call_start')).toEqual([
+      { type: 'tool_call_start', toolCallId: 'call_repeat', toolName: 'ls', index: 0 }
+    ])
+    expect(events.filter(e => e.type === 'tool_call')).toEqual([
+      { type: 'tool_call', toolCall: { id: 'call_repeat', name: 'ls', arguments: '{"path":"."}' } }
+    ])
+    expect(events.filter(e => e.type === 'tool_call_delta').map(e => e.argumentsDelta).join(''))
+      .toBe('{"path":"."}')
+  })
+
+  it('名称分片与重复的完整名称元数据均保持正确，并行调用参数互不污染', async () => {
+    const events = await collectToolStream([
+      toolCallStart(0, 'call_search', 'web_', '{"query":'),
+      toolCallStart(1, 'call_ls', 'ls', '{"path":'),
+      toolCallStart(0, 'call_search', 'search', '"official"}'),
+      toolCallStart(1, 'call_ls', 'ls', '"."}'),
+      messageEnd()
+    ])
+    expect(events.filter(e => e.type === 'tool_call_start')).toHaveLength(2)
+    expect(events.filter(e => e.type === 'tool_call')).toEqual([
+      { type: 'tool_call', toolCall: { id: 'call_search', name: 'web_search', arguments: '{"query":"official"}' } },
+      { type: 'tool_call', toolCall: { id: 'call_ls', name: 'ls', arguments: '{"path":"."}' } }
+    ])
+  })
+
+  it('id 迟到时保留先到的名称和参数，并仅在身份就绪后发布增量', async () => {
+    const events = await collectToolStream([
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'ls', arguments: '{"path":' } }] } }] }),
+      toolCallStart(0, 'call_late', '', '"."}'),
+      messageEnd()
+    ])
+    expect(events.filter(e => e.type === 'tool_call_start' || e.type === 'tool_call_delta' || e.type === 'tool_call')).toEqual([
+      { type: 'tool_call_start', toolCallId: 'call_late', toolName: 'ls', index: 0 },
+      { type: 'tool_call_delta', toolCallId: 'call_late', argumentsDelta: '{"path":"."}' },
+      { type: 'tool_call', toolCall: { id: 'call_late', name: 'ls', arguments: '{"path":"."}' } }
+    ])
+  })
+
+  it('相同的名称增量片段仍然拼接，不把部分名称当成重复元数据', async () => {
+    const events = await collectToolStream([
+      toolCallStart(0, 'call_name_parts', 'foo', '{}'),
+      JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'foo' } }] } }] }),
+      messageEnd()
+    ])
+    expect(events.filter(e => e.type === 'tool_call')).toEqual([
+      { type: 'tool_call', toolCall: { id: 'call_name_parts', name: 'foofoo', arguments: '{}' } }
+    ])
+  })
+
+  it.each([
+    { label: '名称缺失', calls: [{ index: 1, id: 'call_bad', function: { arguments: '{}' } }] },
+    { label: '名称只有空白', calls: [{ index: 1, id: 'call_bad', function: { name: ' ', arguments: '{}' } }] },
+    { label: 'id 缺失', calls: [{ index: 1, function: { name: 'ls', arguments: '{}' } }] },
+    { label: '同索引 id 冲突', calls: [
+      { index: 1, id: 'call_a', function: { name: 'ls', arguments: '{' } },
+      { index: 1, id: 'call_b', function: { arguments: '}' } }
+    ] },
+    { label: '跨索引 id 冲突', calls: [{ index: 1, id: 'call_good', function: { name: 'ls', arguments: '{}' } }] },
+    { label: '参数片段类型错误', calls: [{ index: 1, id: 'call_bad', function: { name: 'ls', arguments: {} } }] },
+    { label: '名称类型错误', calls: [{ index: 1, id: 'call_bad', function: { name: 3, arguments: '{}' } }] },
+    { label: '索引无效', calls: [{ index: -1, id: 'call_bad', function: { name: 'ls', arguments: '{}' } }] }
+  ])('$label 时整批不发布可执行调用，也不伪装成网络重试', async ({ calls }) => {
+    const events = await collectToolStream([
+      toolCallStart(0, 'call_good', 'ls', '{"path":"."}'),
+      ...calls.map(call => JSON.stringify({ choices: [{ delta: { tool_calls: [call] } }] })),
+      messageEnd()
+    ])
+    expect(events.filter(e => e.type === 'tool_call')).toEqual([])
+    expect(events.filter(e => e.type === 'message_end')).toEqual([])
+    expect(events.filter(e => e.type === 'error')).toEqual([
+      expect.objectContaining({ failure: expect.objectContaining({ kind: 'provider_protocol', retryable: false }) })
+    ])
+    const error = events.find(e => e.type === 'error')
+    expect(error?.failure?.dispatchOutcome).toBeUndefined()
+  })
+
   it('单工具调用：完整 start → delta → tool_call 序列', async () => {
     const client = new OpenAICompatibleModelClient(config)
-    originalFetch = globalThis.fetch
 
     globalThis.fetch = async () => {
       return new Response(
@@ -139,7 +235,6 @@ describe('OpenAICompatibleModelClient 流式工具调用增量 yield', () => {
 
   it('第一个 chunk 不带初始 arguments 时仍正确 yield start', async () => {
     const client = new OpenAICompatibleModelClient(config)
-    originalFetch = globalThis.fetch
 
     globalThis.fetch = async () => {
       return new Response(
@@ -181,7 +276,6 @@ describe('OpenAICompatibleModelClient 流式工具调用增量 yield', () => {
 
   it('多工具并发调用：每条调用独立产出 start/delta 序列', async () => {
     const client = new OpenAICompatibleModelClient(config)
-    originalFetch = globalThis.fetch
 
     globalThis.fetch = async () => {
       return new Response(
@@ -216,7 +310,6 @@ describe('OpenAICompatibleModelClient 流式工具调用增量 yield', () => {
   it('cancel 路径：不会 yield 末尾的完整 tool_call', async () => {
     const client = new OpenAICompatibleModelClient(config)
     const controller = new AbortController()
-    originalFetch = globalThis.fetch
 
     globalThis.fetch = async (_url: string, init?: RequestInit) => {
       const stream = new ReadableStream({
@@ -257,7 +350,6 @@ describe('OpenAICompatibleModelClient 流式工具调用增量 yield', () => {
 
   it('第一个 chunk 不带 name 时 toolName 为空字符串', async () => {
     const client = new OpenAICompatibleModelClient(config)
-    originalFetch = globalThis.fetch
 
     // 模拟罕见场景：第一个 chunk 只有 id 没有 function.name
     const chunkNoName = JSON.stringify({

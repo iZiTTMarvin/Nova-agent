@@ -37,6 +37,11 @@ export interface CodeRuntimeExecutionInput {
   /** 允许在 tools.* 上暴露的工具名（由 Catalog 嵌套策略 ∩ 当前激活集解析） */
   readonly toolNames: readonly string[]
   readonly limits: CodeRuntimeLimits
+  /** 只有实际调用指定工具后，才将本次执行总时限延长到该上限。 */
+  readonly timeoutExtension?: {
+    readonly toolNames: readonly string[]
+    readonly maxSandboxTimeMs: number
+  }
   readonly signal?: AbortSignal
   /**
    * 同步中止探针（比 signal 更强的中断源）：

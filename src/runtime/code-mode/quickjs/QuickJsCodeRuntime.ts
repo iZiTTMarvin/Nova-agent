@@ -18,6 +18,10 @@ interface ActiveExecution {
   cleanup: () => void
 }
 
+function abortedExecutionResult(): CodeRuntimeExecutionResult {
+  return { status: 'failed', kind: 'aborted', message: '代码执行已取消', logs: [], toolCallCount: 0 }
+}
+
 export interface QuickJsCodeRuntimeOptions {
   /** 已构建的 worker 入口文件绝对路径（out/main/codeModeWorker.js） */
   readonly workerPath: string
@@ -29,6 +33,7 @@ export class QuickJsCodeRuntime implements CodeRuntime {
   private nextRequestId = 1
   private active: ActiveExecution | null = null
   private queue: Array<() => void> = []
+  private handoffInProgress = false
   private disposed = false
 
   constructor(private readonly options: QuickJsCodeRuntimeOptions) {}
@@ -37,25 +42,63 @@ export class QuickJsCodeRuntime implements CodeRuntime {
     if (this.disposed) {
       return { status: 'failed', kind: 'execution_error', message: 'Code Runtime 已关闭', logs: [], toolCallCount: 0 }
     }
-    // 串行排队：同一 worker 同时只承载一个沙箱
-    while (this.active !== null) {
-      await new Promise<void>(resolve => this.queue.push(resolve))
+    if (input.signal?.aborted) return abortedExecutionResult()
+
+    // 串行排队也可取消；handoffInProgress 防止交权边界唤醒多个执行者。
+    while (this.isBusy()) {
+      if (this.disposed) {
+        return { status: 'failed', kind: 'execution_error', message: 'Code Runtime 已关闭', logs: [], toolCallCount: 0 }
+      }
+      if (input.signal?.aborted) return abortedExecutionResult()
+      let wake!: () => void
+      const wait = new Promise<void>(resolve => { wake = resolve })
+      this.queue.push(wake)
+      const onAbort = (): void => {
+        const index = this.queue.indexOf(wake)
+        if (index >= 0) this.queue.splice(index, 1)
+        wake()
+      }
+      input.signal?.addEventListener('abort', onAbort, { once: true })
+      await wait
+      this.handoffInProgress = false
+      if (input.signal) input.signal.removeEventListener('abort', onAbort)
+      if (input.signal?.aborted) {
+        this.pump()
+        return abortedExecutionResult()
+      }
+      if (this.disposed) {
+        return { status: 'failed', kind: 'execution_error', message: 'Code Runtime 已关闭', logs: [], toolCallCount: 0 }
+      }
     }
     if (this.disposed) {
       return { status: 'failed', kind: 'execution_error', message: 'Code Runtime 已关闭', logs: [], toolCallCount: 0 }
     }
+    if (input.signal?.aborted) return abortedExecutionResult()
     try {
       return await this.runExclusive(input)
     } finally {
-      const next = this.queue.shift()
-      if (next) next()
+      this.pump()
     }
   }
 
   dispose(): void {
     this.disposed = true
+    for (const wake of this.queue.splice(0)) wake()
     this.worker?.terminate()
     this.worker = null
+  }
+
+  private isBusy(): boolean {
+    return this.active !== null || this.handoffInProgress
+  }
+
+  /** 每次只把执行权交给一个等待者；其恢复后必须启动或显式交还。 */
+  private pump(): void {
+    if (this.disposed || this.isBusy()) return
+    const next = this.queue.shift()
+    if (!next) return
+    this.handoffInProgress = true
+    next()
   }
 
   private async runExclusive(input: CodeRuntimeExecutionInput): Promise<CodeRuntimeExecutionResult> {
@@ -83,6 +126,20 @@ export class QuickJsCodeRuntime implements CodeRuntime {
         cleanup: () => {}
       }
       this.active = execution
+      const startedAt = Date.now()
+      let timeoutMs = input.limits.maxSandboxTimeMs
+      const armWatchdog = (): void => {
+        if (execution.watchdog) clearTimeout(execution.watchdog)
+        execution.watchdog = setTimeout(() => {
+          void worker.terminate()
+          if (this.worker === worker) this.worker = null
+          settle({
+            status: 'failed', kind: 'limit_exceeded',
+            message: `沙箱执行超时（含 ${RESULT_GRACE_MS}ms 宽限期后被强制终止）`,
+            logs: [], toolCallCount: 0
+          })
+        }, Math.max(0, startedAt + timeoutMs + RESULT_GRACE_MS - Date.now()))
+      }
 
       const settle = (result: CodeRuntimeExecutionResult): void => {
         if (this.active !== execution) return
@@ -103,6 +160,12 @@ export class QuickJsCodeRuntime implements CodeRuntime {
           return
         }
         if (message.kind === 'toolCall') {
+          const extension = input.timeoutExtension
+          if (extension && extension.maxSandboxTimeMs > timeoutMs &&
+              input.toolNames.includes(message.toolName) && extension.toolNames.includes(message.toolName)) {
+            timeoutMs = extension.maxSandboxTimeMs
+            armWatchdog()
+          }
           void (async () => {
             let resolution: CodeRuntimeToolCallResolution
             try {
@@ -162,17 +225,7 @@ export class QuickJsCodeRuntime implements CodeRuntime {
       worker.once('exit', onExit)
 
       // watchdog：沙箱时限 + 宽限期仍无结果即强杀（正常超时由 worker 内部自报）
-      execution.watchdog = setTimeout(() => {
-        void worker.terminate()
-        if (this.worker === worker) this.worker = null
-        settle({
-          status: 'failed',
-          kind: 'limit_exceeded',
-          message: `沙箱执行超时（含 ${RESULT_GRACE_MS}ms 宽限期后被强制终止）`,
-          logs: [],
-          toolCallCount: 0
-        })
-      }, input.limits.maxSandboxTimeMs + RESULT_GRACE_MS)
+      armWatchdog()
 
       // 中止传播：原子标志可打断阻塞循环；abort 消息切断 worker 侧等待
       let onAbort: (() => void) | null = null
@@ -201,7 +254,8 @@ export class QuickJsCodeRuntime implements CodeRuntime {
         requestId,
         source: input.source,
         toolNames: [...input.toolNames],
-        limits: input.limits
+        limits: input.limits,
+        timeoutExtension: input.timeoutExtension
       } satisfies CodeModeHostToWorkerMessage)
     })
   }

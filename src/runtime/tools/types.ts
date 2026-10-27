@@ -8,7 +8,7 @@ import type { SessionStore } from '../sessions/SessionStore'
 import type { EventBus } from '../agent/EventBus'
 import type { ReadState } from './editTool'
 import type { AskQuestionItem, AskQuestionAnswer } from '../../shared/askQuestion/types'
-import type { ToolTruncationMeta } from '../../shared/tools/types'
+import type { JsonValue, ToolTruncationMeta } from '../../shared/tools/types'
 import type { ImageContent } from '../../shared/tools/types'
 import type { Mode } from '../../shared/session/types'
 import type { ModelClient } from '../model/ModelClient'
@@ -54,6 +54,8 @@ export interface NestedToolCallResult {
   readonly success: boolean
   /** 成功时的工具输出文本（已过流水线截断与 sanitize） */
   readonly output: string
+  /** 仅供代码沙箱使用的结构化结果；不写入主对话历史。 */
+  readonly structuredContent?: JsonValue
   /** 失败原因（权限拒绝 / 组未激活 / 工具错误等，已含可读文案） */
   readonly error?: string
 }
@@ -199,6 +201,8 @@ export interface ToolResult {
   success: boolean
   /** 工具输出（文本格式，供模型理解） */
   output: string
+  /** 运行期结构化结果；仅嵌套调用消费，不复制进会话或模型消息。 */
+  structuredContent?: JsonValue
   /** 错误信息（仅在 success=false 时有值） */
   error?: string
   /**
@@ -241,6 +245,8 @@ export interface ToolExecutor {
   description: string
   /** JSON Schema 格式的入参定义，供模型生成调用 */
   parameters: ToolDefinition['parameters']
+  /** Code Mode 返回值 schema；不进入模型原生 tool schema。 */
+  codeModeResultSchema?: Record<string, unknown>
   /** 输出最大字符数，超出后由 AgentLoop 通过 TruncationPipeline 截断。未设置则不限制 */
   maxResultSizeChars?: number
   /** 工具默认执行模式。未声明时视为 sequential。 */

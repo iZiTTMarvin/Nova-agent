@@ -92,22 +92,34 @@ export async function extractContent(
     return { kind: 'raw', text: body }
   }
 
+  let fallbackBody = body
   try {
     const { ReadabilityCtor, parseHTML, TurndownService } = await loadExtractionLibs()
     const dom = parseHTML(body)
+    for (const element of dom.document.querySelectorAll<HTMLElement>('[hidden], [aria-hidden], [style]')) {
+      if (element.hasAttribute('hidden') || element.getAttribute('aria-hidden')?.trim().toLowerCase() === 'true' ||
+          element.style?.display === 'none' || element.style?.visibility === 'hidden') element.remove()
+    }
+    fallbackBody = dom.document.toString()
+    const turndown = new TurndownService({
+      headingStyle: 'atx',
+      codeBlockStyle: 'fenced',
+      bulletListMarker: '-'
+    })
+    turndown.remove(['script', 'style', 'noscript', 'nav'])
+    // 列表页的正文常全是链接；Readability 的文章密度算法会误删它们。
+    const main = dom.document.querySelector('main, [role="main"]')
+    if (main) {
+      const markdown = turndown.turndown(main.innerHTML)
+      if (markdown.trim()) return judgeQuality(markdown, dom.document.title)
+    }
     const article = new ReadabilityCtor(dom.document).parse()
     if (article?.content) {
-      const turndown = new TurndownService({
-        headingStyle: 'atx',
-        codeBlockStyle: 'fenced',
-        bulletListMarker: '-'
-      })
-      turndown.remove(['script', 'style', 'noscript'])
       const markdown = turndown.turndown(article.content)
       return judgeQuality(markdown, article.title ?? undefined)
     }
   } catch {
     // 提取器抛错（畸形 HTML 等）时走降级：原文去脚本
   }
-  return judgeQuality(stripToText(body))
+  return judgeQuality(stripToText(fallbackBody))
 }

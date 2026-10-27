@@ -7,10 +7,12 @@ import {
   SEARCH_PROVIDER_ORDER
 } from '../../../../../src/runtime/tools/webSearch/providers/index'
 import { resetDdgCooldown } from '../../../../../src/runtime/tools/webSearch/providers/duckduckgo'
+import { resetExaCooldown } from '../../../../../src/runtime/tools/webSearch/providers/exa'
 
 describe('getAvailableProviders', () => {
   beforeEach(() => {
     resetDdgCooldown()
+    resetExaCooldown()
     process.env.TAVILY_API_KEY = 'test-key'
   })
 
@@ -26,15 +28,15 @@ describe('getAvailableProviders', () => {
     }
   })
 
-  it('无 Tavily API key 时仍返回 bing 与 duckduckgo', () => {
+  it('无 Tavily API key 时优先匿名 Exa，再尝试网页搜索', () => {
     delete process.env.TAVILY_API_KEY
     const names = getAvailableProviders().map(p => p.name)
-    expect(names).toEqual(['bing', 'duckduckgo'])
+    expect(names).toEqual(['exa', 'keenable', 'bing', 'duckduckgo'])
   })
 
-  it('有 Tavily API key 时返回全部三个 provider', () => {
+  it('有 Tavily API key 时在免费来源之后保留增强 provider', () => {
     const names = getAvailableProviders().map(p => p.name)
-    expect(names).toEqual(['bing', 'duckduckgo', 'tavily'])
+    expect(names).toEqual(['exa', 'keenable', 'bing', 'duckduckgo', 'tavily'])
   })
 
   it('返回顺序遵循 SEARCH_PROVIDER_ORDER', () => {
@@ -46,7 +48,7 @@ describe('getAvailableProviders', () => {
     expect(names).toEqual(expected)
   })
 
-  it('SEARCH_PROVIDER_ORDER 固定为 bing → duckduckgo → tavily', () => {
-    expect(SEARCH_PROVIDER_ORDER).toEqual(['bing', 'duckduckgo', 'tavily'])
+  it('SEARCH_PROVIDER_ORDER 固定为匿名接口优先、网页抓取与配置增强降级', () => {
+    expect(SEARCH_PROVIDER_ORDER).toEqual(['exa', 'keenable', 'bing', 'duckduckgo', 'tavily'])
   })
 })

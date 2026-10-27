@@ -64,6 +64,15 @@ function dumpWireBody(body: string): void {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function toolCallProtocolError(detail: string): ChatEvent {
+  const message = `模型工具调用响应格式错误：${detail}`
+  return { type: 'error', error: message, failure: { kind: 'provider_protocol', retryable: false, message } }
+}
+
 export class OpenAICompatibleModelClient implements ModelClient {
   private config: ModelClientConfig
   /**
@@ -593,51 +602,65 @@ export class OpenAICompatibleModelClient implements ModelClient {
             }
 
             // 工具调用增量
-            if (delta?.tool_calls) {
-              for (const tc of delta.tool_calls) {
+            const toolCallDeltas: unknown = delta?.tool_calls
+            if (toolCallDeltas != null) {
+              if (!Array.isArray(toolCallDeltas)) {
+                yield toolCallProtocolError('tool_calls 必须是数组')
+                return
+              }
+              for (const rawToolCall of toolCallDeltas) {
+                const tc: unknown = rawToolCall
+                if (!isRecord(tc) || (tc.function != null && !isRecord(tc.function))) {
+                  yield toolCallProtocolError('工具分片及 function 必须是对象')
+                  return
+                }
                 const idx = tc.index ?? 0
-                const existing = pendingToolCalls.get(idx)
+                const fn = isRecord(tc.function) ? tc.function : {}
+                if (typeof idx !== 'number' || !Number.isInteger(idx) || idx < 0 ||
+                    (tc.id != null && typeof tc.id !== 'string') ||
+                    (fn.name != null && typeof fn.name !== 'string') ||
+                    (fn.arguments != null && typeof fn.arguments !== 'string')) {
+                  yield toolCallProtocolError('工具分片的 index、id、name 或 arguments 类型无效')
+                  return
+                }
+                const id = typeof tc.id === 'string' ? tc.id : ''
+                const name = typeof fn.name === 'string' ? fn.name : ''
+                const args = typeof fn.arguments === 'string' ? fn.arguments : ''
+                let pending = pendingToolCalls.get(idx)
+                if (!pending) {
+                  pending = { id: '', name: '', arguments: '' }
+                  pendingToolCalls.set(idx, pending)
+                }
+                if (id && pending.id && id !== pending.id) {
+                  yield toolCallProtocolError(`index=${idx} 的工具调用 id 在流中发生冲突`)
+                  return
+                }
+                const started = Boolean(pending.id)
+                if (id) pending.id = id
+                // 仅把已声明工具的重复完整名称当元数据；同文名称片段仍按增量拼接。
+                const repeatedName = name === pending.name && tools?.some(tool => tool.name === name)
+                if (name && !repeatedName) pending.name += name
+                pending.arguments += args
 
-                if (tc.id) {
-                  // 新的工具调用启动。OpenAI SSE 协议保证第一个带 id 的 chunk
-                  // 同时携带 function.name，无须从 existing 兜底取 name/arguments。
-                  const name = tc.function?.name ?? ''
-                  const initialArgs = tc.function?.arguments ?? ''
-
-                  pendingToolCalls.set(idx, {
-                    id: tc.id,
-                    name,
-                    arguments: initialArgs
-                  })
-
-                  // 立刻 emit start，让 UI 提前插入 running 卡片
+                if (!started && pending.id) {
                   yield {
                     type: 'tool_call_start',
-                    toolCallId: tc.id,
-                    toolName: name,
+                    toolCallId: pending.id,
+                    toolName: pending.name,
                     index: idx
                   }
-
-                  // 第一个 chunk 也可能携带 arguments 片段，一并 yield
-                  if (initialArgs) {
+                  if (pending.arguments) {
                     yield {
                       type: 'tool_call_delta',
-                      toolCallId: tc.id,
-                      argumentsDelta: initialArgs
+                      toolCallId: pending.id,
+                      argumentsDelta: pending.arguments
                     }
                   }
-                } else if (existing) {
-                  // 追加 arguments 片段
-                  if (tc.function?.arguments) {
-                    existing.arguments += tc.function.arguments
-                    yield {
-                      type: 'tool_call_delta',
-                      toolCallId: existing.id,
-                      argumentsDelta: tc.function.arguments
-                    }
-                  }
-                  if (tc.function?.name) {
-                    existing.name = tc.function.name
+                } else if (started && args) {
+                  yield {
+                    type: 'tool_call_delta',
+                    toolCallId: pending.id,
+                    argumentsDelta: args
                   }
                 }
               }
@@ -667,6 +690,16 @@ export class OpenAICompatibleModelClient implements ModelClient {
         type: seg.type === 'thinking' ? 'thinking_delta' : 'text_delta',
         delta: seg.content
       }
+    }
+
+    // 整批身份校验完成后才交付可执行调用，避免残缺响应被回灌给模型反复空转。
+    const toolCallIds = new Set<string>()
+    for (const [idx, tc] of pendingToolCalls) {
+      if (!tc.id.trim() || !tc.name.trim() || toolCallIds.has(tc.id)) {
+        yield toolCallProtocolError(`index=${idx} 的工具调用缺少 id/名称，或 id 重复`)
+        return
+      }
+      toolCallIds.add(tc.id)
     }
 
     // 发射完整的 tool_call 事件

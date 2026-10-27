@@ -1472,6 +1472,7 @@ describe('executeToolBatch —— subagentNotificationIds 透传', () => {
     registerTool(registry, 'task_wait', async () => ({
       success: true,
       output: 'ok',
+      structuredContent: { status: 'ok' },
       subagentNotificationIds: ['ntf_run-1_t-1']
     }))
 
@@ -1510,6 +1511,7 @@ describe('executeToolBatch —— subagentNotificationIds 透传', () => {
     const outcome = result.outcomes[0]!
     expect(outcome.failed).toBe(true)
     expect(outcome.subagentNotificationIds).toBeUndefined()
+    expect(outcome.structuredContent).toBeUndefined()
   })
 
   it('abort-after-execute 返回 skipped，不 emit 事件也不携带 receipt', async () => {

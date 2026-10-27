@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { expect, test } from '../fixtures/nova'
 
@@ -14,6 +14,37 @@ test('provider 失败后 run 明确失败且用户可以继续输入', async ({ 
   await expect.poll(async () => (await nova.getRunSnapshot())?.status, { timeout: 15_000 }).toBe('failed')
   await nova.waitUntilIdle()
   await expect(nova.page.getByLabel('消息输入')).toBeEditable()
+})
+
+test('工具名称缺失时整批拒绝执行，明确失败且用户能够继续对话', async ({ nova }) => {
+  nova.provider.enqueue({
+    kind: 'raw',
+    events: [
+      { payload: { choices: [{ delta: { tool_calls: [
+        { index: 0, id: 'call_write_blocked', function: { name: 'write', arguments: '{"path":"e2e-marker.txt","content":"SHOULD_NOT_WRITE"}' } },
+        { index: 1, id: 'call_missing_name', function: { name: '', arguments: '{"path":"."}' } }
+      ] }, finish_reason: null }] } },
+      { payload: { choices: [{ delta: {}, finish_reason: 'tool_calls' }] } }
+    ]
+  })
+
+  await nova.sendPrompt('触发工具名称缺失的响应')
+  await expect.poll(async () => (await nova.getRunSnapshot())?.status).toBe('failed')
+  await nova.waitUntilIdle()
+
+  expect(nova.provider.requests).toHaveLength(1)
+  expect(await readFile(path.join(nova.workspacePath, 'e2e-marker.txt'), 'utf8')).toBe('Nova Electron E2E marker\n')
+  await expect(nova.page.getByText('模型返回的工具调用格式不完整或不一致', { exact: false }).first()).toBeVisible()
+  await expect(nova.page.getByText('不可用：未注册工具', { exact: false })).toHaveCount(0)
+  await expect(nova.page.getByLabel('消息输入')).toBeEditable()
+
+  nova.provider.enqueue({ kind: 'text', text: 'NOVA_PROTOCOL_FAILURE_RECOVERED' })
+  await nova.sendPrompt('继续对话')
+  await expect(nova.page.getByText('NOVA_PROTOCOL_FAILURE_RECOVERED', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+  expect((await nova.getRunSnapshot())?.status).toBe('completed')
+  expect(nova.provider.requests).toHaveLength(2)
+  expect(nova.pageErrors).toEqual([])
 })
 
 test('中途断流后自动重放，整轮正常完成且半截正文不残留', async ({ nova }) => {

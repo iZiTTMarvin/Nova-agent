@@ -1,5 +1,5 @@
 /** 已知的搜索 provider 名称 */
-export type SearchProviderName = 'bing' | 'duckduckgo' | 'tavily' | 'brave' | 'exa'
+export type SearchProviderName = 'bing' | 'duckduckgo' | 'tavily' | 'brave' | 'exa' | 'keenable'
 
 /** 单条搜索结果来源 */
 export interface SearchSource {

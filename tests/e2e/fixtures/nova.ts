@@ -23,6 +23,7 @@ import type { IpcCommandChannel, IpcCommands, IpcEvents } from '../../../src/sha
 import { isTerminalRunStatus, type RunSnapshot } from '../../../src/shared/run/types'
 import type { Mode } from '../../../src/shared/session/types'
 import { startFakeRuntime, type FakeRuntime } from './fake-runtime'
+import type { ToolPresentationMode } from '../../../src/runtime/code-mode/presentation'
 
 const repoRoot = path.resolve(__dirname, '../../..')
 
@@ -37,6 +38,7 @@ interface LaunchOptions {
   codeIndexEnabled?: boolean
   codeFileCount?: number
   recordTrace?: boolean
+  toolPresentationMode?: ToolPresentationMode
 }
 
 /** 复用既有 profile/workspace/fake 服务的再次启动上下文（用于中断崩溃恢复类用例） */
@@ -127,6 +129,11 @@ function isolatedElectronEnv(profileRoot: string): Record<string, string> {
     ...inherited,
     NODE_ENV: 'production',
     NOVA_E2E: '1',
+    TAVILY_API_KEY: '',
+    CLOUDFLARE_API_KEY: '',
+    CLOUDFLARE_ACCOUNT_ID: '',
+    CLOUDFLARE_GATEWAY_ID: '',
+    NOVA_WEB_FETCH_CACHE_DIR: path.join(profileRoot, 'web-fetch-cache'),
     ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
     APPDATA: path.join(profileRoot, 'appdata'),
     XDG_CONFIG_HOME: path.join(profileRoot, 'xdg'),
@@ -170,6 +177,7 @@ export async function launchNova(
   const mainConsole: string[] = []
 
   const launchEnv = isolatedElectronEnv(profileRoot)
+  if (options.toolPresentationMode) launchEnv.NOVA_TOOL_PRESENTATION = options.toolPresentationMode
   // Windows 上 APPDATA 不会改 Electron userData，必须传 Chromium 开关才能隔离 profile 与单实例锁。
   const userDataArg = `--user-data-dir=${userDataDir}`
   const app = options.executablePath
@@ -373,10 +381,11 @@ export async function launchNova(
   return harness
 }
 
-export const test = base.extend<{ nova: NovaHarness; recordTrace: boolean }>({
+export const test = base.extend<{ nova: NovaHarness; recordTrace: boolean; toolPresentationMode: ToolPresentationMode }>({
   recordTrace: [true, { option: true }],
-  nova: async ({ recordTrace }, use, testInfo) => {
-    const nova = await launchNova(testInfo, { recordTrace })
+  toolPresentationMode: ['direct', { option: true }],
+  nova: async ({ recordTrace, toolPresentationMode }, use, testInfo) => {
+    const nova = await launchNova(testInfo, { recordTrace, toolPresentationMode })
     try {
       await use(nova)
     } finally {

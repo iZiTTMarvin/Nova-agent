@@ -32,12 +32,11 @@ export function createRunCodeTool(deps: RunCodeToolDeps): ToolExecutor {
   return {
     name: 'run_code',
     description: [
-      'Execute a JavaScript snippet in a restricted sandbox that chains read-only exploration tools (tools.ls / tools.read / tools.grep / tools.find).',
-      'Suited to code exploration that needs multiple rounds of alternating search → read → search: intermediate results stay in the sandbox; only console.log output and the return value come back to you.',
-      '- The code is a top-level async function body: await and return can be used directly; there are no timers in the sandbox (setTimeout etc. are unavailable) — only tools.* calls can be awaited.',
-      "- Tool calls look like `const r = await tools.read({ path: 'src/a.ts' })`; success resolves `{ output: string }`, failure throws ToolCallError (carrying toolName and message, so you can try/catch and retry with adjusted arguments).",
-      '- Promise.all is supported for concurrent calls; a single execution has call-count, duration, and size limits, and exceeding them returns an explicit reason.',
-      '- Filter and process in code down to the minimal task-relevant result before returning it; returning a large file as-is wastes context.'
+      'Execute JavaScript in a restricted sandbox that chains SDK-declared read-only tools for multi-step exploration.',
+      'Intermediate results stay in the sandbox; only console.log output and the return value enter the main context.',
+      '- The code is a top-level async function body with await/return; timers are unavailable. Tool failures throw ToolCallError, which can be caught.',
+      '- Return shapes follow the SDK declarations: text tools resolve { output: string }; structured tools resolve typed data directly.',
+      '- Promise.all is supported within concurrency, call-count, duration, and size limits. Curate the minimal result before returning it.'
     ].join('\n'),
     parameters: {
       type: 'object',
@@ -76,7 +75,6 @@ export function createRunCodeTool(deps: RunCodeToolDeps): ToolExecutor {
         return failure('工具可用性 Owner 未装配，run_code 拒绝执行')
       }
 
-      const limits: CodeRuntimeLimits = DEFAULT_CODE_MODE_LIMITS
       const bindings = resolveCodeModeToolBindings(
         context.mode ?? 'default',
         new Set(availability.getActiveToolNames())
@@ -85,12 +83,16 @@ export function createRunCodeTool(deps: RunCodeToolDeps): ToolExecutor {
       const result = await runtime.execute({
         source: code,
         toolNames: bindings,
-        limits,
+        limits: DEFAULT_CODE_MODE_LIMITS,
+        timeoutExtension: {
+          toolNames: bindings.filter(name => name === 'web_search' || name === 'web_fetch'),
+          maxSandboxTimeMs: 120_000
+        },
         signal: context.abortSignal,
         dispatchToolCall: request => bridgeToolCall(request, dispatch)
       })
 
-      const curated = formatCuratedOutput(result.logs, result.valueJson ?? null, limits)
+      const curated = formatCuratedOutput(result.logs, result.valueJson ?? null, DEFAULT_CODE_MODE_LIMITS)
       if (result.status === 'failed') {
         return {
           success: false,
@@ -120,7 +122,12 @@ async function bridgeToolCall(
   }
   const nested = await dispatch({ toolName: request.toolName, args })
   if (nested.success) {
-    return { ok: true, resultJson: JSON.stringify({ output: nested.output }) }
+    return {
+      ok: true,
+      resultJson: JSON.stringify(
+        nested.structuredContent !== undefined ? nested.structuredContent : { output: nested.output }
+      )
+    }
   }
   return { ok: false, errorMessage: nested.error ?? '工具调用失败' }
 }

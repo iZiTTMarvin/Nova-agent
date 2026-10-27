@@ -20,6 +20,7 @@ function makeInput(
     limits?: Partial<typeof DEFAULT_CODE_MODE_LIMITS>
     signal?: AbortSignal
     isAborted?: () => boolean
+    timeoutExtension?: CodeRuntimeExecutionInput['timeoutExtension']
   } = {}
 ): CodeRuntimeExecutionInput {
   const dispatch: Dispatch =
@@ -30,6 +31,7 @@ function makeInput(
     toolNames: options.toolNames ?? ['ls', 'read', 'grep', 'find'],
     limits: { ...DEFAULT_CODE_MODE_LIMITS, ...options.limits },
     signal: options.signal,
+    timeoutExtension: options.timeoutExtension,
     ...(options.isAborted ? { isAborted: options.isAborted } : {}),
     dispatchToolCall: dispatch
   }
@@ -88,6 +90,22 @@ describe('QuickJsSandboxHost', () => {
     expect(result.kind).toBe('limit_exceeded')
     expect(result.message).toContain('超时')
   }, 10_000)
+
+  it('只有实际发起网络工具调用后才获得扩展时限', async () => {
+    const options = {
+      toolNames: ['read', 'web_search'],
+      limits: { maxSandboxTimeMs: 50 },
+      timeoutExtension: { toolNames: ['web_search'], maxSandboxTimeMs: 1_000 },
+      dispatch: async () => {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        return { ok: true, resultJson: '42' }
+      }
+    }
+    const fileOnly = await run('return await tools.read({})', options)
+    expect(fileOnly).toMatchObject({ status: 'failed', kind: 'limit_exceeded' })
+    const web = await run('return await tools.web_search({})', options)
+    expect(web).toMatchObject({ status: 'ok', valueJson: '42' })
+  })
 
   it('同步中止探针可打断阻塞中的同步循环（Worker SAB 同一机制）并归类 aborted', async () => {
     // 进程内宿主无法用事件式 signal 打断阻塞循环（事件循环被占用）；

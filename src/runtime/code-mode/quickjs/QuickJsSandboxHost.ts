@@ -224,7 +224,9 @@ export async function executeInQuickJsSandbox(
   let failure: { kind: RunCodeFailureKind; message: string } | null = null
 
   try {
-    const deadline = Date.now() + limits.maxSandboxTimeMs
+    const startedAt = Date.now()
+    let timeoutMs = limits.maxSandboxTimeMs
+    let deadline = startedAt + timeoutMs
     const timedOut = () => Date.now() > deadline
     context.runtime.setMemoryLimit(limits.maxSandboxMemoryBytes)
     context.runtime.setInterruptHandler(() => isAborted() || timedOut())
@@ -254,7 +256,7 @@ export async function executeInQuickJsSandbox(
     if (glueResult.error) {
       const dumped = context.dump(glueResult.error)
       glueResult.error.dispose()
-      failure = describeSandboxFailure(dumped, { isAborted, timedOut, maxSandboxTimeMs: limits.maxSandboxTimeMs })
+      failure = describeSandboxFailure(dumped, { isAborted, timedOut, maxSandboxTimeMs: timeoutMs })
     } else {
       glueResult.value.dispose()
     }
@@ -264,7 +266,7 @@ export async function executeInQuickJsSandbox(
       if (wrapperResult.error) {
         const dumped = context.dump(wrapperResult.error)
         wrapperResult.error.dispose()
-        failure = describeSandboxFailure(dumped, { isAborted, timedOut, maxSandboxTimeMs: limits.maxSandboxTimeMs })
+        failure = describeSandboxFailure(dumped, { isAborted, timedOut, maxSandboxTimeMs: timeoutMs })
       } else {
         wrapperResult.value.dispose()
       }
@@ -311,7 +313,7 @@ export async function executeInQuickJsSandbox(
               return
             }
             if (timedOut()) {
-              failure = { kind: 'limit_exceeded', message: sandboxTimeoutMessage(limits.maxSandboxTimeMs) }
+              failure = { kind: 'limit_exceeded', message: sandboxTimeoutMessage(timeoutMs) }
               return
             }
             const request = batch[next++]
@@ -338,6 +340,10 @@ export async function executeInQuickJsSandbox(
               continue
             }
             issuedCalls++
+            if (input.timeoutExtension?.toolNames.includes(request.toolName)) {
+              timeoutMs = Math.max(timeoutMs, input.timeoutExtension.maxSandboxTimeMs)
+              deadline = startedAt + timeoutMs
+            }
             let resolution: CodeRuntimeToolCallResolution
             try {
               resolution = await input.dispatchToolCall(request)
@@ -366,7 +372,7 @@ export async function executeInQuickJsSandbox(
               break
             }
             if (timedOut()) {
-              failure = { kind: 'limit_exceeded', message: sandboxTimeoutMessage(limits.maxSandboxTimeMs) }
+              failure = { kind: 'limit_exceeded', message: sandboxTimeoutMessage(timeoutMs) }
               break
             }
             let executedJobs = 0

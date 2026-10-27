@@ -108,6 +108,32 @@ describe('renderCodeModeSdkSection', () => {
     expect(section).not.toContain(' -A?: number')
   })
 
+  it('结构化结果类型由结果 schema 生成，不再统一压成 output:string', () => {
+    const section = renderCodeModeSdkSection([{
+      name: 'web_fetch',
+      description: 'web_fetch tool',
+      parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] },
+      codeModeResultSchema: {
+        type: 'object',
+        properties: {
+          price: { type: 'number' },
+          sources: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: { url: { type: 'string' } },
+              required: ['url']
+            }
+          }
+        },
+        required: ['price', 'sources']
+      }
+    }])
+    expect(section).toContain('price: number')
+    expect(section).toContain('sources: { url: string }[]')
+    expect(section).not.toContain('web_fetch(args: { url: string }): Promise<{ output: string }>')
+  })
+
   it('economy on 时未激活组的 nestable 工具不进 SDK（投影顺序：Mode → Availability → Nesting）', () => {
     const availability = new ToolAvailability()
     availability.setEconomyMode('on')

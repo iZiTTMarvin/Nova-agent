@@ -20,12 +20,94 @@ import { readTool } from '../../../../src/runtime/tools/readTool'
 import { createGrepTool } from '../../../../src/runtime/tools/grepTool'
 import { findTool } from '../../../../src/runtime/tools/findTool'
 import { createRunCodeTool } from '../../../../src/runtime/tools/runCode'
+import { webSearchTool } from '../../../../src/runtime/tools/webSearch'
+import { HookManager } from '../../../../src/runtime/agent/core/HookManager'
 import { InProcessCodeRuntime } from '../../../../src/runtime/code-mode'
+import type { CodeRuntimeExecutionInput } from '../../../../src/runtime/code-mode'
 import { ToolAvailability } from '../../../../src/runtime/tools/availability'
 import { executeToolBatch } from '../../../../src/runtime/agent/execution/toolBatchExecutor'
 import { createReadState } from '../../../../src/runtime/tools/editTool'
 import type { ReadState } from '../../../../src/runtime/tools/editTool'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
+import type { ToolExecutor } from '../../../../src/runtime/tools/types'
+
+interface WebProbe {
+  searchActive: number
+  fetchActive: number
+  maxSearchActive: number
+  maxFetchActive: number
+}
+
+const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+function registerWebTools(registry: ToolRegistry): WebProbe {
+  const probe: WebProbe = { searchActive: 0, fetchActive: 0, maxSearchActive: 0, maxFetchActive: 0 }
+  const urls: Record<string, string[]> = { left: ['a', 'b'], right: ['c'] }
+  const prices: Record<string, number> = { a: 30, b: 10, c: 20 }
+  registry.register({
+    name: 'web_search',
+    description: 'fake web search',
+    codeModeResultSchema: webSearchTool.codeModeResultSchema,
+    parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    executionMode: 'sequential',
+    async execute(args) {
+      probe.searchActive++
+      probe.maxSearchActive = Math.max(probe.maxSearchActive, probe.searchActive)
+      try {
+        await delay(15)
+        const query = String(args.query)
+        return {
+          success: true,
+          output: query,
+          structuredContent: {
+            provider: 'exa',
+            sources: (urls[query] ?? []).map(url => ({ title: url, url }))
+          }
+        }
+      } finally {
+        probe.searchActive--
+      }
+    }
+  } satisfies ToolExecutor)
+  registry.register({
+    name: 'web_fetch',
+    description: 'fake web fetch',
+    parameters: {
+      type: 'object',
+      properties: {
+        url: { type: 'string' },
+        mode: { type: 'string', enum: ['readable', 'extract'] },
+        fields: { type: 'object', additionalProperties: { type: 'string' } }
+      },
+      required: ['url']
+    },
+    executionMode: 'parallel',
+    isConcurrencySafe: () => true,
+    async execute(args) {
+      probe.fetchActive++
+      probe.maxFetchActive = Math.max(probe.maxFetchActive, probe.fetchActive)
+      try {
+        const url = String(args.url)
+        await delay(url === 'a' ? 30 : 10)
+        return {
+          success: true,
+          output: url,
+          structuredContent: {
+            kind: 'extract',
+            extraction: {
+              fields: {
+                price: { status: 'extracted', value: prices[url], confidence: 1 }
+              }
+            }
+          }
+        }
+      } finally {
+        probe.fetchActive--
+      }
+    }
+  } satisfies ToolExecutor)
+  return probe
+}
 
 describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
   let workspace: string
@@ -47,7 +129,9 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
   })
 
   interface Harness {
-    run: (code: string, options?: { economy?: 'off' | 'on' }) => Promise<{
+    web: WebProbe
+    runtimeInputs: CodeRuntimeExecutionInput[]
+    run: (code: string, options?: { economy?: 'off' | 'on'; hookManager?: HookManager }) => Promise<{
       outcome: { resultText: string; failed?: boolean }
       events: AgentEvent[]
       readState: ReadState
@@ -57,10 +141,12 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
   function createHarness(): Harness {
     const registry = new ToolRegistry()
     const availability = new ToolAvailability()
+    const runtimeInputs: CodeRuntimeExecutionInput[] = []
     registry.register(lsTool)
     registry.register(readTool)
     registry.register(createGrepTool({ maxResultSizeChars: 100_000 }))
     registry.register(findTool)
+    const web = registerWebTools(registry)
     const codeContextPack: CodeContextPack = Object.freeze({
       status: 'ready',
       revision: 3,
@@ -95,7 +181,12 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
       createRunCodeTool({
         getToolAvailability: () => availability,
         getPresentationMode: () => 'code-readonly',
-        createCodeRuntime: () => new InProcessCodeRuntime()
+        createCodeRuntime: () => ({
+          execute: input => {
+            runtimeInputs.push(input)
+            return new InProcessCodeRuntime().execute(input)
+          }
+        })
       })
     )
     availability.bindRegisteredToolNames(registry.getToolDefinitions().map(def => def.name))
@@ -103,6 +194,8 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     const events: AgentEvent[] = []
     const readState = createReadState()
     return {
+      web,
+      runtimeInputs,
       run: async (code, options) => {
         availability.setEconomyMode(options?.economy ?? 'off')
         const { outcomes } = await executeToolBatch({
@@ -119,6 +212,7 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
           runId: 'run_int',
           sessionId: 'sess_int',
           mode: 'default',
+          hookManager: options?.hookManager,
           supportsVision: false,
           checkpointManager: null,
           abortSignal: undefined,
@@ -140,6 +234,27 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     }
   }
 
+  it('结构化工具被 hook 改写时明确抛出工具错误，不成功返回错误形状', async () => {
+    const hooks = new HookManager()
+    hooks.on('postToolUse', payload =>
+      payload.toolName === 'web_search' ? { content: 'rewritten search result' } : undefined
+    )
+    const harness = createHarness()
+    const { outcome, events } = await harness.run(`
+      try {
+        await tools.web_search({ query: 'left' });
+        return { unexpectedSuccess: true };
+      } catch (error) {
+        return { name: error.name, tool: error.toolName };
+      }
+    `, { hookManager: hooks })
+    expect(outcome.failed).toBeFalsy()
+    expect(outcome.resultText).toContain('ToolCallError')
+    expect(outcome.resultText).not.toContain('unexpectedSuccess')
+    expect(events.find(event => event.type === 'tool_result' && event.toolName === 'web_search'))
+      .toMatchObject({ failed: true })
+  })
+
   it('run_code → grep → read → return：嵌套工具真实执行，主上下文只有 curated output', async () => {
     const harness = createHarness()
     const { outcome, events } = await harness.run(`
@@ -151,6 +266,7 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
 
     // run_code 是唯一进入主上下文的工具结果
     expect(outcome.failed).toBeFalsy()
+    expect(harness.runtimeInputs[0].limits.maxSandboxTimeMs).toBe(30_000)
     expect(outcome.resultText).toContain('[console]')
     expect(outcome.resultText).toContain('files:')
     expect(outcome.resultText).toContain('[return]')
@@ -248,6 +364,28 @@ describe('run_code 集成（统一流水线 + 真实沙箱）', () => {
     )
     expect(outcome.failed).toBeFalsy()
     expect(outcome.resultText).toContain('"blocked": true')
+  })
+
+  it('Web 结构化结果可直接比较数值，顺序搜索不并发、并行提取不串行', async () => {
+    const harness = createHarness()
+    const { outcome } = await harness.run(`
+      const [left, right] = await Promise.all([
+        tools.web_search({ query: 'left' }),
+        tools.web_search({ query: 'right' })
+      ])
+      const urls = [...left.sources, ...right.sources].map(source => source.url)
+      const pages = await Promise.all(urls.map(url => tools.web_fetch({
+        url,
+        mode: 'extract',
+        fields: { price: 'number' }
+      })))
+      const prices = pages.map(page => page.extraction.fields.price.value)
+      return { prices: prices.sort((a, b) => a - b) }
+    `)
+    expect(outcome.failed).toBeFalsy()
+    expect(outcome.resultText).toMatch(/"prices": \[\s*10,\s*20,\s*30\s*\]/)
+    expect(harness.web.maxSearchActive).toBe(1)
+    expect(harness.web.maxFetchActive).toBeGreaterThan(1)
   })
 
   it('嵌套调用失败可被代码捕获并继续探索', async () => {

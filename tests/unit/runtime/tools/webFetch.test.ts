@@ -79,6 +79,34 @@ describe('urlGate 同步校验', () => {
 })
 
 describe('extractContent 正文提取', () => {
+  it('语义主内容中的列表不会被更长的版权页脚替代', async () => {
+    const html = `<html><head><title>Releases</title></head><body>
+      <main><h1>Releases</h1>${Array.from({ length: 6 }, (_, i) =>
+        `<article><a href="/release/${i}"><h2>Release ${i}</h2><p>Published on October 21, 2026</p></a></article>`
+      ).join('')}</main>
+      <footer><p>${'Copyright Foundation. All rights reserved. '.repeat(40)}</p></footer>
+    </body></html>`
+    const result = await extractContent(html, 'text/html')
+    expect(result.kind).toBe('markdown')
+    if (result.kind !== 'markdown') throw new Error('未提取主内容')
+    expect(result.markdown).toContain('Release 0')
+    expect(result.markdown).toContain('Release 5')
+    expect(result.markdown).not.toContain('All rights reserved')
+  }, 15_000)
+
+  it('语义主内容排除隐藏主区域和隐藏的旧值', async () => {
+    const result = await extractContent(`<html><body>
+      <main hidden><p>Retired price20</p></main>
+      <main><h1>Current price30</h1><p aria-hidden="true">Previous price25</p></main>
+    </body></html>`, 'text/html')
+    const content = result.kind === 'markdown' ? result.markdown : 'text' in result ? result.text : ''
+    expect(content).toContain('Current price30')
+    expect(content).not.toContain('Retired')
+    expect(content).not.toContain('Previous')
+    const hiddenOnly = await extractContent('<html><body><main hidden>Retired price20</main></body></html>', 'text/html')
+    expect(JSON.stringify(hiddenOnly)).not.toContain('Retired')
+  })
+
   // 本用例承担三个 ESM 提取库（readability/linkedom/turndown）的首次动态加载，
   // 冷态并行全量跑时单次加载可超默认 5s 超时，故放宽到 15s；后续用例复用已加载模块。
   it('新闻页：剥掉导航/页脚噪声，正文转 Markdown', async () => {
@@ -157,6 +185,13 @@ describe('权限升格：web_fetch 私网 IP', () => {
     if (!result.ok) return
     expect(result.effects).toContain('network.read')
     expect(result.effects).toContain('network.private_read')
+
+    const extract = resolvePermissionEffects(permissionQuery({
+      url: 'http://192.168.1.1/admin',
+      mode: 'extract',
+      fields: { price: 'number' }
+    }))
+    expect(extract.ok && extract.effects).toContain('network.private_read')
   })
 
   it('loopback 与公网域名不升格', () => {

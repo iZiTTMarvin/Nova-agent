@@ -1,14 +1,18 @@
 /**
  * Provider 链管理：按 fallback 顺序返回可用 provider
- * 顺序：bing → duckduckgo → tavily（Tavily 需 API Key）
+ * 顺序：exa → keenable → bing → duckduckgo → tavily（Tavily 需 API Key）
  */
 import type { SearchProvider } from '../types'
 import { bingProvider } from './bing'
 import { duckduckgoProvider } from './duckduckgo'
 import { tavilyProvider } from './tavily'
+import { exaProvider } from './exa'
+import { keenableProvider } from './keenable'
 
 /** Provider fallback 顺序；第一个最优先，全失败才试下一个 */
 export const SEARCH_PROVIDER_ORDER: Array<SearchProvider['name']> = [
+  'exa',
+  'keenable',
   'bing',
   'duckduckgo',
   'tavily'
@@ -16,6 +20,8 @@ export const SEARCH_PROVIDER_ORDER: Array<SearchProvider['name']> = [
 
 /** provider 实例注册表 */
 const PROVIDER_REGISTRY: Record<string, SearchProvider> = {
+  exa: exaProvider,
+  keenable: keenableProvider,
   bing: bingProvider,
   duckduckgo: duckduckgoProvider,
   tavily: tavilyProvider

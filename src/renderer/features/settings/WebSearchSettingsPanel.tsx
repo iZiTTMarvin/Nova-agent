@@ -70,7 +70,7 @@ export const WebSearchSettingsPanel: React.FC = () => {
         <SettingsPage>
           <SettingsSection
             title="Tavily"
-            description="默认通过 Bing / DuckDuckGo 爬虫搜索；Tavily 用于质量增强与失败兜底。"
+            description="默认使用 Exa / Keenable 免密钥搜索，失败时尝试 Bing / DuckDuckGo；Tavily 是可选增强。"
           >
             <SettingsField>
               <TextInput

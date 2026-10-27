@@ -1,6 +1,6 @@
 /**
  * web_search 联网搜索工具
- * 通过 Bing → DuckDuckGo → Tavily fallback 链查询互联网
+ * 优先免密钥 Exa，失败时沿现有 provider 链降级。
  */
 import type { ToolExecutor, ToolContext, ToolResult } from '../types'
 import type { SearchProviderError, SearchResponse } from './types'
@@ -9,39 +9,43 @@ import { formatForLLM } from './formatters'
 
 const TOOL_NAME = 'web_search'
 
-/**
- * 工具描述（给模型看的 prompt）。
- * 年份在 buildDescription 时通过模板字符串注入当前年份。
- */
-function buildDescription(year: number): string {
-  return `web_search — search the web. Use it when you need up-to-date information (version numbers, best practices, API docs, framework features) that local tools cannot answer.
-
-**Works without an API key**: results are scraped via Bing / DuckDuckGo by default. If a Tavily API key is configured in settings, it joins the fallback chain as a quality enhancement.
-
-**Parameters**
-- query (string, required): search keywords or question. Include an explicit time word or version number, e.g. "React ${year} new features".
-- maxResults (number, optional): maximum number of results to return; defaults to 5, upper bound limited by the provider.
-- recency (string, optional): time-range filter, one of day | week | month | year, to keep only results from that window (Tavily only).
-
-**Result format**
-Returns a summary (answer — usually absent for scraped results) and a list of URL sources. **For most questions snippet + answer suffice; use web_fetch to read the full page only when truly needed** (re-reading the same URL within 2 days hits the cache at zero cost).
-
-**Example**
-When the user asks "What is the latest version of React?", search "React ${year} latest version" and answer from the returned sources' summaries.`
-}
-
-const TOOL_DESCRIPTION = buildDescription(new Date().getFullYear())
+const TOOL_DESCRIPTION = 'web_search — search the web for current information and return source-linked results. Prefer snippets; use web_fetch only when page content or exact fields are needed.'
 const MAX_RESULT_SIZE_CHARS = 50_000
+const CODE_MODE_RESULT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    provider: { type: 'string', enum: ['bing', 'duckduckgo', 'tavily', 'brave', 'exa', 'keenable'] },
+    answer: { type: 'string' },
+    sources: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          url: { type: 'string' },
+          snippet: { type: 'string' },
+          publishedDate: { type: 'string' }
+        },
+        required: ['title', 'url'],
+        additionalProperties: false
+      }
+    },
+    requestId: { type: 'string' }
+  },
+  required: ['provider', 'sources'],
+  additionalProperties: false
+}
 
 export const webSearchTool: ToolExecutor = {
   name: TOOL_NAME,
   description: TOOL_DESCRIPTION,
+  codeModeResultSchema: CODE_MODE_RESULT_SCHEMA,
   parameters: {
     type: 'object',
     properties: {
       query: {
         type: 'string',
-        description: 'Search keywords or question. Include an explicit time word, e.g. "React 2026 new features".'
+        description: 'Search keywords or question; add time or version terms when relevant.'
       },
       maxResults: {
         type: 'number',
@@ -51,7 +55,7 @@ export const webSearchTool: ToolExecutor = {
       },
       recency: {
         type: 'string',
-        description: 'Time-range filter: day | week | month | year.',
+        description: 'Prefer sources published within: day | week | month | year.',
         enum: ['day', 'week', 'month', 'year']
       }
     },
@@ -67,7 +71,7 @@ export const webSearchTool: ToolExecutor = {
     const recency = args.recency as 'day' | 'week' | 'month' | 'year' | undefined
 
     const providers = getAvailableProviders()
-    // bing/ddg 正常情况下恒可用；仅当全部 provider 不可用时才报错
+    // 匿名搜索无需凭据；配置的增强 provider 仍参与原有降级链。
     if (providers.length === 0) {
       return {
         success: false,
@@ -90,7 +94,18 @@ export const webSearchTool: ToolExecutor = {
         )
         return {
           success: true,
-          output: formatForLLM(response)
+          output: formatForLLM(response),
+          structuredContent: {
+            provider: response.provider,
+            ...(response.answer !== undefined ? { answer: response.answer } : {}),
+            sources: response.sources.map(source => ({
+              title: source.title,
+              url: source.url,
+              ...(source.snippet !== undefined ? { snippet: source.snippet } : {}),
+              ...(source.publishedDate !== undefined ? { publishedDate: source.publishedDate } : {})
+            })),
+            ...(response.requestId !== undefined ? { requestId: response.requestId } : {})
+          }
         }
       } catch (err) {
         if (signal.aborted) {

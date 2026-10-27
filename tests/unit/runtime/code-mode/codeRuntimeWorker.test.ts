@@ -15,6 +15,25 @@ const workerBuilt = existsSync(workerPath)
 const suite = workerBuilt ? describe : describe.skip
 
 suite('QuickJsCodeRuntime（真实 worker）', () => {
+  it('网络时限策略穿过 Worker 协议，纯文件调用保留较短时限', async () => {
+    const runtime = new QuickJsCodeRuntime({ workerPath })
+    try {
+      const input = {
+        toolNames: ['read', 'web_search'],
+        limits: { ...DEFAULT_CODE_MODE_LIMITS, maxSandboxTimeMs: 100 },
+        timeoutExtension: { toolNames: ['web_search'], maxSandboxTimeMs: 2_000 },
+        dispatchToolCall: async () => {
+          await new Promise(resolve => setTimeout(resolve, 200))
+          return { ok: true, resultJson: '42' }
+        }
+      }
+      const fileOnly = await runtime.execute({ ...input, source: 'return await tools.read({})' })
+      expect(fileOnly).toMatchObject({ status: 'failed', kind: 'limit_exceeded' })
+      const web = await runtime.execute({ ...input, source: 'return await tools.web_search({})' })
+      expect(web).toMatchObject({ status: 'ok', valueJson: '42' })
+    } finally { runtime.dispose() }
+  }, 10_000)
+
   it('跨线程执行受限程序并完成工具桥往返', async () => {
     const runtime = new QuickJsCodeRuntime({ workerPath })
     try {
@@ -58,6 +77,77 @@ suite('QuickJsCodeRuntime（真实 worker）', () => {
       expect(Date.now() - startedAt).toBeLessThan(2_000)
     } finally {
       runtime.dispose()
+    }
+  }, 10_000)
+
+  it('共享 worker 在交权边界取消后仍会把执行权交给后续任务', async () => {
+    const runtime = new QuickJsCodeRuntime({ workerPath })
+    const tasks: Array<Promise<unknown>> = []
+    const withTimeout = <T>(promise: Promise<T>): Promise<T> => Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => setTimeout(() => reject(new Error('队列未在 2 秒内继续')), 2_000))
+    ])
+    let markStarted!: () => void
+    const started = new Promise<void>(resolve => { markStarted = resolve })
+    let releaseFirst!: () => void
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    try {
+      const first = runtime.execute({
+        source: 'await tools.read({ path: "blocked" })',
+        toolNames: ['read'],
+        limits: { ...DEFAULT_CODE_MODE_LIMITS, maxSandboxTimeMs: 60_000 },
+        dispatchToolCall: async () => {
+          markStarted()
+          await firstGate
+          return { ok: true, resultJson: JSON.stringify({ output: 'ok' }) }
+        }
+      })
+      tasks.push(first)
+      await started
+
+      const controller = new AbortController()
+      const signal = controller.signal
+      let abortAtHandoff = false
+      const originalRemove = signal.removeEventListener.bind(signal)
+      signal.removeEventListener = (...args: Parameters<AbortSignal['removeEventListener']>): void => {
+        originalRemove(...args)
+        // 唤醒后的等待者移除监听器时，它刚取得执行权但还没启动 runExclusive。
+        if (abortAtHandoff && args[0] === 'abort' && !signal.aborted) controller.abort()
+      }
+      let secondCalls = 0
+      const second = runtime.execute({
+        source: 'return 1',
+        toolNames: [],
+        limits: { ...DEFAULT_CODE_MODE_LIMITS, maxSandboxTimeMs: 60_000 },
+        signal,
+        dispatchToolCall: async () => {
+          secondCalls++
+          return { ok: true, resultJson: 'null' }
+        }
+      })
+      tasks.push(second)
+      const third = runtime.execute({
+        source: 'return 3',
+        toolNames: [],
+        limits: { ...DEFAULT_CODE_MODE_LIMITS, maxSandboxTimeMs: 60_000 },
+        dispatchToolCall: async () => ({ ok: true, resultJson: 'null' })
+      })
+      tasks.push(third)
+
+      abortAtHandoff = true
+      releaseFirst()
+      const firstResult = await first
+      const secondResult = await second
+      const thirdResult = await withTimeout(third)
+      expect(secondResult.kind).toBe('aborted')
+      expect(firstResult.status).toBe('ok')
+      expect(thirdResult.status).toBe('ok')
+      expect(thirdResult.valueJson).toBe('3')
+      expect(secondCalls).toBe(0)
+    } finally {
+      releaseFirst()
+      runtime.dispose()
+      await Promise.allSettled(tasks)
     }
   }, 10_000)
 

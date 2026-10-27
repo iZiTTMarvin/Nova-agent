@@ -1,4 +1,4 @@
-import type { ToolProcessOutcome } from '../../../shared/tools/types'
+import type { JsonValue, ToolProcessOutcome } from '../../../shared/tools/types'
 import type { ChatToolCall } from '../../model/types'
 export { toToolContent } from '../../request-projection/messageFacts'
 import type { CheckpointManager } from '../../checkpoints/CheckpointManager'
@@ -34,6 +34,8 @@ export interface ToolExecutionOutcome {
   toolCall: ChatToolCall
   args: Record<string, unknown>
   resultText: string
+  /** 仅供嵌套代码调用；不进入事件、消息或持久化。 */
+  structuredContent?: JsonValue
   resultImages?: ImageContent[]
   /** 大输出 artifact 指针（与 ToolResult.artifactId 对齐） */
   artifactId?: string
@@ -146,6 +148,8 @@ export interface ToolBatchExecutionOptions {
    * 顶层批次默认允许；嵌套执行固定关闭，防止派发无限递归。
    */
   allowNestedToolDispatch?: boolean
+  /** SDK 声明结构化返回时，缺失程序数据必须按工具失败回结。 */
+  requireStructuredResults?: boolean
 }
 
 interface ToolRunResult {
@@ -167,7 +171,9 @@ function createNestedDispatcher(
   parentToolCallId: string
 ): (request: NestedToolCallRequest) => Promise<NestedToolCallResult> {
   let nestedSeq = 0
-  return async request => {
+  const sequentialTails = new Map<string, Promise<void>>()
+
+  const dispatch = async (request: NestedToolCallRequest): Promise<NestedToolCallResult> => {
     nestedSeq += 1
     const nestedToolCallId = `${parentToolCallId}#nested-${nestedSeq}`
     const emitNested = (event: AgentEvent): void => {
@@ -195,6 +201,7 @@ function createNestedDispatcher(
       ],
       emit: emitNested,
       isToolPresented: undefined,
+      requireStructuredResults: true,
       allowNestedToolDispatch: false
     })
     const outcome = outcomes[0]
@@ -212,7 +219,32 @@ function createNestedDispatcher(
       toolName: request.toolName,
       success: !outcome.failed && !outcome.skippedByAbort,
       output: outcome.resultText,
+      ...(!outcome.failed && !outcome.skippedByAbort && outcome.structuredContent !== undefined
+        ? { structuredContent: outcome.structuredContent }
+        : {}),
       ...(outcome.failed || outcome.skippedByAbort ? { error: outcome.resultText || '执行被跳过' } : {})
+    }
+  }
+
+  return async request => {
+    const tool = options.toolRegistry?.getTool(request.toolName)
+    const schedulingContext = buildToolContext(options)
+    const sequential = tool !== undefined && !isConcurrencySafe(tool, request.args, schedulingContext)
+    if (!sequential || !tool) return dispatch(request)
+
+    // 单个嵌套批次只有一个调用，无法靠 partitionPreparedToolCalls 保证跨调用串行。
+    // 在同一个 run_code 内按工具串行，避免 Promise.all 绕过搜索 provider 的反爬约束。
+    const previous = sequentialTails.get(tool.name) ?? Promise.resolve()
+    let release!: () => void
+    const tail = new Promise<void>(resolve => { release = resolve })
+    const queuedTail = previous.then(() => tail)
+    sequentialTails.set(tool.name, queuedTail)
+    await previous
+    try {
+      return await dispatch(request)
+    } finally {
+      release()
+      if (sequentialTails.get(tool.name) === queuedTail) sequentialTails.delete(tool.name)
     }
   }
 }
@@ -420,6 +452,7 @@ async function executePreparedToolCall(
       : undefined
   )
   let resultText = ''
+  let structuredContent: JsonValue | undefined
   let resultImages: ImageContent[] | undefined
   let artifactId: string | undefined
   let truncationMeta: ToolTruncationMeta | undefined
@@ -449,6 +482,7 @@ async function executePreparedToolCall(
           ? options.applyTruncation(toolResult.output, maxSize)
           : toolResult.output
       }
+      structuredContent = toolResult.structuredContent
       resultImages = toolResult.images
       artifactId = toolResult.artifactId
       truncationMeta = toolResult.truncationMeta
@@ -487,8 +521,18 @@ async function executePreparedToolCall(
       toolResult: resultText,
       isError: failed
     })
-    if (patched?.content !== undefined) resultText = patched.content
+    if (patched?.content !== undefined) {
+      if (patched.content !== resultText) structuredContent = undefined
+      resultText = patched.content
+    }
     if (patched?.isError !== undefined) failed = patched.isError
+  }
+
+  // 文本被改写或结果失败时，不能向脚本继续投递旧结构化副本。
+  if (failed) structuredContent = undefined
+  if (!failed && options.requireStructuredResults && item.tool.codeModeResultSchema && structuredContent === undefined) {
+    failed = true
+    resultText = limitToolErrorText(`工具执行失败: 结构化结果不可用，无法供脚本使用。\n${resultText}`)
   }
 
   // hook 将结果改为 error 时丢弃消费事实，event 与 outcome 均不携带。
@@ -515,6 +559,7 @@ async function executePreparedToolCall(
       toolCall: item.toolCall,
       args: item.args,
       resultText,
+      structuredContent,
       resultImages,
       artifactId,
       truncationMeta,

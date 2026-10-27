@@ -133,7 +133,7 @@ const NAV_GROUPS: NavGroupMeta[] = [
         id: 'websearch',
         label: '联网搜索',
         description:
-          '无需配置 API Key 也可通过 Bing / DuckDuckGo 联网搜索。填写 Tavily API Key 可在爬虫失败时作为质量增强兜底。',
+          '无需配置 API Key：优先使用 Exa / Keenable 的匿名搜索接口，失败时尝试 Bing / DuckDuckGo。免费服务有用量限制，Tavily 为可选增强。',
         keywords: 'web search',
         icon: <SearchIcon size={16} />,
         badge: 'Beta'

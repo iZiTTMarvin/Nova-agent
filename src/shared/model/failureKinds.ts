@@ -14,6 +14,7 @@ export type ModelFailureKind =
   | 'auth'
   | 'context_overflow'
   | 'provider_unavailable'
+  | 'provider_protocol'
   | 'provider_billing'
   | 'unknown'
 
@@ -24,6 +25,7 @@ export const MODEL_FAILURE_KINDS: readonly ModelFailureKind[] = [
   'auth',
   'context_overflow',
   'provider_unavailable',
+  'provider_protocol',
   'provider_billing',
   'unknown'
 ]

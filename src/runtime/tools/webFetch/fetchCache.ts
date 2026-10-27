@@ -26,6 +26,25 @@ interface CacheEntry extends CachedFetch {
   bodySha256: string
 }
 
+const activeWrites = new Map<string, symbol>()
+
+/** 较晚开始的请求取得写入资格；完成或失败后都释放在途状态。 */
+export async function withCacheWrite<T>(
+  normalizedUrl: string,
+  load: (put: (value: CachedFetch) => void) => Promise<T>
+): Promise<T> {
+  const key = entryPath(cacheKey(normalizedUrl))
+  const token = Symbol()
+  activeWrites.set(key, token)
+  try {
+    return await load(value => {
+      if (activeWrites.get(key) === token) cachePut(normalizedUrl, value)
+    })
+  } finally {
+    if (activeWrites.get(key) === token) activeWrites.delete(key)
+  }
+}
+
 function cacheDir(): string {
   // 环境覆盖点：测试与沙箱隔离用，生产无此变量
   if (process.env.NOVA_WEB_FETCH_CACHE_DIR) return process.env.NOVA_WEB_FETCH_CACHE_DIR

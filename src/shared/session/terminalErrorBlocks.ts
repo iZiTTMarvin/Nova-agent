@@ -30,6 +30,7 @@ const MODEL_FAILURE_PRESENTATIONS: Record<ModelFailureKind, { text: string; acti
   timeout: { text: '服务商响应超时了，重试通常可以解决。', actions: ['retry'] },
   context_overflow: { text: CONTEXT_BUDGET_EXCEEDED_NOTICE, actions: ['new-session'] },
   provider_unavailable: { text: '服务商暂时不可用，可以换个模型或稍后再试。', actions: ['switch-model'] },
+  provider_protocol: { text: '模型返回的工具调用格式不完整或不一致，本轮已停止，未执行这批工具。可以换个模型或导出诊断包排查。', actions: ['switch-model', 'export-diagnostics'] },
   unknown: { text: '出了个没识别出来的问题，可以导出诊断包帮忙定位。', actions: ['export-diagnostics'] }
 }
 

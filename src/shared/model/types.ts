@@ -14,6 +14,7 @@ export type ChatRequestPurpose =
   | 'compaction-stub'
   | 'compaction-state'
   | 'compaction-tighten'
+  | 'web-extract'
 
 /**
  * 供应商缓存计数的上报状态。

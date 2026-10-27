@@ -3,7 +3,7 @@
  * 一次 execute 对应一个 requestId；工具调用按 callId 请求-回结配对。
  */
 import type { CodeRuntimeLimits } from '../limits'
-import type { CodeRuntimeExecutionResult, CodeRuntimeToolCallResolution } from '../types'
+import type { CodeRuntimeExecutionInput, CodeRuntimeExecutionResult, CodeRuntimeToolCallResolution } from '../types'
 
 export interface CodeModeExecutePayload {
   readonly kind: 'execute'
@@ -11,6 +11,7 @@ export interface CodeModeExecutePayload {
   readonly source: string
   readonly toolNames: readonly string[]
   readonly limits: CodeRuntimeLimits
+  readonly timeoutExtension?: CodeRuntimeExecutionInput['timeoutExtension']
 }
 
 export interface CodeModeResolveToolCallPayload {

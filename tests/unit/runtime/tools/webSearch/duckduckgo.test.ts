@@ -93,6 +93,104 @@ describe('duckduckgoProvider', () => {
     expect(duckduckgoProvider.isAvailable()).toBe(true)
   })
 
+  it('并发搜索按 2 秒启动间隔串行执行', async () => {
+    const html = readFileSync(fixturePath, 'utf-8')
+    let active = 0
+    let maxActive = 0
+    const starts: number[] = []
+    mockFetch.mockImplementation(async () => {
+      active++
+      maxActive = Math.max(maxActive, active)
+      starts.push(Date.now())
+      return {
+        ok: true,
+        text: async () => {
+          await new Promise(resolve => setTimeout(resolve, 100))
+          active--
+          return html
+        }
+      } as Response
+    })
+
+    const first = duckduckgoProvider.search({ query: 'first' }, new AbortController().signal)
+    const second = duckduckgoProvider.search({ query: 'second' }, new AbortController().signal)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1_900)
+    await vi.advanceTimersByTimeAsync(100)
+    await Promise.all([first, second])
+
+    expect(maxActive).toBe(1)
+    expect(starts).toHaveLength(2)
+    expect(starts[1] - starts[0]).toBeGreaterThanOrEqual(2_000)
+  })
+
+  it('本地队列饱和不应触发 provider 全局冷却', async () => {
+    const html = readFileSync(fixturePath, 'utf-8')
+    mockFetch.mockImplementation(async () => new Response(html))
+    const pending = Promise.allSettled(Array.from({ length: 5 }, (_, index) =>
+      duckduckgoProvider.search({ query: `query-${index}` }, new AbortController().signal)
+    ))
+    await vi.advanceTimersByTimeAsync(8_001)
+    const results = await pending
+    expect(results.map(result => result.status)).toEqual([
+      'fulfilled', 'fulfilled', 'fulfilled', 'fulfilled', 'rejected'
+    ])
+    expect(mockFetch).toHaveBeenCalledTimes(4)
+    expect(duckduckgoProvider.isAvailable()).toBe(true)
+  })
+
+  it('排队等待期间取消不会发起第二次请求，也不触发冷却', async () => {
+    const html = readFileSync(fixturePath, 'utf-8')
+    mockFetch.mockResolvedValue({
+      ok: true,
+      text: async () => {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        return html
+      }
+    } as Response)
+    const first = duckduckgoProvider.search({ query: 'first' }, new AbortController().signal)
+    const controller = new AbortController()
+    const second = duckduckgoProvider.search({ query: 'second' }, controller.signal)
+    const third = duckduckgoProvider.search({ query: 'third' }, new AbortController().signal)
+    await vi.advanceTimersByTimeAsync(0)
+    controller.abort()
+    await expect(second).rejects.toMatchObject({ provider: 'duckduckgo', message: '请求已取消' })
+    await vi.advanceTimersByTimeAsync(100)
+    await first
+    // 第二项取消后，第三项仍须等第一项规定间隔结束，不能穿透队列。
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1_900)
+    await vi.advanceTimersByTimeAsync(100)
+    await third
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(duckduckgoProvider.isAvailable()).toBe(true)
+  })
+
+  it('排队超过总超时时按时失败且不发起后续请求', async () => {
+    mockFetch.mockImplementationOnce((_url, init) => {
+      let streamController: ReadableStreamDefaultController<Uint8Array> | undefined
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          streamController = controller
+        }
+      })
+      init?.signal?.addEventListener('abort', () => {
+        streamController?.error(new DOMException('Aborted', 'AbortError'))
+      })
+      return Promise.resolve(new Response(body, { status: 200 }))
+    })
+    const first = duckduckgoProvider.search({ query: 'slow-first' }, new AbortController().signal)
+    const second = duckduckgoProvider.search({ query: 'queued-second' }, new AbortController().signal)
+    const firstResult = expect(first).rejects.toMatchObject({ provider: 'duckduckgo', message: '请求超时（8000ms）' })
+    const secondResult = expect(second).rejects.toMatchObject({ provider: 'duckduckgo', message: '请求超时（8000ms）' })
+    await vi.advanceTimersByTimeAsync(8_000)
+    await Promise.all([firstResult, secondResult])
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+
   it('正文消费期间用户取消时不触发冷却', async () => {
     const controller = new AbortController()
     mockFetch.mockImplementationOnce((_url, init) => {

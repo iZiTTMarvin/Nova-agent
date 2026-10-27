@@ -54,6 +54,18 @@ const tavilySuccessResponse: SearchResponse = {
 }
 
 describe('webSearchTool.execute', () => {
+  it('匿名主来源限流后使用另一个免费来源，无需配置密钥', async () => {
+    const search = vi.fn<SearchProvider['search']>().mockResolvedValue({
+      provider: 'keenable', sources: [{ title: 'Official docs', url: 'https://example.com/docs' }]
+    })
+    mockGetAvailableProviders.mockReturnValue([
+      mockProvider('exa', { search: vi.fn().mockRejectedValue({ provider: 'exa', message: 'HTTP 429', statusCode: 429 }) }),
+      mockProvider('keenable', { search })
+    ])
+    const result = await webSearchTool.execute({ query: 'official docs' }, createContext())
+    expect(result.success).toBe(true)
+    expect(result.structuredContent).toMatchObject({ provider: 'keenable', sources: [{ url: 'https://example.com/docs' }] })
+  })
   beforeEach(() => {
     mockGetAvailableProviders.mockReset()
   })
@@ -88,6 +100,10 @@ describe('webSearchTool.execute', () => {
 
     expect(result.success).toBe(true)
     expect(result.output).toContain('## Sources')
+    expect(result.structuredContent).toEqual({
+      provider: 'bing',
+      sources: [{ title: '示例', url: 'https://example.com', snippet: '摘要' }]
+    })
     expect(ddgSearch).not.toHaveBeenCalled()
     expect(tavilySearch).not.toHaveBeenCalled()
   })

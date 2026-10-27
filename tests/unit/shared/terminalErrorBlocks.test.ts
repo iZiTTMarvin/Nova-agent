@@ -96,7 +96,7 @@ describe('ModelFailure 前缀协议', () => {
     expect(parseModelFailureError('ModelFailure:')).toBeNull()
   })
 
-  it('8 类失败各出人话文案，无一是英文原文直出', () => {
+  it('各类失败均有用户文案，无一是英文原文直出', () => {
     for (const kind of MODEL_FAILURE_KINDS) {
       const translated = formatTerminalErrorMessage(encodeModelFailureError(kind, 'raw provider text'))
       expect(translated.length).toBeGreaterThan(4)
@@ -121,6 +121,9 @@ describe('ModelFailure 前缀协议', () => {
     expect(resolveTerminalErrorActions(encodeModelFailureError('timeout', 'x'))).toEqual(['retry'])
     expect(resolveTerminalErrorActions(encodeModelFailureError('context_overflow', 'x'))).toEqual(['new-session'])
     expect(resolveTerminalErrorActions(encodeModelFailureError('provider_unavailable', 'x'))).toEqual(['switch-model'])
+    const protocolError = encodeModelFailureError('provider_protocol', 'index=0 missing name')
+    expect(formatTerminalErrorMessage(protocolError)).toContain('未执行这批工具')
+    expect(resolveTerminalErrorActions(protocolError)).toEqual(['switch-model', 'export-diagnostics'])
     expect(resolveTerminalErrorActions(encodeModelFailureError('unknown', 'x'))).toEqual(['export-diagnostics'])
     expect(resolveTerminalErrorActions(encodeModelFailureError('rate_limit', 'x'))).toEqual(['retry', 'switch-model'])
   })
