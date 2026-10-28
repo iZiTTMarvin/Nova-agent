@@ -104,6 +104,33 @@ export function markUserScrollInput(
   return until
 }
 
+/** 用户点击展开/收起后的锚定窗口，略长于折叠壳过渡（240ms） */
+export const USER_TOGGLE_ANCHOR_MS = 500
+
+/** 最近一次用户展开/收起所在的消息行；窗口内虚拟列表不补偿该行的高度变化，也不跟随到底部 */
+export interface UserToggleAnchor {
+  rowIndex: number | null
+  until: number
+}
+
+export function markUserToggle(
+  anchorRef: { current: UserToggleAnchor },
+  rowIndex: number | null,
+  now: number = typeof performance !== 'undefined' ? performance.now() : Date.now()
+): void {
+  anchorRef.current = { rowIndex, until: now + USER_TOGGLE_ANCHOR_MS }
+}
+
+/** rowIndex 缺省表示只问“窗口是否仍有效”（跟随到底部用）；给定时还要求是同一行。 */
+export function isWithinUserToggleAnchor(
+  anchor: UserToggleAnchor,
+  rowIndex?: number,
+  now: number = typeof performance !== 'undefined' ? performance.now() : Date.now()
+): boolean {
+  if (now >= anchor.until) return false
+  return rowIndex === undefined || anchor.rowIndex === rowIndex
+}
+
 /** 对滚动容器滚到底（不经过 scrollIntoView） */
 export function scrollContainerToBottom(
   container: HTMLElement,

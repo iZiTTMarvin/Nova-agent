@@ -82,13 +82,24 @@ export const TurnProcessCollapsible: React.FC<TurnProcessCollapsibleProps> = Rea
       const durationMs = rootRef.current
         ? parseCssDurationMs(getComputedStyle(rootRef.current).transitionDuration)
         : 0
+      const stop = (): void => {
+        cancelAnimationFrame(raf)
+        scroller.removeEventListener('wheel', stop)
+        scroller.removeEventListener('touchstart', stop)
+        scroller.removeEventListener('keydown', stop)
+      }
       const tick = (now: number) => {
         const delta = header.getBoundingClientRect().top - pinnedTop
         if (delta !== 0) scroller.scrollTop += delta
         if (now - started < durationMs) raf = requestAnimationFrame(tick)
+        else stop()
       }
+      // 用户自己滚动时立即交还视口，定位动画不再抢夺
+      scroller.addEventListener('wheel', stop, { passive: true })
+      scroller.addEventListener('touchstart', stop, { passive: true })
+      scroller.addEventListener('keydown', stop)
       raf = requestAnimationFrame(tick)
-      return () => cancelAnimationFrame(raf)
+      return stop
     }, [open, pinHeaderRef])
 
     const handleTransitionEnd: React.TransitionEventHandler<HTMLDivElement> = event => {

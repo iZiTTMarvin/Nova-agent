@@ -302,6 +302,70 @@ test('面板页签切走再切回，webview 隐藏后恢复且与舞台对齐', 
   }
 })
 
+test('会话 B 的 Agent 页自动打开面板，切回无页面的会话 A 恢复原布局且页面不丢', async ({ nova }) => {
+  const fixture = await startBrowseFixture()
+  try {
+    const sessionA = (await nova.getWorkspace()).currentSessionId!
+    const sessionB = (await nova.createFreshSession()).currentSessionId!
+    expect(sessionB).not.toBe(sessionA)
+    const panel = nova.page.locator('.inspector-panel--open')
+    await expect(panel).toHaveCount(0)
+
+    const opened = await nova.invoke(BROWSER_OPEN, { sessionId: sessionB, url: `${fixture.origin}/` })
+    expect(opened.status).toBe('applied')
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
+    const guest = nova.page.locator('webview[data-browser-id]')
+    await expect(guest).toBeVisible()
+    const guestId = await guest.getAttribute('data-browser-id')
+
+    await nova.selectSession(sessionA)
+    await expect(panel).toHaveCount(0)
+    await expect(guest).toBeHidden()
+
+    await nova.selectSession(sessionB)
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
+    await expect(guest).toHaveAttribute('data-browser-id', guestId ?? '')
+    expect(nova.pageErrors).toEqual([])
+  } finally {
+    await fixture.close()
+  }
+})
+
+test('用户正在看文件标签或自己打开了页面时，切会话不会被自动收起', async ({ nova }) => {
+  const fixture = await startBrowseFixture()
+  try {
+    const sessionA = (await nova.getWorkspace()).currentSessionId!
+    const sessionB = (await nova.createFreshSession()).currentSessionId!
+
+    await nova.page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
+    await expect(nova.page.locator('.inspector-panel--open')).toHaveCount(1)
+    // 用户在会话 B 手动打开文件标签后，Agent 页出现并切到浏览器；切回 A 回到用户原来的文件标签
+    await nova.page.getByRole('button', { name: '打开视图' }).click()
+    await nova.page.getByRole('menuitem', { name: '打开工作区文件' }).click()
+    await expect(nova.page.getByTestId('inspector-tab-files')).toHaveAttribute('aria-selected', 'true')
+    await nova.invoke(BROWSER_OPEN, { sessionId: sessionB, url: `${fixture.origin}/` })
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
+    await nova.selectSession(sessionA)
+    await expect(nova.page.locator('.inspector-panel--open')).toHaveCount(1)
+    await expect(nova.page.getByTestId('inspector-tab-files')).toHaveAttribute('aria-selected', 'true')
+
+    // 用户页存在时，切到没有页面的会话也保持面板
+    await nova.page.getByRole('button', { name: '打开视图' }).click()
+    await nova.page.getByRole('menuitem', { name: '打开内置浏览器' }).click()
+    const address = nova.page.getByTestId('browser-address')
+    await address.fill(`${fixture.origin}/two`)
+    await address.press('Enter')
+    await address.blur()
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(1)
+    await nova.selectSession(sessionB)
+    await nova.selectSession(sessionA)
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
+    await expect(nova.page.getByTestId('browser-tab')).toHaveCount(1)
+    expect(nova.pageErrors).toEqual([])
+  } finally {
+    await fixture.close()
+  }
+})
 test('加载失败显示错误与重试', async ({ nova }) => {
   const live = await startBrowseFixture()
   const dead = await startBrowseFixture()

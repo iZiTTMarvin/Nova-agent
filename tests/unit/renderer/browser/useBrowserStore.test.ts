@@ -118,3 +118,77 @@ describe('无会话的用户浏览', () => {
     })
   })
 })
+
+describe('Agent 页面自动打开面板的跨会话恢复', () => {
+  const closedLayout = { inspectorOpen: false, inspectorTab: 'review', learnInspectorOpen: false } as const
+
+  function seedSnapshot(pages: BrowserPageProjection[], sequence = 1): void {
+    useBrowserStore.getState().applySnapshot({
+      sequence, pages, activeBrowserId: pages[0]?.browserId ?? null, maxLivePages: 2
+    })
+  }
+
+  beforeEach(() => {
+    invoke.mockReset()
+    Object.assign(window, { api: { invoke } })
+    resetBrowserStoreForTests()
+    useWorkspaceStore.setState({ currentSessionId: 'session-b', currentMode: 'dev' })
+    useLayoutStore.setState({ ...closedLayout, browserAutoOpenRestore: null })
+    seedSnapshot([], 1)
+  })
+
+  it('会话 B 的 Agent 页自动打开面板，切回无页面的会话 A 恢复原布局', () => {
+    seedSnapshot([page('session-b', 'browser-b')], 2)
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+
+    useWorkspaceStore.setState({ currentSessionId: 'session-a' })
+    useBrowserStore.getState().bindSessionSurface('session-a')
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    expect(useLayoutStore.getState().browserAutoOpenRestore).toBeNull()
+    // 页面没有被销毁，切回会话 B 仍然可见
+    expect(useBrowserStore.getState().snapshot?.pages.map((p) => p.browserId)).toEqual(['browser-b'])
+    useWorkspaceStore.setState({ currentSessionId: 'session-b' })
+    useBrowserStore.getState().bindSessionSurface('session-b')
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+    expect(useBrowserStore.getState().focusedBrowserId).toBe('browser-b')
+  })
+
+  it('自动打开前面板已在显示其他标签时，恢复回该标签', () => {
+    useLayoutStore.setState({ inspectorOpen: true, inspectorTab: 'review' })
+    seedSnapshot([page('session-b', 'browser-b')], 2)
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+
+    useBrowserStore.getState().bindSessionSurface('session-a')
+    expect(useLayoutStore.getState().inspectorOpen).toBe(true)
+    expect(useLayoutStore.getState().inspectorTab).toBe('review')
+  })
+
+  it('用户在自动打开后手动打开浏览器，切回无页面会话不收回', () => {
+    seedSnapshot([page('session-b', 'browser-b')], 2)
+    useLayoutStore.getState().openBrowserPane(false)
+    useBrowserStore.getState().bindSessionSurface('session-a')
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+  })
+
+  it('用户在自动打开后切到文件审阅标签，不被收回', () => {
+    seedSnapshot([page('session-b', 'browser-b')], 2)
+    useLayoutStore.getState().setInspectorTab('review')
+    useBrowserStore.getState().bindSessionSurface('session-a')
+    expect(useLayoutStore.getState().inspectorOpen).toBe(true)
+    expect(useLayoutStore.getState().inspectorTab).toBe('review')
+  })
+
+  it('目标会话有用户页时保持面板，用户页跨会话保留', () => {
+    seedSnapshot([page('session-b', 'browser-b'), page(null, 'browser-user')], 2)
+    useBrowserStore.getState().bindSessionSurface('session-a')
+    expect(selectBrowserPaneActive(useLayoutStore.getState(), false)).toBe(true)
+    expect(useBrowserStore.getState().focusedBrowserId).toBe('browser-user')
+  })
+
+  it('初次快照是恢复而非新页出现，不弹开面板', () => {
+    resetBrowserStoreForTests()
+    seedSnapshot([page('session-b', 'browser-b')], 1)
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    expect(useLayoutStore.getState().browserAutoOpenRestore).toBeNull()
+  })
+})

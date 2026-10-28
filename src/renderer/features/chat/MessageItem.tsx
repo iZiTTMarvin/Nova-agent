@@ -178,12 +178,12 @@ function renderMessageUnit(
   }
 
   if (unit.kind === 'toolGroup') {
-    const groupKey = unit.blocks.map(b => b.toolCallId).join('-')
     return (
       <ToolCallGroup
-        key={`group-${groupKey}`}
+        key={`group-${unit.blocks[0].toolCallId}`}
         toolName={unit.toolName}
         blocks={unit.blocks}
+        groupId={unit.blocks[0].toolCallId}
       />
     )
   }

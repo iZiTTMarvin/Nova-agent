@@ -151,6 +151,42 @@ describe('buildBlockRenderUnits', () => {
     expect(units[0]).toMatchObject({ kind: 'toolGroup', toolName: 'bash' })
   })
 
+  it('web_fetch 独立成组：单条保持单行，连续两条起成组，不并入搜索探索组', () => {
+    expect(buildBlockRenderUnits([toolBlock('1', 'web_fetch', { url: 'https://a.com' })], 'default')
+      .map(u => u.kind)).toEqual(['tool'])
+
+    const units = buildBlockRenderUnits(
+      [
+        toolBlock('s1', 'web_search', { query: 'a' }),
+        toolBlock('s2', 'web_search', { query: 'b' }),
+        toolBlock('f1', 'web_fetch', { url: 'https://a.com' }),
+        toolBlock('f2', 'web_fetch', { url: 'https://b.com' }),
+        toolBlock('f3', 'web_fetch', { url: 'https://c.com' })
+      ],
+      'default'
+    )
+    expect(units.map(u => u.kind)).toEqual(['toolGroup', 'toolGroup'])
+    expect(units.map(u => (u.kind === 'toolGroup' ? u.toolName : ''))).toEqual(['web_search', 'web_fetch'])
+    expect(units[1].kind === 'toolGroup' && units[1].blocks.map(b => b.toolCallId)).toEqual(['f1', 'f2', 'f3'])
+  })
+
+  it('文字、思考、其他工具打断 web_fetch 连续段，历史顺序不变', () => {
+    const units = buildBlockRenderUnits(
+      [
+        toolBlock('f1', 'web_fetch', { url: 'https://a.com' }),
+        { type: 'text', content: '中间说明' },
+        toolBlock('f2', 'web_fetch', { url: 'https://b.com' }),
+        toolBlock('f3', 'web_fetch', { url: 'https://c.com' }),
+        { type: 'thinking', content: '思考' },
+        toolBlock('f4', 'web_fetch', { url: 'https://d.com' }),
+        toolBlock('b', 'bash', { command: 'ls' }),
+        toolBlock('f5', 'web_fetch', { url: 'https://e.com' })
+      ],
+      'default'
+    )
+    expect(units.map(u => u.kind)).toEqual(['tool', 'block', 'toolGroup', 'block', 'tool', 'tool', 'tool'])
+  })
+
   it('提问卡 / 计划卡 / 子代理打断探索连续段', () => {
     const ask = buildBlockRenderUnits(
       [
@@ -238,13 +274,25 @@ describe('getToolGroupSummary', () => {
     expect(getToolGroupSummary('grep', blocks)).toBe('探索 2 搜索')
   })
 
-  it('web_search：显示搜索数量', () => {
+  it('纯网页搜索组按次数表达；混入文件或本地搜索时仍分类计数', () => {
     const blocks = [
       toolBlock('1', 'web_search', { query: 'react hook' }),
       toolBlock('2', 'web_search', { query: 'vue' }),
       toolBlock('3', 'web_search', { query: 'svelte' })
     ]
-    expect(getToolGroupSummary('web_search', blocks)).toBe('探索 3 搜索')
+    expect(getToolGroupSummary('web_search', blocks)).toBe('搜索 3 次')
+    expect(getToolGroupSummary('web_search', [
+      toolBlock('1', 'web_search', { query: 'react' }),
+      toolBlock('2', 'read', { path: 'a.ts' })
+    ])).toBe('探索 1 搜索 1 文件')
+  })
+
+  it('网页读取组：显示读取次数', () => {
+    const blocks = [
+      toolBlock('1', 'web_fetch', { url: 'https://a.com/x' }),
+      toolBlock('2', 'web_fetch', { url: 'https://b.com/y' })
+    ]
+    expect(getToolGroupSummary('web_fetch', blocks)).toBe('读取网页 2 次')
   })
 
   it('find / ls 显示探索数量', () => {

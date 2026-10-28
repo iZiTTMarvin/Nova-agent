@@ -25,6 +25,9 @@ export interface RenderToolBlockContext {
   messageId: string
   sessionId?: string | null
   pendingPlanReview?: PendingPlanReview | null
+  /** 过程列表保存的单项展开状态，按 toolCallId 索引 */
+  traceOpen?: Readonly<Record<string, boolean>>
+  onTraceOpenChange?: (toolCallId: string, open: boolean) => void
 }
 
 export function renderToolBlock(
@@ -127,6 +130,9 @@ export function renderToolBlock(
         status={block.status}
         result={block.result}
         isLiveStreaming={isLive}
+        {...(context?.onTraceOpenChange
+          ? { open: context.traceOpen?.[block.toolCallId] ?? false, onOpenChange: context.onTraceOpenChange }
+          : {})}
       />
     )
   }
@@ -141,6 +147,9 @@ export function renderToolBlock(
       result={block.result}
       isLiveStreaming={isLive}
       nestedActivities={block.nestedActivities}
+      {...(context?.onTraceOpenChange
+        ? { open: context.traceOpen?.[block.toolCallId] ?? false, onOpenChange: context.onTraceOpenChange }
+        : {})}
     />
   )
 }

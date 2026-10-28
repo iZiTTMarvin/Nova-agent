@@ -1,7 +1,7 @@
 /**
  * L3 过程轨迹列表：map ProcessSegment → 现有 ThinkingBlock / ToolTraceRow / ToolCallGroup 等。
  */
-import React from 'react'
+import React, { useCallback, useState } from 'react'
 import { ThinkingBlock } from './ThinkingBlock'
 import { StreamingTextBlock } from './StreamingTextBlock'
 import { InlineUiScopeProvider, useInlineUiHost } from '../inline-ui/InlineUiScope'
@@ -31,7 +31,8 @@ function segmentKey(segment: ProcessSegment, idx: number): string {
     return `block-${segment.index}-${segment.block.type}-${idx}`
   }
   if (segment.kind === 'toolGroup') {
-    return `group-${segment.blocks.map(b => b.toolCallId).join('-')}`
+    // 以首个调用为组身份：新调用加入时组不重挂载，已展开的详情不会收起
+    return `group-${segment.blocks[0].toolCallId}`
   }
   return `tool-${segment.block.toolCallId}`
 }
@@ -51,6 +52,11 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
   const streamSmoothness = useSettingsStore(state => state.streamSmoothness)
   const streamStyle: 'agile' | 'elegant' = streamSmoothness === 'instant' ? 'agile' : 'elegant'
   const inlineUiHost = useInlineUiHost()
+  // 单条调用变成分组时组件类型会变、行会重挂载；展开状态放在这里（可丢弃的界面状态），阅读现场不丢
+  const [traceOpen, setTraceOpen] = useState<Readonly<Record<string, boolean>>>({})
+  const handleTraceOpenChange = useCallback((key: string, open: boolean) => {
+    setTraceOpen(previous => (previous[key] === open ? previous : { ...previous, [key]: open }))
+  }, [])
   return (
     <div className="turn-process-trace-list">
       {segments.map((segment, idx) => {
@@ -109,12 +115,14 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
         }
 
         if (segment.kind === 'toolGroup') {
-          const groupKey = segment.blocks.map(b => b.toolCallId).join('-')
           return (
             <ToolCallGroup
-              key={`group-${groupKey}`}
+              key={segmentKey(segment, idx)}
               toolName={segment.toolName}
               blocks={segment.blocks}
+              groupId={segment.blocks[0].toolCallId}
+              traceOpen={traceOpen}
+              onTraceOpenChange={handleTraceOpenChange}
             />
           )
         }
@@ -123,7 +131,9 @@ export const ProcessTraceList: React.FC<ProcessTraceListProps> = React.memo(func
           return renderToolBlock(segment.block, isCurrentAssistantGenerating, {
             messageId,
             sessionId,
-            pendingPlanReview
+            pendingPlanReview,
+            traceOpen,
+            onTraceOpenChange: handleTraceOpenChange
           })
         }
 

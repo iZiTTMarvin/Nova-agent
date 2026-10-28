@@ -576,6 +576,29 @@
   line-height: 1.4;
 }
 
+.web-search-card__more {
+  margin-top: 8px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.web-search-card__more:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.web-search-card__more:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+}
+
 .web-search-card__raw {
   font-family: var(--font-mono);
   font-size: 0.8rem;

@@ -36,6 +36,8 @@ export interface VirtualMessageListProps {
   onEditResend: (messageId: string, newContent: string) => void | Promise<void>
   rollbackErrors: Record<string, string | undefined>
   onRenderPoolTick: () => void
+  /** 该行刚被用户点开/收起：它的高度变化不应反向推动 scrollTop */
+  shouldHoldScrollAnchor?: (rowIndex: number) => boolean
   isPausedForUserInput: boolean
   pausedMessageId: string | null
   pendingPlanReview: PendingPlanReview | null
@@ -165,6 +167,24 @@ export const VirtualMessageList: React.FC<VirtualMessageListProps> = (props) => 
     getItemKey: useCallback((index: number) => messages[index]?.id ?? index, [messages]),
     enabled: viewportReady && messages.length > 0
   })
+
+  const holdAnchorRef = React.useRef(props.shouldHoldScrollAnchor)
+  holdAnchorRef.current = props.shouldHoldScrollAnchor
+
+  // 默认策略会在“起点在视口上方的行变高/变矮”时补偿 scrollTop。展开的行是一整条很高的助手消息时，
+  // 用户点的标题在视口内、增长发生在标题下方，补偿反而把标题推走；点击窗口内改为不补偿。
+  useEffect(() => {
+    virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+      if (holdAnchorRef.current?.(item.index) && instance.itemSizeCache.has(item.key)) return false
+      return (
+        item.start < (instance.scrollOffset ?? 0) &&
+        (!instance.itemSizeCache.has(item.key) || instance.scrollDirection !== 'backward')
+      )
+    }
+    return () => {
+      virtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined
+    }
+  }, [virtualizer])
 
   if (viewport === 'pending') {
     return (

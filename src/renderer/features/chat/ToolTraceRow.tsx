@@ -9,10 +9,12 @@ import {
   ChevronIcon,
   FileIcon,
   FolderIcon,
+  GlobeIcon,
   SearchIcon,
   TerminalIcon
 } from '../../components/Icons'
 import { isPermissionDeniedResult } from './renderingPolicy'
+import { AWAITING_PERMISSION_LABEL, getToolOutcomeLabel, resolveToolOutcome } from './toolOutcome'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useFileTreeStore } from '../inspector/useFileTreeStore'
 import {
@@ -43,13 +45,21 @@ export interface ToolTraceRowProps {
   isLiveStreaming?: boolean
   /** run_code 沙箱内的嵌套工具活动：行下紧凑展示，不占顶级轨道 */
   nestedActivities?: NestedToolActivity[]
+  /** 受控展开：由上层按 toolCallId 保存，单条变成分组时阅读状态不丢；缺省时用本地状态 */
+  open?: boolean
+  onOpenChange?: (toolCallId: string, open: boolean) => void
+  /** 作为分组内的子项渲染：不自带外边距 */
+  embedded?: boolean
+  /** 授权入口由所在分组统一渲染，行内不再重复 */
+  permissionHandledByGroup?: boolean
 }
 
 /** 兼容既有测试：流式入场已改为纯 CSS，常量仅作门控文档 */
 export const LIVE_ENTER_SPRING = { type: 'spring' as const, stiffness: 300, damping: 30, mass: 0.8 }
 export const NO_ANIMATION = { duration: 0 }
 
-function selectAnchoredRequest(
+/** 授权请求锚定在 toolCallIds 的最后一项，只会有一行（或一组）承载它。 */
+export function selectAnchoredRequest(
   request: PendingPermissionRequest | null,
   toolCallId: string | undefined
 ): PendingPermissionRequest | null {
@@ -74,6 +84,9 @@ function TraceFileBadgeOrIcon({
   }
   if (toolName === 'bash') {
     return <TerminalIcon size={12} className="tool-trace-row__icon" />
+  }
+  if (toolName === 'web_fetch') {
+    return <GlobeIcon size={12} className="tool-trace-row__icon" />
   }
 
   const normalizedExt = ext.toLowerCase()
@@ -146,7 +159,7 @@ function ToolTraceDetail({
 
       {result && (
         <div className="tool-trace-row__section">
-          <div className="tool-trace-row__sec-title">结果</div>
+          <div className="tool-trace-row__sec-title">{status === 'error' ? '原因' : '结果'}</div>
           {name === 'web_search' ? (
             <WebSearchCard output={result} />
           ) : name === 'bash' && bashDisplay ? (
@@ -188,7 +201,11 @@ function areTracePropsEqual(prev: ToolTraceRowProps, next: ToolTraceRowProps): b
     prev.isLiveStreaming === next.isLiveStreaming &&
     prev.argumentsRaw === next.argumentsRaw &&
     prev.args === next.args &&
-    prev.nestedActivities === next.nestedActivities
+    prev.nestedActivities === next.nestedActivities &&
+    prev.open === next.open &&
+    prev.onOpenChange === next.onOpenChange &&
+    prev.embedded === next.embedded &&
+    prev.permissionHandledByGroup === next.permissionHandledByGroup
   )
 }
 
@@ -223,10 +240,21 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   status,
   result,
   isLiveStreaming = false,
-  nestedActivities
+  nestedActivities,
+  open: controlledOpen,
+  onOpenChange,
+  embedded = false,
+  permissionHandledByGroup = false
 }) {
-  const [isOpen, setIsOpen] = useState(false)
+  const [localOpen, setLocalOpen] = useState(false)
+  const isOpen = controlledOpen ?? localOpen
   const headerRef = useRef<HTMLButtonElement>(null)
+
+  const toggleOpen = () => {
+    const next = !isOpen
+    setLocalOpen(next)
+    if (toolCallId) onOpenChange?.(toolCallId, next)
+  }
 
   const args = useMemo<Record<string, unknown>>(() => {
     if (argumentsRaw !== undefined) {
@@ -262,11 +290,18 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
       ? `${actionText} ${command}`
       : `${actionText} ${generalTarget || fileParts?.filename || ''}`
 
+  const outcome = resolveToolOutcome({ status, result })
+  const awaitingPermission = anchoredRequest !== null
+  const statusLabel = awaitingPermission
+    ? AWAITING_PERMISSION_LABEL
+    : getToolOutcomeLabel(name, outcome)
+
   const rootClass = [
     'tool-trace-row',
+    embedded ? 'tool-trace-row--embedded' : '',
     isLiveStreaming ? 'tool-trace-row--live' : '',
-    status === 'error' ? 'tool-trace-row--error' : '',
-    anchoredRequest !== null ? 'tool-trace-row--pending-approval' : ''
+    outcome === 'failed' ? 'tool-trace-row--error' : '',
+    anchoredRequest !== null && !permissionHandledByGroup ? 'tool-trace-row--pending-approval' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -295,7 +330,7 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
         ref={headerRef}
         type="button"
         className="tool-trace-row__header"
-        onClick={() => setIsOpen(prev => !prev)}
+        onClick={toggleOpen}
         aria-expanded={isOpen}
         title={fullTitle}
       >
@@ -336,6 +371,14 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
           <span className="tool-trace-row__text">{generalTarget}</span>
         )}
 
+        {statusLabel && (
+          <span
+            className={`tool-trace-row__status tool-trace-row__status--${awaitingPermission ? 'awaiting' : outcome}`}
+          >
+            {statusLabel}
+          </span>
+        )}
+
         <ChevronIcon
           size={12}
           direction={isOpen ? 'down' : 'right'}
@@ -355,7 +398,7 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
         <NestedActivityList activities={nestedActivities} workspaceRoot={workspaceRoot} />
       )}
 
-      {anchoredRequest && (
+      {anchoredRequest && !permissionHandledByGroup && (
         <div className="tool-trace-row__permission">
           <InlinePermissionBar request={anchoredRequest} />
         </div>

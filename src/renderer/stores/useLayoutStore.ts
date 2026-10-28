@@ -42,6 +42,32 @@ type DetailReturnState = {
   inspectorTab: InspectorTab
 }
 
+/**
+ * 因会话页面自动打开浏览器之前的面板布局，仅用于切到没有任何页面的会话时恢复。
+ * 属于布局的界面上下文，不复制页面事实；用户自己改动面板的任何操作都会丢弃它。
+ */
+type BrowserAutoOpenRestore =
+  | {
+      scope: 'dev'
+      inspectorOpen: boolean
+      inspectorTab: InspectorTab
+      inspectorTabs: readonly InspectorTab[]
+      inspectorSurface: InspectorSurface
+      planTarget: PlanTarget | null
+      subagentTarget: SubagentTarget | null
+      statusSessionId: string | null
+      detailReturnState: DetailReturnState | null
+    }
+  | {
+      scope: 'learn'
+      learnInspectorOpen: boolean
+      learnInspectorTab: LearnInspectorTab
+      learnInspectorTabs: readonly LearnInspectorTab[]
+    }
+
+/** 用户主动改动面板：自动打开的恢复点随之作废，避免之后把用户的选择当成“自动状态”收回。 */
+const USER_OWNS_PANE = { browserAutoOpenRestore: null } as const
+
 export type SidebarSortMode = 'projects' | 'sessions'
 
 const STORAGE_PREFIX = 'nova.layout.'
@@ -78,6 +104,7 @@ const DEFAULTS = {
   subagentTarget: null as SubagentTarget | null,
   statusSessionId: null as string | null,
   detailReturnState: null as DetailReturnState | null,
+  browserAutoOpenRestore: null as BrowserAutoOpenRestore | null,
   learnInspectorOpen: false,
   learnInspectorTab: 'outline' as LearnInspectorTab,
   // 用户拖出的阅读柱宽（px）；null = 跟随默认 --chat-content-max-width
@@ -259,6 +286,7 @@ export interface LayoutStoreState {
   subagentTarget: SubagentTarget | null
   statusSessionId: string | null
   detailReturnState: DetailReturnState | null
+  browserAutoOpenRestore: BrowserAutoOpenRestore | null
   learnInspectorOpen: boolean
   learnInspectorTab: LearnInspectorTab
   chatContentWidth: number | null
@@ -283,6 +311,10 @@ export interface LayoutStoreState {
   setInspectorTab: (tab: InspectorTab) => void
   selectReviewFile: (filePath: string) => void
   openBrowserPane: (isLearnSurface: boolean) => void
+  /** 会话自带的 Agent 页面触发的自动打开：记住原布局，之后可由 releaseAutoOpenedBrowserPane 恢复。 */
+  autoOpenBrowserPane: (isLearnSurface: boolean) => void
+  /** 切到没有任何页面的会话时调用：仅当面板仍是自动打开的结果才恢复原布局。 */
+  releaseAutoOpenedBrowserPane: () => void
   toggleBrowserPane: (isLearnSurface: boolean) => void
   toggleLearnInspector: () => void
   setLearnInspectorTab: (tab: LearnInspectorTab) => void
@@ -294,6 +326,31 @@ export interface LayoutStoreState {
 }
 
 const persisted = loadPersistedLayout()
+
+/** 打开浏览器页签所需的布局字段；作用域由调用方按当前表面传入。 */
+function browserPaneOpenPatch(
+  state: LayoutStoreState,
+  isLearnSurface: boolean
+): Partial<LayoutStoreState> {
+  if (isLearnSurface) {
+    return {
+      learnInspectorOpen: true,
+      learnInspectorTab: 'browser',
+      learnInspectorTabs: withTabOpened(state.learnInspectorTabs, 'browser')
+    }
+  }
+  return {
+    inspectorOpen: true,
+    inspectorTab: 'browser',
+    inspectorTabs: withTabOpened(state.inspectorTabs, 'browser'),
+    // 计划表面没有页签条，先回标准表面浏览器才可见
+    inspectorSurface: 'standard',
+    planTarget: null,
+    subagentTarget: null,
+    statusSessionId: null,
+    detailReturnState: null
+  }
+}
 
 export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   ...DEFAULTS,
@@ -341,7 +398,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       planTarget: null,
       subagentTarget: null,
       statusSessionId: null,
-      detailReturnState: null
+      detailReturnState: null,
+      ...USER_OWNS_PANE
     })
   },
 
@@ -355,7 +413,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       planTarget: null,
       subagentTarget: null,
       statusSessionId: null,
-      detailReturnState: null
+      detailReturnState: null,
+      ...USER_OWNS_PANE
     })
   },
 
@@ -369,7 +428,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       statusSessionId: null,
       detailReturnState: state.inspectorSurface !== 'standard'
         ? state.detailReturnState
-        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
+        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab },
+      ...USER_OWNS_PANE
     })
   },
 
@@ -383,7 +443,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       statusSessionId: null,
       detailReturnState: state.inspectorSurface !== 'standard'
         ? state.detailReturnState
-        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
+        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab },
+      ...USER_OWNS_PANE
     })
   },
 
@@ -397,7 +458,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
       subagentTarget: null,
       detailReturnState: state.inspectorSurface !== 'standard'
         ? state.detailReturnState
-        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab }
+        : { inspectorOpen: state.inspectorOpen, inspectorTab: state.inspectorTab },
+      ...USER_OWNS_PANE
     })
   },
 
@@ -412,25 +474,31 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
         planTarget: null,
         subagentTarget: null,
         statusSessionId: null,
-        detailReturnState: null
+        detailReturnState: null,
+        ...USER_OWNS_PANE
       })
       return
     }
-    set({ inspectorOpen: false })
+    set({ inspectorOpen: false, ...USER_OWNS_PANE })
   },
 
   toggleInspector: (tab) => {
     const state = get()
     if (tab === undefined) {
-      set({ inspectorOpen: !state.inspectorOpen })
+      set({ inspectorOpen: !state.inspectorOpen, ...USER_OWNS_PANE })
       return
     }
     if (state.inspectorOpen && state.inspectorTab === tab) {
-      set({ inspectorOpen: false })
+      set({ inspectorOpen: false, ...USER_OWNS_PANE })
       return
     }
     persistInspectorTab(tab)
-    set({ inspectorOpen: true, inspectorTab: tab, inspectorTabs: withTabOpened(state.inspectorTabs, tab) })
+    set({
+      inspectorOpen: true,
+      inspectorTab: tab,
+      inspectorTabs: withTabOpened(state.inspectorTabs, tab),
+      ...USER_OWNS_PANE
+    })
   },
 
   setInspectorWidth: (w) => {
@@ -442,14 +510,14 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   /** 打开视图标签并激活；已打开则只切换。 */
   setInspectorTab: (tab) => {
     persistInspectorTab(tab)
-    set({ inspectorTab: tab, inspectorTabs: withTabOpened(get().inspectorTabs, tab) })
+    set({ inspectorTab: tab, inspectorTabs: withTabOpened(get().inspectorTabs, tab), ...USER_OWNS_PANE })
   },
 
   closeInspectorTab: (tab) => {
     const state = get()
     const next = withTabClosed(state.inspectorTabs, state.inspectorTab, tab)
     if (next.active !== state.inspectorTab) persistInspectorTab(next.active)
-    set({ inspectorTabs: next.tabs, inspectorTab: next.active })
+    set({ inspectorTabs: next.tabs, inspectorTab: next.active, ...USER_OWNS_PANE })
   },
 
   selectReviewFile: (filePath) => {
@@ -460,24 +528,56 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
 
   /** 打开右侧面板并切到浏览器页签；作用域由调用方按当前表面传入。 */
   openBrowserPane: (isLearnSurface) => {
-    if (isLearnSurface) {
+    set({ ...browserPaneOpenPatch(get(), isLearnSurface), ...USER_OWNS_PANE })
+  },
+
+  autoOpenBrowserPane: (isLearnSurface) => {
+    const state = get()
+    // 面板已经在显示浏览器（用户打开或此前已自动打开）：保持现有归属，不重复记录
+    if (selectBrowserPaneActive(state, isLearnSurface)) return
+    const restore: BrowserAutoOpenRestore = isLearnSurface
+      ? {
+          scope: 'learn',
+          learnInspectorOpen: state.learnInspectorOpen,
+          learnInspectorTab: state.learnInspectorTab,
+          learnInspectorTabs: state.learnInspectorTabs
+        }
+      : {
+          scope: 'dev',
+          inspectorOpen: state.inspectorOpen,
+          inspectorTab: state.inspectorTab,
+          inspectorTabs: state.inspectorTabs,
+          inspectorSurface: state.inspectorSurface,
+          planTarget: state.planTarget,
+          subagentTarget: state.subagentTarget,
+          statusSessionId: state.statusSessionId,
+          detailReturnState: state.detailReturnState
+        }
+    set({ ...browserPaneOpenPatch(state, isLearnSurface), browserAutoOpenRestore: restore })
+  },
+
+  releaseAutoOpenedBrowserPane: () => {
+    const restore = get().browserAutoOpenRestore
+    if (!restore) return
+    if (restore.scope === 'learn') {
       set({
-        learnInspectorOpen: true,
-        learnInspectorTab: 'browser',
-        learnInspectorTabs: withTabOpened(get().learnInspectorTabs, 'browser')
+        learnInspectorOpen: restore.learnInspectorOpen,
+        learnInspectorTab: restore.learnInspectorTab,
+        learnInspectorTabs: restore.learnInspectorTabs,
+        browserAutoOpenRestore: null
       })
       return
     }
     set({
-      inspectorOpen: true,
-      inspectorTab: 'browser',
-      inspectorTabs: withTabOpened(get().inspectorTabs, 'browser'),
-      // 计划表面没有页签条，先回标准表面浏览器才可见
-      inspectorSurface: 'standard',
-      planTarget: null,
-      subagentTarget: null,
-      statusSessionId: null,
-      detailReturnState: null
+      inspectorOpen: restore.inspectorOpen,
+      inspectorTab: restore.inspectorTab,
+      inspectorTabs: restore.inspectorTabs,
+      inspectorSurface: restore.inspectorSurface,
+      planTarget: restore.planTarget,
+      subagentTarget: restore.subagentTarget,
+      statusSessionId: restore.statusSessionId,
+      detailReturnState: restore.detailReturnState,
+      browserAutoOpenRestore: null
     })
   },
 
@@ -486,8 +586,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     const state = get()
     const active = selectBrowserPaneActive(state, isLearnSurface)
     if (active) {
-      if (isLearnSurface) set({ learnInspectorOpen: false })
-      else set({ inspectorOpen: false })
+      if (isLearnSurface) set({ learnInspectorOpen: false, ...USER_OWNS_PANE })
+      else set({ inspectorOpen: false, ...USER_OWNS_PANE })
       return
     }
     get().openBrowserPane(isLearnSurface)
@@ -496,7 +596,7 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
   toggleLearnInspector: () => {
     const learnInspectorOpen = !get().learnInspectorOpen
     writeStored('learnInspectorOpen', String(learnInspectorOpen))
-    set({ learnInspectorOpen })
+    set({ learnInspectorOpen, ...USER_OWNS_PANE })
   },
 
   /** 打开学习视图标签并激活；已打开则只切换。 */
@@ -504,7 +604,8 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     persistLearnInspectorTab(learnInspectorTab)
     set({
       learnInspectorTab,
-      learnInspectorTabs: withTabOpened(get().learnInspectorTabs, learnInspectorTab)
+      learnInspectorTabs: withTabOpened(get().learnInspectorTabs, learnInspectorTab),
+      ...USER_OWNS_PANE
     })
   },
 
@@ -512,7 +613,7 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     const state = get()
     const next = withTabClosed(state.learnInspectorTabs, state.learnInspectorTab, tab)
     if (next.active !== state.learnInspectorTab) persistLearnInspectorTab(next.active)
-    set({ learnInspectorTabs: next.tabs, learnInspectorTab: next.active })
+    set({ learnInspectorTabs: next.tabs, learnInspectorTab: next.active, ...USER_OWNS_PANE })
   },
 
   openOutline: () => {
@@ -521,13 +622,14 @@ export const useLayoutStore = create<LayoutStoreState>((set, get) => ({
     set({
       learnInspectorOpen: true,
       learnInspectorTab: 'outline',
-      learnInspectorTabs: withTabOpened(get().learnInspectorTabs, 'outline')
+      learnInspectorTabs: withTabOpened(get().learnInspectorTabs, 'outline'),
+      ...USER_OWNS_PANE
     })
   },
 
   closeLearnInspector: () => {
     writeStored('learnInspectorOpen', 'false')
-    set({ learnInspectorOpen: false })
+    set({ learnInspectorOpen: false, ...USER_OWNS_PANE })
   },
 
   setChatContentWidth: (w) => {

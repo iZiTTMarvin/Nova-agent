@@ -49,6 +49,21 @@ describe('getToolTraceTarget', () => {
     expect(getToolTraceTarget('task_followup', { child_session_id: 'sess_sub_abc123', task: '继续深入分析' })).toBe('sess_sub...: 继续深入分析')
   })
 
+  it('web_fetch 只显示域名与路径，不铺开凭据、查询参数和片段', () => {
+    expect(getToolTraceTarget('web_fetch', { url: 'https://openai.com/news/gpt-5/' })).toBe('openai.com/news/gpt-5')
+    expect(getToolTraceTarget('web_fetch', {
+      url: 'https://user:secret@example.com:8443/report?token=abc#part'
+    })).toBe('example.com:8443/report')
+    expect(getToolTraceTarget('web_fetch', { url: 'https://example.com' })).toBe('example.com')
+  })
+
+  it('web_fetch 参数未到齐或网址不可解析时用空目标，不编造内容', () => {
+    expect(getToolTraceTarget('web_fetch', {})).toBe('')
+    expect(getToolTraceTarget('web_fetch', { url: 'not a url' })).toBe('')
+    expect(getToolTraceTarget('web_fetch', { url: 'file:///etc/passwd' })).toBe('')
+    expect(getToolTraceActionChinese('web_fetch')).toBe('读取网页')
+  })
+
   it('浏览器工具显示动作目标且不重复原始工具名', () => {
     expect(getToolTraceTarget('browser_open', {
       action: 'open',

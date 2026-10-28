@@ -125,14 +125,10 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
     return count
   })
 
-  const baseHeaderTitle = formatWorkedHeader({
+  const headerTitle = formatWorkedHeader({
     phase: model.phase,
     durationMs: model.durationMs
   })
-  const headerTitle =
-    activeSubagentsInTurn > 0
-      ? `${baseHeaderTitle} · ${activeSubagentsInTurn} 个后台任务进行中`
-      : baseHeaderTitle
 
   const groups = groupTimeline(model.timeline)
   const trace = (segments: TurnTimelineSegment[]) => (
@@ -161,6 +157,11 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
           data-testid="turn-process-header"
         >
           <span className="turn-process-tree__header-title">{headerTitle}</span>
+          {activeSubagentsInTurn > 0 && (
+            <span className="turn-process-tree__header-meta">
+              {activeSubagentsInTurn} 个后台任务进行中
+            </span>
+          )}
           <ChevronIcon
             size={12}
             direction={open ? 'down' : 'right'}

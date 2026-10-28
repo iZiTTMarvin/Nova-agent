@@ -19,6 +19,7 @@ export const AGGREGATABLE_TOOL_NAMES = new Set([
   'find',
   'ls',
   'web_search',
+  'web_fetch',
   'write',
   'edit',
   'bash'

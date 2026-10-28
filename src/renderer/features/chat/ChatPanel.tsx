@@ -39,12 +39,15 @@ import {
   getDistanceFromBottom,
   isWithinProgrammaticScrollGuard,
   isWithinUserScrollCooldown,
+  isWithinUserToggleAnchor,
   markProgrammaticScroll,
   markUserScrollInput,
+  markUserToggle,
   scrollContainerToBottom,
   shouldShowScrollToBottom,
   syncAutoScrollModeOnScroll,
-  type AutoScrollMode
+  type AutoScrollMode,
+  type UserToggleAnchor
 } from './autoScroll'
 import { recordStreamingReactCommit, isStreamingPerfEnabled } from '../../lib/streamingPerf'
 import { ContextIndicator } from './ContextIndicator'
@@ -65,6 +68,7 @@ import {
 } from '../../lib/image-attachments'
 import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
 import { createComposerFileTrigger } from './composerFileTrigger'
+import { revealCaretInScroller } from './composerCaret'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import { WelcomeHero } from './WelcomeHero'
 import { ChatContentWidthHandle } from './ChatContentWidthHandle'
@@ -325,6 +329,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const programmaticScrollUntilRef = useRef(0)
   /** 用户主动滚轮/触摸输入后的 150ms 防抢夺冷却时间戳 */
   const userScrollCooldownUntilRef = useRef(0)
+  /** 用户刚点过的展开/收起控件所在的消息行：窗口内不补偿该行高度变化、不跟随到底部 */
+  const userToggleAnchorRef = useRef<UserToggleAnchor>({ rowIndex: null, until: 0 })
   const lastScrollTopRef = useRef(0)
 
   /** prepend 历史消息前记录的 scrollHeight，用于补载后修正 scrollTop 防止视口跳动 */
@@ -377,7 +383,30 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     if (isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) {
       return false
     }
+    if (isWithinUserToggleAnchor(userToggleAnchorRef.current)) {
+      return false
+    }
     return canFollowAutoScroll(autoScrollModeRef.current)
+  }, [])
+
+  const shouldHoldScrollAnchor = useCallback(
+    (rowIndex: number) => isWithinUserToggleAnchor(userToggleAnchorRef.current, rowIndex),
+    []
+  )
+
+  // 点击展开/收起控件：标题要留在原位，不能被虚拟列表的高度补偿或自动跟随带走。
+  // 捕获阶段早于控件自己的处理器；此刻 aria-expanded 仍是点击前的值。
+  const handleToggleCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element ? event.target : null
+    const toggle = target?.closest('[aria-expanded]')
+    if (!toggle) return
+    const row = toggle.closest('[data-index]')
+    const rowIndex = row instanceof HTMLElement ? Number(row.dataset.index) : Number.NaN
+    markUserToggle(userToggleAnchorRef, Number.isNaN(rowIndex) ? null : rowIndex)
+    // 展开会让内容变长，若仍在跟随底部，标题会被推出视口
+    if (toggle.getAttribute('aria-expanded') === 'false') {
+      autoScrollModeRef.current = 'off'
+    }
   }, [])
 
   // 对滚动容器滚到底（scrollTo，避免 scrollIntoView 强制同步布局整棵消息树）
@@ -435,7 +464,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     if (
       !container ||
       autoScrollModeRef.current === 'off' ||
-      isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)
+      isWithinUserScrollCooldown(userScrollCooldownUntilRef.current) ||
+      isWithinUserToggleAnchor(userToggleAnchorRef.current)
     ) {
       return
     }
@@ -783,6 +813,12 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     }
   }, [supportsVision, addImageFiles])
 
+  /** 输入框手动插入粘贴文本，浏览器不会自动跟随插入点；插入后补一次，返回 false 仍由输入框插入 */
+  const handleComposerPaste = useCallback((): boolean => {
+    requestAnimationFrame(() => revealCaretInScroller(window.getSelection()))
+    return false
+  }, [])
+
   /** 拖拽交互 */
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
@@ -877,6 +913,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           ref={bindScrollContainer}
           onScroll={handleScroll}
           onWheel={handleWheel}
+          onClickCapture={handleToggleCapture}
           style={{ overflowAnchor: 'none' }}
         >
           {showMemoryNotice && (
@@ -925,6 +962,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           onEditResend={handleEditResend}
           rollbackErrors={rollbackErrors}
           onRenderPoolTick={scheduleStreamAutoScroll}
+          shouldHoldScrollAnchor={shouldHoldScrollAnchor}
           isPausedForUserInput={isPausedForUserInput}
           pausedMessageId={pausedMessageId}
           pendingPlanReview={pendingPlanReview}
@@ -1099,6 +1137,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 onChange={handleInputChange}
                 onKeyDown={handleComposerKeyDown}
                 onFiles={handleComposerFiles}
+                onPaste={handleComposerPaste}
                 triggers={composerTriggers}
                 // Nova 无跨会话持久化 prompt history；内置 hasHistory 是 per-mount 且不可清除。
                 hasHistory={false}

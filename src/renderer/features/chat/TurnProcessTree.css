@@ -42,6 +42,20 @@
   white-space: nowrap;
 }
 
+.turn-process-tree__header-meta {
+  flex-shrink: 0;
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.turn-process-tree__header:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 1px;
+  border-radius: var(--radius-sm);
+}
+
 .turn-process-tree__chevron {
   flex-shrink: 0;
   opacity: 0.7;

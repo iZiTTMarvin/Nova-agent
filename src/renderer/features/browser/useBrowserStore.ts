@@ -57,6 +57,11 @@ function openBrowserPane(): void {
   useLayoutStore.getState().openBrowserPane(isLearnSurfaceNow())
 }
 
+/** 会话自带的 Agent 页面触发的自动打开：布局 Owner 记住原布局，切到无页面会话时可恢复。 */
+function autoOpenBrowserPaneForSessionPage(): void {
+  useLayoutStore.getState().autoOpenBrowserPane(isLearnSurfaceNow())
+}
+
 function pageIdsForSession(
   snapshot: BrowserSurfaceSnapshot | null,
   sessionId: string | null
@@ -129,7 +134,11 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
       snapshot,
       focusedBrowserId: focused?.browserId ?? null
     })
-    if (appeared && hadSnapshot) openBrowserPane()
+    if (appeared && hadSnapshot) {
+      // 只有 Agent 页面的出现属于“自动”；用户页出现总伴随用户自己的打开动作
+      if (newcomers.some((page) => page.sessionId !== null)) autoOpenBrowserPaneForSessionPage()
+      else openBrowserPane()
+    }
   },
 
   applyGuestMount: (guests) => {
@@ -142,7 +151,13 @@ export const useBrowserStore = create<BrowserStoreState>((set, get) => ({
     set({ focusedBrowserId: focused?.browserId ?? null })
     // 会话自带的 AI 页面要让浏览器可见：覆盖启动/重载后会话异步恢复的场景。
     // 只有用户页时不自动弹开，避免每次切会话都打断当前布局。
-    if (pages.some((page) => page.sessionId !== null)) openBrowserPane()
+    if (pages.some((page) => page.sessionId !== null)) {
+      autoOpenBrowserPaneForSessionPage()
+      return
+    }
+    // 目标会话没有任何页面（用户页也没有）：此前因别的会话自动打开的空面板收回；
+    // 用户自己打开或切过标签的布局不会被收回，用户页存在时也保持现状
+    if (pages.length === 0) useLayoutStore.getState().releaseAutoOpenedBrowserPane()
   },
 
   focusPage: (browserId) => {

@@ -53,6 +53,8 @@ export function getToolTraceAction(toolName: string): string {
       return 'Ran'
     case 'web_search':
       return 'Searched'
+    case 'web_fetch':
+      return 'Fetched'
     case 'browser_open':
       return 'Opened page'
     case 'browser_observe':
@@ -98,9 +100,11 @@ export function getToolTraceAction(toolName: string): string {
   }
 }
 
-export type ToolGroupKind = 'explore' | 'write' | 'command'
+export type ToolGroupKind = 'explore' | 'write' | 'command' | 'web'
 
 export function getToolGroupKind(toolName: string): ToolGroupKind | null {
+  // 网页读取单独成组：混进“探索”会无法表达网页数量，也会打乱文件/目录/搜索的层级
+  if (toolName === 'web_fetch') return 'web'
   if (
     toolName === 'read' ||
     toolName === 'grep' ||
@@ -181,6 +185,8 @@ export function getToolTraceTarget(
       const query = (args.query as string) || ''
       return query ? truncateTarget(query) : 'query'
     }
+    case 'web_fetch':
+      return truncateTarget(formatWebTarget(args.url))
     case 'browser_open': {
       const action = typeof args.action === 'string' ? args.action : ''
       const url = typeof args.url === 'string' ? args.url : ''
@@ -336,6 +342,23 @@ export function getToolTraceTarget(
   }
 }
 
+/**
+ * 网页读取目标：只显示域名与路径。凭据、查询参数和片段不进入默认摘要；
+ * 参数未到齐或不是可解析的 http(s) 网址时返回空串，由调用方显示中性文案。
+ */
+export function formatWebTarget(rawUrl: unknown): string {
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) return ''
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl.trim())
+  } catch {
+    return ''
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return ''
+  const path = parsed.pathname.replace(/\/+$/, '')
+  return `${parsed.host}${path}`
+}
+
 function shortBrowserId(browserId: string): string {
   return browserId.length > 14 ? `${browserId.slice(0, 14)}...` : browserId
 }
@@ -399,7 +422,9 @@ export function getToolTraceActionChinese(toolName: string): string {
     case 'bash':
       return '已执行'
     case 'web_search':
-      return '已搜索'
+      return '搜索'
+    case 'web_fetch':
+      return '读取网页'
     case 'browser_open':
       return '打开网页'
     case 'browser_observe':
@@ -484,6 +509,17 @@ export function getToolGroupHeaderInfo(
   const groupKind = names.length > 0 ? getToolGroupKind(names[0]) : null
   if (!groupKind || !names.every(name => getToolGroupKind(name) === groupKind)) {
     return null
+  }
+
+  if (groupKind === 'web') {
+    const summaryText = `${blocks.length} 次`
+    return { kind: 'web', title: '读取网页', summaryText, fullSummary: `读取网页 ${summaryText}` }
+  }
+
+  // 纯网页搜索组直接按次数表达；混有文件、目录或本地搜索时仍分类计数
+  if (groupKind === 'explore' && names.every(name => name === 'web_search')) {
+    const summaryText = `${blocks.length} 次`
+    return { kind: 'explore', title: '搜索', summaryText, fullSummary: `搜索 ${summaryText}` }
   }
 
   if (groupKind === 'explore') {

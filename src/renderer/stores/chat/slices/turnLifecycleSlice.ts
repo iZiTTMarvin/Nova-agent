@@ -2,6 +2,7 @@ import {
   appendTerminalErrorToBlocks,
   formatTerminalErrorMessage
 } from '../../../../shared/session/terminalErrorBlocks'
+import { USER_CANCELLED_TOOL_RESULT } from '../../../../shared/session/toolCancellation'
 import { markThinkingEndedForMessage } from '../../../lib/thinkingTimingMemory'
 import type { ChatState, ExtendedMessage, RendererToolBlock } from '../types'
 import {
@@ -40,7 +41,7 @@ function cancelToolBlock(block: RendererToolBlock): RendererToolBlock {
   return {
     ...restBlock,
     ...(block.status === 'running'
-      ? { status: 'error' as const, result: '用户取消执行' }
+      ? { status: 'error' as const, result: USER_CANCELLED_TOOL_RESULT }
       : {}),
     ...(nestedActivities ? { nestedActivities } : {})
   }
@@ -136,7 +137,7 @@ export const createTurnLifecycleSlice: ChatSliceCreator<TurnLifecycleSliceState>
           const toolCalls = base.toolCalls?.map(tc => {
             if (tc.status === 'running') {
               const { argumentsRaw: _tcDrop, ...restTc } = tc
-              return { ...restTc, status: 'error' as const, result: '用户取消执行' }
+              return { ...restTc, status: 'error' as const, result: USER_CANCELLED_TOOL_RESULT }
             }
             return tc
           })

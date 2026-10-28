@@ -261,3 +261,29 @@ test('流式输出期间拖拽 Inspector：自动跟底保持，用户上滚不�
   expect(nova.pageErrors).toEqual([])
   expect(nova.rendererConsole.some(line => line.includes('ResizeObserver loop'))).toBe(false)
 })
+
+test('粘贴长文本后插入点留在输入框可视范围内，继续输入仍跟随', async ({ nova }) => {
+  const { page, app } = nova
+  const input = page.getByLabel('消息输入')
+  await input.click()
+  const long = Array.from({ length: 60 }, (_, i) => `第${i + 1}行 ${'粘贴内容'.repeat(6)}`).join('\n')
+  await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), long)
+  await page.keyboard.press('Control+V')
+
+  const scrollState = () => input.evaluate(el => {
+    const scroller = [el, ...Array.from(el.querySelectorAll<HTMLElement>('*'))]
+      .find(node => node.scrollHeight > node.clientHeight + 2) as HTMLElement | undefined
+    return scroller
+      ? { top: scroller.scrollTop, max: scroller.scrollHeight - scroller.clientHeight }
+      : null
+  })
+  await expect.poll(async () => {
+    const state = await scrollState()
+    return state ? state.max - state.top : -1
+  }).toBeLessThanOrEqual(24)
+
+  await page.keyboard.type('继续输入ABC')
+  const after = await scrollState()
+  expect(after && after.max - after.top).toBeLessThanOrEqual(24)
+  expect(nova.pageErrors).toEqual([])
+})

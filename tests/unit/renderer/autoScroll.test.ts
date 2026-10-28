@@ -10,6 +10,9 @@ import {
   createStreamingScrollPoller,
   getDistanceFromBottom,
   isWithinProgrammaticScrollGuard,
+  isWithinUserToggleAnchor,
+  markUserToggle,
+  USER_TOGGLE_ANCHOR_MS,
   isWithinUserScrollCooldown,
   markProgrammaticScroll,
   markUserScrollInput,
@@ -302,5 +305,25 @@ describe('createStreamingScrollPoller', () => {
     vi.advanceTimersByTime(300)
     expect(scrollToBottom).not.toHaveBeenCalled()
     poller.stop()
+  })
+})
+
+describe('用户展开/收起锚定窗口', () => {
+  it('窗口内只对被点击的行生效，过期后失效', () => {
+    const ref = { current: { rowIndex: null as number | null, until: 0 } }
+    markUserToggle(ref, 3, 1000)
+    expect(isWithinUserToggleAnchor(ref.current, 3, 1000 + USER_TOGGLE_ANCHOR_MS - 1)).toBe(true)
+    expect(isWithinUserToggleAnchor(ref.current, 4, 1100)).toBe(false)
+    // 不给行号时只问窗口是否有效（流式跟随用）
+    expect(isWithinUserToggleAnchor(ref.current, undefined, 1100)).toBe(true)
+    expect(isWithinUserToggleAnchor(ref.current, 3, 1000 + USER_TOGGLE_ANCHOR_MS)).toBe(false)
+  })
+
+  it('快速连点会刷新窗口并切换到新的行', () => {
+    const ref = { current: { rowIndex: null as number | null, until: 0 } }
+    markUserToggle(ref, 1, 1000)
+    markUserToggle(ref, 2, 1400)
+    expect(isWithinUserToggleAnchor(ref.current, 1, 1450)).toBe(false)
+    expect(isWithinUserToggleAnchor(ref.current, 2, 1850)).toBe(true)
   })
 })
