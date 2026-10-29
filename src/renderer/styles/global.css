@@ -79,10 +79,10 @@
   --ring-focus: 0 0 0 2px color-mix(in srgb, var(--color-focus) 30%, transparent);
   --surface-gutter: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04)); /* 代码行号栏 */
 
-  /* 文本梯度：深色主文字近白，弱文字落到 zinc-500 */
+  /* 文本梯度：深色主文字近白；弱文字在侧栏、内容底与卡片上都保持 ≥4.5:1，仍比 secondary 低一档 */
   --text-primary: light-dark(#18181b, #fafafa);
   --text-secondary: light-dark(#52525b, #a1a1aa);
-  --text-muted: light-dark(#71717a, #71717a);           /* 相对时间、辅助说明 */
+  --text-muted: light-dark(#71717a, #8e8e96);           /* 相对时间、辅助说明 */
   --text-placeholder: light-dark(#a1a1aa, #71717a);
   --text-charcoal: light-dark(#27272a, #e4e4e7);
 

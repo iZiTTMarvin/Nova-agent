@@ -20,7 +20,7 @@ import {
 } from './projection'
 import { SubagentDetailPopover } from './SubagentDetailPopover'
 import { SubagentDiffCard } from './SubagentDiffCard'
-import { formatSubagentModelLine } from './modelLine'
+import { formatSubagentModelParts } from './modelLine'
 import { requestSubagentResume } from './resumeSubagentExecution'
 import './SubagentActivityRow.css'
 
@@ -186,7 +186,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     return projection.summary ?? projection.latestActivity ?? ''
   }, [active, fallbackResult, projection])
 
-  const modelLine = formatSubagentModelLine(projection)
+  const modelParts = formatSubagentModelParts(projection)
 
   const visibleFileChanges = projection.fileChanges ?? []
 
@@ -232,9 +232,16 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
                 {projection.taskLabel}
               </span>
             )}
-            {modelLine && <span className="subagent-activity-row__model">{modelLine}</span>}
+            {modelParts.length > 0 && (
+              <span className="subagent-activity-row__model" title={modelParts.join(' ')}>
+                {modelParts.map(part => (
+                  <span key={part} className="subagent-model-part">{part}</span>
+                ))}
+              </span>
+            )}
             <span className="subagent-activity-row__status">
-              {status.label}{elapsed ? ` · ${elapsed}` : ''}
+              <span>{status.label}</span>
+              {elapsed ? <span className="subagent-activity-row__elapsed">{elapsed}</span> : null}
             </span>
             <span className="subagent-activity-row__chevron" aria-hidden="true">
               {open ? '▾' : '▸'}

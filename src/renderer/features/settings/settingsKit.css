@@ -51,13 +51,13 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   container: settings-rows / inline-size;
-  border: 1px solid var(--border-subtle);
+  border: 0.5px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   background: var(--bg-card);
 }
 
 .settings-rows > * + * {
-  border-block-start: 1px solid var(--border-cream);
+  border-block-start: 0.5px solid var(--border-cream);
 }
 
 /* Item 默认带圆角卡片观感；行组内拉直，hairline 才能读成一条直线 */

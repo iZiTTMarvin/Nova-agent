@@ -497,7 +497,7 @@ export const ReviewTab: React.FC = () => {
           >
             {turns.map((turn, index) => (
               <option key={turn.messageId} value={turn.messageId}>
-                {index === 0 ? '最近改动 · ' : ''}{turn.label}
+                {index === 0 ? '最近改动：' : ''}{turn.label}
               </option>
             ))}
           </select>

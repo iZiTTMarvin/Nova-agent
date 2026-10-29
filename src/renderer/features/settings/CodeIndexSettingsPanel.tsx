@@ -189,7 +189,7 @@ function CoverageDetails({ snapshot }: { snapshot: CodeIndexStatusDto }) {
   return (
     <details className="code-index-settings-panel__coverage">
       <summary>
-        已跳过 {skipped} 个文件（暂不支持的语言或文件过大） · {snapshot.coverage.parseFailures} 个文件解析失败
+        已跳过 {skipped} 个文件（暂不支持的语言或文件过大），{snapshot.coverage.parseFailures} 个文件解析失败
       </summary>
       <dl>
         <div><dt>符合索引条件</dt><dd>{snapshot.coverage.eligibleFiles}</dd></div>
@@ -207,7 +207,7 @@ function formatStatus(snapshot: CodeIndexStatusDto | null): string {
   switch (snapshot.status) {
     case 'building':
       return progress && progress.total > 0
-        ? `索引中 · ${progress.completed} / ${progress.total} 个文件`
+        ? `索引中 ${progress.completed} / ${progress.total} 个文件`
         : '正在建立索引'
     case 'ready':
       return '可用'

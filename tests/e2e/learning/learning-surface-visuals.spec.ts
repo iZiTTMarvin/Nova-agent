@@ -58,9 +58,6 @@ test('视觉留证：学习界面双主题四尺寸四场景截图', async ({ no
   test.setTimeout(420_000)
   await writeSampleCode(nova.workspacePath)
 
-  // 空状态会话：只建会话不发消息；大纲生成后它会多出一条「从某主题开始」的建议
-  const emptySessionId = await createLearnSession(nova)
-
   // 出题会话：先落一个待答停点，再生成一份真实大纲
   const questionSessionId = await createLearnSession(nova)
   nova.provider.enqueue(checkpointToolTurn('call_ckpt_visuals'))
@@ -73,6 +70,10 @@ test('视觉留证：学习界面双主题四尺寸四场景截图', async ({ no
   installOutlineBuildSuccess(nova.provider, buildInfo)
   await pane.getByRole('button', { name: '生成大纲' }).click()
   await expect(outlineTopicRow(pane, TOPIC_TITLE)).toBeVisible({ timeout: 60_000 })
+
+  // 空状态会话最后建：出题会话已有消息，不会被当成空草稿复用，两个场景才是两个会话
+  const emptySessionId = await createLearnSession(nova)
+  expect(emptySessionId).not.toBe(questionSessionId)
 
   // 详情场景要连出处片段一起留证，片段按钮名从取证结果推出来
   const fileName = buildInfo.sourcePath?.split(/[\\/]/).pop() ?? null

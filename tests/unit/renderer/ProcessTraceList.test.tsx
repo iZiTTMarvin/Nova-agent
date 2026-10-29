@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ProcessTraceList } from '../../../src/renderer/features/chat/ProcessTraceList'
 import { buildTurnRenderModel } from '../../../src/renderer/features/chat/turnProcessModel'
 import { resetAgentStoreForTests, useAgentStore } from '../../../src/renderer/stores/useAgentStore'
+import { useFileTreeStore } from '../../../src/renderer/features/inspector/useFileTreeStore'
 import { USER_CANCELLED_TOOL_RESULT } from '../../../src/shared/session/toolCancellation'
 import type { RendererToolBlock } from '../../../src/renderer/stores/types'
 import { act, renderDom } from './renderDom'
@@ -60,6 +61,11 @@ function headerOf(container: HTMLElement): HTMLButtonElement {
   return header
 }
 
+/** 行状态与展开按钮是同一行的兄弟节点 */
+function statusOf(header: HTMLElement): string | null | undefined {
+  return header.closest('.tool-trace-row__line')?.querySelector('.tool-trace-row__status')?.textContent
+}
+
 function rowHeaders(container: HTMLElement): HTMLButtonElement[] {
   return Array.from(container.querySelectorAll<HTMLButtonElement>('.tool-trace-row__header'))
 }
@@ -100,7 +106,7 @@ describe('web_fetch 过程呈现', () => {
     expect(header.getAttribute('aria-expanded')).toBe('true')
     const rows = rowHeaders(view.container)
     expect(rows).toHaveLength(4)
-    expect(rows.map(row => row.querySelector('.tool-trace-row__status')?.textContent)).toEqual([
+    expect(rows.map(row => statusOf(row))).toEqual([
       '已读取', '已读取', '已读取', '读取失败'
     ])
     view.unmount()
@@ -136,7 +142,7 @@ describe('web_fetch 过程呈现', () => {
     expect(header.textContent).toContain('1 项未完成')
     expect(header.textContent).not.toContain('失败')
     act(() => header.click())
-    expect(rowHeaders(view.container)[1].querySelector('.tool-trace-row__status')?.textContent).toBe('未完成')
+    expect(statusOf(rowHeaders(view.container)[1])).toBe('未完成')
     view.unmount()
   })
 
@@ -148,7 +154,7 @@ describe('web_fetch 过程呈现', () => {
     const header = headerOf(view.container)
     expect(header.textContent).toContain('1 项进行中')
     act(() => header.click())
-    expect(rowHeaders(view.container)[0].querySelector('.tool-trace-row__status')?.textContent).toBe('正在读取')
+    expect(statusOf(rowHeaders(view.container)[0])).toBe('正在读取')
     view.unmount()
   })
 
@@ -211,6 +217,62 @@ describe('web_fetch 过程呈现', () => {
 
     act(() => header.click())
     expect(view.container.querySelectorAll('.inline-perm')).toHaveLength(1)
+    view.unmount()
+  })
+})
+
+describe('文件工具行', () => {
+  const writeBlock: RendererToolBlock = {
+    type: 'tool',
+    toolCallId: 'w1',
+    toolName: 'write',
+    arguments: { path: 'src/index.ts', content: 'a\nb' },
+    status: 'running'
+  }
+
+  it('等待授权时动作保持中性，不出现完成态文案', () => {
+    useAgentStore.getState().handlePermissionRequest({
+      messageId: 'msg-1',
+      requestId: 'req-w',
+      toolName: 'write',
+      args: { path: 'src/index.ts' },
+      riskLevel: 'high',
+      reason: '写入需要确认',
+      toolCallIds: ['w1'],
+      sessionId: 'sess-1',
+      version: 1
+    })
+    const view = renderList([writeBlock])
+    const [header] = rowHeaders(view.container)
+    expect(view.container.querySelector('.tool-trace-row__action')?.textContent).toBe('写入')
+    expect(statusOf(header)).toBe('等待授权')
+    expect(header.getAttribute('aria-label')).toBe('写入 src/index.ts，等待授权')
+    expect(view.container.textContent).not.toContain('已写入')
+    view.unmount()
+  })
+
+  it('运行中显示正在写入，同样不预告完成', () => {
+    const view = renderList([writeBlock])
+    expect(statusOf(rowHeaders(view.container)[0])).toBe('正在写入')
+    expect(view.container.textContent).not.toContain('已写入')
+    view.unmount()
+  })
+
+  it('打开文件与展开详情是两个独立按钮，打开文件不会展开详情', () => {
+    useFileTreeStore.getState().selectFile(null)
+    const view = renderList([{ ...writeBlock, status: 'success', result: 'ok' }])
+    const [header] = rowHeaders(view.container)
+    const fileButton = view.container.querySelector<HTMLButtonElement>('button.tool-trace-row__file-target')
+    expect(fileButton).not.toBeNull()
+    expect(fileButton?.closest('.tool-trace-row__header')).toBeNull()
+    expect(header.contains(fileButton)).toBe(false)
+
+    act(() => fileButton?.click())
+    expect(useFileTreeStore.getState().selectedFile).toBe('src/index.ts')
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+
+    act(() => header.click())
+    expect(header.getAttribute('aria-expanded')).toBe('true')
     view.unmount()
   })
 })

@@ -127,7 +127,7 @@
 }
 
 .diff-file__status-badge {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
@@ -186,7 +186,7 @@
 }
 
 .diff-file__review-badge {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
@@ -342,7 +342,7 @@
 }
 
 .diff-dir-group__count {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   padding: 1px 6px;
   background-color: var(--border-cream);
@@ -389,7 +389,7 @@
 
 .diff-viewer__skipped-count {
   margin-left: auto;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   font-weight: 500;
   color: var(--text-muted);
   padding: 1px 6px;
@@ -427,7 +427,7 @@
 
 .diff-viewer__skipped-reason {
   flex-shrink: 0;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   padding: 1px 5px;
   border: 1px solid var(--border-cream);

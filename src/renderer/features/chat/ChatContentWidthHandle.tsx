@@ -5,7 +5,7 @@
  * 只在已进入会话（enabled）时挂载并发布宽度：空会话保持默认阅读宽、不留拖拽热区。
  * 复用分栏手势引擎：向左拖变宽、deltaScale=2 让柱体绕中心对称伸缩，手柄始终贴着指针。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode, type WheelEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type WheelEvent } from 'react'
 import { CHAT_CONTENT_WIDTH_MIN, useLayoutStore } from '../../stores/useLayoutStore'
 import { useSplitPaneResize } from '../../hooks/useSplitPaneResize'
 
@@ -13,10 +13,17 @@ import { useSplitPaneResize } from '../../hooks/useSplitPaneResize'
    拖到上限时柱缘离面板边恰剩 58px，热区不会消失、始终可往回拖；右侧对称留白同时覆盖滚动条。 */
 const EDGE_BUDGET_PX = 58 * 2
 
+/** 键盘步进：柱体对称伸缩，每步左右各让 16px；Shift 为大步 */
+const KEY_STEP_PX = 32
+const KEY_STEP_LARGE_PX = 128
+
+function maxContentWidth(panelWidth: number): number {
+  return Math.max(CHAT_CONTENT_WIDTH_MIN, panelWidth - EDGE_BUDGET_PX)
+}
+
 /** 按容器实时宽度解析显示宽度：偏好只作意图，永远钳到 [MIN, 容器剩余]。 */
 function resolveContentWidth(panelWidth: number, preference: number | null): number {
-  const max = Math.max(CHAT_CONTENT_WIDTH_MIN, panelWidth - EDGE_BUDGET_PX)
-  return Math.min(Math.max(preference ?? CHAT_CONTENT_WIDTH_MIN, CHAT_CONTENT_WIDTH_MIN), max)
+  return Math.min(Math.max(preference ?? CHAT_CONTENT_WIDTH_MIN, CHAT_CONTENT_WIDTH_MIN), maxContentWidth(panelWidth))
 }
 
 /**
@@ -32,24 +39,33 @@ export function ChatContentWidthHandle({ enabled }: { enabled: boolean }): React
   const enabledRef = useRef(enabled)
   enabledRef.current = enabled
 
+  /** 分隔器的当前值与上限随宽度写入同步到 DOM，与 CSS 变量一样不经 React 渲染 */
+  const syncAria = useCallback((width: number) => {
+    const el = handleRef.current
+    const panel = shellRef.current
+    if (!el || !panel) return
+    el.setAttribute('aria-valuenow', String(Math.round(width)))
+    el.setAttribute('aria-valuemax', String(Math.round(maxContentWidth(panel.offsetWidth))))
+  }, [])
+
   /** 把解析后的宽度写进外壳变量；停用或无偏好时还原到样式表默认值。 */
   const publish = useCallback(() => {
     const panel = shellRef.current
     if (!panel) return
     const preference = enabledRef.current ? useLayoutStore.getState().chatContentWidth : null
+    syncAria(resolveContentWidth(panel.offsetWidth, preference))
     if (preference === null) {
       panel.style.removeProperty('--chat-content-max-width')
       return
     }
     panel.style.setProperty('--chat-content-max-width', `${Math.round(resolveContentWidth(panel.offsetWidth, preference))}px`)
-  }, [])
+  }, [syncAria])
 
   const { dragging, onResizeMouseDown, onResizeDoubleClick } = useSplitPaneResize({
     shellRef,
     direction: 'right', // 手柄在左缘：指针左移 = 变宽
     widthMin: CHAT_CONTENT_WIDTH_MIN,
-    widthMax: () =>
-      Math.max(CHAT_CONTENT_WIDTH_MIN, (shellRef.current?.offsetWidth ?? CHAT_CONTENT_WIDTH_MIN) - EDGE_BUDGET_PX),
+    widthMax: () => maxContentWidth(shellRef.current?.offsetWidth ?? CHAT_CONTENT_WIDTH_MIN),
     defaultWidth: CHAT_CONTENT_WIDTH_MIN,
     getCurrentWidth: () =>
       resolveContentWidth(
@@ -57,7 +73,10 @@ export function ChatContentWidthHandle({ enabled }: { enabled: boolean }): React
         useLayoutStore.getState().chatContentWidth
       ),
     onCommitWidth: (w) => useLayoutStore.getState().setChatContentWidth(w),
-    applyWidth: (el, w) => el.style.setProperty('--chat-content-max-width', `${Math.round(w)}px`),
+    applyWidth: (el, w) => {
+      el.style.setProperty('--chat-content-max-width', `${Math.round(w)}px`)
+      syncAria(w)
+    },
     deltaScale: 2
   })
 
@@ -102,16 +121,40 @@ export function ChatContentWidthHandle({ enabled }: { enabled: boolean }): React
     return () => window.removeEventListener('mousemove', onMove)
   }, [dragging, trackHandleY])
 
+  // 键盘与拖拽走同一份偏好：手柄在柱左缘，← 外移变宽、→ 内收变窄，Home 恢复默认、End 铺满
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>) => {
+    const panel = shellRef.current
+    if (!panel) return
+    const current = resolveContentWidth(panel.offsetWidth, useLayoutStore.getState().chatContentWidth)
+    const step = e.shiftKey ? KEY_STEP_LARGE_PX : KEY_STEP_PX
+    const next =
+      e.key === 'ArrowLeft' ? current + step
+        : e.key === 'ArrowRight' ? current - step
+          : e.key === 'Home' ? CHAT_CONTENT_WIDTH_MIN
+            : e.key === 'End' ? maxContentWidth(panel.offsetWidth)
+              : null
+    if (next === null) return
+    e.preventDefault()
+    useLayoutStore.getState().setChatContentWidth(resolveContentWidth(panel.offsetWidth, next))
+    publish()
+  }, [publish])
+
   if (!enabled) return null
 
   return (
     <div
       ref={handleRef}
       className={`chat-width-handle${dragging ? ' chat-width-handle--active' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="调整阅读区宽度（方向键调整，Home 或双击恢复默认，拖拽中按 Escape 还原）"
+      aria-valuemin={CHAT_CONTENT_WIDTH_MIN}
+      tabIndex={0}
       onMouseDown={onResizeMouseDown}
       onDoubleClick={onResizeDoubleClick}
       onMouseMove={(e) => trackHandleY(e.clientY)}
       onWheel={onWheel}
+      onKeyDown={onKeyDown}
     />
   )
 }

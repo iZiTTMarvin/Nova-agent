@@ -641,7 +641,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
     const showWaiting = !!waitingBadge && !isActive
     const runningBadge = runningSessions.find(r => r.sessionId === session.id)
     const showRunning = !!runningBadge && !isActive
-    const detailTitle = `${displayTitle}\n${formatDetailTitleTime(session.updatedAt)}${session.messageCount > 0 ? ` · ${session.messageCount} 条对话` : ''}`
+    const detailTitle = `${displayTitle}\n${formatDetailTitleTime(session.updatedAt)}${session.messageCount > 0 ? `，${session.messageCount} 条对话` : ''}`
     const compactTime = formatCompactRelativeTime(session.updatedAt)
     const dragState = dragOptions?.dragState
     const dragProps = !isEditing ? dragOptions?.dragProps : undefined

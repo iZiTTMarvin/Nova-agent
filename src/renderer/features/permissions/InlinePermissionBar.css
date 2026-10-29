@@ -15,6 +15,9 @@
 }
 
 .inline-perm__reason {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
   font-size: 0.82rem;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -23,27 +26,31 @@
   background-color: var(--bg-sidebar);
 }
 
-/* 风险等级左边框提示与脉冲状态点 */
-.inline-perm__reason--low {
-  border-left: 3px solid #7a8a53;
-}
+/* 风险等级用状态点与浅底表达，不用卡片左彩条 */
 .inline-perm__reason--high {
-  border-left: 3px solid var(--color-error);
+  color: var(--text-primary);
+  background-color: var(--surface-danger-subtle);
 }
 .inline-perm__reason--low::before,
 .inline-perm__reason--high::before {
   content: '';
-  display: inline-block;
+  flex-shrink: 0;
   width: 6px;
   height: 6px;
-  margin-right: 7px;
-  vertical-align: middle;
   border-radius: 50%;
   background-color: var(--color-warning);
   animation: inline-perm-pulse 1.6s ease-in-out infinite;
 }
 .inline-perm__reason--high::before {
   background-color: var(--color-error);
+}
+
+.inline-perm__hint {
+  margin: 0;
+  padding: 0 2px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
 }
 
 @keyframes inline-perm-pulse {

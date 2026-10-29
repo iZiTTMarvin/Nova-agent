@@ -12,6 +12,7 @@ import type { LearningQuestionView } from '../../../shared/learning/surface'
 import { useAgentStore } from '../../stores/useAgentStore'
 import { selectSessionIsRunning, useRunStore } from '../../stores/useRunStore'
 import { ComposerContextBar } from '../composer-context/ComposerContextBar'
+import { useImeEnterGuard } from '../chat/imeEnterGuard'
 import { useLearningStore } from './useLearningStore'
 import {
   LEARNING_ANSWER_LABEL,
@@ -39,6 +40,7 @@ export function LearningQuestionDock({ sessionId, question }: LearningQuestionDo
   const cancelExecution = useAgentStore(state => state.cancelExecution)
   const disabled = isRunning || commandPending
   const checkpointId = question.checkpointId
+  const imeEnterGuard = useImeEnterGuard()
 
   const submit = (action: LearningAction): void => {
     if (disabled) return
@@ -63,10 +65,10 @@ export function LearningQuestionDock({ sessionId, question }: LearningQuestionDo
     submit({ type: 'answer', checkpointId, text, optionIds: [] })
   }
 
-  // 与开发输入框同一套 Enter 语义：合成期间不提交，Shift/Alt+Enter 换行
+  // 与开发输入框同一套 Enter 语义：输入法选词不提交，Shift/Alt+Enter 换行
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (imeEnterGuard.interceptKeyDown(event)) return
     if (event.key !== 'Enter' || event.shiftKey || event.altKey) return
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     event.preventDefault()
     submitAnswer()
   }
@@ -76,6 +78,8 @@ export function LearningQuestionDock({ sessionId, question }: LearningQuestionDo
       <section
         className="chat-composer-box learning-dock w-full flex flex-col p-3"
         aria-label={LEARNING_DOCK_LABEL}
+        onCompositionEnd={imeEnterGuard.handleCompositionEnd}
+        onKeyUp={imeEnterGuard.handleKeyUp}
       >
         <div className="learning-dock__eyebrow">
           <BookIcon size={13} className="learning-dock__eyebrow-icon" aria-hidden="true" />

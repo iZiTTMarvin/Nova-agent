@@ -1,5 +1,5 @@
 /**
- * ThinkingBlock — 「Think · 摘要」轻量单行折叠行
+ * ThinkingBlock — 「Think 摘要」轻量单行折叠行
  *
  * 运行中保持单行在行内流式吐字（不展开大卡片），结束后显示首行/耗时摘要；
  * 用户点击整行或箭头时展开完整 Markdown 思考内容。
@@ -146,7 +146,6 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
         <span className="thinking-block__title">
           Think
         </span>
-        <span className="thinking-block__sep" aria-hidden="true">·</span>
         <span
           className={`thinking-block__line-text ${active ? 'thinking-block__line-text--active' : ''}`}
         >

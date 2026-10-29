@@ -513,7 +513,7 @@ export const MemorySettingsPanel: React.FC = () => {
                         {scope.unavailable
                           ? '需打开工作区'
                           : s
-                            ? `${s.fileCount} 个文件 · ${s.entries.topics} 条生效`
+                            ? `${s.fileCount} 个文件，${s.entries.topics} 条生效`
                             : '加载中…'}
                       </span>
                     </span>
@@ -578,7 +578,7 @@ export const MemorySettingsPanel: React.FC = () => {
                     >
                       <span className="memory-settings-panel__file-chip-name">{file.relPath}</span>
                       <span className="memory-settings-panel__file-chip-meta">
-                        {formatBytes(file.size)} · {formatSettingsDateTime(file.mtimeMs)}
+                        {formatBytes(file.size)}，{formatSettingsDateTime(file.mtimeMs)}
                       </span>
                     </button>
                   ))}
@@ -595,7 +595,7 @@ export const MemorySettingsPanel: React.FC = () => {
 
         <section aria-label="已学习的记忆">
           <h4 className="memory-settings-panel__section-title">
-            已学习的记忆 · {recordScope === 'project' ? '项目' : '全局'}
+            已学习的记忆（{recordScope === 'project' ? '项目' : '全局'}）
           </h4>
           <p className="settings-panel__muted memory-settings-panel__records-hint">
             主题条目可置顶或彻底遗忘；待批准条目不会进入检索和开局快照。
@@ -623,7 +623,7 @@ export const MemorySettingsPanel: React.FC = () => {
             {records.map((record, index) => (
               <li key={record.id} className="memory-settings-panel__record-item">
                 <div className="memory-settings-panel__record-main">
-                  {(index === 0 || records[index - 1].relPath !== record.relPath) && <h5>{record.relPath}{record.location === 'inbox' ? ' · 待批准' : record.location === 'archive' ? ' · 历史归档' : ''}</h5>}
+                  {(index === 0 || records[index - 1].relPath !== record.relPath) && <h5>{record.relPath}{record.location === 'inbox' ? '（待批准）' : record.location === 'archive' ? '（历史归档）' : ''}</h5>}
                   <p className="memory-settings-panel__record-content">{record.text}</p>
                   <div className="memory-settings-panel__record-meta">
                     <span className="memory-settings-panel__record-kind">
@@ -678,7 +678,7 @@ export const MemorySettingsPanel: React.FC = () => {
             {!!stats?.ledgerBadLines && <p role="alert">账本存在 {stats.ledgerBadLines} 个坏行，请检查原文件；坏行已保留。</p>}
 
             <h5 className="memory-settings-panel__advanced-title">开局记忆预览</h5>
-            <p className="settings-panel__muted">全局 {preview?.globalCoreCount ?? 0} 条 · 项目 {preview?.projectCoreCount ?? 0} 条 · 预算外 {preview?.omittedCoreCount ?? 0} 条</p>
+            <p className="settings-panel__muted">全局 {preview?.globalCoreCount ?? 0} 条，项目 {preview?.projectCoreCount ?? 0} 条，预算外 {preview?.omittedCoreCount ?? 0} 条</p>
             <pre className="memory-settings-panel__preview">{preview?.text ?? '暂无开局记忆'}</pre>
 
             <h5 className="memory-settings-panel__advanced-title">维护</h5>
@@ -717,7 +717,7 @@ export const MemorySettingsPanel: React.FC = () => {
             ))}
             {legacy.map(dir => (
               <div key={dir.oldHash} className="memory-settings-panel__advanced-row">
-                <span className="settings-panel__muted">未关联的旧记忆：<code className="memory-settings-panel__meta-code">{dir.oldHash}</code> · {dir.fileCount} 个文件</span>
+                <span className="settings-panel__muted">未关联的旧记忆：<code className="memory-settings-panel__meta-code">{dir.oldHash}</code>，{dir.fileCount} 个文件</span>
                 <Button label={`删除旧记忆 ${dir.oldHash}`} variant="secondary" size="sm" onClick={() => void (async () => {
                   const response = await confirmDialog({ type: 'warning', title: '删除旧记忆', message: `永久删除未关联目录 ${dir.oldHash}？`, buttons: ['取消', '删除'], defaultId: 0, cancelId: 0 })
                   if (response !== 1) return
@@ -844,7 +844,7 @@ export const MemorySettingsPanel: React.FC = () => {
                       )}
                     </span>
                     <span className="memory-settings-panel__file-meta">
-                      {formatBytes(file.size)} · {formatSettingsDateTime(file.mtimeMs)}
+                      {formatBytes(file.size)}，{formatSettingsDateTime(file.mtimeMs)}
                     </span>
                   </ClickableCard>
                 ))}
@@ -860,7 +860,7 @@ export const MemorySettingsPanel: React.FC = () => {
                         </span>
                         {selectedFile && (
                           <span className="memory-settings-panel__editor-meta">
-                            {formatBytes(selectedFile.size)} · {formatSettingsDateTime(selectedFile.mtimeMs)}
+                            {formatBytes(selectedFile.size)}，{formatSettingsDateTime(selectedFile.mtimeMs)}
                           </span>
                         )}
                       </div>

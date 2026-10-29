@@ -69,6 +69,7 @@ import {
 import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
 import { createComposerFileTrigger } from './composerFileTrigger'
 import { revealCaretInScroller } from './composerCaret'
+import { useImeEnterGuard } from './imeEnterGuard'
 import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
 import { WelcomeHero } from './WelcomeHero'
 import { ChatContentWidthHandle } from './ChatContentWidthHandle'
@@ -247,6 +248,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     composerInputHandleRef.current?.focus()
   }, [])
   const composerBoxRef = useRef<HTMLDivElement>(null)
+  const imeEnterGuard = useImeEnterGuard()
   const slashSkillsRef = useRef(slashSkills)
   slashSkillsRef.current = slashSkills
   const skillsDiagnosticsRef = useRef(skillsDiagnostics)
@@ -694,8 +696,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
    * preventDefault 后走 handleSend。
    */
   const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (imeEnterGuard.interceptKeyDown(e)) return
     if (e.key !== 'Enter' || e.shiftKey || e.altKey) return
-    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return
     // 菜单打开时不发送：高亮项的 Enter 交给官方 trigger；无高亮也不要把草稿当消息发出。
     if (e.currentTarget.getAttribute('aria-expanded') === 'true') {
       e.preventDefault()
@@ -1100,6 +1102,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
               <div className="chat-composer-stack w-full">
               <div
               ref={composerBoxRef}
+              onCompositionEnd={imeEnterGuard.handleCompositionEnd}
+              onKeyUp={imeEnterGuard.handleKeyUp}
               className={`chat-composer-box w-full flex flex-col p-3 ${
                 isDragOver ? 'chat-composer-box--dragover' : ''
               }`}

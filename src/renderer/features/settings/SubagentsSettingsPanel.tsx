@@ -507,7 +507,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                     <span className="settings-split__item-title">{item.name}</span>
                     <span className="settings-split__item-meta">
                       {item.builtin ? '内置' : item.origin === 'project' ? '项目' : '全局'}
-                      {!item.enabled && ' · 已禁用'}
+                      {!item.enabled && '，已禁用'}
                     </span>
                   </button>
                   {!item.builtin && (
@@ -628,7 +628,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
             <div className="subagent-detail-page">
               <header className="subagent-detail-header">
                 <div>
-                  <span>内置能力 · 只读</span>
+                  <span>内置能力（只读）</span>
                   <h3>{selected.name}</h3>
                   <p>{selected.description}</p>
                 </div>
@@ -652,7 +652,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                     </div>
                     <div className="subagent-fact">
                       <dt>运行限制</dt>
-                      <dd>{selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}{selected.contextWindow ? ` · 上下文 ${selected.contextWindow} tokens` : ''}</dd>
+                      <dd>{selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}{selected.contextWindow ? `，上下文 ${selected.contextWindow} tokens` : ''}</dd>
                     </div>
                   </dl>
                   <h4>System prompt</h4>

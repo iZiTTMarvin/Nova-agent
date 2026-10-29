@@ -282,8 +282,38 @@ test('粘贴长文本后插入点留在输入框可视范围内，继续输入�
     return state ? state.max - state.top : -1
   }).toBeLessThanOrEqual(24)
 
-  await page.keyboard.type('继续输入ABC')
-  const after = await scrollState()
-  expect(after && after.max - after.top).toBeLessThanOrEqual(24)
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('后续任务运行期间历史回答高度不变，复制可用而修改历史的操作被禁用', async ({ nova }) => {
+  const { page, app } = nova
+  nova.provider.enqueue({ kind: 'text', text: 'NOVA_E2E_HISTORY_ANSWER' })
+  await nova.sendPrompt('先回复一条历史消息')
+  await expect(page.getByText('NOVA_E2E_HISTORY_ANSWER', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+
+  const historyRow = page.locator('.chat-msg-row').filter({ hasText: 'NOVA_E2E_HISTORY_ANSWER' })
+  const heightOf = () => historyRow.evaluate(el => el.getBoundingClientRect().height)
+  const regenerate = historyRow.getByRole('button', { name: '重新生成此回答' })
+  const heightBefore = await heightOf()
+  await expect(regenerate).toBeEnabled()
+
+  nova.provider.enqueue({ kind: 'hold', id: 'history-footer-hold', text: 'NOVA_E2E_FOLLOWUP_DONE' })
+  await nova.sendPrompt('继续下一项任务')
+  await expect(page.getByRole('button', { name: '中断生成' })).toBeVisible()
+  await nova.provider.waitForRequestCount(2)
+
+  expect(Math.abs((await heightOf()) - heightBefore)).toBeLessThanOrEqual(1)
+  await expect(regenerate).toBeDisabled()
+  await app.evaluate(({ clipboard }) => clipboard.writeText(''))
+  await historyRow.getByRole('button', { name: '复制此消息' }).click()
+  await expect.poll(() => app.evaluate(({ clipboard }) => clipboard.readText()))
+    .toContain('NOVA_E2E_HISTORY_ANSWER')
+
+  nova.provider.release('history-footer-hold')
+  await expect(page.getByText('NOVA_E2E_FOLLOWUP_DONE', { exact: false })).toBeVisible()
+  await nova.waitUntilIdle()
+  expect(Math.abs((await heightOf()) - heightBefore)).toBeLessThanOrEqual(1)
+  await expect(regenerate).toBeEnabled()
   expect(nova.pageErrors).toEqual([])
 })

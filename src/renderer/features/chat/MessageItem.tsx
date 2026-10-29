@@ -378,8 +378,8 @@ function MessageItemInner({
     const count = runtimeInputBlocks.length
     const label =
       count > 1
-        ? `后台子任务已完成（共 ${count} 项）· 结果已自动同步到上下文`
-        : '后台子任务已完成 · 结果已自动同步到上下文'
+        ? `后台子任务已完成（共 ${count} 项），结果已自动同步到上下文`
+        : '后台子任务已完成，结果已自动同步到上下文'
 
     return (
       <ChatMessage sender="system">
@@ -393,18 +393,29 @@ function MessageItemInner({
     )
   }
 
+  /*
+   * 修改历史的操作（重新生成、编辑重发、切分支、学懂改动）在任务运行或分叉准备期间禁用，
+   * 但 footer 本身保持挂载：卸载会让每条历史消息高度跳变，并让复制在 Agent 工作时不可用。
+   */
+  const historyLockReason = branchForkInProgress
+    ? '正在创建分支，完成后可用'
+    : isGenerating
+      ? '任务运行中，完成后可用'
+      : null
+  const historyLocked = historyLockReason !== null
+
   /* 兄弟分支翻页器：‹ k/n ›，随操作按钮一起落在消息末尾的 footer 里 */
   const branchFlipper =
-    msg.branch && msg.branch.total > 1 && onSwitchBranch && !isGenerating && !branchForkInProgress ? (
+    msg.branch && msg.branch.total > 1 && onSwitchBranch ? (
       <div className="chat-msg__branch-flipper">
         <IconButton
           label="上一条分支"
           icon={<span aria-hidden="true">‹</span>}
           variant="ghost"
           size="sm"
-          isDisabled={msg.branch.index <= 1 || !!rollbackError}
+          isDisabled={msg.branch.index <= 1 || !!rollbackError || historyLocked}
           onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index - 2]!)}
-          tooltip="上一条分支"
+          tooltip={historyLockReason ?? '上一条分支'}
         />
         <span className="chat-msg__branch-label">
           {msg.branch.index} / {msg.branch.total}
@@ -414,9 +425,9 @@ function MessageItemInner({
           icon={<span aria-hidden="true">›</span>}
           variant="ghost"
           size="sm"
-          isDisabled={msg.branch.index >= msg.branch.total || !!rollbackError}
+          isDisabled={msg.branch.index >= msg.branch.total || !!rollbackError || historyLocked}
           onClick={() => onSwitchBranch(msg.branch!.siblingIds[msg.branch!.index]!)}
-          tooltip="下一条分支"
+          tooltip={historyLockReason ?? '下一条分支'}
         />
       </div>
     ) : null
@@ -428,8 +439,9 @@ function MessageItemInner({
   const timestampEl = (
     <span className="chat-msg__timestamp">{formatFullTimestamp(msg.timestamp)}</span>
   )
-  const showMessageFooter =
-    (isAssistant || isUser) && !isGenerating && !branchForkInProgress && !isEditing
+  // 只有正在流式生成的那条回答不显示 footer，保持流尾布局；其余历史消息常驻
+  const isGeneratingThisRow = isAssistant && isGenerating && msg.id === currentGeneratingMessageId
+  const showMessageFooter = (isAssistant || isUser) && !isGeneratingThisRow && !isEditing
   const messageFooter = showMessageFooter ? (
     <div className={`chat-msg__footer ${isUser ? 'chat-msg__footer--user' : 'chat-msg__footer--assistant'}`}>
       {isUser && timestampEl}
@@ -441,13 +453,15 @@ function MessageItemInner({
             variant="ghost"
             size="sm"
             onClick={() => onRegenerate(msg.id)}
-            isDisabled={!!rollbackError || regenerateBlocked}
+            isDisabled={!!rollbackError || regenerateBlocked || historyLocked}
             tooltip={
               rollbackError
                 ? `无法重新生成：${rollbackError}`
-                : regenerateBlocked
-                  ? '重新生成暂不支持含图片的消息'
-                  : '重新生成此回答（保留原分支）'
+                : historyLockReason
+                  ? historyLockReason
+                  : regenerateBlocked
+                    ? '重新生成暂不支持含图片的消息'
+                    : '重新生成此回答（保留原分支）'
             }
           />
           {copyButton}
@@ -458,7 +472,8 @@ function MessageItemInner({
               variant="ghost"
               size="sm"
               onClick={() => onLearnChange(msg.id)}
-              tooltip="学懂这次改动"
+              isDisabled={historyLocked}
+              tooltip={historyLockReason ?? '学懂这次改动'}
             />
           )}
         </>
@@ -474,8 +489,12 @@ function MessageItemInner({
             setEditText(typeof textContent === 'string' ? textContent : '')
             setIsEditing(true)
           }}
-          isDisabled={!!rollbackError}
-          tooltip={rollbackError ? `无法编辑：${rollbackError}` : '编辑并重发（保留原分支）'}
+          isDisabled={!!rollbackError || historyLocked}
+          tooltip={
+            rollbackError
+              ? `无法编辑：${rollbackError}`
+              : historyLockReason ?? '编辑并重发（保留原分支）'
+          }
         />
       )}
       {isUser && copyButton}
@@ -531,7 +550,7 @@ function MessageItemInner({
                     } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
                       e.preventDefault()
                       const t = editText.trim()
-                      if (t) {
+                      if (t && !historyLocked) {
                         setIsEditing(false)
                         onEditResend?.(msg.id, t)
                       }
@@ -549,10 +568,10 @@ function MessageItemInner({
                     label="重发"
                     variant="primary"
                     size="sm"
-                    isDisabled={!editText.trim() || branchForkInProgress}
+                    isDisabled={!editText.trim() || historyLocked}
                     onClick={() => {
                       const t = editText.trim()
-                      if (t && !branchForkInProgress) {
+                      if (t && !historyLocked) {
                         setIsEditing(false)
                         onEditResend?.(msg.id, t)
                       }

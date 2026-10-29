@@ -21,6 +21,14 @@ export const parchmentTheme = defineTheme({
     ...neutralIconRegistry
   },
   tokens: {
+    // ── 字号 ──
+    // 桌面端可见文字不低于 12px：比例阶梯在 sm 以下的档位统一收到 sm，
+    // 层级改由字重与灰阶表达，而不是继续缩小文字。
+    '--font-size-4xs': '0.75rem',
+    '--font-size-3xs': '0.75rem',
+    '--font-size-2xs': '0.75rem',
+    '--font-size-xs': '0.75rem',
+
     // ── 字体 ──
     '--font-family-body': 'var(--font-sans)',
     '--font-family-heading': 'var(--font-sans)',

@@ -13,7 +13,7 @@
 .permission-mode__menu-title {
   padding: 8px 12px 6px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -24,7 +24,7 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--color-error) 8%, transparent);
   color: var(--color-error);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.35;
 }
 

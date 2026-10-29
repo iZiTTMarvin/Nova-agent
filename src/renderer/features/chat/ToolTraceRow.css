@@ -21,16 +21,18 @@
   animation: tool-trace-row-live-enter 80ms ease-out both;
 }
 
+/* 内联授权卡属于消息流而非浮层：只用边框与底色表达，不加外阴影（折叠容器会裁掉它） */
 .tool-trace-row--pending-approval {
   margin: 6px 0;
   padding: 6px 10px 8px;
   border-radius: var(--radius-md);
   border: 0.5px solid var(--border-brand);
   background-color: var(--bg-card);
-  box-shadow: var(--shadow-whisper);
 }
 
-.tool-trace-row__header {
+/* 行容器负责排版与 hover；展开按钮铺满整行，文件按钮叠在其上 */
+.tool-trace-row__line {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -39,29 +41,42 @@
   min-height: 28px;
   box-sizing: border-box;
   padding: 2px 4px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
   color: inherit;
-  font: inherit;
   font-size: 13px;
   min-width: 0;
   border-radius: var(--radius-sm);
   overflow-anchor: auto;
-  appearance: none;
   user-select: none;
   transition: background-color var(--transition-fast) ease;
 }
 
-.tool-trace-row__header:hover {
+.tool-trace-row__line:hover {
   color: var(--text-primary);
   background-color: var(--surface-hover);
+}
+
+.tool-trace-row__header {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  border-radius: inherit;
+  appearance: none;
 }
 
 .tool-trace-row__header:focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 1px;
+}
+
+.tool-trace-row__icon-slot {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .tool-trace-row__action {
@@ -83,11 +98,19 @@
 }
 
 .tool-trace-row__file-target {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
   cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  appearance: none;
   border-radius: 4px;
   padding: 1px 4px;
   margin-left: -4px;
@@ -96,6 +119,11 @@
 
 .tool-trace-row__file-target:hover {
   background-color: var(--surface-hover);
+}
+
+.tool-trace-row__file-target:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 0;
 }
 
 .tool-trace-row__file-target:hover .tool-trace-row__filename {
@@ -177,7 +205,7 @@
   margin-left: 0;
 }
 
-.tool-trace-row__header:hover .tool-trace-row__chevron {
+.tool-trace-row__line:hover .tool-trace-row__chevron {
   opacity: 1;
   color: var(--text-primary);
 }
@@ -215,7 +243,8 @@
   font-size: 12px;
   padding: 6px 8px;
   background: var(--bg-card);
-  border-radius: 4px;
+  /* 外层详情 6px 圆角、8px 内边距：同心收缩后内层只留微圆角 */
+  border-radius: 2px;
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 220px;
@@ -248,7 +277,7 @@
     animation: none;
   }
 
-  .tool-trace-row__header {
+  .tool-trace-row__line {
     transition: none;
   }
 }

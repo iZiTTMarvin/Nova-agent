@@ -35,7 +35,7 @@ function ruleDescription(rule: PermissionRuleDto): string | undefined {
   if (rule.filePath) parts.push(`文件: ${rule.filePath}`)
   parts.push(rule.scope === 'project' ? '项目级' : '全局')
   if (rule.description) parts.push(rule.description)
-  return parts.length > 0 ? parts.join(' · ') : undefined
+  return parts.length > 0 ? parts.join('，') : undefined
 }
 
 export const PermissionsSettingsPanel: React.FC = () => {

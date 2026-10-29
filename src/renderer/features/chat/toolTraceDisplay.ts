@@ -193,9 +193,9 @@ export function getToolTraceTarget(
       const browserId = typeof args.browserId === 'string' ? args.browserId : ''
       if (action === 'open' && url) {
         try {
-          return `· ${truncateTarget(new URL(url).hostname || url)}`
+          return truncateTarget(new URL(url).hostname || url)
         } catch {
-          return `· ${truncateTarget(url)}`
+          return truncateTarget(url)
         }
       }
       const actionLabel: Record<string, string> = {
@@ -205,21 +205,21 @@ export function getToolTraceTarget(
         stop: '停止'
       }
       const target = actionLabel[action] || '页面'
-      return `· ${target}${browserId ? ` · ${shortBrowserId(browserId)}` : ''}`
+      return browserId ? `${target} ${shortBrowserId(browserId)}` : target
     }
     case 'browser_observe': {
       const action = typeof args.action === 'string' ? args.action : 'snapshot'
-      if (action === 'list') return '· 页面列表'
+      if (action === 'list') return '页面列表'
       const focus = args.focus
       if (focus && typeof focus === 'object') {
         const focusRecord = focus as Record<string, unknown>
         const role = typeof focusRecord.role === 'string' ? focusRecord.role : ''
         const name = typeof focusRecord.name === 'string' ? focusRecord.name : ''
-        if (role && name) return `· ${truncateTarget(`${role}: ${name}`)}`
-        if (name) return `· ${truncateTarget(name)}`
+        if (role && name) return truncateTarget(`${role}: ${name}`)
+        if (name) return truncateTarget(name)
       }
       const browserId = typeof args.browserId === 'string' ? args.browserId : ''
-      return browserId ? `· ${shortBrowserId(browserId)}` : ''
+      return browserId ? shortBrowserId(browserId) : ''
     }
     case 'browser_act': {
       const action = args.action
@@ -243,18 +243,18 @@ export function getToolTraceTarget(
                 : kind === 'viewport'
                   ? formatViewportTarget(actionRecord)
                   : '页面操作'
-      return `· ${truncateTarget(summary)}`
+      return truncateTarget(summary)
     }
     case 'browser_capture': {
       const observation = args.observation
       const browserId = observation && typeof observation === 'object'
         ? (observation as Record<string, unknown>).browserId
         : undefined
-      return typeof browserId === 'string' ? `· ${shortBrowserId(browserId)}` : ''
+      return typeof browserId === 'string' ? shortBrowserId(browserId) : ''
     }
     case 'browser_close': {
       const browserId = typeof args.browserId === 'string' ? args.browserId : ''
-      return browserId ? `· ${shortBrowserId(browserId)}` : ''
+      return browserId ? shortBrowserId(browserId) : ''
     }
     case 'task': {
       const sub = (args.subagent_type as string) || ''
@@ -368,7 +368,7 @@ function formatViewportTarget(action: Record<string, unknown>): string {
   const height = typeof action.height === 'number' ? action.height : null
   const device = typeof action.device === 'string' ? action.device : ''
   if (width !== null && height !== null) {
-    return `视口 ${width}×${height}${device ? ` · ${device}` : ''}`
+    return `视口 ${width}×${height}${device ? `（${device}）` : ''}`
   }
   return '调整视口'
 }
@@ -404,23 +404,26 @@ function extractPreviewText(value: unknown): string {
   return ''
 }
 
-/** L3 行中文动作动词（对齐 Cursor 风格平铺轨迹） */
+/**
+ * L3 行中文动作：只说明“要做什么”，不暗示结果。
+ * 运行中、等待授权、失败等真实结果统一由 toolOutcome 投影表达，避免动作与状态互相矛盾。
+ */
 export function getToolTraceActionChinese(toolName: string): string {
   switch (toolName) {
     case 'read':
-      return '已读取'
+      return '读取'
     case 'grep':
-      return '已搜索'
+      return '搜索'
     case 'find':
-      return '已查找'
+      return '查找'
     case 'ls':
-      return '已列出'
+      return '列出'
     case 'write':
-      return '已写入'
+      return '写入'
     case 'edit':
-      return '已编辑'
+      return '编辑'
     case 'bash':
-      return '已执行'
+      return '执行'
     case 'web_search':
       return '搜索'
     case 'web_fetch':
@@ -436,35 +439,35 @@ export function getToolTraceActionChinese(toolName: string): string {
     case 'browser_close':
       return '关闭页面'
     case 'task':
-      return '已委托'
+      return '委托'
     case 'task_followup':
-      return '已续跑'
+      return '续跑'
     case 'task_wait':
-      return '已等待'
+      return '等待'
     case 'subagent_read':
-      return '已回读'
+      return '回读'
     case 'batch_task':
-      return '已批处理'
+      return '批处理'
     case 'invoke_skill':
-      return '已调用技能'
+      return '调用技能'
     case 'todo_write':
-      return '已更新待办'
+      return '更新待办'
     case 'askQuestion':
-      return '已提问'
+      return '提问'
     case 'present_visualization':
       return '可视化'
     case 'save_plan':
-      return '已保存计划'
+      return '保存计划'
     case 'switch_mode':
-      return '已切换模式'
+      return '切换模式'
     case 'run_code':
-      return '已探索'
+      return '代码探索'
     case 'learning_context':
-      return '已读取学习上下文'
+      return '读取学习上下文'
     case 'learning_checkpoint':
-      return '已保存核对点'
+      return '保存核对点'
     case 'learning_assess':
-      return '已提交评估'
+      return '提交评估'
     default:
       return getToolTraceAction(toolName)
   }
@@ -534,7 +537,7 @@ export function getToolGroupHeaderInfo(
     if (directoryCount > 0) parts.push(`${directoryCount} 目录`)
     const summaryText = parts.join(' ') || `${blocks.length} 项探索`
     const title = '探索'
-    const fullSummary = `已探索 ${summaryText}`
+    const fullSummary = `${title} ${summaryText}`
     return { kind: 'explore', title, summaryText, fullSummary }
   }
 
@@ -546,13 +549,13 @@ export function getToolGroupHeaderInfo(
     if (editCount > 0) parts.push(`${editCount} 编辑`)
     const summaryText = parts.join(' ') || `${blocks.length} 文件`
     const title = '写入'
-    const fullSummary = `已写入 ${summaryText}`
+    const fullSummary = `${title} ${summaryText}`
     return { kind: 'write', title, summaryText, fullSummary }
   }
 
   const title = '运行'
   const summaryText = `${blocks.length} 条命令`
-  const fullSummary = `已运行 ${summaryText}`
+  const fullSummary = `${title} ${summaryText}`
   return { kind: 'command', title, summaryText, fullSummary }
 }
 

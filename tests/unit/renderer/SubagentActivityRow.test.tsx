@@ -154,7 +154,9 @@ describe('SubagentActivityRow', () => {
         })}
       />
     )
-    expect(withEffort.container.textContent ?? '').toContain('deepseek-v4-flash · high')
+    const parts = Array.from(withEffort.container.querySelectorAll('.subagent-model-part')).map(el => el.textContent)
+    expect(parts).toEqual(['deepseek-v4-flash', 'high'])
+    expect(withEffort.container.textContent ?? '').not.toContain('·')
     withEffort.unmount()
 
     const autoEffort = renderDom(

@@ -108,8 +108,9 @@
 .inline-ui__tone--warning { --iu-tone: var(--accent-warning); }
 .inline-ui__tone--danger { --iu-tone: var(--accent-error); }
 
+/* 语气由浅底、细描边与标题色表达，不用卡片左彩条 */
 .inline-ui__callout {
-  border-left: 3px solid var(--iu-tone);
+  border: 0.5px solid color-mix(in srgb, var(--iu-tone) 28%, transparent);
   border-radius: var(--radius-md);
   padding: 8px 12px;
   background: color-mix(in srgb, var(--iu-tone) 9%, transparent);
@@ -129,7 +130,7 @@
   align-self: flex-start;
   padding: 1px 8px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 18px;
   color: var(--iu-tone);
   background: color-mix(in srgb, var(--iu-tone) 12%, transparent);
@@ -156,7 +157,7 @@
   position: absolute;
   top: 4px;
   right: 8px;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--text-muted);
   text-transform: lowercase;
 }
@@ -204,7 +205,7 @@
   transition: color 200ms ease;
 }
 
-.inline-ui__stat-hint { font-size: 11px; color: var(--text-muted); }
+.inline-ui__stat-hint { font-size: 12px; color: var(--text-muted); }
 
 .inline-ui__stat--info .inline-ui__stat-value { color: var(--accent-primary); }
 .inline-ui__stat--success .inline-ui__stat-value { color: var(--accent-running); }
@@ -298,8 +299,8 @@
 
 .inline-ui__chart-grid line { stroke: var(--border-subtle); stroke-width: 1; }
 .inline-ui__chart-grid text,
-.inline-ui__chart-xlabel { fill: var(--text-muted); font-size: 11px; }
-.inline-ui__chart-value { fill: var(--text-secondary); font-size: 11px; font-family: var(--font-mono); }
+.inline-ui__chart-xlabel { fill: var(--text-muted); font-size: 12px; }
+.inline-ui__chart-value { fill: var(--text-secondary); font-size: 12px; font-family: var(--font-mono); }
 
 .inline-ui__chart-bar {
   transform-box: fill-box;
@@ -408,7 +409,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
   border-radius: 999px;
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-mono);
   transition: background-color 180ms ease, color 180ms ease;
 }
@@ -533,7 +534,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 }
 
 .inline-ui__architecture-connector-axis { grid-column: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.inline-ui__architecture-relation { color: var(--text-muted); font-size: 11px; line-height: 1.4; text-align: center; }
+.inline-ui__architecture-relation { color: var(--text-muted); font-size: 12px; line-height: 1.4; text-align: center; }
 
 .inline-ui__architecture-arrow {
   position: relative;
@@ -602,7 +603,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
   box-shadow: inset 0 0 0 1px var(--iu-accent);
 }
 
-.inline-ui__step-detail { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+.inline-ui__step-detail { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 
 /* ---------- 分阶段讲解 ---------- */
 .inline-ui__walk {
@@ -652,7 +653,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 }
 
 .inline-ui__walk-phase-label { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; }
-.inline-ui__walk-phase-index { flex: 0 0 auto; font-family: var(--font-mono); font-size: 11px; }
+.inline-ui__walk-phase-index { flex: 0 0 auto; font-family: var(--font-mono); font-size: 12px; }
 .inline-ui__walk-phase-title { min-width: 0; line-height: 1.35; overflow-wrap: anywhere; }
 
 .inline-ui__walk-phase[data-state='done'] .inline-ui__walk-phase-bar { background: color-mix(in srgb, var(--iu-accent) 45%, transparent); }
@@ -661,7 +662,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 .inline-ui__walk-phase[data-state='active'] > button { color: var(--text-primary); font-weight: 600; }
 
 .inline-ui__walk-head { display: flex; flex-direction: column; gap: 3px; animation: inline-ui-fade 200ms ease both; }
-.inline-ui__walk-kicker { font-size: 11px; color: var(--text-muted); }
+.inline-ui__walk-kicker { font-size: 12px; color: var(--text-muted); }
 .inline-ui__walk-phase-name { font-size: 15px; font-weight: 600; }
 .inline-ui__walk-summary { font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
 
@@ -741,7 +742,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
   border-radius: 999px;
   background: var(--surface-muted);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   transition: background-color 160ms ease, color 160ms ease;
 }
 
@@ -750,7 +751,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 
 .inline-ui__walk-step-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .inline-ui__walk-step-title { font-size: 13px; font-weight: 600; line-height: 1.4; }
-.inline-ui__walk-step-meta { font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.inline-ui__walk-step-meta { font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
 
 .inline-ui__walk-detail {
   display: flex;
@@ -758,19 +759,20 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
   gap: 8px;
   min-width: 0;
   padding: 12px;
-  border-radius: var(--radius-md);
+  /* 嵌套面按同心圆角收：外层 8px、内边距 12px 已超过外圆角，内层只留 2px 微圆角 */
+  border-radius: 2px;
   background: var(--surface-muted);
   animation: inline-ui-fade 200ms ease both;
 }
 
 .inline-ui__walk-detail-title { font-size: 14px; font-weight: 600; }
-.inline-ui__walk-detail-meta { margin-top: -6px; font-size: 11px; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.inline-ui__walk-detail-meta { margin-top: -6px; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); overflow-wrap: anywhere; }
 .inline-ui__walk-detail-text { margin: 0; font-size: 13px; line-height: 1.65; }
-.inline-ui__walk-data { padding: 8px 10px; border-radius: var(--radius-md); background: var(--bg-card); }
+.inline-ui__walk-data { padding: 8px 10px; border-radius: 2px; background: var(--bg-card); }
 
 .inline-ui__walk-source {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border: 0.5px solid var(--border-subtle);
+  border-radius: 2px;
   background: var(--bg-card);
   overflow: hidden;
 }
@@ -968,7 +970,7 @@ button.inline-ui__flow-node:not(:disabled):hover { border-color: var(--iu-accent
 }
 
 .inline-ui__flashcard-front > span:first-child { font-weight: 600; }
-.inline-ui__flashcard-hint { font-size: 11px; color: var(--text-muted); }
+.inline-ui__flashcard-hint { font-size: 12px; color: var(--text-muted); }
 
 /* ---------- 输入控件 ---------- */
 .inline-ui__control { min-width: 0; }

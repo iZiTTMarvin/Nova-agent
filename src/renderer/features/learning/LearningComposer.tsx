@@ -14,6 +14,7 @@ import { ModelSelector } from '../chat/ModelSelector'
 import { ReasoningEffortControl } from '../chat/ReasoningEffortControl'
 import { CodeIndexStatusChip } from '../chat/CodeIndexStatusChip'
 import { ComposerContextBar } from '../composer-context/ComposerContextBar'
+import { useImeEnterGuard } from '../chat/imeEnterGuard'
 import { useLearningStore } from './useLearningStore'
 import { LearningQuestionDock } from './LearningQuestionDock'
 import {
@@ -44,6 +45,7 @@ export function LearningComposer({
   const cancelExecution = useAgentStore(state => state.cancelExecution)
   const inputHandleRef = useRef<ChatComposerInputHandle>(null)
   const composerFocusVersion = useWorkspaceStore(state => state.composerFocusVersion)
+  const imeEnterGuard = useImeEnterGuard()
   useEffect(() => {
     inputHandleRef.current?.focus()
   }, [sessionId, composerFocusVersion])
@@ -72,8 +74,8 @@ export function LearningComposer({
    * 内置的 onSubmit（它会无条件清空编辑器）。
    */
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (imeEnterGuard.interceptKeyDown(event)) return
     if (event.key !== 'Enter' || event.shiftKey || event.altKey) return
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return
     if (event.currentTarget.getAttribute('aria-expanded') === 'true') {
       event.preventDefault()
       return
@@ -84,7 +86,11 @@ export function LearningComposer({
 
   return (
     <div className="chat-composer-stack w-full">
-      <div className="chat-composer-box w-full flex flex-col p-3">
+      <div
+        className="chat-composer-box w-full flex flex-col p-3"
+        onCompositionEnd={imeEnterGuard.handleCompositionEnd}
+        onKeyUp={imeEnterGuard.handleKeyUp}
+      >
         <ChatComposerInput
           className="chat-composer__input"
           handleRef={inputHandleRef}

@@ -47,7 +47,7 @@
 }
 
 .inspector-review__turn-hint {
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -65,7 +65,7 @@
   align-items: center;
   gap: 5px;
   font: inherit;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 500;
   border-radius: 6px;
   padding: 4px 10px;
@@ -106,7 +106,7 @@
 
 .inspector-review__turn-actions p {
   flex-basis: 100%;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--color-error);
   margin: 0;
 }
@@ -289,7 +289,7 @@
 
 .inspector-plan__heading span {
   color: var(--text-muted);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
   font-weight: 650;
   letter-spacing: 0.06em;
 }
@@ -308,7 +308,7 @@
   border-bottom: 1px solid var(--border-cream);
   background: var(--bg-sand);
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .inspector-plan__body {
@@ -344,7 +344,7 @@
   padding: 8px 12px;
   border-top: 1px solid var(--border-cream);
   background: color-mix(in srgb, var(--nova-status-error) 7%, var(--bg-card));
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .inspector-review__error {
@@ -352,7 +352,7 @@
   color: var(--color-error);
   background: var(--surface-danger);
   border-bottom: 1px solid color-mix(in srgb, var(--color-error) 24%, var(--border-subtle));
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 /* ── ReviewTab ── */
@@ -385,7 +385,7 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
 }
 
@@ -419,7 +419,7 @@
   border: none;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   padding: 3px 8px;
   cursor: pointer;
   transition: background-color var(--transition-fast), color var(--transition-fast);
@@ -441,7 +441,7 @@
   border: 1px solid var(--border-subtle);
   background: var(--surface-canvas);
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   padding: 3px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -464,7 +464,7 @@
 
 .inspector-review__stale-banner {
   padding: 6px 12px;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--text-secondary);
   background-color: var(--surface-canvas);
   border-bottom: 1px dashed var(--border-subtle);
@@ -566,7 +566,7 @@
 
 .inspector-review__dir {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -593,7 +593,7 @@
   height: 24px;
   padding: 0 7px;
   border-radius: 5px;
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -637,7 +637,7 @@
 
 .inspector-review__file-empty {
   padding: 12px;
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   text-align: center;
   background-color: var(--code-block-bg);
@@ -645,7 +645,7 @@
 
 /* 复用 DiffViewer 文件状态徽章语义，与冷峻 Zinc 主题对齐 */
 .inspector-review .diff-file__status-badge {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   padding: 1px 5px;
   border-radius: 4px;
@@ -668,7 +668,7 @@
 }
 
 .inspector-review .diff-file__review-badge {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 4px;
@@ -830,7 +830,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
 }
 
@@ -865,7 +865,7 @@
   border: 1px solid var(--border-warm);
   background: var(--bg-card);
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   padding: 2px 8px;
   border-radius: 4px;
   cursor: pointer;

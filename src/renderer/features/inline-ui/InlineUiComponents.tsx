@@ -792,7 +792,7 @@ function ChartView({ node, style }: { node: NodeOf<'chart'>; style: CSSPropertie
                   fill={palette[s % palette.length]}
                   style={stagger(i)}
                 >
-                  <title>{`${node.labels[i]}${series.name && series.name !== '—' ? ` · ${series.name}` : ''}：${fullNumber.format(v)}${unit}`}</title>
+                  <title>{`${node.labels[i]}${series.name && series.name !== '—' ? `（${series.name}）` : ''}：${fullNumber.format(v)}${unit}`}</title>
                 </rect>
                 {singleBarLabels && (
                   <text className="inline-ui__chart-value" x={bx + inner / 2 - 1} y={top - 5} textAnchor="middle">
@@ -823,7 +823,7 @@ function ChartView({ node, style }: { node: NodeOf<'chart'>; style: CSSPropertie
               <path className="inline-ui__chart-line" d={segments.join(' ')} stroke={color} pathLength={1} />
               {series.values.map((v, i) => v === null ? null : (
                 <circle key={i} className="inline-ui__chart-point" cx={x(i)} cy={y(v)} r={3.5} fill={color} style={stagger(i)}>
-                  <title>{`${node.labels[i]}${series.name && series.name !== '—' ? ` · ${series.name}` : ''}：${fullNumber.format(v)}${unit}`}</title>
+                  <title>{`${node.labels[i]}${series.name && series.name !== '—' ? `（${series.name}）` : ''}：${fullNumber.format(v)}${unit}`}</title>
                 </circle>
               ))}
             </g>
@@ -895,7 +895,7 @@ function PieView({ node, style }: { node: NodeOf<'pie'>; style: CSSProperties })
           <span key={i} className="inline-ui__legend-item">
             <span className="inline-ui__legend-dot" style={{ background: palette[i % palette.length] }} />
             <span className="inline-ui__legend-label">{item.label}</span>
-            <span className="inline-ui__legend-value">{`${item.display} · ${percent(item.value)}`}</span>
+            <span className="inline-ui__legend-value">{`${item.display}（${percent(item.value)}）`}</span>
           </span>
         ))}
       </figcaption>

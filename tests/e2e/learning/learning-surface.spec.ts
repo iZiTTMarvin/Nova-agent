@@ -458,7 +458,7 @@ test.describe('学习表面主路径', () => {
     // 从这里开始学：分隔线 + 教练回合，用户气泡是短话
     nova.provider.enqueue({ kind: 'text', text: 'COACH_START_REPLY' })
     await pane.getByRole('button', { name: '从这里开始学' }).click()
-    await expect(learningFlow(nova).getByText('开始学习 · 应用如何启动')).toBeVisible({ timeout: 30_000 })
+    await expect(learningFlow(nova).getByText('开始学习「应用如何启动」')).toBeVisible({ timeout: 30_000 })
     await expect(nova.page.getByText('COACH_START_REPLY', { exact: false })).toBeVisible()
     await waitLearnTurnSettled(nova, sessionId)
     await expectNoInstructionLeak(nova)

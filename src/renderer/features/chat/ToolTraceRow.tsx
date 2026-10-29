@@ -306,16 +306,14 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
     .filter(Boolean)
     .join(' ')
 
-  const handleOpenFile = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleOpenFile = () => {
     const relPath = rawPath ? compactPathForTrace(rawPath, workspaceRoot) : ''
     if (!relPath) return
     useLayoutStore.getState().openFiles()
     useFileTreeStore.getState().selectFile(relPath)
   }
 
-  const handleOpenDir = (e: React.MouseEvent) => {
-    e.stopPropagation()
+  const handleOpenDir = () => {
     const relPath = rawPath && rawPath !== '.' ? compactPathForTrace(rawPath, workspaceRoot) : ''
     useLayoutStore.getState().openFiles()
     useFileTreeStore.getState().selectFile(null)
@@ -324,56 +322,69 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
     }
   }
 
+  const fileTargetLabel = isFileTool
+    ? `在侧边栏查看 ${fileParts?.filename || rawPath}`
+    : `在侧边栏查看目录 ${fileParts?.filename || fileParts?.dir || '.'}`
+
+  /*
+   * 展开详情与打开文件是两个兄弟按钮，不能互相嵌套：
+   * 展开按钮铺满整行承接点击与焦点环，可见内容只作展示；文件按钮叠在其上，可被 Tab 单独到达。
+   */
   return (
     <div className={rootClass}>
-      <button
-        ref={headerRef}
-        type="button"
-        className="tool-trace-row__header"
-        onClick={toggleOpen}
-        aria-expanded={isOpen}
-        title={fullTitle}
-      >
-        <span className="tool-trace-row__action">{actionText}</span>
-        <TraceFileBadgeOrIcon toolName={name} ext={fileParts?.ext || ''} />
+      <div className="tool-trace-row__line">
+        <button
+          ref={headerRef}
+          type="button"
+          className="tool-trace-row__header"
+          onClick={toggleOpen}
+          aria-expanded={isOpen}
+          aria-label={statusLabel ? `${fullTitle}，${statusLabel}` : fullTitle}
+          title={fullTitle}
+        />
+        <span className="tool-trace-row__action" aria-hidden="true">{actionText}</span>
+        <span className="tool-trace-row__icon-slot" aria-hidden="true">
+          <TraceFileBadgeOrIcon toolName={name} ext={fileParts?.ext || ''} />
+        </span>
 
-        {isFileTool && (
-          <span
+        {(isFileTool || isLs) && (
+          <button
+            type="button"
             className="tool-trace-row__file-target"
-            onClick={handleOpenFile}
-            title={`在侧边栏查看 ${fileParts?.filename || rawPath}`}
+            onClick={isLs ? handleOpenDir : handleOpenFile}
+            title={fileTargetLabel}
+            aria-label={fileTargetLabel}
           >
-            <span className="tool-trace-row__filename">{fileParts?.filename || 'file'}</span>
-            {fileParts?.dir ? <span className="tool-trace-row__dirname">{fileParts.dir}</span> : null}
-          </span>
-        )}
-
-        {isLs && (
-          <span
-            className="tool-trace-row__file-target"
-            onClick={handleOpenDir}
-            title={`在侧边栏查看目录 ${fileParts?.filename || fileParts?.dir || '.'}`}
-          >
-            <span className="tool-trace-row__filename">{fileParts?.filename || fileParts?.dir || '.'}</span>
-            {fileParts?.dir && fileParts?.filename ? (
-              <span className="tool-trace-row__dirname">{fileParts.dir}</span>
-            ) : null}
-          </span>
+            {isLs ? (
+              <>
+                <span className="tool-trace-row__filename">{fileParts?.filename || fileParts?.dir || '.'}</span>
+                {fileParts?.dir && fileParts?.filename ? (
+                  <span className="tool-trace-row__dirname">{fileParts.dir}</span>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <span className="tool-trace-row__filename">{fileParts?.filename || 'file'}</span>
+                {fileParts?.dir ? <span className="tool-trace-row__dirname">{fileParts.dir}</span> : null}
+              </>
+            )}
+          </button>
         )}
 
         {isBash && (
-          <span className="tool-trace-row__command" title={command}>
+          <span className="tool-trace-row__command" aria-hidden="true">
             {command}
           </span>
         )}
 
         {!isFileTool && !isLs && !isBash && (
-          <span className="tool-trace-row__text">{generalTarget}</span>
+          <span className="tool-trace-row__text" aria-hidden="true">{generalTarget}</span>
         )}
 
         {statusLabel && (
           <span
             className={`tool-trace-row__status tool-trace-row__status--${awaitingPermission ? 'awaiting' : outcome}`}
+            aria-hidden="true"
           >
             {statusLabel}
           </span>
@@ -383,8 +394,9 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
           size={12}
           direction={isOpen ? 'down' : 'right'}
           className="tool-trace-row__chevron"
+          aria-hidden="true"
         />
-      </button>
+      </div>
 
       <TurnProcessCollapsible
         open={isOpen}

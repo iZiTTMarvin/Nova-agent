@@ -47,7 +47,7 @@
   gap: 6px;
   margin-left: auto;
   color: var(--text-muted);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 650;
 }
 
@@ -61,7 +61,7 @@
 
 .plan-approval-card__eyebrow {
   color: var(--text-muted);
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 650;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -78,7 +78,7 @@
   margin-left: auto;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.75rem;
 }
 
 .plan-approval-card__choices {
@@ -142,7 +142,7 @@
 .plan-approval-card__choice small {
   margin-left: 6px;
   color: var(--text-muted);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .plan-approval-card__feedback {
@@ -188,7 +188,7 @@
   margin-right: auto;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.75rem;
 }
 
 @media (max-width: 760px) {
@@ -226,7 +226,7 @@
 
 .plan-approval-pending__hint {
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.75rem;
 }
 
 @keyframes plan-approval-pending-pulse {

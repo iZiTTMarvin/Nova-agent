@@ -189,7 +189,7 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
                 { value: 'default', label: '跟随默认模型（派遣时确定）' },
                 ...selectableModels.map(model => ({
                   value: `${model.providerId}::${model.modelEntryId}`,
-                  label: `${model.providerName} · ${model.displayName}`
+                  label: `${model.displayName}（${model.providerName}）`
                 }))
               ]}
               onChange={value => {

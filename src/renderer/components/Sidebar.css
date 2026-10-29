@@ -145,7 +145,7 @@
 
 .sidebar-search-bar__count {
   flex-shrink: 0;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   background-color: var(--surface-canvas);

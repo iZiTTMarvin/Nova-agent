@@ -193,7 +193,7 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
 
     const { container, unmount } = renderDom(<SubagentsSettingsPanel />)
     await flush()
-    expect(container.textContent).toContain('内置能力 · 只读')
+    expect(container.textContent).toContain('内置能力（只读）')
     expect(container.textContent).not.toContain('删除配置')
 
     await act(async () => button(container, '复制为自定义').click())
@@ -225,7 +225,7 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
     await flush()
 
     expect(container.querySelector('[aria-busy="true"]')).toBeNull()
-    expect(container.textContent).toContain('内置能力 · 只读')
+    expect(container.textContent).toContain('内置能力（只读）')
     expect(container.textContent).toContain('explore')
     unmount()
   })

@@ -65,7 +65,7 @@ export function learningTopicSuggestion(topicTitle: string): string {
 }
 
 export function learningTopicDivider(topicTitle: string): string {
-  return `开始学习 · ${topicTitle}`
+  return `开始学习「${topicTitle}」`
 }
 
 export const LEARNING_TURN_INTERRUPTED = '已停止'

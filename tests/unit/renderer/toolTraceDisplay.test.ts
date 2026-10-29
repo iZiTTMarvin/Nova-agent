@@ -64,39 +64,39 @@ describe('getToolTraceTarget', () => {
     expect(getToolTraceActionChinese('web_fetch')).toBe('读取网页')
   })
 
-  it('浏览器工具显示动作目标且不重复原始工具名', () => {
+  it('浏览器工具直接给出目标，不以中点拼接', () => {
     expect(getToolTraceTarget('browser_open', {
       action: 'open',
       url: 'https://example.com/docs'
-    })).toBe('· example.com')
+    })).toBe('example.com')
     expect(getToolTraceTarget('browser_observe', {
       action: 'snapshot',
       browserId: 'brw_123456789012345'
-    })).toBe('· brw_1234567890...')
+    })).toBe('brw_1234567890...')
     expect(getToolTraceTarget('browser_act', {
       action: { kind: 'click', ref: 'e3' }
-    })).toBe('· 点击 e3')
+    })).toBe('点击 e3')
     expect(getToolTraceTarget('browser_capture', {
       observation: { browserId: 'brw_1' }
-    })).toBe('· brw_1')
-    expect(getToolTraceTarget('browser_close', { browserId: 'brw_1' })).toBe('· brw_1')
+    })).toBe('brw_1')
+    expect(getToolTraceTarget('browser_close', { browserId: 'brw_1' })).toBe('brw_1')
     expect(getToolTraceTarget('custom_tool', {})).toBe('')
   })
 })
 
 describe('getToolTraceActionChinese', () => {
-  it('映射常见工具为中文动词', () => {
-    expect(getToolTraceActionChinese('read')).toBe('已读取')
-    expect(getToolTraceActionChinese('bash')).toBe('已执行')
-    expect(getToolTraceActionChinese('edit')).toBe('已编辑')
-    expect(getToolTraceActionChinese('write')).toBe('已写入')
-    expect(getToolTraceActionChinese('grep')).toBe('已搜索')
-    expect(getToolTraceActionChinese('find')).toBe('已查找')
-    expect(getToolTraceActionChinese('ls')).toBe('已列出')
-    expect(getToolTraceActionChinese('task_wait')).toBe('已等待')
-    expect(getToolTraceActionChinese('batch_task')).toBe('已批处理')
-    expect(getToolTraceActionChinese('subagent_read')).toBe('已回读')
-    expect(getToolTraceActionChinese('task_followup')).toBe('已续跑')
+  it('动作只表达意图，不预告完成；结果由 toolOutcome 负责', () => {
+    expect(getToolTraceActionChinese('read')).toBe('读取')
+    expect(getToolTraceActionChinese('bash')).toBe('执行')
+    expect(getToolTraceActionChinese('edit')).toBe('编辑')
+    expect(getToolTraceActionChinese('write')).toBe('写入')
+    expect(getToolTraceActionChinese('grep')).toBe('搜索')
+    expect(getToolTraceActionChinese('find')).toBe('查找')
+    expect(getToolTraceActionChinese('ls')).toBe('列出')
+    expect(getToolTraceActionChinese('task_wait')).toBe('等待')
+    expect(getToolTraceActionChinese('batch_task')).toBe('批处理')
+    expect(getToolTraceActionChinese('subagent_read')).toBe('回读')
+    expect(getToolTraceActionChinese('task_followup')).toBe('续跑')
     expect(getToolTraceActionChinese('browser_open')).toBe('打开网页')
     expect(getToolTraceActionChinese('browser_observe')).toBe('读取页面')
     expect(getToolTraceActionChinese('browser_act')).toBe('操作页面')

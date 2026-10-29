@@ -49,7 +49,7 @@ export function buildStatusDiffTurns(
       removed += counts.deletions
     }
     const time = new Date(message.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
-    turns.push({ messageId: message.id, label: `${time} · ${files.length} 个文件`, cache, files, added, removed })
+    turns.push({ messageId: message.id, label: `${time}，${files.length} 个文件`, cache, files, added, removed })
   }
   return turns.reverse()
 }

@@ -66,7 +66,7 @@
 }
 
 .image-preview-bar__name {
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   max-width: 64px;
   overflow: hidden;

@@ -335,7 +335,7 @@ describe('MemorySettingsPanel 学习记忆查看器', () => {
     })
     const renderer = renderDom(<MemorySettingsPanel />); await flushAsync()
     expect(renderer.container.textContent).toContain('preview fixture')
-    expect(renderer.container.textContent).toContain('全局 1 条 · 项目 2 条')
+    expect(renderer.container.textContent).toContain('全局 1 条，项目 2 条')
     expect(renderer.container.textContent).toContain('后台小模型')
     const switches = [...renderer.container.querySelectorAll<HTMLInputElement>('input[role="switch"]')]
     expect(switches).toHaveLength(2)

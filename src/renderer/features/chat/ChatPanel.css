@@ -253,7 +253,7 @@
   gap: 6px;
   padding: 3px 12px;
   border-radius: 999px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--text-secondary);
   background: var(--surface-muted);
   border: 1px solid var(--border-subtle);
@@ -482,7 +482,7 @@
 }
 
 .tool-box__truncation-hint {
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   padding: 4px 2px 6px;
   line-height: 1.4;
@@ -524,11 +524,18 @@
   }
 }
 
+/* 减弱动态：停住旋转，加载文字仍表达状态 */
+@media (prefers-reduced-motion: reduce) {
+  .web-search-card__spinner {
+    animation: none;
+  }
+}
+
 .web-search-card__answer {
   padding: 8px 10px;
   margin-bottom: 8px;
   background-color: var(--bg-card);
-  border: 1px solid var(--border-cream);
+  border: 0.5px solid var(--border-cream);
   border-radius: var(--radius-sm);
   line-height: 1.5;
   white-space: pre-wrap;
@@ -656,7 +663,7 @@
 }
 
 .chat-msg__timestamp {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
@@ -887,7 +894,7 @@
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.75rem;
   white-space: nowrap;
   transition:
     background-color 150ms var(--ease-out-expo),
@@ -966,7 +973,7 @@ button.code-index-status-chip:hover {
 }
 
 .context-popover__total {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
@@ -1084,14 +1091,14 @@ button.code-index-status-chip:hover {
 }
 
 .context-usage__summary {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
 .context-usage__hint {
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.5;
   color: var(--text-muted);
 }
@@ -1147,7 +1154,7 @@ button.code-index-status-chip:hover {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .context-usage__profile-id {
@@ -1365,13 +1372,13 @@ button.code-index-status-chip:hover {
 .steering-queue__title {
   font-weight: 500;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   letter-spacing: 0.02em;
 }
 
 .steering-queue__hint {
   flex: 1;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-muted);
 }
 
@@ -1395,7 +1402,7 @@ button.code-index-status-chip:hover {
 
 .steering-queue__index {
   min-width: 14px;
-  font-size: 11px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
   text-align: right;
@@ -1666,4 +1673,16 @@ button.code-index-status-chip:hover {
 .chat-width-handle:hover::after,
 .chat-width-handle--active::after {
   opacity: 1;
+}
+
+/* 键盘焦点：热区本身不画框，焦点环套在玻璃把手上 */
+.chat-width-handle:focus-visible {
+  outline: none;
+}
+
+.chat-width-handle:focus-visible::after {
+  opacity: 1;
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 999px;
 }

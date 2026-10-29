@@ -10,7 +10,7 @@ import type { Message, MessageBlock } from '../../../shared/session'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import type { RunSnapshot } from '../../../shared/run/types'
 import { MarkdownRenderer } from '../chat/MarkdownRenderer'
-import { formatSubagentModelLine } from './modelLine'
+import { formatSubagentModelParts } from './modelLine'
 import { useRunStore } from '../../stores/useRunStore'
 import { useChatStore } from '../../stores/useChatStore'
 import type { PopoverAnchor } from './SubagentActivityRow'
@@ -227,7 +227,7 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = (prop
   )
   const loading = messages === null
 
-  const modelLine = formatSubagentModelLine(projection)
+  const modelParts = formatSubagentModelParts(projection)
 
   return (
     <>
@@ -244,11 +244,15 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = (prop
             <span className="subagent-detail-popover__name">{projection.profile.name}</span>
             {projection.taskLabel && projection.taskLabel !== projection.profile.name && (
               <span className="subagent-detail-popover__task-label" title={projection.taskLabel}>
-                · {projection.taskLabel}
+                {projection.taskLabel}
               </span>
             )}
-            {modelLine && (
-              <span className="subagent-detail-popover__model">{modelLine}</span>
+            {modelParts.length > 0 && (
+              <span className="subagent-detail-popover__model">
+                {modelParts.map(part => (
+                  <span key={part} className="subagent-model-part">{part}</span>
+                ))}
+              </span>
             )}
             {projection.artifactCount > 0 && (
               <span className="subagent-detail-popover__artifacts">
