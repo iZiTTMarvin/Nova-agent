@@ -52,6 +52,9 @@ export const TurnProcessCollapsible: React.FC<TurnProcessCollapsibleProps> = Rea
         setRenderChildren(true)
         return
       }
+      // 从未展开过（每条收起的行挂载时都走这里）就没有内容要卸载：不读计算样式。
+      // 否则上百行同批挂载时，每次都会强制整页同步样式计算，形成长任务。
+      if (!renderChildren) return
       if (reducedMotion) {
         setRenderChildren(false)
         return
@@ -66,7 +69,7 @@ export const TurnProcessCollapsible: React.FC<TurnProcessCollapsibleProps> = Rea
       }
       const timer = window.setTimeout(() => setRenderChildren(false), durationMs)
       return () => window.clearTimeout(timer)
-    }, [open, reducedMotion])
+    }, [open, reducedMotion, renderChildren])
 
     useLayoutEffect(() => {
       const wasOpen = prevOpenRef.current
@@ -117,6 +120,7 @@ export const TurnProcessCollapsible: React.FC<TurnProcessCollapsibleProps> = Rea
         ref={rootRef}
         className={classes}
         data-expanded={open}
+        data-empty={!renderChildren}
         aria-hidden={!open}
         onTransitionEnd={handleTransitionEnd}
       >

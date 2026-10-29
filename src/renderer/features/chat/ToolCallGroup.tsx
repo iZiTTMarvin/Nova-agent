@@ -1,21 +1,14 @@
 /**
- * ToolCallGroup — 相邻同族过程工具的摘要行
+ * ToolCallGroup — 活动组：两段说话之间的思考与工具调用收成一行整句摘要
  *
- * 组头：动作、数量与真实存在的状态；展开后每项保留自己的状态与详情。
+ * 组头：各类动作的数量与真实存在的状态；展开后每项保留自己的状态与详情。
  * 文件与目录项保持“点击在右侧打开”的入口；其余项复用 ToolTraceRow 的参数/结果/错误详情。
  * 授权入口固定画在组头下方，组折叠时依然可见、只出现一次。
  */
 import React, { useCallback, useRef, useState } from 'react'
-import {
-  ChevronIcon,
-  SearchIcon,
-  EditIcon,
-  TerminalIcon,
-  FileIcon,
-  FolderIcon,
-  GlobeIcon
-} from '../../components/Icons'
+import { ChevronIcon, FileIcon, FolderIcon } from '../../components/Icons'
 import { TurnProcessCollapsible } from './TurnProcessCollapsible'
+import { ActivityScrollBox } from './ActivityScrollBox'
 import { ToolTraceRow, selectAnchoredRequest } from './ToolTraceRow'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { useAgentStore } from '../../stores/useAgentStore'
@@ -23,28 +16,32 @@ import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useFileTreeStore } from '../inspector/useFileTreeStore'
 import {
   compactPathForTrace,
-  getToolGroupHeaderInfo,
+  getActivityHeadline,
   getToolTraceActionChinese,
-  splitFilePath,
-  type ToolGroupKind
+  splitFilePath
 } from './toolTraceDisplay'
 import {
   AWAITING_PERMISSION_LABEL,
   countToolOutcomes,
   formatToolOutcomeCounts,
   getToolOutcomeLabel,
-  resolveToolOutcome,
-  type ToolOutcomeCounts
+  resolveToolOutcome
 } from './toolOutcome'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import type { RendererToolBlock } from '../../stores/types'
+import type { ActivityItem } from './turnProcessModel'
 import './ToolCallGroup.css'
 
 export interface ToolCallGroupProps {
-  toolName: string
-  blocks: RendererToolBlock[]
-  /** 稳定的组身份（首个调用的 toolCallId），新调用加入时不变 */
+  items: ActivityItem[]
+  /** 稳定的组身份（首项身份），新项加入时不变 */
   groupId: string
+  /** 用户未操作时的展开状态；回合进行中的末段活动组默认展开 */
+  defaultOpen?: boolean
+  /** 思考项由调用方渲染（需要回合级的活跃判定与计时上下文） */
+  renderThinking?: (item: Extract<ActivityItem, { kind: 'block' }>) => React.ReactNode
+  /** 当前助手消息正在生成：运行中的工具行显示流式态 */
+  isGenerating?: boolean
   /** 展开状态按 key 保存在上层：组用 `group:${groupId}`，单项用 toolCallId；不传则组件自己保存 */
   traceOpen?: Readonly<Record<string, boolean>>
   onTraceOpenChange?: (key: string, open: boolean) => void
@@ -52,28 +49,6 @@ export interface ToolCallGroupProps {
 
 export function groupOpenKey(groupId: string): string {
   return `group:${groupId}`
-}
-
-function GroupHeaderIcon({
-  kind,
-  counts
-}: {
-  kind: ToolGroupKind | null
-  counts: ToolOutcomeCounts
-}) {
-  const iconClass = [
-    'tool-call-group__icon',
-    counts.running > 0 ? 'tool-call-group__icon--running' : '',
-    counts.failed > 0 ? 'tool-call-group__icon--error' : ''
-  ]
-    .filter(Boolean)
-    .join(' ')
-
-  if (kind === 'web') return <GlobeIcon size={14} className={iconClass} />
-  if (kind === 'explore') return <SearchIcon size={14} className={iconClass} />
-  if (kind === 'write') return <EditIcon size={14} className={iconClass} />
-  if (kind === 'command') return <TerminalIcon size={14} className={iconClass} />
-  return <span className="tool-call-group__status-dot" aria-hidden="true" />
 }
 
 function FileBadgeOrIcon({ toolName, ext }: { toolName: string; ext: string }) {
@@ -202,9 +177,11 @@ function FileOrDirItem({
 }
 
 export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function ToolCallGroup({
-  toolName,
-  blocks,
+  items,
   groupId,
+  defaultOpen = false,
+  renderThinking,
+  isGenerating = false,
   traceOpen: controlledTraceOpen,
   onTraceOpenChange: controlledOnTraceOpenChange
 }) {
@@ -219,28 +196,72 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
     [controlledOnTraceOpenChange]
   )
   const workspaceRoot = useWorkspaceStore(state => state.currentProjectPath)
-  const headerInfo = getToolGroupHeaderInfo(blocks, toolName)
-  const counts = countToolOutcomes(blocks)
+  // 步骤框高度只是阅读偏好，随组件存活即可，不进持久化
+  const [boxHeight, setBoxHeight] = useState<number | undefined>(undefined)
+  const toolBlocks = items.flatMap(item => (item.kind === 'tool' ? [item.block] : []))
+  const headline = getActivityHeadline(
+    items.map(item =>
+      item.kind === 'tool' ? { toolName: item.block.toolName, arguments: item.block.arguments } : {}
+    )
+  )
+  const counts = countToolOutcomes(toolBlocks)
 
   // 授权请求只锚定到 toolCallIds 的最后一项；组负责渲染它，行内不再重复
   const anchoredRequest = useAgentStore(state => {
     const request = state.pendingPermissionRequest
     if (!request) return null
-    return blocks.some(block => selectAnchoredRequest(request, block.toolCallId) !== null)
+    return toolBlocks.some(block => selectAnchoredRequest(request, block.toolCallId) !== null)
       ? request
       : null
   })
 
   const openKey = groupOpenKey(groupId)
-  // 单条调用变成分组时，已展开的那一项让组默认保持展开
-  const isOpen = traceOpen[openKey] ?? blocks.some(block => traceOpen[block.toolCallId] === true)
+  // 用户操作优先；否则末段默认展开，单条变成分组时已展开的那一项也让组保持展开
+  const isOpen =
+    traceOpen[openKey] ??
+    (defaultOpen || toolBlocks.some(block => traceOpen[block.toolCallId] === true))
 
-  const title = headerInfo?.title ?? '过程'
-  const summaryText = headerInfo?.summaryText ?? `${blocks.length} 项`
-  const fullSummary = headerInfo?.fullSummary ?? `${title} ${summaryText}`
   const statusParts = formatToolOutcomeCounts(counts)
   if (anchoredRequest) statusParts.push(AWAITING_PERMISSION_LABEL)
   const hasProblem = counts.failed > 0 || counts.incomplete > 0
+
+  const renderItem = (item: ActivityItem): React.ReactNode => {
+    if (item.kind === 'block') {
+      return (
+        <li key={`thinking-${item.index}`} className="tool-call-group__item-wrap">
+          {renderThinking?.(item)}
+        </li>
+      )
+    }
+    const block = item.block
+    const outcome = resolveToolOutcome(block)
+    const isFileOrDir = FILE_TOOL_NAMES.has(block.toolName) || block.toolName === 'ls'
+    // 流式 write/edit 的参数尚未成形，交给 ToolTraceRow 按原始 JSON 预览
+    const isStreamingArgs = block.argumentsRaw !== undefined
+    const showLightItem =
+      isFileOrDir && !isStreamingArgs && (outcome === 'running' || outcome === 'success')
+    return (
+      <li key={block.toolCallId} className="tool-call-group__item-wrap">
+        {showLightItem ? (
+          <FileOrDirItem block={block} workspaceRoot={workspaceRoot} />
+        ) : (
+          <ToolTraceRow
+            toolCallId={block.toolCallId}
+            name={block.toolName}
+            {...(isStreamingArgs ? { argumentsRaw: block.argumentsRaw } : { args: block.arguments })}
+            status={block.status}
+            result={block.result}
+            isLiveStreaming={isGenerating && block.status === 'running'}
+            nestedActivities={block.nestedActivities}
+            open={traceOpen[block.toolCallId] ?? false}
+            onOpenChange={onTraceOpenChange}
+            embedded
+            permissionHandledByGroup
+          />
+        )}
+      </li>
+    )
+  }
 
   return (
     <div className="tool-call-group" data-group-id={groupId}>
@@ -250,13 +271,9 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
         className="tool-call-group__header"
         onClick={() => onTraceOpenChange(openKey, !isOpen)}
         aria-expanded={isOpen}
-        title={fullSummary}
+        title={headline}
       >
-        <span className="tool-call-group__icon-slot">
-          <GroupHeaderIcon kind={headerInfo?.kind ?? null} counts={counts} />
-        </span>
-        <span className="tool-call-group__title">{title}</span>
-        <span className="tool-call-group__summary-text">{summaryText}</span>
+        <span className="tool-call-group__headline">{headline}</span>
         {statusParts.length > 0 && (
           <span
             className={`tool-call-group__outcome${hasProblem ? ' tool-call-group__outcome--problem' : ''}`}
@@ -282,32 +299,16 @@ export const ToolCallGroup: React.FC<ToolCallGroupProps> = React.memo(function T
         className="tool-call-group__expandable"
         pinHeaderRef={headerRef}
       >
-        <ul className="tool-call-group__list">
-          {blocks.map(block => {
-            const outcome = resolveToolOutcome(block)
-            const isFileOrDir = FILE_TOOL_NAMES.has(block.toolName) || block.toolName === 'ls'
-            const showLightItem = isFileOrDir && (outcome === 'running' || outcome === 'success')
-            return (
-              <li key={block.toolCallId} className="tool-call-group__item-wrap">
-                {showLightItem ? (
-                  <FileOrDirItem block={block} workspaceRoot={workspaceRoot} />
-                ) : (
-                  <ToolTraceRow
-                    toolCallId={block.toolCallId}
-                    name={block.toolName}
-                    args={block.arguments}
-                    status={block.status}
-                    result={block.result}
-                    open={traceOpen[block.toolCallId] ?? false}
-                    onOpenChange={onTraceOpenChange}
-                    embedded
-                    permissionHandledByGroup
-                  />
-                )}
-              </li>
-            )
-          })}
-        </ul>
+        <ActivityScrollBox
+          total={items.length}
+          follow={defaultOpen}
+          height={boxHeight}
+          onHeightChange={setBoxHeight}
+        >
+          {(start, end) => (
+            <ul className="tool-call-group__list">{items.slice(start, end).map(renderItem)}</ul>
+          )}
+        </ActivityScrollBox>
       </TurnProcessCollapsible>
     </div>
   )

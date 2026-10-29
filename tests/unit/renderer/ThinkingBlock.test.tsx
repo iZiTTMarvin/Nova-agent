@@ -56,18 +56,26 @@ describe('ThinkingBlock 单行流式与状态', () => {
   it('active 时在单行内展示最新流式内容，不默认展开大卡片', () => {
     const r = renderDom(<ThinkingBlock thinking={'第一句\n正在分析第二句'} active={true} />)
     const title = r.container.querySelector('.thinking-block__title')
-    expect(title?.textContent).toBe('Think')
+    expect(title?.textContent).toBe('思考中')
     const lineText = r.container.querySelector('.thinking-block__line-text')
     expect(lineText?.textContent).toBe('正在分析第二句')
     expect(r.container.querySelector('.thinking-block__collapsible')).toBeNull()
     r.unmount()
   })
 
-  it('非 active 时单行展示首行摘要', () => {
+  it('非 active 且无耗时（旧消息）时单行展示首行摘要', () => {
     const r = renderDom(<ThinkingBlock thinking={'思考总结第一句\n后面更多分析'} active={false} />)
+    expect(r.container.querySelector('.thinking-block__title')?.textContent).toBe('已思考')
     const lineText = r.container.querySelector('.thinking-block__line-text')
     expect(lineText?.textContent).toBe('思考总结第一句')
     expect(r.container.querySelector('.thinking-block__collapsible')).toBeNull()
+    r.unmount()
+  })
+
+  it('结束且有耗时时只显示耗时，不再铺开原文首行', () => {
+    const r = renderDom(<ThinkingBlock thinking={'很长的一段思考原文'} active={false} durationMs={7_000} />)
+    expect(r.container.querySelector('.thinking-block__line-text')?.textContent).toBe('7 秒')
+    expect(r.container.textContent).not.toContain('很长的一段思考原文')
     r.unmount()
   })
 

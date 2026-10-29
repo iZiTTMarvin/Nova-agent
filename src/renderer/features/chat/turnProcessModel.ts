@@ -2,12 +2,7 @@
  * TurnProcessTree 纯函数层：分区、摘要、过程时间线。
  */
 import type { Mode } from '../../../shared/session/types'
-import { isPersistentToolBlock, shouldRenderToolBlock } from './renderingPolicy'
-import {
-  buildBlockRenderUnits,
-  buildToolCallRenderUnits,
-  type RenderUnit
-} from './toolCallGrouping'
+import { isActivityToolBlock, isPersistentToolBlock, shouldRenderToolBlock } from './renderingPolicy'
 import type {
   ExtendedToolCall,
   RendererMessageBlock,
@@ -17,13 +12,36 @@ import type {
 /** 回合阶段 */
 export type TurnPhase = 'live' | 'completed'
 
-/** block 单元与 tool/toolGroup 单元按原始顺序穿插。 */
-export type ProcessSegment =
+type RendererThinkingBlock = Extract<RendererMessageBlock, { type: 'thinking' }>
+
+/** 时间线最小单元：一个 block 或一次工具调用，按原始顺序排列。 */
+type TimelineUnit =
   | { kind: 'block'; block: RendererMessageBlock; index: number }
-  | Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }>
+  | { kind: 'tool'; block: RendererToolBlock }
+
+/** 活动组内的一项：一段思考或一次普通工具调用。 */
+export type ActivityItem =
+  | { kind: 'block'; block: RendererThinkingBlock; index: number }
+  | { kind: 'tool'; block: RendererToolBlock }
+
+/**
+ * 两段说话之间连续的思考与工具调用合成一个活动组，组头给整句摘要。
+ * id 取首项身份，组内追加新项时不变；isLast 表示它是整条时间线的末段。
+ */
+export type ActivitySegment = {
+  kind: 'activity'
+  id: string
+  items: ActivityItem[]
+  isLast: boolean
+}
+
+export type ProcessSegment = TimelineUnit | ActivitySegment
+
+type TimelineDisplay = 'process' | 'persistent'
+type TurnTimelineUnit = TimelineUnit & { display: TimelineDisplay }
 
 export type TurnTimelineSegment = ProcessSegment & {
-  display: 'process' | 'persistent'
+  display: TimelineDisplay
 }
 
 export interface TurnRenderModel {
@@ -181,38 +199,24 @@ export function normalizeThinkingForDisplay(thinking: string): string {
 }
 
 /**
- * 将 blocks 映射为按时间线排序的 TurnTimelineSegment[]（tool 段经 buildBlockRenderUnits 聚合）。
+ * 将 blocks 映射为按时间线排序的单元（每个 block / 每次工具调用一项，活动组在其后合成）。
  * 工具属于 process（可视化等回合产物除外）；answerIndex 处的 text 是 persistent；空 text 不产生渲染单元。
  *
- * cache 命中时按 block 引用前缀复用已产出的段：流式 tick 只浅拷贝尾部，
- * 前缀段（含 toolGroup 的 blocks 数组）引用保持稳定，下游 React.memo 不再级联失效。
+ * cache 命中时按 block 引用前缀复用已产出的单元：流式 tick 只浅拷贝尾部，
+ * 前缀单元引用保持稳定，下游 React.memo 不再级联失效。
  */
-function buildTimeline(
+function buildTimelineUnits(
   blocks: RendererMessageBlock[],
   mode: Mode,
   cache?: TurnBuildCache
-): TurnTimelineSegment[] {
+): TurnTimelineUnit[] {
   const answerIndex = findAnswerIndex(blocks, mode)
   const lastSavePlanIndex = findLastSavePlanIndex(blocks)
 
   const reused = reuseTimelinePrefix(blocks, mode, answerIndex, lastSavePlanIndex, cache)
 
-  const timeline: TurnTimelineSegment[] = reused.timeline
+  const timeline: TurnTimelineUnit[] = reused.timeline
   const segmentEndBlockIndex: number[] = reused.segmentEndBlockIndex
-  let toolRun: RendererToolBlock[] = []
-  let runLastBlockIndex = -1
-
-  const flushToolRun = (): void => {
-    if (toolRun.length === 0) return
-    const units = buildBlockRenderUnits(toolRun, mode)
-    for (const unit of units) {
-      if (unit.kind === 'tool' || unit.kind === 'toolGroup') {
-        timeline.push({ ...unit, display: resolveToolDisplay(unit) })
-        segmentEndBlockIndex.push(runLastBlockIndex)
-      }
-    }
-    toolRun = []
-  }
 
   for (let index = reused.resumeBlockIndex; index < blocks.length; index++) {
     const block = blocks[index]
@@ -220,14 +224,13 @@ function buildTimeline(
     if (block.type === 'tool') {
       if (!shouldRenderToolBlock(mode, block.toolName)) continue
       if (block.toolName === 'save_plan' && index !== lastSavePlanIndex) continue
-      toolRun.push(block)
-      runLastBlockIndex = index
+      timeline.push({ kind: 'tool', block, display: resolveToolDisplay(block) })
+      segmentEndBlockIndex.push(index)
       continue
     }
 
     if (block.type === 'text' && !block.content.trim()) continue
 
-    flushToolRun()
     timeline.push({
       kind: 'block',
       block,
@@ -236,7 +239,6 @@ function buildTimeline(
     })
     segmentEndBlockIndex.push(index)
   }
-  flushToolRun()
 
   if (cache) {
     cache.blocks = blocks
@@ -262,7 +264,7 @@ function reuseTimelinePrefix(
   answerIndex: number,
   lastSavePlanIndex: number,
   cache?: TurnBuildCache
-): { timeline: TurnTimelineSegment[]; segmentEndBlockIndex: number[]; resumeBlockIndex: number } {
+): { timeline: TurnTimelineUnit[]; segmentEndBlockIndex: number[]; resumeBlockIndex: number } {
   if (!cache || cache.mode !== mode || cache.timeline.length === 0) {
     return { timeline: [], segmentEndBlockIndex: [], resumeBlockIndex: 0 }
   }
@@ -310,22 +312,82 @@ function reuseTimelinePrefix(
   }
 }
 
-/** 段输出由其输入 block 引用完全决定；流式 tick 只改尾部，前缀段可跨构建复用 */
+/** 单元输出由其输入 block 引用完全决定；流式 tick 只改尾部，前缀单元可跨构建复用 */
 export interface TurnBuildCache {
   blocks: RendererMessageBlock[]
   mode: Mode
   answerIndex: number
   lastSavePlanIndex: number
-  timeline: TurnTimelineSegment[]
-  /** 每个段输入的最后一个 block 下标（与 timeline 一一对应） */
+  timeline: TurnTimelineUnit[]
+  /** 每个单元输入的 block 下标（与 timeline 一一对应） */
   segmentEndBlockIndex: number[]
+  /** 上次输出的分组时间线，用于复用未变化的活动组 */
+  segments?: TurnTimelineSegment[]
 }
 
 /** 工具段的展示位置只取决于其自身 block，前缀复用不受影响 */
-function resolveToolDisplay(
-  unit: Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }>
-): TurnTimelineSegment['display'] {
-  return unit.kind === 'tool' && isPersistentToolBlock(unit.block) ? 'persistent' : 'process'
+function resolveToolDisplay(block: RendererToolBlock): TimelineDisplay {
+  return isPersistentToolBlock(block) ? 'persistent' : 'process'
+}
+
+function activityItemOf(unit: TurnTimelineUnit): ActivityItem | null {
+  if (unit.display !== 'process') return null
+  if (unit.kind === 'tool') return isActivityToolBlock(unit.block) ? { kind: 'tool', block: unit.block } : null
+  return unit.block.type === 'thinking' ? { kind: 'block', block: unit.block, index: unit.index } : null
+}
+
+function activityItemId(item: ActivityItem): string {
+  return item.kind === 'tool' ? item.block.toolCallId : `thinking-${item.index}`
+}
+
+/**
+ * 把相邻的思考与普通工具调用合成活动组；说话（text）、交互卡片与回合产物打断连续段。
+ * 只有一项时保持原单元，避免为单行再套一层折叠。
+ * previous 为上次构建结果：项引用与末段标记都未变的组直接复用旧对象，下游 memo 不失效。
+ */
+function groupActivities(
+  units: TurnTimelineUnit[],
+  previous?: TurnTimelineSegment[]
+): TurnTimelineSegment[] {
+  const previousById = new Map<string, ActivitySegment>()
+  for (const segment of previous ?? []) {
+    if (segment.kind === 'activity') previousById.set(segment.id, segment)
+  }
+
+  const segments: TurnTimelineSegment[] = []
+  let run: TurnTimelineUnit[] = []
+  let items: ActivityItem[] = []
+
+  const flush = (isLast: boolean): void => {
+    if (run.length === 1) segments.push(run[0])
+    else if (run.length > 1) {
+      const id = activityItemId(items[0])
+      const prev = previousById.get(id)
+      const reusable =
+        prev !== undefined &&
+        prev.isLast === isLast &&
+        prev.items.length === items.length &&
+        prev.items.every((item, i) => item.block === items[i].block)
+      segments.push(
+        reusable ? (prev as TurnTimelineSegment) : { kind: 'activity', id, items, isLast, display: 'process' }
+      )
+    }
+    run = []
+    items = []
+  }
+
+  for (const unit of units) {
+    const item = activityItemOf(unit)
+    if (item) {
+      run.push(unit)
+      items.push(item)
+      continue
+    }
+    flush(false)
+    segments.push(unit)
+  }
+  flush(true)
+  return segments
 }
 
 function resolveDurationMs(
@@ -378,10 +440,10 @@ export function buildTurnRenderModel(
   } = input
 
   const durationMs = resolveDurationMs(phase, turnStartedAt, turnEndedAt)
-  let timeline: TurnTimelineSegment[]
+  let units: TurnTimelineUnit[]
 
   if (blocks && blocks.length > 0) {
-    timeline = buildTimeline(blocks, mode, cache)
+    units = buildTimelineUnits(blocks, mode, cache)
   } else {
     // 旧路径降级：toolCalls + content/thinking。语义与 blocks 路径一致：
     // thinking 与全部工具（含 askQuestion）属于过程，content 是最终答案。
@@ -391,19 +453,33 @@ export function buildTurnRenderModel(
     const answerBlock: RendererMessageBlock | null = content?.trim()
       ? { type: 'text', content }
       : null
-    timeline = [
+    const toolUnits: TurnTimelineUnit[] = (toolCalls ?? [])
+      .filter(tc => shouldRenderToolBlock(mode, tc.name))
+      .map(tc => {
+        const block: RendererToolBlock = {
+          type: 'tool',
+          toolCallId: tc.id,
+          toolName: tc.name,
+          arguments: tc.arguments,
+          status: tc.status,
+          result: tc.result,
+          ...(tc.argumentsRaw !== undefined ? { argumentsRaw: tc.argumentsRaw } : {})
+        }
+        return { kind: 'tool' as const, block, display: resolveToolDisplay(block) }
+      })
+    units = [
       ...(thinkingBlock
         ? [{ kind: 'block' as const, block: thinkingBlock, index: -1, display: 'process' as const }]
         : []),
-      ...buildToolCallRenderUnits(toolCalls, mode)
-        .filter((unit): unit is Extract<RenderUnit, { kind: 'tool' } | { kind: 'toolGroup' }> =>
-          unit.kind === 'tool' || unit.kind === 'toolGroup')
-        .map(unit => ({ ...unit, display: resolveToolDisplay(unit) })),
+      ...toolUnits,
       ...(answerBlock
         ? [{ kind: 'block' as const, block: answerBlock, index: -1, display: 'persistent' as const }]
         : [])
     ]
   }
+
+  const timeline = groupActivities(units, cache?.segments)
+  if (cache && blocks && blocks.length > 0) cache.segments = timeline
 
   const hasProcess = timeline.some(segment => segment.display === 'process')
   const hasAnswer = timeline.some(segment => segment.display === 'persistent')

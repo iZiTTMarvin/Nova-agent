@@ -47,12 +47,16 @@
   border-radius: var(--radius-sm);
   overflow-anchor: auto;
   user-select: none;
-  transition: background-color var(--transition-fast) ease;
+  transition: color var(--transition-fast) ease;
 }
 
-.tool-trace-row__line:hover {
+/* 悬停只提亮文字，不铺底色 */
+.tool-trace-row__line:hover,
+.tool-trace-row__line:hover .tool-trace-row__action,
+.tool-trace-row__line:hover .tool-trace-row__icon,
+.tool-trace-row__line:hover .tool-trace-row__command,
+.tool-trace-row__line:hover .tool-trace-row__dirname {
   color: var(--text-primary);
-  background-color: var(--surface-hover);
 }
 
 .tool-trace-row__header {
@@ -114,11 +118,6 @@
   border-radius: 4px;
   padding: 1px 4px;
   margin-left: -4px;
-  transition: background-color 120ms ease;
-}
-
-.tool-trace-row__file-target:hover {
-  background-color: var(--surface-hover);
 }
 
 .tool-trace-row__file-target:focus-visible {

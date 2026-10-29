@@ -1,8 +1,8 @@
 /**
  * TurnProcessTree — 回合工作区折叠容器
  *
- * 单层结构：「已工作 X 分 X 秒」折叠头 + 过程时间线。
- * 最终结论文案不在此容器内，由 MessageItem 以正文样式单独渲染。
+ * 两层折叠：「已工作 X 分 X 秒」折叠头收起整段过程；过程内两段说话之间的思考与工具调用
+ * 再收成活动组。最终结论文案不在折叠区内，始终外露。
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { ChevronIcon } from '../../components/Icons'
@@ -141,6 +141,7 @@ export const TurnProcessTree: React.FC<TurnProcessTreeProps> = React.memo(functi
       isTurnActiveForThisMsg={isTurnActiveForThisMsg}
       isPausedForInput={isPausedForInput}
       isCurrentAssistantGenerating={isCurrentAssistantGenerating}
+      keepLastActivityOpen={isLive || interrupted}
       onRenderPoolTick={onRenderPoolTick}
     />
   )

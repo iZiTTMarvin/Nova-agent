@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 /**
- * 过程列表中网页读取分组：组头统计、单项详情、状态文案、授权入口与动态加入时的展开保持。
+ * 过程列表：活动组组头摘要、单项详情、状态文案、授权入口、动态加入时的展开保持与随回合推进的自动折叠。
  */
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -10,7 +10,7 @@ import { buildTurnRenderModel } from '../../../src/renderer/features/chat/turnPr
 import { resetAgentStoreForTests, useAgentStore } from '../../../src/renderer/stores/useAgentStore'
 import { useFileTreeStore } from '../../../src/renderer/features/inspector/useFileTreeStore'
 import { USER_CANCELLED_TOOL_RESULT } from '../../../src/shared/session/toolCancellation'
-import type { RendererToolBlock } from '../../../src/renderer/stores/types'
+import type { RendererMessageBlock, RendererToolBlock } from '../../../src/renderer/stores/types'
 import { act, renderDom } from './renderDom'
 
 function fetchBlock(
@@ -96,8 +96,7 @@ describe('web_fetch 过程呈现', () => {
       fetchBlock('f4', 'https://example.com/research', 'error', 'HTTP 404')
     ])
     const header = headerOf(view.container)
-    expect(header.textContent).toContain('读取网页')
-    expect(header.textContent).toContain('4 次')
+    expect(header.textContent).toContain('读取 4 个网页')
     expect(header.textContent).toContain('1 项失败')
     expect(header.textContent).not.toContain('·')
     expect(header.getAttribute('aria-expanded')).toBe('false')
@@ -217,6 +216,53 @@ describe('web_fetch 过程呈现', () => {
 
     act(() => header.click())
     expect(view.container.querySelectorAll('.inline-perm')).toHaveLength(1)
+    view.unmount()
+  })
+})
+
+describe('活动组随回合推进折叠', () => {
+  function bashBlock(id: string, status: RendererToolBlock['status'] = 'success'): RendererToolBlock {
+    return { type: 'tool', toolCallId: id, toolName: 'bash', arguments: { command: `echo ${id}` }, status }
+  }
+
+  function renderLive(blocks: RendererMessageBlock[]) {
+    const element = (next: RendererMessageBlock[]) => (
+      <ProcessTraceList
+        segments={buildTurnRenderModel({ blocks: next, toolCalls: [], mode: 'default', phase: 'live' }).timeline}
+        messageId="msg-1"
+        blocks={next}
+        isTurnActiveForThisMsg
+        isPausedForInput={false}
+        isCurrentAssistantGenerating
+        keepLastActivityOpen
+        sessionId="sess-1"
+      />
+    )
+    const rendered = renderDom(element(blocks))
+    return { ...rendered, update: (next: RendererMessageBlock[]) => rendered.render(element(next)) }
+  }
+
+  it('进行中的末段展开；助手接着说话后自动收起，用户展开的组不受影响', () => {
+    const working: RendererMessageBlock[] = [
+      { type: 'thinking', content: '先跑测试' },
+      bashBlock('b1'),
+      bashBlock('b2', 'running')
+    ]
+    const view = renderLive(working)
+    const header = headerOf(view.container)
+    expect(header.textContent).toContain('运行 2 条命令')
+    expect(header.getAttribute('aria-expanded')).toBe('true')
+
+    const speaking: RendererMessageBlock[] = [
+      working[0], working[1], bashBlock('b2'), { type: 'text', content: '测试通过' }
+    ]
+    view.update(speaking)
+    expect(headerOf(view.container).getAttribute('aria-expanded')).toBe('false')
+
+    act(() => headerOf(view.container).click())
+    view.update([...speaking, bashBlock('b3'), bashBlock('b4', 'running')])
+    const headers = view.container.querySelectorAll<HTMLButtonElement>('.tool-call-group__header')
+    expect(Array.from(headers).map(h => h.getAttribute('aria-expanded'))).toEqual(['true', 'true'])
     view.unmount()
   })
 })

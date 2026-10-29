@@ -1,0 +1,76 @@
+/**
+ * 活动组步骤滚动框：框内滚动，滚到边缘不带动外层对话；底边细手柄拖动调高度。
+ */
+.activity-scroll {
+  position: relative;
+}
+
+.activity-scroll__viewport {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  /* 滚动区独立成层：框内滚动与行内展开不牵动整条消息的排版 */
+  contain: layout paint;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
+}
+
+.activity-scroll__viewport::-webkit-scrollbar {
+  width: 5px;
+}
+
+.activity-scroll__viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.activity-scroll__viewport::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 3px;
+}
+
+/* 离屏行跳过排版与绘制；auto 记住上次真实高度，滚回来不跳 */
+.activity-scroll__viewport .tool-call-group__item-wrap {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+
+/* 手柄热区 8px，可见部分是居中的短横线，悬停与拖动时加深 */
+.activity-scroll__handle {
+  position: relative;
+  height: 8px;
+  margin-top: -2px;
+  cursor: ns-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.activity-scroll__handle::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 32px;
+  height: 2px;
+  margin-left: -16px;
+  border-radius: 1px;
+  background: var(--text-muted);
+  opacity: 0.25;
+  transition: opacity var(--transition-fast) ease;
+}
+
+.activity-scroll__handle:hover::after,
+.activity-scroll__handle--dragging::after {
+  opacity: 0.7;
+}
+
+.activity-scroll__handle:focus-visible::after {
+  opacity: 1;
+  background: var(--color-brand);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-scroll__handle::after {
+    transition: none;
+  }
+}

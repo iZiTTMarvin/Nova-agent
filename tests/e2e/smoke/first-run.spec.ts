@@ -111,8 +111,11 @@ test('干净 profile 经设置 UI 配置模型：错 Key 401 → 修正后写文
 
   // 文件真实存在；展开 bash 工具行可见输出与非零退出码
   expect(existsSync(join(nova.workspacePath, relPath))).toBe(true)
-  // 工具轨迹默认收在「已工作 X 秒」折叠头里，先展开再定位 bash 行
+  // 工具轨迹默认收在「已工作 X 秒」折叠头里；write 与 bash 相邻，再收进同一个活动组
   await nova.page.locator('.turn-process-tree__header').last().click()
+  const activityHeader = nova.page.locator('.tool-call-group__header').last()
+  await expect(activityHeader).toContainText('写入 1 个文件，运行 1 条命令')
+  await activityHeader.click()
   const bashRow = nova.page.locator('.tool-trace-row').filter({ hasText: 'node hello.js' }).first()
   await bashRow.locator('.tool-trace-row__header').click()
   await expect(bashRow.locator('.tool-trace-row__pre').last()).toContainText('NOVA_E2E_SCRIPT_OUT')

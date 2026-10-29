@@ -31,11 +31,15 @@
   cursor: pointer;
   user-select: none;
   text-align: left;
-  transition: background-color var(--transition-fast) ease;
+  transition: color var(--transition-fast) ease;
 }
 
-.thinking-block__summary:hover {
-  background-color: var(--surface-hover);
+/* 悬停只提亮文字，不铺底色 */
+.thinking-block__summary:hover,
+.thinking-block__summary:hover .thinking-block__title,
+.thinking-block__summary:hover .thinking-block__line-text,
+.thinking-block__summary:hover .thinking-block__icon,
+.thinking-block__summary:hover .thinking-block__arrow {
   color: var(--text-primary);
 }
 

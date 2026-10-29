@@ -131,10 +131,10 @@ describe('聊天体验回归', () => {
 
     renderer.render(React.createElement(ThinkingBlock, { thinking: '先分析调用链', active: false }))
 
-    // 结束后仍默认折叠，只显示 Think 与首行摘要
+    // 结束后仍默认折叠，只显示「已思考」与耗时
     expect(renderer.container.querySelector('.thinking-block__summary')?.getAttribute('aria-expanded')).toBe('false')
-    expect(renderer.container.querySelector('.thinking-block__title')?.textContent).toBe('Think')
-    expect(renderer.container.querySelector('.thinking-block__line-text')?.textContent).toBe('先分析调用链')
+    expect(renderer.container.querySelector('.thinking-block__title')?.textContent).toBe('已思考')
+    expect(renderer.container.querySelector('.thinking-block__line-text')?.textContent).toMatch(/^\d+ 秒$/)
 
     renderer.unmount()
   })

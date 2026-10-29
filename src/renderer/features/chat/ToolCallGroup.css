@@ -33,12 +33,12 @@
   overflow-anchor: auto;
   appearance: none;
   user-select: none;
-  transition: background-color var(--transition-fast) ease;
+  transition: color var(--transition-fast) ease;
 }
 
+/* 悬停只提亮文字，不铺底色 */
 .tool-call-group__header:hover {
   color: var(--text-primary);
-  background-color: var(--surface-hover);
 }
 
 .tool-call-group__header:focus-visible {
@@ -46,56 +46,15 @@
   outline-offset: 1px;
 }
 
-.tool-call-group__icon-slot {
-  width: 14px;
-  height: 14px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.tool-call-group__icon {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.tool-call-group__header:hover .tool-call-group__icon {
-  color: var(--text-primary);
-}
-
-.tool-call-group__icon--running {
-  color: var(--color-brand);
-  animation: tool-icon-pulse 1.2s ease-in-out infinite;
-}
-
-.tool-call-group__icon--error {
-  color: var(--color-error);
-}
-
-.tool-call-group__status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background-color: var(--color-success);
-}
-
-.tool-call-group__title {
-  flex-shrink: 0;
-  font-weight: 500;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.tool-call-group__summary-text {
+/* 整句摘要：与行内弱文字同色，悬停提亮；过长时省略，完整内容在 title */
+.tool-call-group__headline {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
+  color: inherit;
 }
 
 /* 组头状态：失败与未完成同时有文字，颜色只是辅助 */
@@ -113,14 +72,12 @@
 
 .tool-call-group__chevron {
   flex-shrink: 0;
-  margin-left: auto;
   opacity: 0.7;
-  color: var(--text-secondary);
+  color: inherit;
 }
 
 .tool-call-group__header:hover .tool-call-group__chevron {
   opacity: 1;
-  color: var(--text-primary);
 }
 
 .tool-call-group__permission {
@@ -158,11 +115,14 @@
   padding: 2px 4px;
   border-radius: 4px;
   font-size: 13px;
-  transition: background-color 100ms ease;
+  transition: color 100ms ease;
 }
 
-.tool-call-group__item:hover {
-  background-color: var(--surface-hover);
+.tool-call-group__item:hover,
+.tool-call-group__item:hover .tool-call-group__item-action,
+.tool-call-group__item:hover .tool-call-group__item-icon,
+.tool-call-group__item:hover .tool-call-group__item-dirname {
+  color: var(--text-primary);
 }
 
 .tool-call-group__item--clickable {
@@ -293,16 +253,7 @@
   color: var(--text-secondary);
 }
 
-@keyframes tool-icon-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .tool-call-group__icon--running {
-    animation: none;
-  }
-
   .tool-call-group__header,
   .tool-call-group__item {
     transition: none;

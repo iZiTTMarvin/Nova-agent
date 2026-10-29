@@ -1,7 +1,7 @@
 /**
- * ThinkingBlock — 「Think 摘要」轻量单行折叠行
+ * ThinkingBlock — 「思考」轻量单行折叠行
  *
- * 运行中保持单行在行内流式吐字（不展开大卡片），结束后显示首行/耗时摘要；
+ * 运行中保持单行在行内流式吐字（不展开大卡片），结束后只显示耗时摘要；
  * 用户点击整行或箭头时展开完整 Markdown 思考内容。
  */
 import React, { useState, useEffect, useMemo, useRef } from 'react'
@@ -15,6 +15,7 @@ import {
   readThinkingElapsedSec
 } from '../../lib/thinkingTimingMemory'
 import { normalizeThinkingForDisplay } from './turnProcessModel'
+import { formatDurationMs } from './turnSummaryDisplay'
 import './ThinkingBlock.css'
 
 interface ThinkingBlockProps {
@@ -28,9 +29,8 @@ interface ThinkingBlockProps {
 }
 
 function formatElapsed(seconds: number): string {
-  if (seconds <= 0) return '0s'
-  if (seconds < 10) return `${seconds.toFixed(1)}s`
-  return `${Math.round(seconds)}s`
+  if (seconds >= 60) return formatDurationMs(seconds * 1000)
+  return `${Math.max(1, Math.round(seconds))} 秒`
 }
 
 function resolveDisplayElapsedSec(options: {
@@ -128,10 +128,13 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
     localElapsed: elapsed
   })
 
-  // 单行摘要文本：流式运行中取最新一行；完成后取首行/总览
+  // 进行中流式展示最新一行；结束后只给耗时，原文点开再看（缺耗时的旧消息退回首行）
+  const title = active ? '思考中' : '已思考'
   const summaryText = active
-    ? latestLine(displayThinking) || 'Thinking…'
-    : firstLine(displayThinking) || (displayElapsed !== null ? `Thought for ${formatElapsed(displayElapsed)}` : 'Thought')
+    ? latestLine(displayThinking)
+    : displayElapsed !== null
+      ? formatElapsed(displayElapsed)
+      : firstLine(displayThinking)
 
   return (
     <div className={`thinking-block ${active ? 'thinking-block--active' : ''} ${isOpen ? 'thinking-block--open' : ''}`}>
@@ -144,7 +147,7 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
       >
         <ThinkIcon size={14} className="thinking-block__icon" />
         <span className="thinking-block__title">
-          Think
+          {title}
         </span>
         <span
           className={`thinking-block__line-text ${active ? 'thinking-block__line-text--active' : ''}`}

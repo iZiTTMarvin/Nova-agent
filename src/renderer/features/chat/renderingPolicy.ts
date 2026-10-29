@@ -46,3 +46,19 @@ export function shouldRenderToolBlock(mode: Mode, toolName: string): boolean {
 export function isPersistentToolBlock(block: { toolName: string; status: string }): boolean {
   return block.toolName === 'present_visualization' && block.status !== 'error'
 }
+
+/** 需要用户关注或带独立交互的卡片工具：单独占一行，不收进活动组。 */
+const STANDALONE_PROCESS_TOOL_NAMES = new Set([
+  'save_plan',
+  'switch_mode',
+  'stage_transition',
+  'askQuestion',
+  'task',
+  'task_followup',
+  'batch_task'
+])
+
+/** 可收进活动组的工具：普通轨迹行（读写、命令、搜索、技能等）；回合产物与交互卡片除外。 */
+export function isActivityToolBlock(block: { toolName: string; status: string }): boolean {
+  return !STANDALONE_PROCESS_TOOL_NAMES.has(block.toolName) && !isPersistentToolBlock(block)
+}

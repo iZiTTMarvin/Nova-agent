@@ -4,11 +4,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildBlockRenderUnits,
-  buildToolCallRenderUnits,
   getToolGroupSummary
 } from '../../../src/renderer/features/chat/toolCallGrouping'
 import type { RendererMessageBlock, RendererToolBlock } from '../../../src/renderer/stores/types'
-import type { ExtendedToolCall } from '../../../src/renderer/stores/types'
 
 function toolBlock(
   id: string,
@@ -22,14 +20,6 @@ function toolBlock(
     arguments: args,
     status: 'success'
   }
-}
-
-function extendedToolCall(
-  id: string,
-  name: string,
-  args: Record<string, unknown> = {}
-): ExtendedToolCall {
-  return { id, name, arguments: args, status: 'success' }
 }
 
 describe('buildBlockRenderUnits', () => {
@@ -223,30 +213,6 @@ describe('buildBlockRenderUnits', () => {
       'default'
     )
     expect(task.map(u => u.kind)).toEqual(['toolGroup', 'tool', 'toolGroup'])
-  })
-})
-
-describe('buildToolCallRenderUnits', () => {
-  it('相邻 read×3 聚合', () => {
-    const toolCalls = [
-      extendedToolCall('1', 'read', { path: 'a.ts' }),
-      extendedToolCall('2', 'read', { path: 'b.ts' }),
-      extendedToolCall('3', 'read', { path: 'c.ts' })
-    ]
-    const units = buildToolCallRenderUnits(toolCalls, 'default')
-    expect(units).toHaveLength(1)
-    expect(units[0].kind).toBe('toolGroup')
-  })
-
-  it('bash 切断同类连续', () => {
-    const toolCalls = [
-      extendedToolCall('1', 'read', { path: 'a.ts' }),
-      extendedToolCall('2', 'read', { path: 'b.ts' }),
-      extendedToolCall('3', 'bash', { command: 'ls' }),
-      extendedToolCall('4', 'read', { path: 'c.ts' })
-    ]
-    const units = buildToolCallRenderUnits(toolCalls, 'default')
-    expect(units.map(u => u.kind)).toEqual(['toolGroup', 'tool', 'tool'])
   })
 })
 

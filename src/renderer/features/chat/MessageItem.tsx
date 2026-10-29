@@ -181,8 +181,7 @@ function renderMessageUnit(
     return (
       <ToolCallGroup
         key={`group-${unit.blocks[0].toolCallId}`}
-        toolName={unit.toolName}
-        blocks={unit.blocks}
+        items={unit.blocks.map(block => ({ kind: 'tool' as const, block }))}
         groupId={unit.blocks[0].toolCallId}
       />
     )

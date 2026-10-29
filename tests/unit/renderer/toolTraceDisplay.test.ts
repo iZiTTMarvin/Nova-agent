@@ -3,12 +3,42 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  getActivityHeadline,
   getToolTraceAction,
   getToolTraceActionChinese,
   getToolTraceTarget,
   getToolGroupTraceParts,
   splitFilePath
 } from '../../../src/renderer/features/chat/toolTraceDisplay'
+
+describe('getActivityHeadline', () => {
+  it('按首次出现顺序列出各类动作，同一文件重复读写只计一次', () => {
+    expect(getActivityHeadline([
+      {},
+      { toolName: 'bash', arguments: { command: 'npm test' } },
+      { toolName: 'read', arguments: { path: 'src/a.ts' } },
+      { toolName: 'read', arguments: { path: 'src\\a.ts' } },
+      { toolName: 'read', arguments: { path: 'src/b.ts' } },
+      { toolName: 'bash', arguments: { command: 'npm run lint' } }
+    ])).toBe('运行 2 条命令，读取 2 个文件')
+  })
+
+  it('超过三类时其余合并为「另有 N 项」，按调用次数计', () => {
+    expect(getActivityHeadline([
+      { toolName: 'write', arguments: { path: 'a.ts' } },
+      { toolName: 'bash' },
+      { toolName: 'edit', arguments: { path: 'b.ts' } },
+      { toolName: 'grep', arguments: { pattern: 'x' } },
+      { toolName: 'invoke_skill' },
+      { toolName: 'grep', arguments: { pattern: 'y' } }
+    ])).toBe('写入 1 个文件，运行 1 条命令，编辑 1 个文件，另有 3 项')
+  })
+
+  it('只有思考时显示思考次数；有工具时不提思考', () => {
+    expect(getActivityHeadline([{}, {}])).toBe('思考 2 次')
+    expect(getActivityHeadline([{}, { toolName: 'ls', arguments: { path: 'src' } }])).toBe('查看 1 个目录')
+  })
+})
 
 describe('getToolTraceAction', () => {
   it('映射常见工具为短英文动词', () => {

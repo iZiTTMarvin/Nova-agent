@@ -89,7 +89,7 @@ describe('buildTurnRenderModel', () => {
     }
   })
 
-  it('thinking 一律属于过程，即使位于工具之后也保留原始 index', () => {
+  it('thinking 一律属于过程，与工具一起收进活动组并保留原始 index', () => {
     const blocks: RendererMessageBlock[] = [
       { type: 'thinking', content: '第一段' },
       toolBlock('1', 'ls', { path: '.' }),
@@ -97,9 +97,12 @@ describe('buildTurnRenderModel', () => {
     ]
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'live' })
     expect(model.hasProcess).toBe(true)
-    expect(model.timeline.every(segment => segment.display === 'process')).toBe(true)
-    const tail = model.timeline.at(-1)
-    expect(tail).toMatchObject({ kind: 'block', index: 2 })
+    expect(model.timeline).toHaveLength(1)
+    const group = model.timeline[0]
+    expect(group).toMatchObject({ kind: 'activity', display: 'process', isLast: true })
+    if (group.kind === 'activity') {
+      expect(group.items.at(-1)).toMatchObject({ kind: 'block', index: 2 })
+    }
   })
 
   it('工具后无 text 的 completed 轮次标记 missingAnswer；live 不标记', () => {
@@ -122,11 +125,7 @@ describe('buildTurnRenderModel', () => {
     ]
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
     expect(
-      model.timeline.some(
-        s =>
-          (s.kind === 'tool' && s.block.toolName === 'todo_write') ||
-          (s.kind === 'toolGroup' && s.toolName === 'todo_write')
-      )
+      model.timeline.some(s => s.kind === 'tool' && s.block.toolName === 'todo_write')
     ).toBe(false)
     expect(displays(model)).toEqual(['process', 'persistent'])
   })
@@ -181,15 +180,30 @@ describe('buildTurnRenderModel', () => {
     expect(displays(model)).toEqual(['process', 'persistent', 'persistent'])
   })
 
-  it('连续 read×3 → 过程时间线含 toolGroup', () => {
+  it('两段说话之间的思考与各类工具合成一个活动组；说话与交互卡片打断连续段', () => {
     const blocks: RendererMessageBlock[] = [
+      { type: 'thinking', content: '先看看' },
       toolBlock('1', 'read', { path: 'a.ts' }),
-      toolBlock('2', 'read', { path: 'b.ts' }),
-      toolBlock('3', 'read', { path: 'c.ts' }),
+      toolBlock('2', 'bash', { command: 'npm test' }),
+      { type: 'text', content: '测试通过，再看计划' },
+      toolBlock('3', 'read', { path: 'b.ts' }),
+      toolBlock('q1', 'askQuestion', { questions: [] }),
+      toolBlock('4', 'grep', { pattern: 'x' }),
+      toolBlock('5', 'edit', { path: 'b.ts' }),
       { type: 'text', content: 'done' }
     ]
     const model = buildTurnRenderModel({ blocks, toolCalls: [], mode: 'default', phase: 'completed' })
-    expect(model.timeline.some(s => s.kind === 'toolGroup')).toBe(true)
+    expect(
+      model.timeline.map(s =>
+        s.kind === 'activity'
+          ? `activity:${s.items.length}`
+          : s.kind === 'tool'
+            ? s.block.toolCallId
+            : s.block.type
+      )
+    ).toEqual(['activity:3', 'text', '3', 'q1', 'activity:2', 'text'])
+    expect(model.timeline.filter(s => s.kind === 'activity').map(s => s.kind === 'activity' && s.isLast))
+      .toEqual([false, false])
   })
 
   it('plan 模式隐藏 write：write 不参与答案边界，也不产生渲染单元', () => {
@@ -257,7 +271,7 @@ describe('buildTurnRenderModel', () => {
     if (plans[0]?.kind === 'tool') expect(plans[0].block.toolCallId).toBe('p1')
   })
 
-  it('无 blocks，有 toolCalls → 降级路径：thinking 与工具属过程，content 是答案', () => {
+  it('无 blocks，有 toolCalls → 降级路径：thinking 与工具属过程并合成活动组，content 是答案', () => {
     const toolCalls: ExtendedToolCall[] = [
       { id: '1', name: 'read', arguments: { path: 'a.ts' }, status: 'success' }
     ]
@@ -271,7 +285,10 @@ describe('buildTurnRenderModel', () => {
     })
     expect(model.hasProcess).toBe(true)
     expect(model.missingAnswer).toBe(false)
-    expect(displays(model)).toEqual(['process', 'process', 'persistent'])
+    expect(model.timeline.map(s => [s.kind, s.display])).toEqual([
+      ['activity', 'process'],
+      ['block', 'persistent']
+    ])
   })
 
   it('降级路径无 content 时同样标记 missingAnswer', () => {
@@ -338,12 +355,12 @@ describe('buildTurnRenderModel 增量缓存', () => {
     const full = build(blocks2)
 
     expect(incremental.timeline).toEqual(full.timeline)
-    // thinking 段与工具组段为同一对象：下游 React.memo 不失效
+    // 活动组为同一对象：下游 React.memo 不失效
+    expect(incremental.timeline[0]).toMatchObject({ kind: 'activity', isLast: false })
     expect(incremental.timeline[0]).toBe(first.timeline[0])
-    expect(incremental.timeline[1]).toBe(first.timeline[1])
   })
 
-  it('同族工具追加（尾部 toolRun 生长）：增量结果与全量一致', () => {
+  it('活动组尾部追加新项：增量结果与全量一致，组身份不变', () => {
     const blocks1: RendererMessageBlock[] = [
       { type: 'thinking', content: '思考' },
       toolBlock('r1', 'read'),
@@ -352,17 +369,16 @@ describe('buildTurnRenderModel 增量缓存', () => {
     const cache = freshCache()
     const first = build(blocks1, cache)
 
-    const blocks2 = [...blocks1, toolBlock('r3', 'read')]
+    const blocks2 = [...blocks1, toolBlock('r3', 'bash')]
     const incremental = build(blocks2, cache)
     const full = build(blocks2)
 
     expect(incremental.timeline).toEqual(full.timeline)
-    if (incremental.timeline[1].kind === 'toolGroup' && full.timeline[1].kind === 'toolGroup') {
-      expect(incremental.timeline[1].blocks).toHaveLength(3)
-    } else {
-      throw new Error('toolGroup 段缺失')
-    }
-    expect(incremental.timeline[0]).toBe(first.timeline[0])
+    const [before, after] = [first.timeline[0], incremental.timeline[0]]
+    if (before.kind !== 'activity' || after.kind !== 'activity') throw new Error('活动组缺失')
+    expect(after.id).toBe(before.id)
+    expect(after.items).toHaveLength(4)
+    expect(after.items[1].block).toBe(before.items[1].block)
   })
 
   it('尾部工具状态更新：增量结果与全量一致', () => {
@@ -390,7 +406,8 @@ describe('buildTurnRenderModel 增量缓存', () => {
     const blocks2: RendererMessageBlock[] = [blocks1[0], { ...toolBlock('v1', 'present_visualization'), status: 'error' }]
     const incremental = build(blocks2, cache)
     expect(incremental.timeline).toEqual(build(blocks2).timeline)
-    expect(displays(incremental)).toEqual(['process', 'process'])
+    // 失败的可视化退回普通轨迹行，与前面的思考收进同一活动组
+    expect(incremental.timeline.map(s => [s.kind, s.display])).toEqual([['activity', 'process']])
   })
 
   it('新增 save_plan 使前缀计划卡隐藏：增量必须与全量一致（不残留旧段）', () => {

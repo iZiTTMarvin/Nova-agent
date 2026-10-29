@@ -637,3 +637,84 @@ export function getToolGroupTraceParts(
       }
   }
 }
+
+/** 活动组的一项；toolName 缺省表示一段思考 */
+export interface ActivityHeadlineEntry {
+  toolName?: string
+  arguments?: Record<string, unknown>
+}
+
+interface ActivityCategory {
+  key: string
+  /** 按文件计数的类别用路径去重；同一文件反复读写只算一次 */
+  countsFiles: boolean
+  format: (count: number) => string
+}
+
+function getActivityCategory(toolName: string): ActivityCategory {
+  switch (toolName) {
+    case 'bash':
+      return { key: 'bash', countsFiles: false, format: n => `运行 ${n} 条命令` }
+    case 'read':
+      return { key: 'read', countsFiles: true, format: n => `读取 ${n} 个文件` }
+    case 'write':
+      return { key: 'write', countsFiles: true, format: n => `写入 ${n} 个文件` }
+    case 'edit':
+      return { key: 'edit', countsFiles: true, format: n => `编辑 ${n} 个文件` }
+    case 'ls':
+      return { key: 'ls', countsFiles: false, format: n => `查看 ${n} 个目录` }
+    case 'grep':
+    case 'find':
+      return { key: 'search', countsFiles: false, format: n => `搜索 ${n} 次` }
+    case 'web_search':
+      return { key: 'web_search', countsFiles: false, format: n => `搜索网页 ${n} 次` }
+    case 'web_fetch':
+      return { key: 'web_fetch', countsFiles: false, format: n => `读取 ${n} 个网页` }
+    default: {
+      const action = getToolTraceActionChinese(toolName)
+      return { key: toolName, countsFiles: false, format: n => `${action} ${n} 次` }
+    }
+  }
+}
+
+const ACTIVITY_HEADLINE_MAX_PARTS = 3
+
+/**
+ * 活动组折叠头整句：按首次出现顺序列出各类动作的数量，超出部分合并为「另有 N 项」。
+ * 有工具时不提思考（思考是工具调用的前置，计入只会拉长标题）；只有思考时显示思考次数。
+ */
+export function getActivityHeadline(entries: ReadonlyArray<ActivityHeadlineEntry>): string {
+  const categories = new Map<string, { category: ActivityCategory; calls: number; files: Set<string> }>()
+  let thinkingCount = 0
+
+  entries.forEach((entry, position) => {
+    if (!entry.toolName) {
+      thinkingCount++
+      return
+    }
+    const category = getActivityCategory(entry.toolName)
+    let bucket = categories.get(category.key)
+    if (!bucket) {
+      bucket = { category, calls: 0, files: new Set() }
+      categories.set(category.key, bucket)
+    }
+    bucket.calls++
+    if (category.countsFiles) {
+      const args = entry.arguments ?? {}
+      const path = (args.path as string) || (args.filePath as string) || ''
+      bucket.files.add(path ? path.replace(/\\/g, '/') : `#${position}`)
+    }
+  })
+
+  if (categories.size === 0) return `思考 ${thinkingCount} 次`
+
+  const buckets = [...categories.values()]
+  const parts = buckets
+    .slice(0, ACTIVITY_HEADLINE_MAX_PARTS)
+    .map(({ category, calls, files }) => category.format(category.countsFiles ? files.size : calls))
+  const rest = buckets
+    .slice(ACTIVITY_HEADLINE_MAX_PARTS)
+    .reduce((sum, bucket) => sum + bucket.calls, 0)
+  if (rest > 0) parts.push(`另有 ${rest} 项`)
+  return parts.join('，')
+}

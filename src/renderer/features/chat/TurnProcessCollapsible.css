@@ -8,13 +8,25 @@
     grid-template-rows 240ms cubic-bezier(0.16, 1, 0.3, 1),
     opacity 160ms ease,
     visibility 240ms;
-  will-change: grid-template-rows, opacity;
+}
+
+/* 收起且没有内容时不参与排版：成百条收起的行详情不再各占一个格子容器 */
+.turn-process-collapsible[data-expanded="false"][data-empty="true"] {
+  display: none;
 }
 
 .turn-process-collapsible[data-expanded="true"] {
   grid-template-rows: 1fr;
   opacity: 1;
   visibility: visible;
+}
+
+/* 从 display: none 打开时没有旧样式可过渡，用起始样式保住展开动画 */
+@starting-style {
+  .turn-process-collapsible[data-expanded="true"] {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
 }
 
 .turn-process-collapsible__inner {
