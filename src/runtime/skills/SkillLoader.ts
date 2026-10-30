@@ -1,31 +1,20 @@
 /**
  * SkillLoader — 多源扫描、优先级覆盖、错误收集
- * 优先级：builtin(0) < third_party_claude(1) < global(2) < project(3)
+ * 优先级：builtin(0) < third_party(1) < global(2) < project(3)
  */
-import { existsSync, readdirSync, readFileSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { parseSkillMarkdown } from './frontmatter'
+import { SKILL_FILE, listSkillDirs } from './skillDirectories'
 import type { LoadError, SkillManifest, SkillSource } from './types'
-
-const SKILL_FILE = 'SKILL.md'
-/** 单会话模型上下文收录技能上限（条数） */
-export const MAX_CONTEXT_SKILLS = 30
-const SKIP_DIRS = new Set(['node_modules', '.git', '.archive'])
-
-/** 模型上下文投影：收录集固定按名称排序，省略数明确记录 */
-export interface SkillContextProjection {
-  included: SkillManifest[]
-  eligible: number
-  omittedCount: number
-}
 
 /** 各来源优先级（数值越大越优先） */
 export const SOURCE_PRIORITY: Record<SkillSource, number> = {
   builtin: 0,
   virtual: 0,
   mcp: 0,
-  third_party_claude: 1,
+  third_party: 1,
   global: 2,
   project: 3
 }
@@ -34,8 +23,8 @@ export interface SkillLoaderOptions {
   builtinDir?: string
   globalDir?: string
   projectDir?: string
-  /** 第三方 Claude skill 缓存目录，可选 */
-  thirdPartyDir?: string
+  /** 用户已同意的第三方技能目录（原地读取，不复制）；同一真实目录只加载一次 */
+  thirdPartyDirs?: string[]
 }
 
 export interface SkillLoadResult {
@@ -52,7 +41,7 @@ export function resolveDefaultSkillDirs(opts: SkillLoaderOptions = {}): Required
     builtinDir: opts.builtinDir,
     globalDir: opts.globalDir ?? join(homedir(), '.nova', 'skills'),
     projectDir: opts.projectDir,
-    thirdPartyDir: opts.thirdPartyDir
+    thirdPartyDirs: opts.thirdPartyDirs
   }
 }
 
@@ -147,16 +136,21 @@ export class SkillLoader {
     const errors: LoadError[] = []
     const shadowed: Record<string, SkillSource> = {}
 
-    const sources: Array<{ dir: string | undefined; source: SkillSource }> = [
+    const thirdPartySeen = new Set<string>()
+    const sources: Array<{ dir: string | undefined; source: SkillSource; seen?: Set<string> }> = [
       { dir: dirs.builtinDir, source: 'builtin' },
-      { dir: dirs.thirdPartyDir, source: 'third_party_claude' },
+      ...(dirs.thirdPartyDirs ?? []).map(dir => ({
+        dir,
+        source: 'third_party' as const,
+        seen: thirdPartySeen
+      })),
       { dir: dirs.globalDir, source: 'global' },
       { dir: dirs.projectDir, source: 'project' }
     ]
 
-    for (const { dir, source } of sources) {
+    for (const { dir, source, seen } of sources) {
       if (!dir) continue
-      SkillLoader.scanDir(dir, source, merged, errors, shadowed)
+      SkillLoader.scanDir(dir, source, merged, errors, shadowed, seen)
     }
 
     return new SkillLoader(merged, errors, shadowed)
@@ -167,24 +161,19 @@ export class SkillLoader {
     source: SkillSource,
     target: Map<string, SkillManifest>,
     errors: LoadError[],
-    shadowed: Record<string, SkillSource>
+    shadowed: Record<string, SkillSource>,
+    seenRealPaths?: Set<string>
   ): void {
-    if (!existsSync(dir)) return
-
-    let entries: string[]
+    let entries: ReturnType<typeof listSkillDirs>
     try {
-      entries = readdirSync(dir, { withFileTypes: true })
-        .filter(e => e.isDirectory() && !SKIP_DIRS.has(e.name))
-        .map(e => e.name)
+      entries = listSkillDirs(dir, seenRealPaths)
     } catch (err) {
       errors.push({ path: dir, message: (err as Error).message })
       return
     }
 
-    for (const dirName of entries) {
-      const skillDir = join(dir, dirName)
+    for (const { name: dirName, path: skillDir } of entries) {
       const skillPath = join(skillDir, SKILL_FILE)
-      if (!existsSync(skillPath)) continue
 
       try {
         const content = readFileSync(skillPath, 'utf-8')
@@ -249,25 +238,11 @@ export class SkillLoader {
     return [...this.skills.values()]
   }
 
-  /** 模型可见技能：enabled + modelInvocable + agent 域 + 上限 30，按名称固定排序。 */
+  /** 模型可见技能：modelInvocable + 非隐藏 + agent 域；全量收录，按名称固定排序 */
   listForContext(profile?: string): SkillManifest[] {
-    return this.listForContextProjection(profile).included
-  }
-
-  /** 与 listForContext 同一选择逻辑的结构化投影（收录集/总数/省略数） */
-  listForContextProjection(profile?: string): SkillContextProjection {
-    const eligible = [...this.skills.values()]
-      .filter(s => {
-        if (!s.enabled || !s.modelInvocable || s.invalid) return false
-        if (s.hidden) return false
-        return SkillLoader.isAgentAllowed(s, profile)
-      })
+    return [...this.skills.values()]
+      .filter(s => s.modelInvocable && !s.invalid && !s.hidden && SkillLoader.isAgentAllowed(s, profile))
       .sort((a, b) => a.name.localeCompare(b.name))
-    return {
-      included: eligible.slice(0, MAX_CONTEXT_SKILLS),
-      eligible: eligible.length,
-      omittedCount: Math.max(0, eligible.length - MAX_CONTEXT_SKILLS)
-    }
   }
 
   /** 用户可 slash 调用的技能（不含 hidden） */

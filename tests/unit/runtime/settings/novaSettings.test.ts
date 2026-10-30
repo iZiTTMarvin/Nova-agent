@@ -30,15 +30,28 @@ describe('novaSettings', () => {
   it('settings.json 损坏时回退默认值', async () => {
     const { loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     writeFileSync(join(mockHome, '.nova', 'settings.json'), '{ broken', 'utf-8')
-    expect(loadNovaSettings().loadThirdPartySkills).toBe(true)
+    expect(loadNovaSettings().thirdPartySkillSources).toEqual({ agents: false, claude: false })
   })
 
   it('saveNovaSettings 合并写入并可读回', async () => {
     const { loadNovaSettings, saveNovaSettings } = await import(
       '../../../../src/runtime/settings/novaSettings'
     )
-    saveNovaSettings({ loadThirdPartySkills: false })
-    expect(loadNovaSettings().loadThirdPartySkills).toBe(false)
+    saveNovaSettings({ thirdPartySkillSources: { agents: true, claude: false } })
+    expect(loadNovaSettings().thirdPartySkillSources).toEqual({ agents: true, claude: false })
+    expect(() =>
+      saveNovaSettings({ thirdPartySkillSources: { agents: 'yes' } as never })
+    ).toThrow('thirdPartySkillSources')
+  })
+
+  it('旧版 loadThirdPartySkills 布尔值不迁移，第三方技能来源升级后默认关闭', async () => {
+    const { loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
+    writeFileSync(
+      join(mockHome, '.nova', 'settings.json'),
+      JSON.stringify({ loadThirdPartySkills: true }),
+      'utf-8'
+    )
+    expect(loadNovaSettings().thirdPartySkillSources).toEqual({ agents: false, claude: false })
   })
 
   it('streamSmoothness 默认 smooth，合法值持久化，非法值拒绝且旧文件缺省回落', async () => {
@@ -68,7 +81,7 @@ describe('novaSettings', () => {
     )
 
     expect(loadNovaSettings().defaultPermissionMode).toBe(expected)
-    saveNovaSettings({ loadThirdPartySkills: false })
+    saveNovaSettings({ theme: 'dark' })
 
     const persisted = JSON.parse(readFileSync(settingsPath, 'utf-8')) as Record<string, unknown>
     expect(persisted.defaultPermissionMode).toBe(expected)
@@ -135,7 +148,7 @@ describe('novaSettings', () => {
     const { loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     writeFileSync(
       join(mockHome, '.nova', 'settings.json'),
-      JSON.stringify({ loadThirdPartySkills: true }),
+      JSON.stringify({ theme: 'dark' }),
       'utf-8'
     )
     expect(loadNovaSettings().maxToolRounds).toBeNull()

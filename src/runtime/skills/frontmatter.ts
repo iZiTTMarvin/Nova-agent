@@ -94,7 +94,6 @@ function buildInvalidManifest(
     directory: opts.directory,
     warnings,
     hasSupportingFiles: detectSupportingFiles(opts.directory),
-    enabled: true,
     invalid: true,
     invalidReason
   }
@@ -126,7 +125,6 @@ export function parseSkillMarkdown(content: string, opts: ParseSkillOptions): Sk
       directory: opts.directory,
       warnings,
       hasSupportingFiles: detectSupportingFiles(opts.directory),
-      enabled: true,
       invalid: false
     }
   }
@@ -154,7 +152,6 @@ export function parseSkillMarkdown(content: string, opts: ParseSkillOptions): Sk
       directory: opts.directory,
       warnings: invalid ? [] : ['缺少 YAML frontmatter，已使用正文首段作为 description'],
       hasSupportingFiles: detectSupportingFiles(opts.directory),
-      enabled: true,
       invalid,
       invalidReason: invalid ? '缺少 frontmatter 且无法从正文推断 description' : undefined
     }
@@ -226,7 +223,6 @@ export function parseSkillMarkdown(content: string, opts: ParseSkillOptions): Sk
     directory: opts.directory,
     warnings,
     hasSupportingFiles: detectSupportingFiles(opts.directory),
-    enabled: true,
     invalid: false,
     ...(hidden ? { hidden: true } : {})
   }

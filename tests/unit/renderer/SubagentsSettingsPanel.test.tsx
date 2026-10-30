@@ -102,6 +102,7 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
     global.window.api = { invoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() } as never
     const { container, unmount } = renderDom(<SubagentsSettingsPanel />)
     await flush()
+    await act(async () => button(container, 'explore').click())
     await changeInput(input(container, '显示名称'), '改名后的助手')
     await act(async () => button(container, '保存更改').click())
     const update = invoke.mock.calls.find(call => call[0] === 'subagents:update')
@@ -193,6 +194,7 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
 
     const { container, unmount } = renderDom(<SubagentsSettingsPanel />)
     await flush()
+    await act(async () => button(container, 'explore').click())
     expect(container.textContent).toContain('内置能力（只读）')
     expect(container.textContent).not.toContain('删除配置')
 
@@ -203,7 +205,7 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
     unmount()
   })
 
-  it('加载中显示骨架；列表与初始详情一次提交', async () => {
+  it('加载中显示骨架；列表一次提交并停留在卡片网格', async () => {
     let resolveList: ((value: SubagentsListResult) => void) | undefined
     const invoke = vi.fn((channel: string) => {
       if (channel === 'subagents:list') {
@@ -225,7 +227,7 @@ describe('SubagentsSettingsPanel 结构化设置交互', () => {
     await flush()
 
     expect(container.querySelector('[aria-busy="true"]')).toBeNull()
-    expect(container.textContent).toContain('内置能力（只读）')
+    expect(container.textContent).not.toContain('内置能力（只读）')
     expect(container.textContent).toContain('explore')
     unmount()
   })

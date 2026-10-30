@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs'
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, symlinkSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { SkillLoader, resolveBuiltinSkillsDir, resolveDevBuiltinDir, resolveUnpackedSkillsDirFrom } from '../../../../src/runtime/skills/SkillLoader'
@@ -67,7 +67,7 @@ describe('SkillLoader', () => {
     expect(loader.listForContext('default').map(s => s.name)).toEqual(['c'])
   })
 
-  it('third_party_claude 优先级介于 builtin 与 global 之间', () => {
+  it('third_party 优先级介于 builtin 与 global 之间', () => {
     writeSkill(builtinDir, 'shared', md('shared', 'builtin'))
     writeSkill(globalDir, 'shared', md('shared', 'global'))
     const thirdDir = join(tmpdir(), `nova-third-${Date.now()}`)
@@ -75,12 +75,34 @@ describe('SkillLoader', () => {
     writeSkill(thirdDir, 'shared', md('shared', 'third'))
     writeSkill(thirdDir, 'claude-only', md('claude-only', 'claude'))
 
-    const loader = SkillLoader.loadAll({ builtinDir, globalDir, thirdPartyDir: thirdDir })
+    const loader = SkillLoader.loadAll({ builtinDir, globalDir, thirdPartyDirs: [thirdDir] })
     expect(loader.get('shared')?.description).toBe('global')
-    expect(loader.get('claude-only')?.source).toBe('third_party_claude')
-    expect(loader.getShadowed()['shared']).toBe('third_party_claude')
+    expect(loader.get('claude-only')?.source).toBe('third_party')
+    expect(loader.getShadowed()['shared']).toBe('third_party')
 
     rmSync(thirdDir, { recursive: true, force: true })
+  })
+
+  it('第三方目录里的符号链接技能能被识别，且指向同一真实目录的只加载一次', () => {
+    const root = join(tmpdir(), `nova-third-link-${Date.now()}`)
+    const agentsDir = join(root, 'agents')
+    const claudeDir = join(root, 'claude')
+    mkdirSync(claudeDir, { recursive: true })
+    writeSkill(agentsDir, 'archify', md('archify', 'from agents'))
+    try {
+      symlinkSync(join(agentsDir, 'archify'), join(claudeDir, 'archify'), 'junction')
+    } catch {
+      rmSync(root, { recursive: true, force: true })
+      return
+    }
+    writeSkill(claudeDir, 'only-claude', md('only-claude', 'claude'))
+
+    const loader = SkillLoader.loadAll({ globalDir, thirdPartyDirs: [agentsDir, claudeDir] })
+    expect(loader.get('archify')?.source).toBe('third_party')
+    expect(loader.get('only-claude')?.source).toBe('third_party')
+    expect(loader.getShadowed()['archify']).toBeUndefined()
+
+    rmSync(root, { recursive: true, force: true })
   })
 
   it('listUserInvocable 过滤 user-invocable', () => {

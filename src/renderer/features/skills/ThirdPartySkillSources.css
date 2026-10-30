@@ -1,0 +1,45 @@
+.third-party {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.third-party__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+}
+
+.third-party__row + .third-party__row {
+  border-top: 0.5px solid var(--glass-edge);
+}
+
+.third-party__text {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.third-party__name {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.third-party__path {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+}
+
+.third-party__count {
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+}

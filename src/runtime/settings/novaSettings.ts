@@ -1,7 +1,7 @@
 /**
  * Nova 全局设置持久化（~/.nova/settings.json）
  *
- * Task 5/13：第三方 skill 开关等应用级配置
+ * 第三方 skill 来源开关等应用级配置
  * PRD §5.6：扩展为完整用户偏好 schema，含默认模式、bash shell、字体、主题等。
  *
  * 设计要点：
@@ -16,6 +16,7 @@ import { homedir } from 'os'
 import { atomicWriteFileSync } from '../storage/atomicFile'
 import type { Mode, PermissionMode } from '../../shared/session/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
+import type { ThirdPartySkillSources } from '../../shared/skills/types'
 
 /** 应用级设置字段（与 NovaSettingsDto 完全对齐） */
 export type NovaSettings = NovaSettingsDto
@@ -25,7 +26,7 @@ const CURRENT_SETTINGS_VERSION = 4
 
 /** 默认值：所有字段的兜底 */
 export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
-  loadThirdPartySkills: true,
+  thirdPartySkillSources: { agents: false, claude: false },
   defaultMode: 'default',
   defaultPermissionMode: 'auto',
   defaultShell: '',
@@ -74,7 +75,7 @@ function getSettingsPath(): string {
  * 把任意未知结构的磁盘数据迁移 + 默认值填充为完整 NovaSettings。
  *
  * 迁移逻辑：
- * - 无 settingsVersion 视为 v0（旧版只有 loadThirdPartySkills 单字段）。
+ * - 无 settingsVersion 视为 v0。
  * - v0 → v1：补全所有新增字段为默认值。
  * - 逐字段用默认值兜底（即便 v1 也可能有字段缺失，防御性填充）。
  */
@@ -84,9 +85,9 @@ function migrateAndFill(raw: unknown): NovaSettings {
   const version = typeof obj.settingsVersion === 'number' ? obj.settingsVersion : 0
 
   // 逐字段安全填充：只在类型合法时采用磁盘值，否则用默认值
-  if (typeof obj.loadThirdPartySkills === 'boolean') {
-    result.loadThirdPartySkills = obj.loadThirdPartySkills
-  }
+  // 旧版 loadThirdPartySkills 布尔值不迁移：第三方技能改为按来源逐项同意，升级后默认关闭。
+  const sources = normalizeThirdPartySkillSources(obj.thirdPartySkillSources)
+  if (sources) result.thirdPartySkillSources = sources
   // 旧 Mode 含 auto：迁为 default，并保留其自动权限语义。
   let migratedAutoMode = false
   if (obj.defaultMode === 'auto') {
@@ -213,12 +214,24 @@ function migrateAndFill(raw: unknown): NovaSettings {
   return result
 }
 
+function normalizeThirdPartySkillSources(value: unknown): ThirdPartySkillSources | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  return { agents: record.agents === true, claude: record.claude === true }
+}
+
 /**
  * 校验 patch 的字段合法性。返回错误消息列表（空表示全部合法）。
  * 用于 saveNovaSettings 拒绝非法值。
  */
 function validatePatch(patch: Partial<NovaSettings>): string[] {
   const errors: string[] = []
+  if ('thirdPartySkillSources' in patch && patch.thirdPartySkillSources !== undefined) {
+    const value = patch.thirdPartySkillSources as unknown as Record<string, unknown> | null
+    if (!value || typeof value.agents !== 'boolean' || typeof value.claude !== 'boolean') {
+      errors.push('thirdPartySkillSources 必须包含布尔值 agents 与 claude')
+    }
+  }
   if ('defaultMode' in patch && patch.defaultMode !== undefined) {
     if (!['plan', 'default', 'compose'].includes(patch.defaultMode)) {
       errors.push('defaultMode 必须是 plan / default / compose 之一')

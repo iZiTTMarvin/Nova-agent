@@ -5,10 +5,10 @@
 import type { BrowserWindow } from 'electron'
 import { app } from 'electron'
 import { SkillService, toCatalogDiagnostics } from '../../runtime/skills/SkillService'
-import { MAX_CONTEXT_SKILLS } from '../../runtime/skills/SkillLoader'
 import type { SkillRegistry } from '../../runtime/skills/SkillRegistry'
 import type { SkillCatalogSnapshot } from '../../shared/skills/types'
 import { SKILL_CHANGED } from '../../shared/ipc/channels'
+import { createSkillRootsWatcher } from './SkillRootsWatcher'
 
 let skillService: SkillService | null = null
 let boundWindow: BrowserWindow | null = null
@@ -19,9 +19,18 @@ let lastSnapshot: SkillCatalogSnapshot = {
   error: null,
   refreshedAt: null,
   diagnostics: [],
-  modelBudget: { cap: MAX_CONTEXT_SKILLS, eligible: 0 }
+  thirdPartySources: []
 }
 let catalogWarmed = false
+/** 技能目录有文件变化时防抖重扫，第三方技能增删无需手动重载 */
+const rootsWatcher = createSkillRootsWatcher(() => {
+  if (!catalogWarmed) return
+  try {
+    refreshSkillsAfterMutation()
+  } catch {
+    // 失败已记入错误快照
+  }
+})
 
 /** 获取或初始化 SkillService 单例；目录在首次读取时才扫描 */
 export function getSkillService(): SkillService {
@@ -74,13 +83,14 @@ export function ensureSkillRegistryForWorkspace(workspaceRoot: string): SkillReg
 }
 
 function buildSnapshot(service: SkillService): SkillCatalogSnapshot {
+  rootsWatcher.setRoots(service.getWatchRoots())
   return {
     skills: service.list(),
     loading: false,
     error: null,
     refreshedAt: Date.now(),
     diagnostics: toCatalogDiagnostics(service.getRegistry()),
-    modelBudget: service.getModelBudget()
+    thirdPartySources: service.getThirdPartySources()
   }
 }
 

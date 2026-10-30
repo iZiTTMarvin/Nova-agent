@@ -7,7 +7,6 @@ import { homedir } from 'os'
 import {
   SkillLoader,
   resolveDevBuiltinDir,
-  type SkillContextProjection,
   type SkillLoaderOptions
 } from './SkillLoader'
 import type { LoadError, SkillManifest, SkillSource } from './types'
@@ -18,8 +17,6 @@ export interface SkillRegistryLoadOptions extends SkillLoaderOptions {
   /** @deprecated 使用 projectDir 或 workspaceRoot */
   projectDir?: string
 }
-
-let warnedTruncation = false
 
 export class SkillRegistry {
   private loader: SkillLoader
@@ -43,16 +40,10 @@ export class SkillRegistry {
       builtinDir: opts.builtinDir,
       globalDir: opts.globalDir ?? join(homedir(), '.nova', 'skills'),
       projectDir,
-      thirdPartyDir: opts.thirdPartyDir
+      thirdPartyDirs: opts.thirdPartyDirs
     }
 
     const loader = SkillLoader.loadAll(loaderOpts)
-    const all = loader.listAll()
-
-    if (all.length > 30 && !warnedTruncation) {
-      console.warn('[SkillRegistry] 技能超过 30 条，listForContext 将截断')
-      warnedTruncation = true
-    }
 
     return new SkillRegistry(loader, { ...opts, projectDir })
   }
@@ -65,11 +56,6 @@ export class SkillRegistry {
       opts.projectDir = join(workspaceRoot, '.nova', 'skills')
     }
     return SkillRegistry.load(opts)
-  }
-
-  /** 重置截断 warn 标志（测试用） */
-  static resetWarnFlag(): void {
-    warnedTruncation = false
   }
 
   get(name: string): SkillManifest | undefined {
@@ -86,10 +72,6 @@ export class SkillRegistry {
 
   listForContext(profile?: string): SkillManifest[] {
     return this.loader.listForContext(profile)
-  }
-
-  getContextProjection(profile?: string): SkillContextProjection {
-    return this.loader.listForContextProjection(profile)
   }
 
   listUserInvocable(): SkillManifest[] {

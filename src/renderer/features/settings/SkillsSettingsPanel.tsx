@@ -1,24 +1,41 @@
 /**
- * Skills 配置面板 — 列表、开关、第三方 skill 选项、创建与导入
+ * Skills 配置面板 — 第三方来源开关、两列技能小卡、详情弹窗、创建与导入
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
-import { Switch } from '@astryxdesign/core/Switch'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { useSkillsStore } from '../skills/store'
-import { SkillCard } from '../skills/SkillCard'
+import { SkillTile } from '../skills/SkillTile'
+import { SkillDetailDialog } from '../skills/SkillDetailDialog'
+import { ThirdPartySkillSourceList } from '../skills/ThirdPartySkillSources'
 import { CreateSkillDialog } from '../skills/CreateSkillDialog'
 import { SkillImportBar } from '../skills/SkillImportBar'
-import { skillSourceLabel, skillsI18n } from '../skills/i18n'
-import { SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
-import type { NovaSettingsDto } from '../../../shared/settings/types'
-import type { SkillCatalogDiagnostic, SkillSource } from '../../../shared/skills/types'
+import { skillsI18n } from '../skills/i18n'
+import { confirmDialog } from '../confirm/confirmDialog'
+import { SettingsGlassPanel, SettingsPage, SettingsSection, SettingsSegmented } from './settingsKit'
+import type {
+  SkillCatalogDiagnostic,
+  SkillSummary,
+  ThirdPartySkillSources as ThirdPartySkillSourcesValue
+} from '../../../shared/skills/types'
 import './SkillsSettingsPanel.css'
 
-const COLLAPSE_LIMIT = 5
-type SkillSourceFilter = SkillSource | 'all'
+type SkillFilter = 'all' | 'mine' | 'third_party' | 'builtin'
+
+function matchesFilter(skill: SkillSummary, filter: SkillFilter): boolean {
+  switch (filter) {
+    case 'mine':
+      return skill.source === 'global' || skill.source === 'project'
+    case 'third_party':
+      return skill.source === 'third_party'
+    case 'builtin':
+      return skill.source === 'builtin'
+    default:
+      return true
+  }
+}
 
 export const SkillsSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -27,13 +44,13 @@ export const SkillsSettingsPanel: React.FC = () => {
   const skillsLoading = useSkillsStore(state => state.loading)
   const skillsError = useSkillsStore(state => state.error)
   const skillsDiagnostics = useSkillsStore(state => state.diagnostics)
+  const thirdPartySources = useSkillsStore(state => state.thirdPartySources)
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSnapshot = useSkillsStore(state => state.setSnapshot)
 
-  const [settings, setSettings] = useState<NovaSettingsDto | null>(null)
-  const [expanded, setExpanded] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [sourceFilter, setSourceFilter] = useState<SkillSourceFilter>('all')
+  const [filter, setFilter] = useState<SkillFilter>('all')
+  const [detailName, setDetailName] = useState<string | null>(null)
   const [createOpen, setCreateOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
@@ -41,11 +58,6 @@ export const SkillsSettingsPanel: React.FC = () => {
   const showToast = useCallback((message: string) => {
     setToast(message)
     window.setTimeout(() => setToast(null), 3200)
-  }, [])
-
-  const loadSettings = useCallback(async () => {
-    const s = await window.api.invoke('settings:get')
-    setSettings(s)
   }, [])
 
   const handleReload = useCallback(async () => {
@@ -58,102 +70,73 @@ export const SkillsSettingsPanel: React.FC = () => {
   }, [currentProject, refreshSkills])
 
   useEffect(() => {
-    void loadSettings()
     void refreshSkills()
-    const unsub = window.nova.skill.onChange(snapshot => setSnapshot(snapshot))
-    return unsub
-  }, [loadSettings, refreshSkills, setSnapshot])
+    return window.nova.skill.onChange(snapshot => setSnapshot(snapshot))
+  }, [refreshSkills, setSnapshot])
 
-  const sorted = useMemo(() => [...skills].sort((a, b) => a.name.localeCompare(b.name)), [skills])
-  const sourceOptions = useMemo(() => {
-    const sources = [...new Set(sorted.map(skill => skill.source))]
-      .sort((a, b) => skillSourceLabel(a).localeCompare(skillSourceLabel(b)))
-    return [
-      { value: 'all', label: skillsI18n.allSources },
-      ...sources.map(source => ({ value: source, label: skillSourceLabel(source) }))
-    ]
-  }, [sorted])
   const normalizedQuery = searchQuery.trim().toLocaleLowerCase()
   const filtered = useMemo(() => {
-    return sorted.filter(skill => {
-      if (sourceFilter !== 'all' && skill.source !== sourceFilter) return false
-      if (!normalizedQuery) return true
-      return [skill.name, skill.nameZh, skill.description, skill.descriptionZh]
-        .some(value => value?.toLocaleLowerCase().includes(normalizedQuery))
-    })
-  }, [normalizedQuery, sorted, sourceFilter])
-  const visible = expanded ? filtered : filtered.slice(0, COLLAPSE_LIMIT)
+    return [...skills]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .filter(skill => {
+        if (!matchesFilter(skill, filter)) return false
+        if (!normalizedQuery) return true
+        return [skill.name, skill.nameZh, skill.description, skill.descriptionZh]
+          .some(value => value?.toLocaleLowerCase().includes(normalizedQuery))
+      })
+  }, [filter, normalizedQuery, skills])
 
-  useEffect(() => {
-    if (sourceFilter !== 'all' && !sourceOptions.some(option => option.value === sourceFilter)) {
-      setSourceFilter('all')
-    }
-  }, [sourceFilter, sourceOptions])
-
-  // 诊断按技能归属分组展示；无归属的目录级问题单列一行，不打断浏览
   const diagnosticsBySkill = useMemo(() => {
     const map = new Map<string, SkillCatalogDiagnostic[]>()
     for (const d of skillsDiagnostics) {
       if (!d.skillName) continue
-      const list = map.get(d.skillName) ?? []
-      list.push(d)
-      map.set(d.skillName, list)
+      map.set(d.skillName, [...(map.get(d.skillName) ?? []), d])
     }
     return map
   }, [skillsDiagnostics])
   const unattributedDiagnostics = skillsDiagnostics.filter(d => !d.skillName)
+  const detailSkill = detailName ? skills.find(skill => skill.name === detailName) : undefined
 
-  const handleThirdPartyToggle = async (checked: boolean) => {
-    const next = await window.api.invoke('settings:set', { loadThirdPartySkills: checked })
-    setSettings(next)
-    await window.nova.skill.reload(currentProject)
-  }
-
-  const handleToggle = async (name: string, enabled: boolean) => {
+  const handleSourcesChange = async (next: ThirdPartySkillSourcesValue) => {
     try {
-      await window.nova.skill.toggle(name, enabled)
-      // skill:changed → onChange 已更新列表，无需再 refresh
+      await window.api.invoke('settings:set', { thirdPartySkillSources: next })
+      await window.nova.skill.reload(currentProject)
     } catch (err) {
       showToast((err as Error).message)
     }
   }
 
-  const handleUse = (name: string) => {
-    requestComposerPrefill(`/${name} `)
-  }
+  const handleUse = (name: string) => requestComposerPrefill(`/${name} `)
 
   const handleExport = async (name: string) => {
     try {
       const result = await window.nova.skill.export(name)
-      if (!result.canceled && result.zipPath) {
-        showToast(skillsI18n.exportSuccess(result.zipPath))
-      }
+      if (!result.canceled && result.zipPath) showToast(skillsI18n.exportSuccess(result.zipPath))
     } catch (err) {
       showToast((err as Error).message)
     }
   }
 
   const handleDelete = async (name: string) => {
-    if (!window.confirm(`确定删除技能「${name}」？`)) return
+    const choice = await confirmDialog({
+      type: 'warning',
+      title: '删除技能',
+      message: `确定删除技能「${name}」？`,
+      detail: '技能目录会被永久删除。',
+      buttons: ['取消', '删除'],
+      defaultId: 0
+    })
+    if (choice !== 1) return
     try {
       await window.nova.skill.delete(name)
-      // skill:changed → onChange 已更新列表
       showToast(`已删除技能「${name}」`)
     } catch (err) {
       showToast((err as Error).message)
     }
   }
 
-  const handleCreated = (name: string) => {
-    showToast(skillsI18n.createSuccess(name))
-  }
-
-  const handleImported = (name: string) => {
-    showToast(skillsI18n.importSuccess(name))
-  }
-
   return (
-    <div className="settings-panel">
+    <SettingsGlassPanel className="skills-panel">
       {toast && (
         <Banner
           status="info"
@@ -166,19 +149,12 @@ export const SkillsSettingsPanel: React.FC = () => {
 
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsSection title="第三方技能">
-            <SettingsRow
-              label={skillsI18n.loadThirdParty}
-              description={skillsI18n.loadThirdPartyHint}
-              end={
-                <Switch
-                  label={skillsI18n.loadThirdParty}
-                  isLabelHidden
-                  value={settings?.loadThirdPartySkills ?? true}
-                  onChange={checked => void handleThirdPartyToggle(checked)}
-                />
-              }
-            />
+          <SettingsSection
+            title={skillsI18n.thirdPartyTitle}
+            description={skillsI18n.thirdPartyHint}
+            variant="bare"
+          >
+            <ThirdPartySkillSourceList sources={thirdPartySources} onChange={handleSourcesChange} />
           </SettingsSection>
 
           <SettingsSection
@@ -186,12 +162,7 @@ export const SkillsSettingsPanel: React.FC = () => {
             variant="bare"
             action={
               <>
-                <Button
-                  label={skillsI18n.reload}
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => void handleReload()}
-                >
+                <Button label={skillsI18n.reload} variant="ghost" size="sm" onClick={() => void handleReload()}>
                   {skillsI18n.reload}
                 </Button>
                 <Button
@@ -202,19 +173,14 @@ export const SkillsSettingsPanel: React.FC = () => {
                 >
                   {importOpen ? skillsI18n.hideImportBar : skillsI18n.import}
                 </Button>
-                <Button
-                  label={skillsI18n.create}
-                  variant="primary"
-                  size="sm"
-                  onClick={() => setCreateOpen(true)}
-                >
+                <Button label={skillsI18n.create} variant="primary" size="sm" onClick={() => setCreateOpen(true)}>
                   {skillsI18n.create}
                 </Button>
               </>
             }
           >
             {importOpen && (
-              <SkillImportBar hasProject={Boolean(currentProject)} onImported={handleImported} />
+              <SkillImportBar hasProject={Boolean(currentProject)} onImported={name => showToast(skillsI18n.importSuccess(name))} />
             )}
 
             <div className="skill-settings__filters" role="search" aria-label={skillsI18n.searchLabel}>
@@ -223,43 +189,24 @@ export const SkillsSettingsPanel: React.FC = () => {
                   label={skillsI18n.searchLabel}
                   isLabelHidden
                   value={searchQuery}
-                  onChange={value => {
-                    setSearchQuery(value)
-                    setExpanded(false)
-                  }}
+                  onChange={setSearchQuery}
                   placeholder={skillsI18n.searchPlaceholder}
                   hasClear
                   size="sm"
                   width="100%"
                 />
               </div>
-              {sourceOptions.length > 2 && (
-                <div className="skill-settings__source-filter">
-                  <SettingsSelect
-                    label={skillsI18n.sourceFilterLabel}
-                    isLabelHidden
-                    options={sourceOptions}
-                    value={sourceFilter}
-                    onChange={value => {
-                      setSourceFilter(value as SkillSourceFilter)
-                      setExpanded(false)
-                    }}
-                    size="sm"
-                    width="100%"
-                  />
-                </div>
-              )}
-              {filtered.length > COLLAPSE_LIMIT && (
-                <Button
-                  label={expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${filtered.length}）`}
-                  variant="ghost"
-                  size="sm"
-                  className="skill-settings__expand"
-                  onClick={() => setExpanded(value => !value)}
-                >
-                  {expanded ? skillsI18n.showLess : `${skillsI18n.showAll}（${filtered.length}）`}
-                </Button>
-              )}
+              <SettingsSegmented
+                label={skillsI18n.sourceFilterLabel}
+                value={filter}
+                onChange={setFilter}
+                options={[
+                  { value: 'all', label: skillsI18n.allSources },
+                  { value: 'mine', label: skillsI18n.filterMine },
+                  { value: 'third_party', label: skillsI18n.filterThirdParty },
+                  { value: 'builtin', label: skillsI18n.filterBuiltin }
+                ]}
+              />
             </div>
 
             {skillsError && (
@@ -274,13 +221,9 @@ export const SkillsSettingsPanel: React.FC = () => {
                 }
               />
             )}
-            {visible.length === 0 && !skillsError && (
+            {filtered.length === 0 && !skillsError && (
               <p className="settings-panel__muted">
-                {skillsLoading
-                  ? '加载中…'
-                  : skills.length === 0
-                    ? skillsI18n.empty
-                    : skillsI18n.noSearchResults}
+                {skillsLoading ? '加载中…' : skills.length === 0 ? skillsI18n.empty : skillsI18n.noSearchResults}
               </p>
             )}
             {unattributedDiagnostics.map((d, i) => (
@@ -288,32 +231,39 @@ export const SkillsSettingsPanel: React.FC = () => {
                 {d.path ? `${d.message}（${d.path}）` : d.message}
               </p>
             ))}
-            {visible.length > 0 && (
-              <div className="skill-card-list">
-                {visible.map(skill => (
-                  <SkillCard
+            {filtered.length > 0 && (
+              <ul className="skill-grid" aria-label="技能列表">
+                {filtered.map(skill => (
+                  <SkillTile
                     key={`${skill.source}:${skill.name}`}
                     skill={skill}
-                    diagnostics={diagnosticsBySkill.get(skill.name)}
-                    onToggle={handleToggle}
+                    onOpen={item => setDetailName(item.name)}
                     onUse={handleUse}
                     onExport={name => void handleExport(name)}
-                    onDelete={handleDelete}
+                    onDelete={name => void handleDelete(name)}
                   />
                 ))}
-              </div>
+              </ul>
             )}
-
           </SettingsSection>
         </SettingsPage>
       </div>
+
+      {detailSkill && (
+        <SkillDetailDialog
+          skill={detailSkill}
+          diagnostics={diagnosticsBySkill.get(detailSkill.name)}
+          onClose={() => setDetailName(null)}
+          onUse={handleUse}
+        />
+      )}
 
       <CreateSkillDialog
         open={createOpen}
         hasProject={Boolean(currentProject)}
         onClose={() => setCreateOpen(false)}
-        onCreated={handleCreated}
+        onCreated={name => showToast(skillsI18n.createSuccess(name))}
       />
-    </div>
+    </SettingsGlassPanel>
   )
 }

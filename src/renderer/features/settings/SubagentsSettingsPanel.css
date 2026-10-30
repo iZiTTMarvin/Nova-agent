@@ -1,0 +1,269 @@
+/* 子代理：列表是两列卡片网格，点开进入全宽详情页，没有侧栏和分割线 */
+.subagents-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.subagents-stage {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  padding: 2px 6px 2px 2px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.subagent-page {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.subagents-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+
+.subagents-toolbar__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.subagents-group {
+  display: grid;
+  gap: 10px;
+}
+
+.subagents-group__title {
+  margin: 0;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.subagents-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subagent-tile {
+  min-width: 0;
+}
+
+.subagent-tile--off .subagent-tile__main {
+  opacity: 0.6;
+}
+
+.subagent-tile__main {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  width: 100%;
+  min-height: 112px;
+  padding: 14px 64px 14px 16px;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.subagent-tile__main:focus-visible {
+  outline: none;
+}
+
+.subagent-tile__name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-tile__desc {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.subagent-tile__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.subagent-tile__switch {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+
+.subagents-skeleton {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.subagents-skeleton__tile {
+  height: 112px;
+  border-radius: 14px;
+  background: var(--glass-well);
+}
+
+.subagent-back {
+  flex-shrink: 0;
+}
+
+.subagent-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 2px 6px 0;
+}
+
+.subagent-header__text {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  min-width: 0;
+}
+
+.subagent-header h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.25rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.subagent-header p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.6;
+}
+
+.subagent-header p code {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+
+/* 底部悬浮操作条：随滚动停靠在详情底部 */
+.subagent-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: auto;
+  padding: 12px 16px;
+  border-radius: 16px;
+}
+
+.subagent-actions > :last-child {
+  margin-left: auto;
+}
+
+.subagent-delete-confirm {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--color-error);
+  font-size: 0.8rem;
+}
+
+.subagent-empty {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  min-height: 200px;
+  padding: 24px 12px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.subagent-empty strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.subagent-value {
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  text-align: right;
+}
+
+.subagent-prompt {
+  overflow: auto;
+  max-height: 340px;
+  margin: 0;
+  padding: 14px 16px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 12px;
+  background: var(--glass-well);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.subagent-diagnostics {
+  display: grid;
+  gap: 4px;
+  padding: 10px 14px;
+  border: 0.5px solid color-mix(in srgb, var(--color-warning) 40%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.subagent-page-error {
+  flex-shrink: 0;
+}
+
+@media (max-width: 760px) {
+  .subagents-grid,
+  .subagents-skeleton {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

@@ -10,7 +10,6 @@ import {
   SKILL_GET_BODY,
   SKILL_CREATE,
   SKILL_DELETE,
-  SKILL_TOGGLE,
   SKILL_IMPORT,
   SKILL_EXPORT,
   SKILL_RELOAD,
@@ -29,8 +28,6 @@ export const skillApi: NovaSkillApi = {
   create: (input) => invokeMain(SKILL_CREATE, input),
 
   delete: (name) => invokeMain(SKILL_DELETE, name),
-
-  toggle: (name, enabled) => invokeMain(SKILL_TOGGLE, { name, enabled }),
 
   import: (input) => invokeMain(SKILL_IMPORT, input),
 

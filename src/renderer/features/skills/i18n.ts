@@ -12,7 +12,7 @@ export function skillSourceLabel(source: SkillSource): string {
       return '本地'
     case 'project':
       return '项目'
-    case 'third_party_claude':
+    case 'third_party':
       return '第三方'
     case 'virtual':
       return '虚拟'
@@ -26,22 +26,35 @@ export function skillSourceLabel(source: SkillSource): string {
 export const skillsI18n = {
   panelTitle: '技能',
   panelDesc: '技能是可被 / 唤起或由模型调用的指令模板。内置技能随应用分发，也可在本地或项目中自定义。',
-  loadThirdParty: '加载第三方 skill',
-  loadThirdPartyHint: '开启后读取 Claude Code 技能目录，与 Nova 内置/本地技能合并展示。',
+  thirdPartyTitle: '共享其他工具的技能',
+  thirdPartyHint: '默认只使用 Nova 自己的技能（~/.nova/skills）。开启后，Nova 会直接读取对应目录中的技能，不复制、不修改；关闭立即停止读取。',
+  thirdPartyUserLabel: (id: string) => `~/${id}/skills`,
+  thirdPartyProjectLabel: (id: string) => `项目 ${id}/skills`,
+  thirdPartyCount: (n: number) => `${n} 个技能`,
+  thirdPartyMissing: '目录不存在',
+  thirdPartyConfirmTitle: (id: string) => `读取 ${id} 中的技能？`,
+  thirdPartyConfirmMessage: (id: string, total: number) =>
+    `Nova 将直接读取 ${id}/skills 下的 ${total} 个技能（用户目录与当前项目）。这些技能可能带有可执行脚本，请确认你信任它们的来源。`,
+  thirdPartyConfirmDetail: '只读取，不会复制到 Nova，也不会修改原目录。随时可以关闭。',
+  thirdPartyConfirmAction: '开启读取',
+  menuLabel: (name: string) => `${name} 的更多操作`,
+  menuUse: '在输入框使用',
+  detailPath: '位置',
+  detailBody: '指令内容',
+  detailBodyLoading: '加载中…',
+  detailClose: '关闭',
   create: '+ 新建',
   import: '导入',
   use: '使用',
   export: '导出',
   exportSuccess: (path: string) => `已导出到 ${path}`,
-  toggle: '允许模型自动调用',
   searchLabel: '搜索技能',
   searchPlaceholder: '按名称或描述搜索',
   sourceFilterLabel: '筛选来源',
-  allSources: '全部来源',
-  showDescription: '查看完整描述',
-  hideDescription: '收起描述',
-  showAll: '显示全部',
-  showLess: '收起',
+  allSources: '全部',
+  filterMine: '我的',
+  filterThirdParty: '第三方',
+  filterBuiltin: '内置',
   empty: '暂无技能',
   noSearchResults: '没有匹配的技能',
   reload: '刷新列表',
@@ -86,8 +99,8 @@ export const rulesI18n = {
   panelDesc: '规则用于约束 Agent 行为，可始终生效或按文件路径生效（路径匹配将在后续版本支持）。',
   create: '+ 新建',
   empty: '暂无规则文件',
-  selectHint: '从左侧选择规则文件进行编辑',
-  scopeWorkspace: '工作区',
+  selectHint: '选择规则文件进行编辑',
+  scopeWorkspace: '项目',
   scopeGlobal: '全局',
   save: '保存',
   saved: '已保存',

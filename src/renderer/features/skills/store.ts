@@ -6,8 +6,8 @@ import { create } from 'zustand'
 import type {
   SkillCatalogDiagnostic,
   SkillCatalogSnapshot,
-  SkillModelBudget,
-  SkillSummary
+  SkillSummary,
+  ThirdPartySkillSourceStatus
 } from '../../../shared/skills/types'
 
 interface SkillsStoreState {
@@ -16,8 +16,8 @@ interface SkillsStoreState {
   error: string | null
   refreshedAt: number | null
   diagnostics: SkillCatalogDiagnostic[]
-  /** 目录级模型预算投影；首个快照到达前为 null */
-  modelBudget: SkillModelBudget | null
+  /** 第三方来源（.agents / .claude）的开关状态与检测结果 */
+  thirdPartySources: ThirdPartySkillSourceStatus[]
   /** 从 IPC 拉取并更新 */
   refresh: () => Promise<void>
   /** 写入主进程推送的快照（skill:changed） */
@@ -30,7 +30,7 @@ export const useSkillsStore = create<SkillsStoreState>((set) => ({
   error: null,
   refreshedAt: null,
   diagnostics: [],
-  modelBudget: null,
+  thirdPartySources: [],
 
   refresh: async () => {
     try {

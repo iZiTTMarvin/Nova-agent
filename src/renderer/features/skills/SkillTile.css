@@ -1,0 +1,68 @@
+.skill-tile {
+  list-style: none;
+  min-width: 0;
+  /* 技能很多时，屏幕外的卡片不参与布局与绘制 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 88px;
+}
+
+.skill-tile__main {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  width: 100%;
+  min-height: 88px;
+  padding: 14px 44px 14px 16px;
+  border: none;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.skill-tile__main:focus-visible {
+  outline: none;
+}
+
+.skill-tile__name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-tile__desc {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.skill-tile__desc--invalid {
+  color: var(--color-error);
+}
+
+.skill-tile__menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0.55;
+  transition: opacity 0.2s var(--glass-ease);
+}
+
+.skill-tile:hover .skill-tile__menu,
+.skill-tile:focus-within .skill-tile__menu {
+  opacity: 1;
+}
+
+.skill-tile__ellipsis {
+  font-size: 1.1rem;
+  line-height: 1;
+}

@@ -428,10 +428,6 @@ export interface IpcCommands {
     params: string
     result: void
   }
-  'skill:toggle': {
-    params: { name: string; enabled: boolean }
-    result: SkillSummary
-  }
   'skill:import': {
     params: SkillImportInput
     result: SkillSummary

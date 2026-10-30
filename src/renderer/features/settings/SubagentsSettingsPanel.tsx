@@ -26,7 +26,10 @@ import {
   type SubagentFieldErrors,
   type SubagentPresetDraft
 } from './SubagentPresetForm'
-import { SettingsSelect } from './settingsKit'
+import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage, SettingsSelect } from './settingsKit'
+import { trackSheen } from './glass'
+import { SubagentToolGroups, summarizeToolPermission } from './SubagentToolGroups'
+import './SubagentsSettingsPanel.css'
 
 interface AbilityTemplate {
   id: string
@@ -158,8 +161,9 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 function routeAfterLoad(previous: Route, items: readonly SubagentListItem[]): Route {
+  if (previous.kind === 'create') return previous
   if (previous.kind === 'detail' && items.some(item => item.id === previous.id)) return previous
-  return items[0] ? { kind: 'detail', id: items[0].id } : { kind: 'list' }
+  return { kind: 'list' }
 }
 
 interface SubagentCatalog {
@@ -216,6 +220,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
   const selected = route.kind === 'detail'
     ? items.find(item => item.id === route.id) ?? null
     : null
+  const builtinPermission = summarizeToolPermission(tools, selected?.allowedTools ?? [])
 
   const loadList = useCallback(async (): Promise<SubagentListItem[] | null> => {
     const generation = ++loadGenerationRef.current
@@ -450,160 +455,179 @@ export const SubagentsSettingsPanel: React.FC = () => {
     setPageError(null)
   }
 
-  return (
-    <div className="settings-panel subagents-settings">
-      {diagnostics.length > 0 && (
-        <div className="subagent-diagnostics" role="alert">
-          <strong>部分配置无法读取</strong>
-          {diagnostics.map((diagnostic, index) => (
-            <span key={`${diagnostic.location}-${diagnostic.code}-${index}`}>
-              {diagnostic.location === 'project' ? '项目' : '全局'}：{diagnostic.message}
-            </span>
-          ))}
-        </div>
-      )}
-      {pageError && <div className="settings-status settings-status--error subagent-page-error" role="alert">{pageError}</div>}
+  const originLabel = (item: SubagentListItem) =>
+    item.builtin ? '内置' : item.origin === 'project' ? '项目' : '全局'
 
-      <div className="settings-split subagent-workspace">
-        <aside className="settings-split__list subagent-list" aria-label="子代理列表">
-          <div className="settings-split__header">
-            <span className="settings-split__header-title">
-              全部子代理
-              {!loading && <span className="settings-split__count">{items.length}</span>}
-            </span>
-            <Button label="创建子代理" variant="secondary" size="sm" onClick={beginCreate} isDisabled={saving}>
-              + 新建
-            </Button>
+  return (
+    <SettingsGlassPanel className="subagents-panel">
+      <div className="subagents-body">
+        {diagnostics.length > 0 && (
+          <div className="subagent-diagnostics" role="alert">
+            <strong>部分配置无法读取</strong>
+            {diagnostics.map((diagnostic, index) => (
+              <span key={`${diagnostic.location}-${diagnostic.code}-${index}`}>
+                {diagnostic.location === 'project' ? '项目' : '全局'}：{diagnostic.message}
+              </span>
+            ))}
           </div>
-          {loading && (
-            <div className="subagent-list__skeleton" aria-busy="true" aria-label="加载子代理">
-              <div className="subagent-list__skeleton-row" />
-              <div className="subagent-list__skeleton-row" />
-              <div className="subagent-list__skeleton-row" />
-            </div>
-          )}
-          {!loading && items.length === 0 && (
-            <div className="subagent-empty">
-              <strong>还没有可用的子代理</strong>
-              <span>从安全模板开始创建，之后可以继续调整模型和工具。</span>
-              <Button label="创建第一个子代理" variant="secondary" size="sm" onClick={beginCreate}>开始创建</Button>
-            </div>
-          )}
-          {[
-            { key: 'custom', title: '自定义', group: items.filter(item => !item.builtin) },
-            { key: 'builtin', title: '内置', group: items.filter(item => item.builtin) }
-          ].map(({ key, title, group }) => group.length > 0 && (
-            <div key={key} className="subagent-list__group">
-              <div className="settings-split__group-title">{title}</div>
-              {group.map(item => (
-                <div key={item.id} className={`subagent-list__row${selected?.id === item.id ? ' subagent-list__row--active' : ''}`}>
-                  <button
-                    type="button"
-                    aria-label={item.name}
-                    aria-current={selected?.id === item.id ? 'true' : undefined}
-                    className="settings-split__item subagent-list__card"
-                    onClick={() => setRoute({ kind: 'detail', id: item.id })}
-                  >
-                    <span className="settings-split__item-title">{item.name}</span>
-                    <span className="settings-split__item-meta">
-                      {item.builtin ? '内置' : item.origin === 'project' ? '项目' : '全局'}
-                      {!item.enabled && '，已禁用'}
-                    </span>
-                  </button>
-                  {!item.builtin && (
-                    <Switch
-                      label={`${item.enabled ? '禁用' : '启用'} ${item.name}`}
-                      isLabelHidden
-                      value={item.enabled}
-                      onChange={enabled => void toggleEnabled(item, enabled)}
-                      isDisabled={saving || actionId === item.id}
-                    />
-                  )}
+        )}
+        {pageError && <div className="settings-status settings-status--error subagent-page-error" role="alert">{pageError}</div>}
+
+        <div className="subagents-stage">
+          {route.kind === 'list' && (
+            <div className="subagent-page">
+              <div className="subagents-toolbar">
+                <span className="subagents-toolbar__title">
+                  全部子代理
+                  {!loading && <span className="glass-chip">{items.length}</span>}
+                </span>
+                <Button label="创建子代理" variant="primary" size="sm" onClick={beginCreate} isDisabled={saving}>
+                  + 新建
+                </Button>
+              </div>
+              {loading && (
+                <div className="subagents-skeleton" aria-busy="true" aria-label="加载子代理">
+                  <div className="subagents-skeleton__tile" />
+                  <div className="subagents-skeleton__tile" />
+                  <div className="subagents-skeleton__tile" />
+                  <div className="subagents-skeleton__tile" />
                 </div>
+              )}
+              {!loading && items.length === 0 && (
+                <div className="subagent-empty glass-card">
+                  <strong>还没有可用的子代理</strong>
+                  <span>从安全模板开始创建，之后可以继续调整模型和工具。</span>
+                  <Button label="创建第一个子代理" variant="secondary" size="sm" onClick={beginCreate}>开始创建</Button>
+                </div>
+              )}
+              {[
+                { key: 'custom', title: '自定义', group: items.filter(item => !item.builtin) },
+                { key: 'builtin', title: '内置', group: items.filter(item => item.builtin) }
+              ].map(({ key, title, group }) => group.length > 0 && (
+                <section key={key} className="subagents-group">
+                  <h4 className="subagents-group__title">{title}</h4>
+                  <ul className="subagents-grid">
+                    {group.map(item => (
+                      <li
+                        key={item.id}
+                        className={`subagent-tile glass-tile glass-tile--interactive${item.enabled ? '' : ' subagent-tile--off'}`}
+                        onPointerMove={trackSheen}
+                      >
+                        <button
+                          type="button"
+                          aria-label={item.name}
+                          className="subagent-tile__main"
+                          onClick={() => setRoute({ kind: 'detail', id: item.id })}
+                        >
+                          <span className="subagent-tile__name">{item.name}</span>
+                          <span className="subagent-tile__desc">{item.description}</span>
+                          <span className="subagent-tile__meta">
+                            <span className="glass-chip">{originLabel(item)}</span>
+                            <span className="glass-chip">{item.model ? '固定模型' : '默认模型'}</span>
+                            <span className="glass-chip">{item.allowedTools.length} 个工具</span>
+                            {!item.enabled && <span className="glass-chip">已禁用</span>}
+                          </span>
+                        </button>
+                        {!item.builtin && (
+                          <div className="subagent-tile__switch">
+                            <Switch
+                              label={`${item.enabled ? '禁用' : '启用'} ${item.name}`}
+                              isLabelHidden
+                              value={item.enabled}
+                              onChange={enabled => void toggleEnabled(item, enabled)}
+                              isDisabled={saving || actionId === item.id}
+                            />
+                          </div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
               ))}
             </div>
-          ))}
-        </aside>
-
-        <main className="settings-split__editor subagent-editor">
-          {route.kind === 'list' && items.length > 0 && (
-            <div className="subagent-placeholder">
-              <strong>选择一个子代理</strong>
-              <span>查看真实能力，或编辑自定义配置。</span>
-            </div>
           )}
 
-          {route.kind === 'create' && route.step === 1 && (
-            <div className="subagent-wizard">
-              <header>
-                <span>步骤 1 / 2</span>
-                <h3>确定用途与身份</h3>
-                <p>模板只生成安全初始值，下一步仍可逐项调整。</p>
-              </header>
-              <div className="subagent-wizard__fields">
-              <TextInput
-                label="显示名称"
-                value={draft.preset.name}
-                onChange={name => {
-                  const id = route.idTouched
-                    ? draft.preset.id
-                    : generateSubagentPresetId(name || '新子代理', items.map(item => item.id))
-                  setDraft(current => ({ ...current, preset: { ...current.preset, name, id } }))
-                  setFieldErrors({})
-                }}
-                placeholder="例如：依赖风险审查"
+          {route.kind !== 'list' && (
+            <div className="subagent-back">
+              <Button
+                label="返回全部子代理"
+                variant="ghost"
+                size="sm"
+                onClick={() => setRoute({ kind: 'list' })}
                 isDisabled={saving}
-                width="100%"
-              />
-              <FieldError message={fieldErrors.name} />
-              <TextInput
-                label="稳定 ID"
-                description="创建前可以调整；创建后不可修改。"
-                value={draft.preset.id}
-                onChange={id => {
-                  setDraft(current => ({ ...current, preset: { ...current.preset, id } }))
-                  setRoute({ ...route, idTouched: true })
-                  setFieldErrors({})
-                }}
-                isDisabled={saving}
-                width="100%"
-              />
-              <FieldError message={fieldErrors.id} />
-              <TextArea
-                label="适用场景"
-                value={draft.preset.description}
-                onChange={description => setDraft(current => ({ ...current, preset: { ...current.preset, description } }))}
-                isDisabled={saving}
-                width="100%"
-              />
-              <FieldError message={fieldErrors.description} />
-              <SettingsSelect
-                label="能力模板"
-                value={template.id}
-                options={templates.map(candidate => ({ value: candidate.id, label: candidate.name }))}
-                onChange={value => selectTemplate(value as AbilityTemplate['id'])}
-                isDisabled={saving}
-                width="100%"
-              />
-              <p className="settings-help">{template.description}</p>
+              >
+                ← 全部子代理
+              </Button>
+            </div>
+          )}
+            {route.kind === 'create' && route.step === 1 && (
+              <div className="subagent-page">
+                <PageHeader eyebrow="步骤 1 / 2" title="确定用途与身份" subtitle="模板只生成安全初始值，下一步仍可逐项调整。" />
+                <SettingsCard>
+                  <div className="subagent-form__field">
+                    <TextInput
+                      label="显示名称"
+                      value={draft.preset.name}
+                      onChange={name => {
+                        const id = route.idTouched
+                          ? draft.preset.id
+                          : generateSubagentPresetId(name || '新子代理', items.map(item => item.id))
+                        setDraft(current => ({ ...current, preset: { ...current.preset, name, id } }))
+                        setFieldErrors({})
+                      }}
+                      placeholder="例如：依赖风险审查"
+                      isDisabled={saving}
+                      width="100%"
+                    />
+                    <FieldError message={fieldErrors.name} />
+                  </div>
+                  <div className="subagent-form__field">
+                    <TextInput
+                      label="稳定 ID"
+                      description="创建前可以调整；创建后不可修改。"
+                      value={draft.preset.id}
+                      onChange={id => {
+                        setDraft(current => ({ ...current, preset: { ...current.preset, id } }))
+                        setRoute({ ...route, idTouched: true })
+                        setFieldErrors({})
+                      }}
+                      isDisabled={saving}
+                      width="100%"
+                    />
+                    <FieldError message={fieldErrors.id} />
+                  </div>
+                  <div className="subagent-form__field">
+                    <TextArea
+                      label="适用场景"
+                      value={draft.preset.description}
+                      onChange={description => setDraft(current => ({ ...current, preset: { ...current.preset, description } }))}
+                      isDisabled={saving}
+                      width="100%"
+                    />
+                    <FieldError message={fieldErrors.description} />
+                  </div>
+                  <div className="subagent-form__field">
+                    <SettingsSelect
+                      label="能力模板"
+                      value={template.id}
+                      options={templates.map(candidate => ({ value: candidate.id, label: candidate.name }))}
+                      onChange={value => selectTemplate(value as AbilityTemplate['id'])}
+                      isDisabled={saving}
+                      width="100%"
+                    />
+                    <p className="settings-help">{template.description}</p>
+                  </div>
+                </SettingsCard>
+                <footer className="subagent-actions glass-card">
+                  <Button label="取消创建" variant="secondary" onClick={() => setRoute({ kind: 'list' })}>取消</Button>
+                  <Button label="下一步" variant="primary" onClick={continueCreate}>下一步</Button>
+                </footer>
               </div>
-              <footer className="subagent-actions">
-                <Button label="取消创建" variant="secondary" onClick={() => setRoute({ kind: 'list' })}>取消</Button>
-                <Button label="下一步" variant="primary" onClick={continueCreate}>下一步</Button>
-              </footer>
-            </div>
-          )}
+            )}
 
-          {route.kind === 'create' && route.step === 2 && (
-            <div className="subagent-detail-page">
-              <header className="subagent-detail-header">
-                <div>
-                  <span>步骤 2 / 2</span>
-                  <h3>检查配置</h3>
-                  <p>保存失败不会清空当前输入。</p>
-                </div>
-              </header>
-              <div className="subagent-detail-scroll">
+            {route.kind === 'create' && route.step === 2 && (
+              <div className="subagent-page">
+                <PageHeader eyebrow="步骤 2 / 2" title="检查配置" subtitle="保存失败不会清空当前输入。" />
                 <SubagentPresetForm
                   draft={draft}
                   tools={tools}
@@ -614,64 +638,63 @@ export const SubagentsSettingsPanel: React.FC = () => {
                   fieldErrors={fieldErrors}
                   onChange={updateCreateDraft}
                 />
+                <footer className="subagent-actions glass-card">
+                  <Button label="返回上一步" variant="secondary" onClick={() => setRoute({ ...route, step: 1 })} isDisabled={saving}>上一步</Button>
+                  <Button label={saving ? '创建中…' : '确认创建'} variant="primary" onClick={() => void submitCreate()} isDisabled={saving}>
+                    {saving ? '创建中…' : '确认创建'}
+                  </Button>
+                </footer>
               </div>
-              <footer className="subagent-actions subagent-actions--sticky">
-                <Button label="返回上一步" variant="secondary" onClick={() => setRoute({ ...route, step: 1 })} isDisabled={saving}>上一步</Button>
-                <Button label={saving ? '创建中…' : '确认创建'} variant="primary" onClick={() => void submitCreate()} isDisabled={saving}>
-                  {saving ? '创建中…' : '确认创建'}
-                </Button>
-              </footer>
-            </div>
-          )}
+            )}
 
-          {selected?.builtin && (
-            <div className="subagent-detail-page">
-              <header className="subagent-detail-header">
-                <div>
-                  <span>内置能力（只读）</span>
-                  <h3>{selected.name}</h3>
-                  <p>{selected.description}</p>
-                </div>
-                <Button label="复制为自定义" variant="secondary" size="sm" onClick={() => copyBuiltin(selected)}>复制为自定义</Button>
-              </header>
-              <div className="subagent-detail-scroll">
-                <section className="subagent-capability-summary">
-                  <dl className="subagent-facts">
-                    <div className="subagent-fact">
-                      <dt>模型策略</dt>
-                      <dd>{selected.model ? '使用固定模型绑定' : '派遣时跟随默认模型'}</dd>
-                    </div>
-                    <div className="subagent-fact">
-                      <dt>工具与权限</dt>
-                      <dd>
-                        <div className="subagent-chip-list">{selected.allowedTools.map(tool => <code key={tool}>{tool}</code>)}</div>
-                        <span className="subagent-fact__note">
-                          {selected.allowedTools.some(name => ['edit', 'write', 'bash', 'shell_session'].includes(name)) ? '最高可请求工作区写入权限' : '只读权限上限'}
+            {selected?.builtin && (
+              <div className="subagent-page">
+                <PageHeader
+                  eyebrow="内置能力（只读）"
+                  title={selected.name}
+                  subtitle={selected.description}
+                  action={<Button label="复制为自定义" variant="secondary" size="sm" onClick={() => copyBuiltin(selected)}>复制为自定义</Button>}
+                />
+                <SettingsPage className="subagent-form">
+                  <SettingsCard title="概览">
+                    <SettingsCardRow
+                      label="模型策略"
+                      control={<span className="subagent-value">{selected.model ? '使用固定模型绑定' : '派遣时跟随默认模型'}</span>}
+                    />
+                    <SettingsCardRow
+                      label="运行限制"
+                      control={
+                        <span className="subagent-value">
+                          {selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}
+                          {selected.contextWindow ? `，上下文 ${selected.contextWindow} tokens` : ''}
                         </span>
-                      </dd>
-                    </div>
-                    <div className="subagent-fact">
-                      <dt>运行限制</dt>
-                      <dd>{selected.maxToolRounds !== undefined ? `最多 ${selected.maxToolRounds} 轮工具调用` : '工具调用轮数按权限档默认'}{selected.contextWindow ? `，上下文 ${selected.contextWindow} tokens` : ''}</dd>
-                    </div>
-                  </dl>
-                  <h4>System prompt</h4>
-                  <pre>{selected.prompt}</pre>
-                </section>
+                      }
+                    />
+                  </SettingsCard>
+                  <SettingsCard
+                    title="工具与权限"
+                    aside={
+                      <span className={`glass-chip${builtinPermission.canWrite ? ' glass-chip--caution' : ''}`}>
+                        {builtinPermission.canWrite ? '可修改工作区' : '只读权限上限'}
+                      </span>
+                    }
+                  >
+                    <SubagentToolGroups tools={tools} selected={selected.allowedTools} />
+                  </SettingsCard>
+                  <SettingsCard title="System prompt">
+                    <pre className="subagent-prompt">{selected.prompt}</pre>
+                  </SettingsCard>
+                </SettingsPage>
               </div>
-            </div>
-          )}
+            )}
 
-          {selected && !selected.builtin && (
-            <div className="subagent-detail-page">
-              <header className="subagent-detail-header">
-                <div>
-                  <span>{selected.origin === 'project' ? '项目配置' : '全局配置'}</span>
-                  <h3>{selected.name}</h3>
-                  <p>ID：<code>{selected.id}</code></p>
-                </div>
-              </header>
-              <div className="subagent-detail-scroll">
+            {selected && !selected.builtin && (
+              <div className="subagent-page">
+                <PageHeader
+                  eyebrow={selected.origin === 'project' ? '项目配置' : '全局配置'}
+                  title={selected.name}
+                  subtitle={<>ID：<code>{selected.id}</code></>}
+                />
                 <SubagentPresetForm
                   draft={draft}
                   tools={tools}
@@ -685,25 +708,38 @@ export const SubagentsSettingsPanel: React.FC = () => {
                     setPageError(null)
                   }}
                 />
+                <footer className="subagent-actions glass-card">
+                  {deleteConfirm ? (
+                    <div className="subagent-delete-confirm" role="alert">
+                      <span>删除「{selected.name}」的{selected.origin === 'project' ? '项目' : '全局'}配置？</span>
+                      <Button label="保留配置" variant="secondary" size="sm" onClick={() => setDeleteConfirm(false)} isDisabled={saving}>取消</Button>
+                      <Button label="确认删除" variant="destructive" size="sm" onClick={() => void deleteSelected()} isDisabled={saving}>确认删除</Button>
+                    </div>
+                  ) : (
+                    <Button label="删除配置" variant="destructive" onClick={() => setDeleteConfirm(true)} isDisabled={saving}>删除</Button>
+                  )}
+                  <Button label={saving ? '保存中…' : '保存更改'} variant="primary" onClick={() => void submitUpdate()} isDisabled={saving}>
+                    {saving ? '保存中…' : '保存更改'}
+                  </Button>
+                </footer>
               </div>
-              <footer className="subagent-actions subagent-actions--sticky">
-                {deleteConfirm ? (
-                  <div className="subagent-delete-confirm" role="alert">
-                    <span>删除「{selected.name}」的{selected.origin === 'project' ? '项目' : '全局'}配置？</span>
-                    <Button label="保留配置" variant="secondary" size="sm" onClick={() => setDeleteConfirm(false)} isDisabled={saving}>取消</Button>
-                    <Button label="确认删除" variant="destructive" size="sm" onClick={() => void deleteSelected()} isDisabled={saving}>确认删除</Button>
-                  </div>
-                ) : (
-                  <Button label="删除配置" variant="destructive" onClick={() => setDeleteConfirm(true)} isDisabled={saving}>删除</Button>
-                )}
-                <Button label={saving ? '保存中…' : '保存更改'} variant="primary" onClick={() => void submitUpdate()} isDisabled={saving}>
-                  {saving ? '保存中…' : '保存更改'}
-                </Button>
-              </footer>
-            </div>
-          )}
-        </main>
+            )}
+        </div>
       </div>
-    </div>
+    </SettingsGlassPanel>
+  )
+}
+
+/** 详情页头：状态标签、名称、说明，右侧可放操作 */
+function PageHeader(props: { eyebrow: string; title: string; subtitle?: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <header className="subagent-header">
+      <div className="subagent-header__text">
+        <span className="glass-chip">{props.eyebrow}</span>
+        <h3>{props.title}</h3>
+        {props.subtitle != null && <p>{props.subtitle}</p>}
+      </div>
+      {props.action}
+    </header>
   )
 }

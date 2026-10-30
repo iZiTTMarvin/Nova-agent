@@ -4,6 +4,7 @@
 import type { Mode, PermissionMode } from '../session/types'
 import type { ToolEffect } from '../permissions/types'
 import type { SubagentProfileModel } from '../subagents/types'
+import type { ThirdPartySkillSources } from '../skills/types'
 
 export type { PermissionMode }
 
@@ -65,7 +66,8 @@ export interface SubagentPresetDiagnostic {
  */
 export interface NovaSettingsDto {
   // ── 现有 ──
-  loadThirdPartySkills: boolean
+  /** 用户同意共享给 Nova 的第三方技能目录；默认全部关闭 */
+  thirdPartySkillSources: ThirdPartySkillSources
 
   // ── PRD §5.6 新增：通用偏好 ──
   /** 默认运行模式（新建会话时使用） */

@@ -1,0 +1,98 @@
+.subagent-tools {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.subagent-tools__legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+/* 分组之间用发丝线隔开，分组名与胶囊之间留出固定间距 */
+.subagent-tools__group {
+  display: grid;
+  gap: 9px;
+}
+
+.subagent-tools__group + .subagent-tools__group {
+  padding-top: 16px;
+  border-top: 0.5px solid var(--glass-edge);
+}
+
+.subagent-tools__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 500;
+}
+
+.subagent-tools__title--caution::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+
+.subagent-tools__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.subagent-tool code {
+  color: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+.subagent-tool--toggle {
+  padding: 5px 12px 5px 8px;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    background-color 0.25s var(--glass-ease),
+    border-color 0.25s var(--glass-ease),
+    color 0.25s var(--glass-ease);
+}
+
+.subagent-tool--toggle:hover:not(.glass-chip--accent):not(:disabled) {
+  background: var(--glass-fill-hover);
+  color: var(--text-primary);
+}
+
+.subagent-tool--toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.subagent-tool--toggle:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.subagent-tool__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 50%;
+  font-size: 0.62rem;
+  line-height: 1;
+}
+
+.glass-chip--accent .subagent-tool__mark {
+  border-color: var(--glass-accent-edge);
+  background: var(--accent-primary);
+  color: var(--color-on-accent);
+}

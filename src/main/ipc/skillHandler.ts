@@ -10,7 +10,6 @@ import {
   SKILL_GET_BODY,
   SKILL_CREATE,
   SKILL_DELETE,
-  SKILL_TOGGLE,
   SKILL_IMPORT,
   SKILL_EXPORT,
   SKILL_RELOAD,
@@ -42,12 +41,6 @@ export function registerSkillHandler(getMainWindow?: () => BrowserWindow | null)
   handle(SKILL_DELETE, async (_event, name: string) => {
     service().delete(name)
     refreshSkillsAfterMutation()
-  })
-
-  handle(SKILL_TOGGLE, async (_event, params: { name: string; enabled: boolean }) => {
-    const updated = service().toggle(params.name, params.enabled)
-    refreshSkillsAfterMutation()
-    return updated
   })
 
   handle(SKILL_IMPORT, async (_event, input: SkillImportInput) => {

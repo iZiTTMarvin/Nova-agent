@@ -2,12 +2,12 @@
  * SkillService — 桌面端技能管理单例
  * 封装加载、CRUD、启停持久化与导入导出
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { syncClaudeCodeSkills } from './ClaudeCodeSkillAdapter'
 import { SkillRegistry } from './SkillRegistry'
-import { MAX_CONTEXT_SKILLS, resolveBuiltinSkillsDir } from './SkillLoader'
+import { resolveBuiltinSkillsDir } from './SkillLoader'
+import { describeThirdPartySources, resolveThirdPartySkillDirs } from './thirdPartySources'
 import { loadNovaSettings } from '../settings/novaSettings'
 import {
   createTempSkillDir,
@@ -24,22 +24,19 @@ import type {
   SkillCreateInput,
   SkillCreateLocation,
   SkillImportInput,
-  SkillModelBudget,
   SkillReloadResult,
-  SkillSummary
+  SkillSummary,
+  ThirdPartySkillSourceStatus
 } from '../../shared/skills/types'
 
 const SLUG_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/
 const BODY_PREVIEW_LEN = 280
-const SKILL_STATE_FILE = 'skill-state.json'
 
 export interface SkillServiceOptions {
   /** Electron app.getAppPath；用于定位 builtin 目录 */
   getAppPath?: () => string
   /** 全局技能目录，默认 ~/.nova/skills */
   globalDir?: string
-  /** skill-state.json 所在目录，默认 ~/.nova */
-  novaHomeDir?: string
 }
 
 /** 将完整 manifest 转为 IPC 安全摘要 */
@@ -53,7 +50,6 @@ export function toSkillSummary(skill: SkillManifest): SkillSummary {
     sourcePath: skill.sourcePath,
     userInvocable: skill.userInvocable,
     modelInvocable: skill.modelInvocable,
-    enabled: skill.enabled,
     invalid: skill.invalid,
     invalidReason: skill.invalidReason,
     warnings: skill.warnings,
@@ -65,8 +61,15 @@ export function toSkillSummary(skill: SkillManifest): SkillSummary {
   }
 }
 
+const SOURCE_LABELS: Record<string, string> = {
+  builtin: '内置',
+  global: '本地',
+  project: '项目',
+  third_party: '第三方'
+}
+
 /**
- * 把注册表的加载错误、来源遮蔽、模式限制与模型开关投影为目录诊断。
+ * 把注册表的加载错误、来源遮蔽与模式限制投影为目录诊断。
  * 无效技能只保留加载错误，不叠加次级说明。排序稳定（名称 → 路径 → code），
  * 不依赖文件系统枚举顺序。
  */
@@ -82,7 +85,7 @@ export function toCatalogDiagnostics(registry: SkillRegistry): SkillCatalogDiagn
   )) {
     diagnostics.push({
       code: 'shadowed',
-      message: `技能「${name}」被高优先级来源覆盖，${source} 版本未生效`,
+      message: `技能「${name}」被高优先级来源覆盖，${SOURCE_LABELS[source] ?? source}版本未生效`,
       skillName: name
     })
   }
@@ -96,21 +99,6 @@ export function toCatalogDiagnostics(registry: SkillRegistry): SkillCatalogDiagn
         skillName: skill.name
       })
     }
-    if (skill.modelInvocable && !skill.enabled) {
-      diagnostics.push({
-        code: 'model_disabled',
-        message: '已关闭模型调用',
-        skillName: skill.name
-      })
-    }
-  }
-  // 预算压力是目录级的（未按会话 profile 过滤），超过上限才出现一条
-  const budget = registry.getContextProjection()
-  if (budget.omittedCount > 0) {
-    diagnostics.push({
-      code: 'budget_omitted',
-      message: `模型上下文最多收录前 ${MAX_CONTEXT_SKILLS} 个技能，目录有 ${budget.eligible} 个模型可用技能`
-    })
   }
   diagnostics.sort((a, b) =>
     (a.skillName ?? a.path ?? '').localeCompare(b.skillName ?? b.path ?? '') ||
@@ -124,15 +112,10 @@ export class SkillService {
   private workspaceRoot: string | null = null
   private readonly getAppPath?: () => string
   private readonly globalDir: string
-  private readonly novaHomeDir: string
-  /** name → enabled，持久化到 ~/.nova/skill-state.json */
-  private skillState: Record<string, boolean> = {}
 
   constructor(opts: SkillServiceOptions = {}) {
     this.getAppPath = opts.getAppPath
     this.globalDir = opts.globalDir ?? join(homedir(), '.nova', 'skills')
-    this.novaHomeDir = opts.novaHomeDir ?? join(homedir(), '.nova')
-    this.loadSkillState()
   }
 
   /** 切换工作区但推迟扫描，下次读取目录时按新工作区加载 */
@@ -150,24 +133,15 @@ export class SkillService {
     return this.reload()
   }
 
-  /** 按当前 workspace 重新扫描（含第三方 Claude skill 同步） */
+  /** 按当前 workspace 重新扫描；用户已同意的第三方目录原地读取 */
   reload(): SkillRegistry {
-    const settings = loadNovaSettings()
-    const claudeSync = syncClaudeCodeSkills({
-      enabled: settings.loadThirdPartySkills,
-      workspaceRoot: this.workspaceRoot,
-      novaHomeDir: this.novaHomeDir
-    })
-
     const builtinDir = resolveBuiltinSkillsDir(this.getAppPath)
     this.registry = SkillRegistry.load({
       workspaceRoot: this.workspaceRoot ?? undefined,
       builtinDir,
       globalDir: this.globalDir,
-      // 开关开启时从缓存目录加载 third_party_claude 源
-      thirdPartyDir: claudeSync?.cacheDir
+      thirdPartyDirs: this.thirdPartyDirs()
     })
-    this.applySkillState()
     // 诊断：builtin 为空时 `/` 补全会无候选项，便于排查打包路径错位
     const builtinCount = this.registry
       .getLoader()
@@ -180,6 +154,21 @@ export class SkillService {
       )
     }
     return this.registry
+  }
+
+  private thirdPartyDirs(): string[] {
+    return resolveThirdPartySkillDirs(loadNovaSettings().thirdPartySkillSources, this.workspaceRoot)
+  }
+
+  /** 设置页展示用：各第三方来源的路径、是否存在与技能数 */
+  getThirdPartySources(): ThirdPartySkillSourceStatus[] {
+    return describeThirdPartySources(loadNovaSettings().thirdPartySkillSources, this.workspaceRoot)
+  }
+
+  /** 需要监听文件变化的技能根目录（不含只读的内置目录） */
+  getWatchRoots(): string[] {
+    const project = this.workspaceRoot ? [join(this.workspaceRoot, '.nova', 'skills')] : []
+    return [this.globalDir, ...project, ...this.thirdPartyDirs()]
   }
 
   getRegistry(): SkillRegistry {
@@ -261,33 +250,12 @@ export class SkillService {
     if (!skill) {
       throw new Error(`技能不存在：${name}`)
     }
-    if (skill.source === 'builtin' || skill.source === 'third_party_claude') {
+    if (skill.source === 'builtin' || skill.source === 'third_party') {
       throw new Error(`无法删除来源为 ${skill.source} 的技能`)
     }
 
     rmSync(skill.directory, { recursive: true, force: true })
-    delete this.skillState[name]
-    this.saveSkillState()
     this.reload()
-  }
-
-  /**
-   * 切换 model 调用开关（持久化）
-   */
-  toggle(name: string, enabled: boolean): SkillSummary {
-    const skill = this.getRegistry().get(name)
-    if (!skill) {
-      throw new Error(`技能不存在：${name}`)
-    }
-    if (skill.invalid) {
-      throw new Error(`技能无效，无法切换：${skill.invalidReason}`)
-    }
-
-    this.skillState[name] = enabled
-    this.saveSkillState()
-    skill.enabled = enabled
-
-    return toSkillSummary(skill)
   }
 
   /**
@@ -365,14 +333,6 @@ export class SkillService {
     }
   }
 
-  /** 目录级模型预算投影（未按会话 profile 过滤） */
-  getModelBudget(): SkillModelBudget {
-    return {
-      cap: MAX_CONTEXT_SKILLS,
-      eligible: this.getRegistry().getContextProjection().eligible
-    }
-  }
-
   private resolveLocationDir(location: SkillCreateLocation): string {
     if (location === 'global') {
       mkdirSync(this.globalDir, { recursive: true })
@@ -384,39 +344,6 @@ export class SkillService {
     const projectDir = join(this.workspaceRoot, '.nova', 'skills')
     mkdirSync(projectDir, { recursive: true })
     return projectDir
-  }
-
-  private loadSkillState(): void {
-    const statePath = join(this.novaHomeDir, SKILL_STATE_FILE)
-    if (!existsSync(statePath)) {
-      this.skillState = {}
-      return
-    }
-    try {
-      const raw = readFileSync(statePath, 'utf-8')
-      const parsed = JSON.parse(raw) as Record<string, boolean>
-      this.skillState = parsed && typeof parsed === 'object' ? parsed : {}
-    } catch {
-      this.skillState = {}
-    }
-  }
-
-  private saveSkillState(): void {
-    mkdirSync(this.novaHomeDir, { recursive: true })
-    const statePath = join(this.novaHomeDir, SKILL_STATE_FILE)
-    writeFileSync(statePath, JSON.stringify(this.skillState, null, 2), 'utf-8')
-  }
-
-  /** 将持久化开关应用到已加载 manifest */
-  private applySkillState(): void {
-    if (!this.registry) return
-    for (const skill of this.registry.getLoader().listAll()) {
-      if (!(skill.name in this.skillState)) {
-        skill.enabled = skill.modelInvocable
-      } else {
-        skill.enabled = this.skillState[skill.name]!
-      }
-    }
   }
 }
 

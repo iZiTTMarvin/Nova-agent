@@ -1,0 +1,160 @@
+.rules-body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.rules-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.rules-toolbar > .rules-project {
+  margin-right: auto;
+}
+
+.rules-hint {
+  flex-shrink: 0;
+  margin: -4px 4px 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rules-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.rules-file {
+  padding: 5px 13px;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition:
+    background-color 0.25s var(--glass-ease),
+    border-color 0.25s var(--glass-ease),
+    color 0.25s var(--glass-ease);
+}
+
+.rules-file:hover:not(.glass-chip--accent) {
+  background: var(--glass-fill-hover);
+  color: var(--text-primary);
+}
+
+.rules-file:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.rules-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 14px 16px 14px;
+}
+
+.rules-editor__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.rules-editor__path {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 编辑区撑满卡片剩余高度：组件库在输入框外还包了一层字段容器，也要一起拉伸 */
+.rules-editor > .astryx-field {
+  flex: 1;
+  min-height: 0;
+}
+
+.rules-editor .settings-editor {
+  display: flex;
+  flex: 1;
+  align-items: stretch;
+  min-height: 0;
+}
+
+.rules-editor .settings-editor textarea {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+}
+
+.rules-editor__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.rules-empty {
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  flex: 1;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.rules-empty strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+dialog.rules-create-dialog {
+  padding: 22px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 20px;
+  background: light-dark(rgba(255, 255, 255, 0.84), rgba(38, 40, 48, 0.8));
+  -webkit-backdrop-filter: blur(28px) saturate(170%);
+  backdrop-filter: blur(28px) saturate(170%);
+  box-shadow:
+    0 24px 60px -20px light-dark(rgba(30, 40, 100, 0.4), rgba(0, 0, 0, 0.75)),
+    var(--glass-inset);
+}
+
+.rules-create-dialog__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.rules-create-dialog__form h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.rules-create-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -1,0 +1,348 @@
+/* 设置页共享的液态玻璃：变量、容器、卡片、胶囊与分段控件。
+   玻璃只做半透明填充、发丝边、顶部高光与柔和投影，不引入彩色；强调色只用主题色。
+   模糊只给大容器与弹层，列表里的小卡片用无模糊的玻璃面以保证滚动流畅。 */
+
+.settings-glass,
+.glass-dialog {
+  --glass-fill: light-dark(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.055));
+  --glass-fill-hover: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.09));
+  --glass-fill-open: light-dark(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.075));
+  --glass-well: light-dark(rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.045));
+  --glass-edge: light-dark(rgba(70, 80, 130, 0.16), rgba(255, 255, 255, 0.1));
+  --glass-ring: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.12));
+  --glass-shadow:
+    0 12px 32px -16px light-dark(rgba(40, 50, 120, 0.3), rgba(0, 0, 0, 0.7)),
+    0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+  --glass-inset:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.16)),
+    inset 0 -1px 0 light-dark(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.03)),
+    inset 0 0 0 0.5px var(--glass-ring);
+  --glass-blur: blur(18px) saturate(160%);
+  --glass-sheen-color: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.15));
+  --glass-accent-fill: color-mix(in srgb, var(--accent-primary) 13%, transparent);
+  --glass-accent-edge: color-mix(in srgb, var(--accent-primary) 42%, transparent);
+  --glass-ease: var(--ease-out-expo);
+}
+
+/* 让组件库控件落在玻璃上：只改它公开的色彩与圆角令牌，不依赖其内部类名 */
+.settings-glass,
+.glass-dialog {
+  --color-neutral: light-dark(rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.085));
+  --color-border: var(--glass-edge);
+  --color-background-muted: var(--glass-well);
+  --radius-element: 10px;
+}
+
+.settings-glass .astryx-button:not(:disabled) {
+  box-shadow: var(--glass-inset);
+}
+
+.settings-glass .astryx-button:is(.ghost, [data-variant='ghost']),
+.settings-glass .astryx-button:is(.destructive, [data-variant='destructive']) {
+  box-shadow: none;
+}
+
+.settings-glass-panel {
+  position: relative;
+  isolation: isolate;
+}
+
+/* 玻璃折射用的底层光斑：单一冷灰色调，只在悬停交互时漂移 */
+.glass-aurora {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 80% 75% at 50% 42%, #000 38%, transparent 100%);
+}
+
+.glass-aurora__blob {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  will-change: transform;
+  /* 光斑在玻璃背后，持续移动会让每块玻璃每帧重算模糊；只在交互时漂移，空闲零开销 */
+  animation-play-state: paused;
+}
+
+.settings-glass-panel:hover .glass-aurora__blob {
+  animation-play-state: running;
+}
+
+.glass-aurora__blob--a {
+  top: -120px;
+  left: -40px;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent-primary) 11%, transparent), transparent);
+  animation: glass-drift-a 24s ease-in-out infinite alternate;
+}
+
+.glass-aurora__blob--b {
+  top: 30%;
+  right: -90px;
+  background: radial-gradient(closest-side, light-dark(rgba(120, 130, 160, 0.12), rgba(255, 255, 255, 0.025)), transparent);
+  animation: glass-drift-b 30s ease-in-out infinite alternate;
+}
+
+.glass-aurora__blob--c {
+  bottom: -160px;
+  left: 28%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--accent-primary) 6%, transparent), transparent);
+  animation: glass-drift-c 36s ease-in-out infinite alternate;
+}
+
+@keyframes glass-drift-a {
+  to { transform: translate3d(90px, 60px, 0) scale(1.15); }
+}
+
+@keyframes glass-drift-b {
+  to { transform: translate3d(-110px, 70px, 0) scale(0.9); }
+}
+
+@keyframes glass-drift-c {
+  to { transform: translate3d(70px, -80px, 0) scale(1.1); }
+}
+
+.settings-glass-panel > .settings-panel__scroll {
+  position: relative;
+  z-index: 1;
+}
+
+.glass-card {
+  position: relative;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 18px;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow), var(--glass-inset);
+}
+
+/* 小卡片：与 glass-card 同款质感，但不做背景模糊 */
+.glass-tile {
+  --mx: 50%;
+  --my: 0%;
+  position: relative;
+  isolation: isolate;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 14px;
+  background: var(--glass-fill);
+  box-shadow: var(--glass-inset);
+  transition:
+    background-color 0.3s var(--glass-ease),
+    border-color 0.3s var(--glass-ease),
+    box-shadow 0.4s var(--glass-ease),
+    transform 0.4s var(--ease-overshoot);
+}
+
+.glass-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(240px circle at var(--mx) var(--my), var(--glass-sheen-color), transparent 64%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s var(--glass-ease);
+}
+
+.glass-tile--interactive:hover {
+  background: var(--glass-fill-hover);
+  box-shadow: var(--glass-shadow), var(--glass-inset);
+  transform: translateY(-1px);
+}
+
+.glass-tile--interactive:hover::before {
+  opacity: 1;
+}
+
+.glass-tile--selected {
+  border-color: var(--glass-accent-edge);
+  background: color-mix(in srgb, var(--glass-accent-fill) 100%, var(--glass-fill-hover));
+}
+
+.glass-tile:has(:focus-visible) {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.glass-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 999px;
+  background: var(--glass-well);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.glass-chip--accent {
+  border-color: var(--glass-accent-edge);
+  background: var(--glass-accent-fill);
+  color: var(--text-primary);
+}
+
+.glass-chip--caution::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-warning);
+}
+
+/* 分段控件：滑块跟随选中项 */
+.glass-tabs {
+  --n: 2;
+  --i: 0;
+  position: relative;
+  display: inline-grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(64px, 1fr);
+  padding: 3px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 12px;
+  background: var(--glass-well);
+  box-shadow: inset 0 1px 2px light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.3));
+}
+
+.glass-tabs__thumb {
+  position: absolute;
+  inset: 3px auto 3px 3px;
+  width: calc((100% - 6px) / var(--n));
+  border-radius: 9px;
+  background: light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.14));
+  box-shadow:
+    0 1px 3px light-dark(rgba(40, 50, 120, 0.18), rgba(0, 0, 0, 0.45)),
+    inset 0 1px 0 light-dark(#fff, rgba(255, 255, 255, 0.18));
+  transform: translateX(calc(var(--i) * 100%));
+  transition: transform 0.35s var(--ease-overshoot);
+  pointer-events: none;
+}
+
+.glass-tabs__item {
+  position: relative;
+  z-index: 1;
+  padding: 5px 14px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.2s var(--glass-ease);
+}
+
+.glass-tabs__item:hover:not(:disabled),
+.glass-tabs__item[aria-checked='true'] {
+  color: var(--text-primary);
+}
+
+.glass-tabs__item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.glass-tabs__item:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
+.settings-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px 20px;
+}
+
+.settings-card__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-card__heading {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settings-card__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+
+.settings-card__desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.settings-card__aside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-card__body {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.settings-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-card__row + .settings-card__row {
+  padding-top: 14px;
+  border-top: 0.5px solid var(--glass-edge);
+}
+
+.settings-card__row-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-card__row-label {
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.settings-card__row-desc {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.settings-card__row-control {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .glass-tile,
+  .glass-tabs__thumb {
+    transition: none;
+  }
+}

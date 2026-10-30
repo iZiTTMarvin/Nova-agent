@@ -1,0 +1,73 @@
+/* 子代理表单：每个主题一张玻璃卡，卡间距统一 */
+.settings-page.subagent-form {
+  gap: 16px;
+}
+
+.subagent-form__pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.subagent-form__field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.subagent-form__error {
+  color: var(--color-error);
+  font-size: 0.76rem;
+}
+
+.subagent-advanced {
+  padding: 0;
+}
+
+.subagent-advanced > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  color: var(--text-primary);
+  font-size: 0.92rem;
+  font-weight: 600;
+  list-style: none;
+  cursor: pointer;
+}
+
+.subagent-advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.subagent-advanced > summary::after {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: rotate(45deg);
+  transition: transform 0.3s var(--glass-ease);
+}
+
+.subagent-advanced[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.subagent-advanced > summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+  border-radius: 18px;
+}
+
+.subagent-advanced__content {
+  display: grid;
+  gap: 14px;
+  padding: 0 20px 20px;
+}
+
+@media (max-width: 760px) {
+  .subagent-form__pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

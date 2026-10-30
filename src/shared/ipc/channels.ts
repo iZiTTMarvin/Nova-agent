@@ -16,7 +16,6 @@ export const SKILL_GET = 'skill:get' as const
 export const SKILL_GET_BODY = 'skill:get-body' as const
 export const SKILL_CREATE = 'skill:create' as const
 export const SKILL_DELETE = 'skill:delete' as const
-export const SKILL_TOGGLE = 'skill:toggle' as const
 export const SKILL_IMPORT = 'skill:import' as const
 export const SKILL_EXPORT = 'skill:export' as const
 export const SKILL_RELOAD = 'skill:reload' as const

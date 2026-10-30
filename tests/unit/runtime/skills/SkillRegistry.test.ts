@@ -15,7 +15,6 @@ describe('SkillRegistry', () => {
   let projectDir: string
 
   beforeEach(() => {
-    SkillRegistry.resetWarnFlag()
     globalDir = join(tmpdir(), `nova-skills-g-${Date.now()}`)
     projectDir = join(tmpdir(), `nova-skills-p-${Date.now()}`)
     mkdirSync(globalDir, { recursive: true })
@@ -71,26 +70,14 @@ describe('SkillRegistry', () => {
     expect(reg.getErrors().length).toBeGreaterThan(0)
   })
 
-  it('30 条上限截断', () => {
+  it('技能再多也全量进入模型上下文，按名称固定排序', () => {
     for (let i = 0; i < 35; i++) {
       writeSkill(globalDir, `s${i}`, md(`s${i}`, `d${i}`))
     }
     const reg = SkillRegistry.load({ globalDir, ...noBuiltin })
-    expect(reg.listForContext().length).toBe(30)
-  })
-
-  it('上下文投影记录收录集与省略数，收录集按名称固定排序', () => {
-    for (let i = 0; i < 35; i++) {
-      writeSkill(globalDir, `s${i}`, md(`s${i}`, `d${i}`))
-    }
-    const reg = SkillRegistry.load({ globalDir, ...noBuiltin })
-    const projection = reg.getContextProjection()
-    expect(projection.eligible).toBe(35)
-    expect(projection.included).toHaveLength(30)
-    expect(projection.omittedCount).toBe(5)
-    const names = projection.included.map(s => s.name)
+    const names = reg.listForContext().map(s => s.name)
+    expect(names).toHaveLength(35)
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
-    expect(reg.listForContext()).toEqual(projection.included)
   })
 
   it('目录不存在时不崩溃', () => {

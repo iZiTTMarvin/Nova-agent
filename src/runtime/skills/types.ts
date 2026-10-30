@@ -65,8 +65,6 @@ export interface SkillManifest {
   invalidReason?: string
   warnings: string[]
   hasSupportingFiles: boolean
-  /** 运行时 model 调用开关（默认跟随 modelInvocable） */
-  enabled: boolean
   /**
    * 隐藏技能：仅 compose 模式对模型可见（编排 skill）。
    * 非 compose 的 listForContext 会过滤掉。

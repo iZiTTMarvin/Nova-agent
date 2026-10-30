@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react'
-import { CheckboxInput } from '@astryxdesign/core/CheckboxInput'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextArea } from '@astryxdesign/core/TextArea'
@@ -16,7 +15,9 @@ import type {
   SubagentPresetLocation,
   SubagentToolOption
 } from '../../../shared/settings/types'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
+import { SettingsCard, SettingsCardRow, SettingsPage, SettingsSelect } from './settingsKit'
+import { SubagentToolGroups, summarizeToolPermission } from './SubagentToolGroups'
+import './SubagentPresetForm.css'
 
 export interface SubagentPresetDraft {
   preset: SubAgentSpec
@@ -38,18 +39,6 @@ interface SubagentPresetFormProps {
   canUseProject?: boolean
   fieldErrors?: SubagentFieldErrors
   onChange: (draft: SubagentPresetDraft) => void
-}
-
-const EFFECT_LABELS: Record<string, string> = {
-  'filesystem.read': '读取文件',
-  'filesystem.write': '修改文件',
-  'shell.execute': '执行命令',
-  'process.control': '控制进程',
-  'network.read': '访问网络',
-  'network.write': '写入网络',
-  'session.write': '修改会话',
-  orchestration: '派遣代理',
-  'mode.transition': '切换模式'
 }
 
 function fieldError(message: string | undefined): React.ReactNode {
@@ -101,32 +90,41 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
     ? draft.preset.model.reasoningEffort ?? 'auto'
     : 'auto'
 
+  const permission = summarizeToolPermission(tools, draft.preset.allowedTools)
+  const toggleTool = (name: string, checked: boolean) => updatePreset({
+    allowedTools: checked
+      ? [...draft.preset.allowedTools, name]
+      : draft.preset.allowedTools.filter(item => item !== name)
+  })
+
   return (
     <SettingsPage className="subagent-form">
-      <SettingsSection title="基础信息">
-        <SettingsField>
-          <TextInput
-            label="显示名称"
-            value={draft.preset.name}
-            onChange={name => updatePreset({ name })}
-            placeholder="例如：安全审查助手"
-            isDisabled={disabled}
-            width="100%"
-          />
-          {fieldError(fieldErrors.name)}
-        </SettingsField>
-        <SettingsField>
-          <TextInput
-            label="稳定 ID"
-            description={idEditable ? '创建前可以调整；创建后不可修改。' : '创建后不可修改，用于覆盖、恢复和显式派遣。'}
-            value={draft.preset.id}
-            onChange={id => updatePreset({ id })}
-            isDisabled={disabled || !idEditable}
-            width="100%"
-          />
-          {fieldError(fieldErrors.id)}
-        </SettingsField>
-        <SettingsField>
+      <SettingsCard title="基本信息">
+        <div className="subagent-form__pair">
+          <div className="subagent-form__field">
+            <TextInput
+              label="显示名称"
+              value={draft.preset.name}
+              onChange={name => updatePreset({ name })}
+              placeholder="例如：安全审查助手"
+              isDisabled={disabled}
+              width="100%"
+            />
+            {fieldError(fieldErrors.name)}
+          </div>
+          <div className="subagent-form__field">
+            <TextInput
+              label="稳定 ID"
+              description={idEditable ? '创建前可以调整；创建后不可修改。' : '创建后不可修改，用于覆盖、恢复和显式派遣。'}
+              value={draft.preset.id}
+              onChange={id => updatePreset({ id })}
+              isDisabled={disabled || !idEditable}
+              width="100%"
+            />
+            {fieldError(fieldErrors.id)}
+          </div>
+        </div>
+        <div className="subagent-form__field">
           <TextArea
             label="适用场景"
             value={draft.preset.description}
@@ -136,11 +134,11 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
             width="100%"
           />
           {fieldError(fieldErrors.description)}
-        </SettingsField>
-        <SettingsRow
+        </div>
+        <SettingsCardRow
           label="启用"
           description="禁用只影响新的派遣，已有子会话仍可恢复。"
-          end={
+          control={
             <Switch
               label="启用子代理"
               isLabelHidden
@@ -151,10 +149,10 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
           }
         />
         {showLocation && (
-          <SettingsRow
+          <SettingsCardRow
             label="保存范围"
             description={draft.location === 'project' ? '仅对当前工作区生效；同 ID 会覆盖全局配置。' : '所有工作区均可使用。'}
-            end={
+            control={
               <SettingsSelect
                 label="保存范围"
                 isLabelHidden
@@ -172,15 +170,15 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
             }
           />
         )}
-      </SettingsSection>
+      </SettingsCard>
 
-      <SettingsSection title="模型" description="固定模型只保存稳定引用，不保存凭据。">
-        <SettingsRow
+      <SettingsCard title="模型" description="固定模型只保存稳定引用，不保存凭据。">
+        <SettingsCardRow
           label="使用模型"
           description={modelValue(draft.preset) === 'default'
             ? `派遣时采用默认模型${registry ? `（当前：${getActiveModelDisplayName(registry) ?? '不可用'}）` : ''}`
             : '该配置始终使用选中的模型。'}
-          end={
+          control={
             <SettingsSelect
               label="使用模型"
               isLabelHidden
@@ -220,14 +218,14 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
             />
           }
         />
-        <SettingsRow
+        <SettingsCardRow
           label="思考强度"
           description={modelValue(draft.preset) === 'default'
             ? '跟随默认模型的配置。'
             : knownEfforts.length === 1
               ? '该模型尚未声明可选强度，只能使用自动。'
               : '仅展示模型注册表明确声明的选项。'}
-          end={
+          control={
             <SettingsSelect
               label="思考强度"
               isLabelHidden
@@ -252,85 +250,72 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
           }
         />
         {selectableModels.length === 0 && (
-          <SettingsField>
-            <span className="settings-status settings-status--warning">没有可用的固定模型。仍可保存为跟随默认模型，并在模型设置中完成配置。</span>
-          </SettingsField>
+          <span className="settings-status settings-status--warning">没有可用的固定模型。仍可保存为跟随默认模型，并在模型设置中完成配置。</span>
         )}
         {fieldError(fieldErrors.model)}
-      </SettingsSection>
+      </SettingsCard>
 
-      <SettingsSection title="高级配置" variant="bare">
-        <details className="subagent-advanced">
-          <summary>提示词、工具与运行限制</summary>
-          <div className="subagent-advanced__content">
-            <SettingsField>
-              <TextArea
-                label="System prompt"
-                value={draft.preset.prompt}
-                onChange={prompt => updatePreset({ prompt })}
-                isDisabled={disabled}
-                hasSpellCheck={false}
-                width="100%"
-              />
-              {fieldError(fieldErrors.prompt)}
-            </SettingsField>
-            <SettingsField>
-              <fieldset className="subagent-tool-fieldset" disabled={disabled}>
-                <legend>工具白名单</legend>
-                <p>工具来自当前 Tool Catalog；副作用决定子代理的最高权限。</p>
-                <div className="subagent-tool-grid">
-                  {tools.filter(tool => tool.selectable).map(tool => {
-                    const selected = draft.preset.allowedTools.includes(tool.name)
-                    const effects = tool.effects.map(effect => EFFECT_LABELS[effect] ?? effect).join('、') || '无外部副作用'
-                    return (
-                      <label key={tool.name} className="subagent-tool-option">
-                        <CheckboxInput
-                          label={tool.name}
-                          value={selected}
-                          onChange={checked => updatePreset({
-                            allowedTools: checked
-                              ? [...draft.preset.allowedTools, tool.name]
-                              : draft.preset.allowedTools.filter(name => name !== tool.name)
-                          })}
-                          isDisabled={disabled}
-                        />
-                        <span>{effects}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              </fieldset>
-              {fieldError(fieldErrors.allowedTools)}
-            </SettingsField>
-            <SettingsField>
-              <div className="subagent-limit-grid">
-                <NumberInput
-                  label="最大工具轮数"
-                  value={draft.preset.maxToolRounds ?? null}
-                  onChange={maxToolRounds => updatePreset({ maxToolRounds: maxToolRounds ?? undefined })}
-                  placeholder="按权限档默认"
-                  min={1}
-                  max={1000}
-                  hasClear
-                  isDisabled={disabled}
-                  width="100%"
-                />
-                <NumberInput
-                  label="上下文窗口（tokens）"
-                  value={draft.preset.contextWindow ?? null}
-                  onChange={contextWindow => updatePreset({ contextWindow: contextWindow ?? undefined })}
-                  placeholder="使用模型默认值"
-                  min={1}
-                  hasClear
-                  isDisabled={disabled}
-                  width="100%"
-                />
-              </div>
-              {fieldError(fieldErrors.maxToolRounds ?? fieldErrors.contextWindow)}
-            </SettingsField>
+      <SettingsCard
+        title="工具与权限"
+        description="工具来自当前工具目录；其副作用决定子代理的最高权限。"
+        aside={
+          <>
+            <span className="glass-chip">已选 {permission.selectedCount} / {permission.total}</span>
+            <span className={`glass-chip${permission.canWrite ? ' glass-chip--caution' : ''}`}>
+              {permission.canWrite ? '可修改工作区' : '只读'}
+            </span>
+          </>
+        }
+      >
+        <SubagentToolGroups
+          tools={tools}
+          selected={draft.preset.allowedTools}
+          onToggle={toggleTool}
+          disabled={disabled}
+        />
+        {fieldError(fieldErrors.allowedTools)}
+      </SettingsCard>
+
+      <details className="subagent-advanced settings-card glass-card">
+        <summary>运行限制与提示词</summary>
+        <div className="subagent-advanced__content">
+          <div className="subagent-form__pair">
+            <NumberInput
+              label="最大工具轮数"
+              value={draft.preset.maxToolRounds ?? null}
+              onChange={maxToolRounds => updatePreset({ maxToolRounds: maxToolRounds ?? undefined })}
+              placeholder="按权限档默认"
+              min={1}
+              max={1000}
+              hasClear
+              isDisabled={disabled}
+              width="100%"
+            />
+            <NumberInput
+              label="上下文窗口（tokens）"
+              value={draft.preset.contextWindow ?? null}
+              onChange={contextWindow => updatePreset({ contextWindow: contextWindow ?? undefined })}
+              placeholder="使用模型默认值"
+              min={1}
+              hasClear
+              isDisabled={disabled}
+              width="100%"
+            />
           </div>
-        </details>
-      </SettingsSection>
+          {fieldError(fieldErrors.maxToolRounds ?? fieldErrors.contextWindow)}
+          <div className="subagent-form__field">
+            <TextArea
+              label="System prompt"
+              value={draft.preset.prompt}
+              onChange={prompt => updatePreset({ prompt })}
+              isDisabled={disabled}
+              hasSpellCheck={false}
+              width="100%"
+            />
+            {fieldError(fieldErrors.prompt)}
+          </div>
+        </div>
+      </details>
     </SettingsPage>
   )
 }

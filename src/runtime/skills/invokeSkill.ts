@@ -93,8 +93,8 @@ export function invokeSkillForTool(
   if (!skill) {
     return { success: false, output: '', error: `技能 "${skillName}" 未找到` }
   }
-  if (!skill.modelInvocable || !skill.enabled) {
-    return { success: false, output: '', error: `技能 "${skillName}" 未启用或禁止模型调用` }
+  if (!skill.modelInvocable) {
+    return { success: false, output: '', error: `技能 "${skillName}" 禁止模型调用` }
   }
 
   if (skill.forkAgent) {

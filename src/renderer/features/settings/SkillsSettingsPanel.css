@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px;
 }
 
 .skill-settings__search {
@@ -10,11 +10,18 @@
   min-width: 180px;
 }
 
-.skill-settings__source-filter {
-  flex: 0 1 160px;
-  min-width: 140px;
+/* 两列网格；面板变窄时退为单列 */
+.skills-panel .skill-grid {
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
 }
 
-.skill-settings__expand {
-  flex: 0 0 auto;
+@media (max-width: 760px) {
+  .skills-panel .skill-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

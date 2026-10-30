@@ -26,7 +26,7 @@ const mockOn = vi.fn((channel: string, handler: (snapshot: AppUpdateSnapshot) =>
 })
 
 const settingsDto = {
-  loadThirdPartySkills: true,
+  thirdPartySkillSources: { agents: false, claude: false },
   defaultMode: 'default',
   defaultPermissionMode: 'request_approval',
   defaultShell: '',

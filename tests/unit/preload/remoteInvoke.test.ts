@@ -18,7 +18,7 @@ describe('preload 调用主进程的错误透出', () => {
 
   it('成功结果与参数原样透传', async () => {
     invoke.mockResolvedValueOnce({ ok: true })
-    await expect(invokeMain('skill:toggle', { name: 'a', enabled: true })).resolves.toEqual({ ok: true })
-    expect(invoke).toHaveBeenLastCalledWith('skill:toggle', { name: 'a', enabled: true })
+    await expect(invokeMain('skill:delete', 'a')).resolves.toEqual({ ok: true })
+    expect(invoke).toHaveBeenLastCalledWith('skill:delete', 'a')
   })
 })

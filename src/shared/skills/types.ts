@@ -7,9 +7,31 @@ export type SkillSource =
   | 'builtin'
   | 'global'
   | 'project'
-  | 'third_party_claude'
+  | 'third_party'
   | 'virtual'
   | 'mcp'
+
+/** 可选择共享给 Nova 的第三方技能目录族：`.agents`（跨工具约定）与 `.claude`（Claude Code） */
+export type ThirdPartySkillSourceId = 'agents' | 'claude'
+
+/** 每个第三方来源是否已获用户同意加载；默认全部关闭 */
+export type ThirdPartySkillSources = Record<ThirdPartySkillSourceId, boolean>
+
+export interface ThirdPartySkillLocation {
+  scope: 'user' | 'project'
+  path: string
+  exists: boolean
+  /** 目录下可识别的技能数（含符号链接指向的技能） */
+  count: number
+}
+
+/** 设置页展示用的第三方来源状态 */
+export interface ThirdPartySkillSourceStatus {
+  id: ThirdPartySkillSourceId
+  label: string
+  enabled: boolean
+  locations: ThirdPartySkillLocation[]
+}
 
 /** 渲染端 / IPC 安全的技能摘要 */
 export interface SkillSummary {
@@ -21,7 +43,6 @@ export interface SkillSummary {
   sourcePath: string
   userInvocable: boolean
   modelInvocable: boolean
-  enabled: boolean
   invalid?: boolean
   invalidReason?: string
   warnings: string[]
@@ -79,25 +100,16 @@ export interface SkillSlashRejection {
 
 /** 目录诊断：解释某条技能为何不可见或不可用 */
 export interface SkillCatalogDiagnostic {
-  code: 'load_error' | 'shadowed' | 'profile_restricted' | 'model_disabled' | 'budget_omitted'
+  code: 'load_error' | 'shadowed' | 'profile_restricted'
   message: string
   skillName?: string
   path?: string
 }
 
 /**
- * 模型预算投影：目录级收录压力（未按会话 profile 过滤）。
- * 单会话实际收录以前 30 个按名称排序的 profile 可见技能为准。
- */
-export interface SkillModelBudget {
-  cap: number
-  eligible: number
-}
-
-/**
  * 技能目录快照：主进程组装的权威只读投影。
  * `+` 入口与 `/` 补全消费同一份快照；loading/error 只描述目录本身，
- * 不复用各技能自身的 enabled/invalid 语义。
+ * 不复用各技能自身的 invalid 语义。
  */
 export interface SkillCatalogSnapshot {
   skills: SkillSummary[]
@@ -105,7 +117,7 @@ export interface SkillCatalogSnapshot {
   error: string | null
   refreshedAt: number | null
   diagnostics: SkillCatalogDiagnostic[]
-  modelBudget: SkillModelBudget
+  thirdPartySources: ThirdPartySkillSourceStatus[]
 }
 
 /** preload window.nova.skill API 形状 */
@@ -115,7 +127,6 @@ export interface NovaSkillApi {
   getBody(name: string): Promise<string | null>
   create(input: SkillCreateInput): Promise<SkillSummary>
   delete(name: string): Promise<void>
-  toggle(name: string, enabled: boolean): Promise<SkillSummary>
   import(input: SkillImportInput): Promise<SkillSummary>
   export(name: string, destPath?: string): Promise<SkillExportResult>
   reload(workspaceRoot?: string | null): Promise<SkillReloadResult>
