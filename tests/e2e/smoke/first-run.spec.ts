@@ -21,33 +21,33 @@ async function configureProviderKey(
 ): Promise<void> {
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('tab', { name: '模型' }).click()
-  const customCard = page.locator('.settings-split__item').filter({ hasText: '自定义服务商' })
-  if (await customCard.count() === 0) {
+  const row = page.locator('.llm-row').filter({ hasText: '自定义服务商' })
+  if (await row.count() === 0) {
     await page.getByRole('button', { name: /添加自定义服务商/ }).click()
   } else {
-    await customCard.first().click()
+    await row.getByRole('button', { name: /^编辑/ }).click()
   }
-  await page.getByLabel('接口地址 (Base URL)').fill(baseUrl)
-  await page.getByRole('textbox', { name: 'API Key', exact: true }).fill(apiKey)
-  await page.getByPlaceholder('手动输入模型 ID').fill('nova-e2e-model')
-  const hasModel = await page.locator('.llm-model-list li').filter({ hasText: 'nova-e2e-model' }).count()
+  await page.getByLabel('接口地址').fill(baseUrl)
+  await page.getByRole('textbox', { name: 'API 密钥', exact: true }).fill(apiKey)
+  const hasModel = await page.locator('.llm-model-row').filter({ hasText: 'nova-e2e-model' }).count()
   if (hasModel === 0) {
     await page.getByRole('button', { name: '添加模型', exact: true }).click()
+    await page.getByRole('textbox', { name: '模型 ID' }).fill('nova-e2e-model')
+    await page.getByRole('textbox', { name: '模型 ID' }).press('Enter')
   }
-  // 保存成功后设置模态框自动关闭
-  await page.getByRole('button', { name: '保存配置' }).click()
+  // 保存只收起编辑卡片，设置页保持打开
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await expect(page.getByRole('textbox', { name: 'API 密钥', exact: true })).toBeHidden()
+  await page.getByRole('button', { name: '返回应用' }).click()
   await expect(page.getByRole('button', { name: '返回应用' })).toBeHidden()
 }
 
-/** 重开设置确认自定义服务商卡片显示「已配置」 */
+/** 重开设置确认自定义服务商行显示「已配置」 */
 async function expectProviderConfigured(page: Page): Promise<void> {
   await page.getByRole('button', { name: '设置', exact: true }).click()
   await page.getByRole('tab', { name: '模型' }).click()
-  const card = page
-    .locator('.settings-split__item')
-    .filter({ hasText: '自定义服务商' })
-    .filter({ hasText: '已配置' })
-  await expect(card.first()).toBeVisible()
+  const row = page.locator('.llm-row').filter({ hasText: '自定义服务商' })
+  await expect(row.getByRole('img', { name: '已配置' })).toBeVisible()
   await page.getByRole('button', { name: '返回应用' }).click()
 }
 

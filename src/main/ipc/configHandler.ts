@@ -17,7 +17,7 @@ import {
   loadLlmRegistry,
   saveLlmRegistry
 } from '../../runtime/model/config'
-import { fetchProviderModels } from '../../runtime/model/fetchProviderModels'
+import { fetchProviderModels, resolveFetchApiKey } from '../../runtime/model/fetchProviderModels'
 import {
   applyActiveModelRef,
   applyModelConfigToClient,
@@ -100,8 +100,9 @@ export function registerConfigHandler(): void {
   // 从服务商 API 拉取模型列表
   handle(
     FETCH_PROVIDER_MODELS,
-    async (_event, params: { baseUrl: string; apiKey: string }) => {
-      return fetchProviderModels({ ...params, fetchImpl: electronTransportFetch })
+    async (_event, params: { baseUrl: string; apiKey: string; providerId?: string }) => {
+      const apiKey = resolveFetchApiKey(params, loadLlmRegistry(app.getPath('userData')))
+      return fetchProviderModels({ baseUrl: params.baseUrl, apiKey, fetchImpl: electronTransportFetch })
     }
   )
 }

@@ -217,6 +217,33 @@ export function resolveActiveModelAfterSave(
 }
 
 /**
+ * 移除服务商，并清理指向它的引用：活跃模型改指向首个仍有模型的服务商，
+ * 后台模型与降级链中的失效引用直接丢弃。若已无可用模型，activeModel 原样保留，交由保存校验报错。
+ */
+export function removeProviderFromRegistry(registry: LlmRegistry, providerId: string): LlmRegistry {
+  const providers = registry.providers.filter(p => p.id !== providerId)
+  const isDead = (ref: ActiveModelRef): boolean =>
+    !providers.some(p => p.id === ref.providerId && p.models.some(m => m.id === ref.modelEntryId))
+
+  const { backgroundModel, fallbacks, ...rest } = registry
+  const next: LlmRegistry = { ...rest, providers }
+
+  if (isDead(registry.activeModel)) {
+    for (const p of providers) {
+      const entry = p.models.find(m => m.retired !== true)
+      if (entry) {
+        next.activeModel = { providerId: p.id, modelEntryId: entry.id }
+        break
+      }
+    }
+  }
+  if (backgroundModel && !isDead(backgroundModel)) next.backgroundModel = backgroundModel
+  const aliveFallbacks = fallbacks?.filter(ref => !isDead(ref)) ?? []
+  if (aliveFallbacks.length > 0) next.fallbacks = aliveFallbacks
+  return next
+}
+
+/**
  * 将 ActiveModelRef 解析为运行时 ModelConfig。
  * provider 未启用、缺 key、模型不存在时返回 null。
  */

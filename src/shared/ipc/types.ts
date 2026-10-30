@@ -275,7 +275,7 @@ export interface IpcCommands {
     result: void
   }
   'fetch-provider-models': {
-    params: { baseUrl: string; apiKey: string }
+    params: { baseUrl: string; apiKey: string; providerId?: string }
     result: { ok: true; modelIds: string[] } | { ok: false; message: string }
   }
   'set-mode': {

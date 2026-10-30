@@ -1,738 +1,388 @@
 /**
- * LLM 多服务商配置面板 — 左侧服务商列表 + 右侧详情
+ * LLM 服务商配置面板：服务商列表，点击后在原位展开编辑卡片。
+ * 每次只编辑一个服务商，保存只写入该服务商；后台任务模型独立保存。
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
-import { ClickableCard } from '@astryxdesign/core/ClickableCard'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { NumberInput } from '@astryxdesign/core/NumberInput'
-import { TextInput } from '@astryxdesign/core/TextInput'
 import { useSettingsStore, getDefaultLlmRegistry } from '../../stores/useSettingsStore'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
+import { SettingsSelect } from './settingsKit'
+import { LlmProviderEditor } from './LlmProviderEditor'
+import { ChevronIcon, PlusIcon } from '../../components/Icons'
 import {
   type LlmRegistry,
-  type ProviderConfig,
-  type ModelEntry,
   type PresetProviderId,
-  type ReasoningEffort,
+  type ProviderConfig,
   PRESET_PROVIDERS,
   PRESET_PROVIDER_IDS,
-  findProviderByPreset,
-  createProviderFromPreset,
   createCustomProvider,
-  mergeFetchedModelEntries,
-  resolveActiveModelAfterSave,
-  getSupportedReasoningEfforts,
-  resolveModelReasoningEffort,
-  generateLocalId,
-  listSelectableModels
+  findProviderByPreset,
+  listSelectableModels,
+  removeProviderFromRegistry,
+  resolveActiveModelAfterSave
 } from '../../../shared/config/llmRegistry'
-import { ChevronIcon } from '../../components/Icons'
-import { reasoningSelectionLabel } from '../../../shared/config/reasoning'
-
-type Selection =
-  | { kind: 'preset'; presetId: PresetProviderId }
-  | { kind: 'custom'; providerId: string }
+import './LlmSettingsPanel.css'
 
 const FOLLOW_ACTIVE_MODEL = 'follow-active'
+const DEFAULT_CUSTOM_BASE_URL = 'http://localhost:11434/v1'
+
+interface ProviderRowModel {
+  key: string
+  name: string
+  provider: ProviderConfig | null
+  presetId?: PresetProviderId
+}
+
+interface EditingState {
+  rowKey: string
+  draft: ProviderConfig
+  isNew: boolean
+  /** 折叠动画进行中：卡片仍挂载，播完再卸载 */
+  closing?: boolean
+}
+
+/** 与 LlmSettingsPanel.css 中 llm-fold 的时长一致 */
+const FOLD_MS = 320
 
 function toModelOptionValue(ref: { providerId: string; modelEntryId: string }): string {
   return `${ref.providerId}::${ref.modelEntryId}`
 }
 
+/** 主进程校验错误经 IPC 会带上调用前缀，展示前去掉 */
+function describeError(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : ''
+  return raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || fallback
+}
+
+/** 玻璃高光跟随指针：直接写 CSS 变量，不触发 React 重渲染 */
+function trackSheen(e: React.PointerEvent<HTMLElement>): void {
+  const rect = e.currentTarget.getBoundingClientRect()
+  e.currentTarget.style.setProperty('--mx', `${e.clientX - rect.left}px`)
+  e.currentTarget.style.setProperty('--my', `${e.clientY - rect.top}px`)
+}
+
+function draftForRow(row: ProviderRowModel): ProviderConfig {
+  if (row.provider) return { ...row.provider }
+  const meta = PRESET_PROVIDERS[row.presetId!]
+  return {
+    id: `preset-${meta.presetId}`,
+    name: meta.name,
+    presetId: meta.presetId,
+    baseUrl: meta.baseUrl,
+    apiKey: '',
+    enabled: false,
+    models: []
+  }
+}
+
 export const LlmSettingsPanel: React.FC = () => {
   const llmRegistry = useSettingsStore(state => state.llmRegistry)
   const saveLlmRegistry = useSettingsStore(state => state.saveLlmRegistry)
-  const fetchProviderModels = useSettingsStore(state => state.fetchProviderModels)
-  const setConfigModalOpen = useSettingsStore(state => state.setConfigModalOpen)
+  const registry = useMemo<LlmRegistry>(() => llmRegistry ?? getDefaultLlmRegistry(), [llmRegistry])
 
-  const [draft, setDraft] = useState<LlmRegistry>(() => llmRegistry ?? getDefaultLlmRegistry())
-  const [selection, setSelection] = useState<Selection>({ kind: 'preset', presetId: 'glm' })
-  const [showKey, setShowKey] = useState(false)
+  const [editing, setEditing] = useState<EditingState | null>(null)
   const [saving, setSaving] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
-  const [newModelId, setNewModelId] = useState('')
-  const [refreshMessage, setRefreshMessage] = useState<string | null>(null)
+  const [confirmingRemoveKey, setConfirmingRemoveKey] = useState<string | null>(null)
+  const [savedKey, setSavedKey] = useState<string | null>(null)
+  const [listError, setListError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (llmRegistry) {
-      setDraft(llmRegistry)
-    }
-  }, [llmRegistry])
-
-  /**
-   * 选中某服务商时确保 draft 中存在稳定实例：预设首次选中落占位（enabled:false），
-   * 避免 editingProvider 重算丢掉刷新拉取的真实模型。落 draft 只是草稿态，不写盘。
-   */
-  useEffect(() => {
-    setDraft(prev => {
-      if (selection.kind === 'preset') {
-        if (findProviderByPreset(prev, selection.presetId)) return prev
-        const meta = PRESET_PROVIDERS[selection.presetId]
-        const placeholder: ProviderConfig = {
-          id: `preset-${selection.presetId}`,
-          name: meta.name,
-          presetId: selection.presetId,
-          baseUrl: meta.baseUrl,
-          apiKey: '',
-          enabled: false,
-          models: []
+  const rows = useMemo<ProviderRowModel[]>(
+    () => [
+      ...PRESET_PROVIDER_IDS.map(presetId => {
+        const provider = findProviderByPreset(registry, presetId) ?? null
+        return {
+          key: provider?.id ?? `preset:${presetId}`,
+          name: PRESET_PROVIDERS[presetId].name,
+          provider,
+          presetId
         }
-        return { ...prev, providers: [...prev.providers, placeholder] }
-      }
-      if (!prev.providers.some(p => p.id === selection.providerId)) {
-        const created = createCustomProvider('自定义服务商', 'http://localhost:11434/v1')
-        created.id = selection.providerId
-        return { ...prev, providers: [...prev.providers, created] }
-      }
-      return prev
-    })
-  }, [selection])
-
-  /** 当前编辑的服务商（始终从 draft 取，保证引用稳定） */
-  const editingProvider = useMemo((): ProviderConfig | null => {
-    if (selection.kind === 'preset') {
-      return findProviderByPreset(draft, selection.presetId) ?? null
-    }
-    return draft.providers.find(p => p.id === selection.providerId) ?? null
-  }, [draft, selection])
-
-  const customProviders = useMemo(
-    () => draft.providers.filter(p => !p.presetId),
-    [draft.providers]
+      }),
+      ...registry.providers
+        .filter(p => !p.presetId)
+        .map(p => ({ key: p.id, name: p.name, provider: p }))
+    ],
+    [registry]
   )
 
-  const backgroundModelOptions = useMemo(() => {
-    const options = [{ value: FOLLOW_ACTIVE_MODEL, label: '跟随当前模型' }]
-    for (const model of listSelectableModels(draft)) {
-      options.push({
+  const backgroundModelOptions = useMemo(
+    () => [
+      { value: FOLLOW_ACTIVE_MODEL, label: '跟随当前模型' },
+      ...listSelectableModels(registry).map(model => ({
         value: toModelOptionValue(model),
         label: `${model.providerName} / ${model.displayName}`
-      })
-    }
-    return options
-  }, [draft])
+      }))
+    ],
+    [registry]
+  )
 
-  const handleBackgroundModelChange = (value: string) => {
-    setDraft(prev => {
-      const next: LlmRegistry = { ...prev }
-      const picked = listSelectableModels(prev).find(m => toModelOptionValue(m) === value)
-      if (picked) next.backgroundModel = { providerId: picked.providerId, modelEntryId: picked.modelEntryId }
-      else delete next.backgroundModel
-      return next
-    })
-  }
-
-  const updateProviderInDraft = useCallback((updated: ProviderConfig) => {
-    setDraft(prev => {
-      const idx = prev.providers.findIndex(
-        p => p.id === updated.id || (updated.presetId && p.presetId === updated.presetId)
-      )
-      if (idx >= 0) {
-        const providers = [...prev.providers]
-        providers[idx] = updated
-        return { ...prev, providers }
-      }
-      return { ...prev, providers: [...prev.providers, updated] }
-    })
-  }, [])
-
-  const handlePresetSelect = (presetId: PresetProviderId) => {
-    setSelection({ kind: 'preset', presetId })
-    setSubmitError(null)
-    setRefreshMessage(null)
-  }
-
-  const handleCustomSelect = (providerId: string) => {
-    setSelection({ kind: 'custom', providerId })
-    setSubmitError(null)
-    setRefreshMessage(null)
-  }
-
-  const handleAddCustomProvider = () => {
-    const provider = createCustomProvider('自定义服务商', 'http://localhost:11434/v1')
-    setDraft(prev => ({
-      ...prev,
-      providers: [...prev.providers, provider]
-    }))
-    setSelection({ kind: 'custom', providerId: provider.id })
-  }
-
-  const handleRemoveCustomProvider = (providerId: string) => {
-    setDraft(prev => {
-      const providers = prev.providers.filter(p => p.id !== providerId)
-      const nextActive =
-        prev.activeModel.providerId === providerId && providers.length > 0
-          ? {
-              providerId: providers[0].id,
-              modelEntryId: providers[0].models[0]?.id ?? prev.activeModel.modelEntryId
-            }
-          : prev.activeModel
-      return { ...prev, providers, activeModel: nextActive }
-    })
-    if (selection.kind === 'custom' && selection.providerId === providerId) {
-      setSelection({ kind: 'preset', presetId: 'glm' })
-    }
-  }
-
-  const handleRefreshModels = async () => {
-    if (!editingProvider) return
-    if (!editingProvider.apiKey.trim()) {
-      setRefreshMessage('请先填写 API Key')
-      return
-    }
-    setRefreshing(true)
-    setRefreshMessage(null)
-    try {
-      const result = await fetchProviderModels(editingProvider.baseUrl, editingProvider.apiKey)
-      if (!result.ok) {
-        setRefreshMessage(result.message)
-        return
-      }
-      const merged = mergeFetchedModelEntries(editingProvider, result.modelIds)
-      updateProviderInDraft({ ...editingProvider, models: merged, enabled: true })
-      setRefreshMessage(`已合并 ${result.modelIds.length} 个模型`)
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  const handleAddModel = () => {
-    if (!editingProvider || !newModelId.trim()) return
-    const trimmed = newModelId.trim()
-    if (editingProvider.models.some(m => m.modelId === trimmed)) {
-      setRefreshMessage('该模型已存在')
-      return
-    }
-    updateProviderInDraft({
-      ...editingProvider,
-      models: [
-        ...editingProvider.models,
-        { id: generateLocalId('model'), modelId: trimmed }
-      ]
-    })
-    setNewModelId('')
-    setRefreshMessage(null)
-  }
-
-  const handleRemoveModel = (modelEntryId: string) => {
-    if (!editingProvider) return
-    updateProviderInDraft({
-      ...editingProvider,
-      models: editingProvider.models.filter(m => m.id !== modelEntryId)
-    })
-  }
-
-  /** 更新单个模型条目的字段（供高级配置区使用） */
-  const handleUpdateModel = (modelEntryId: string, patch: Partial<ModelEntry>) => {
-    if (!editingProvider) return
-    updateProviderInDraft({
-      ...editingProvider,
-      models: editingProvider.models.map(m =>
-        m.id === modelEntryId ? { ...m, ...patch } : m
-      )
-    })
-  }
-
-  const handleSave = async () => {
-    if (!editingProvider) return
-
-    if (!editingProvider.apiKey.trim()) {
-      setSubmitError('请填写 API Key')
-      return
-    }
-    if (editingProvider.models.length === 0) {
-      setSubmitError('请至少添加一个模型')
-      return
-    }
-
-    // 自定义服务商首次保存时生成稳定正式 id；预设服务商沿用占位 id `preset-<id>`
-    const stableId = editingProvider.presetId
-      ? editingProvider.id
-      : draft.providers.some(p => p.id === editingProvider.id && p.apiKey.trim())
-        ? editingProvider.id
-        : generateLocalId('custom')
-
-    const toSave: ProviderConfig = {
-      ...editingProvider,
-      id: stableId,
-      apiKey: editingProvider.apiKey.trim(),
-      baseUrl: editingProvider.baseUrl.trim(),
-      enabled: true
-    }
-
-    const nextProviders = [...draft.providers]
-    const existIdx = nextProviders.findIndex(
-      p => p.id === toSave.id || (toSave.presetId && p.presetId === toSave.presetId)
-    )
-    if (existIdx >= 0) {
-      nextProviders[existIdx] = toSave
-    } else {
-      nextProviders.push(toSave)
-    }
-
-    // 计算 activeModel：当前 active 失效或正指向本次保存的服务商时锚定到 toSave；否则保持不变。
-    const activeModel = resolveActiveModelAfterSave(draft.activeModel, toSave, nextProviders)
-
-    const nextRegistry: LlmRegistry = {
-      ...draft,
-      providers: nextProviders,
-      activeModel
-    }
-
+  /** 写入注册表；成功返回 null，失败返回可展示的错误文案 */
+  const persist = async (next: LlmRegistry): Promise<string | null> => {
     setSaving(true)
-    setSubmitError(null)
     try {
-      await saveLlmRegistry(nextRegistry)
+      await saveLlmRegistry(next)
+      return null
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : '保存失败')
+      return describeError(err, '保存失败')
     } finally {
       setSaving(false)
     }
   }
 
-  // 只判断本地是否已填 Key，不代表真实连通性
-  const isPresetConfigured = (presetId: PresetProviderId) => {
-    const p = findProviderByPreset(draft, presetId)
-    return Boolean(p?.apiKey.trim() && p.enabled)
+  const foldTimer = useRef<number | undefined>(undefined)
+  useEffect(() => () => window.clearTimeout(foldTimer.current), [])
+
+  /** 先播折叠动画再卸载编辑卡片；减弱动态时直接卸载 */
+  const closeEditor = () => {
+    window.clearTimeout(foldTimer.current)
+    setSubmitError(null)
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      setEditing(null)
+      return
+    }
+    setEditing(cur => (cur ? { ...cur, closing: true } : cur))
+    foldTimer.current = window.setTimeout(() => setEditing(null), FOLD_MS)
   }
 
-  if (!editingProvider) {
-    return (
-      <div className="settings-panel">
-        <div className="settings-panel__scroll">
-          <p className="settings-panel__muted">加载中…</p>
-        </div>
-      </div>
-    )
+  const beginEditing = (next: EditingState) => {
+    window.clearTimeout(foldTimer.current)
+    setEditing(next)
+    setSubmitError(null)
+    setListError(null)
+    setConfirmingRemoveKey(null)
   }
+
+  const startEdit = (row: ProviderRowModel) =>
+    beginEditing({ rowKey: row.key, draft: draftForRow(row), isNew: false })
+
+  const startAddCustom = () => {
+    const draft = createCustomProvider('自定义服务商', DEFAULT_CUSTOM_BASE_URL)
+    beginEditing({ rowKey: draft.id, draft, isNew: true })
+  }
+
+  const handleSave = async () => {
+    if (!editing) return
+    const { draft } = editing
+    const baseUrl = draft.baseUrl.trim()
+    if (!draft.name.trim()) return setSubmitError('请填写服务商名称')
+    if (!/^https?:\/\/.+/.test(baseUrl)) return setSubmitError('接口地址需以 http:// 或 https:// 开头')
+    if (!draft.apiKey.trim()) return setSubmitError('请填写 API 密钥')
+    if (draft.models.length === 0) return setSubmitError('请至少添加一个模型')
+
+    const toSave: ProviderConfig = {
+      ...draft,
+      name: draft.name.trim(),
+      apiKey: draft.apiKey.trim(),
+      baseUrl,
+      enabled: true
+    }
+    const providers = [...registry.providers]
+    const existIdx = providers.findIndex(
+      p => p.id === toSave.id || (toSave.presetId && p.presetId === toSave.presetId)
+    )
+    if (existIdx >= 0) providers[existIdx] = toSave
+    else providers.push(toSave)
+
+    setSubmitError(null)
+    const error = await persist({
+      ...registry,
+      providers,
+      activeModel: resolveActiveModelAfterSave(registry.activeModel, toSave, providers)
+    })
+    if (error) return setSubmitError(error)
+    closeEditor()
+    setSavedKey(toSave.id)
+  }
+
+  const handleRemove = async (providerId: string) => {
+    setConfirmingRemoveKey(null)
+    setListError(await persist(removeProviderFromRegistry(registry, providerId)))
+  }
+
+  const handleBackgroundModelChange = async (value: string) => {
+    const next: LlmRegistry = { ...registry }
+    const picked = listSelectableModels(registry).find(m => toModelOptionValue(m) === value)
+    if (picked) next.backgroundModel = { providerId: picked.providerId, modelEntryId: picked.modelEntryId }
+    else delete next.backgroundModel
+    setListError(await persist(next))
+  }
+
+  const renderEditor = () =>
+    editing && (
+      <LlmProviderEditor
+        draft={editing.draft}
+        saving={saving}
+        error={submitError}
+        onChange={draft => {
+          setEditing({ ...editing, draft })
+          setSubmitError(null)
+        }}
+        closing={editing.closing}
+        onSave={() => void handleSave()}
+        onCancel={closeEditor}
+      />
+    )
+
+  const renderCollapseButton = (name: string, closing: boolean) => (
+    <IconButton
+      label={`收起 ${name}`}
+      icon={<ChevronIcon size={14} direction={closing ? 'down' : 'up'} />}
+      variant="ghost"
+      size="sm"
+      className="llm-row__collapse"
+      onClick={closeEditor}
+    />
+  )
 
   return (
-    <div className="settings-panel">
-      <div className="settings-split">
-        {/* 左侧：服务商列表 */}
-        <div className="settings-split__list">
-          <div className="settings-split__group-title">预设服务商</div>
-          {PRESET_PROVIDER_IDS.map(presetId => {
-            const meta = PRESET_PROVIDERS[presetId]
-            const configured = isPresetConfigured(presetId)
-            const isActive =
-              selection.kind === 'preset' && selection.presetId === presetId
-            return (
-              <ClickableCard
-                key={presetId}
-                label={meta.name}
-                variant="transparent"
-                padding={0}
-                width="100%"
-                className={`settings-split__item${isActive ? ' settings-split__item--active' : ''}`}
-                onClick={() => handlePresetSelect(presetId)}
-              >
-                <span className="settings-split__item-title">{meta.name}</span>
-                <span
-                  className={`settings-split__item-meta${
-                    configured ? ' llm-provider-card__status--ok' : ''
-                  }`}
+    <div className="settings-panel llm-panel">
+      <div className="llm-panel__aurora" aria-hidden="true">
+        <span className="llm-panel__blob llm-panel__blob--a" />
+        <span className="llm-panel__blob llm-panel__blob--b" />
+        <span className="llm-panel__blob llm-panel__blob--c" />
+      </div>
+
+      <div className="llm-panel__scroll">
+        <div className="llm-panel__column">
+          <ul className="llm-list" aria-label="模型服务商">
+            {rows.map((row, index) => {
+              const { provider } = row
+              const configured = Boolean(provider?.apiKey.trim() && provider.enabled)
+              const isEditing = editing?.rowKey === row.key
+              const isCurrent = Boolean(provider) && registry.activeModel.providerId === provider!.id
+              const confirming = confirmingRemoveKey === row.key
+              const isCustom = !row.presetId
+              return (
+                <li
+                  key={row.key}
+                  className={`llm-row${isEditing && !editing?.closing ? ' llm-row--open' : ''}${savedKey === provider?.id ? ' llm-row--saved' : ''}`}
+                  style={{ '--i': index } as React.CSSProperties}
+                  onAnimationEnd={e => {
+                    if (e.animationName === 'llm-saved-sweep') setSavedKey(null)
+                  }}
                 >
-                  {configured ? '已配置' : '未配置'}
-                </span>
-              </ClickableCard>
-            )
-          })}
-
-          <div className="settings-split__group-title">自定义</div>
-          {customProviders.length === 0 && (
-            <p className="llm-provider-list__empty-hint">暂无自定义服务商</p>
-          )}
-          {customProviders.map(p => {
-            const isActive = selection.kind === 'custom' && selection.providerId === p.id
-            return (
-              <ClickableCard
-                key={p.id}
-                label={p.name}
-                variant="transparent"
-                padding={0}
-                width="100%"
-                className={`settings-split__item${isActive ? ' settings-split__item--active' : ''}`}
-                onClick={() => handleCustomSelect(p.id)}
-              >
-                <span className="settings-split__item-title">{p.name}</span>
-                <span
-                  className={`settings-split__item-meta${
-                    p.apiKey.trim() ? ' llm-provider-card__status--ok' : ''
-                  }`}
-                >
-                  {p.apiKey.trim() ? '已配置' : '未配置'}
-                </span>
-              </ClickableCard>
-            )
-          })}
-
-          <Button
-            label="添加自定义服务商"
-            variant="ghost"
-            size="sm"
-            width="100%"
-            className="llm-provider-add"
-            onClick={handleAddCustomProvider}
-          >
-            + 添加自定义服务商
-          </Button>
-        </div>
-
-        {/* 右侧：服务商详情 */}
-        <div className="settings-split__editor llm-provider-detail">
-          <div className="llm-provider-detail__scroll">
-            <SettingsPage>
-              <SettingsSection title="连接">
-                {selection.kind === 'custom' && (
-                  <SettingsField>
-                    <div className="llm-provider-detail__toolbar">
-                      <div className="llm-provider-detail__name-field">
-                        <TextInput
-                          label="服务商名称"
-                          value={editingProvider.name}
-                          onChange={value =>
-                            updateProviderInDraft({ ...editingProvider, name: value })
-                          }
-                          isDisabled={saving}
-                          width="100%"
-                        />
-                      </div>
-                      <Button
-                        label="删除服务商"
-                        variant="destructive"
-                        size="sm"
-                        className="llm-provider-detail__remove"
-                        onClick={() => handleRemoveCustomProvider(editingProvider.id)}
-                      >
-                        删除
-                      </Button>
-                    </div>
-                  </SettingsField>
-                )}
-
-                <SettingsField>
-                  <TextInput
-                    label="接口地址 (Base URL)"
-                    value={editingProvider.baseUrl}
-                    onChange={value =>
-                      updateProviderInDraft({ ...editingProvider, baseUrl: value })
-                    }
-                    isDisabled={saving || Boolean(editingProvider.presetId)}
-                    width="100%"
-                  />
-                  {editingProvider.presetId && (
-                    <span className="settings-help">预设服务商地址不可修改。</span>
-                  )}
-                </SettingsField>
-
-                <SettingsField>
-                  <div className="settings-input-affix">
-                    <TextInput
-                      label="API Key"
-                      type={showKey ? 'text' : 'password'}
-                      value={editingProvider.apiKey}
-                      onChange={value =>
-                        updateProviderInDraft({ ...editingProvider, apiKey: value })
-                      }
-                      placeholder="填写后保存即可使用"
-                      isDisabled={saving}
-                      width="100%"
-                    />
-                    <Button
-                      label={showKey ? '隐藏 API Key' : '显示 API Key'}
-                      variant="ghost"
-                      size="sm"
-                      className="settings-input-affix__action"
-                      onClick={() => setShowKey(!showKey)}
-                    >
-                      {showKey ? '隐藏' : '显示'}
-                    </Button>
-                  </div>
-                </SettingsField>
-
-                <SettingsRow
-                  label="工具调用方式"
-                  description="auto 按模型能力自动选择。"
-                  end={
-                    <SettingsSelect
-                      label="工具调用方式"
-                      isLabelHidden
-                      options={[
-                        { value: 'auto', label: '自动（推荐）' },
-                        { value: 'native', label: '原生函数调用' },
-                        { value: 'xml', label: 'XML 兼容模式' }
-                      ]}
-                      value={editingProvider.toolDialect ?? 'auto'}
-                      onChange={value =>
-                        updateProviderInDraft({
-                          ...editingProvider,
-                          toolDialect: value as 'auto' | 'native' | 'xml'
-                        })
-                      }
-                      isDisabled={saving}
-                      width={180}
-                    />
-                  }
-                />
-              </SettingsSection>
-
-              <SettingsSection
-                title="模型"
-                action={
-                  <Button
-                    label={refreshing ? '刷新中…' : '刷新模型列表'}
-                    variant="secondary"
-                    size="sm"
-                    className="llm-model-refresh"
-                    onClick={() => void handleRefreshModels()}
-                    isDisabled={saving || refreshing || !editingProvider.apiKey.trim()}
-                    tooltip={
-                      editingProvider.apiKey.trim()
-                        ? '从服务商拉取可用模型'
-                        : '请先填写 API Key'
-                    }
-                  >刷新模型列表</Button>
-                }
-              >
-                {refreshMessage && (
-                  <SettingsField>
-                    <span className="settings-help">{refreshMessage}</span>
-                  </SettingsField>
-                )}
-
-                <SettingsField>
-                  <ul className="llm-model-list">
-                    {editingProvider.models.map(entry => (
-                      <ModelEntryRow
-                        key={entry.id}
-                        entry={entry}
-                        disabled={saving}
-                        onUpdate={patch => handleUpdateModel(entry.id, patch)}
-                        onRemove={() => handleRemoveModel(entry.id)}
+                  <div
+                    className="llm-row__head"
+                    onPointerMove={trackSheen}
+                    onClick={() => {
+                      if (saving) return
+                      if (!isEditing) startEdit(row)
+                      else if (!editing?.closing) closeEditor()
+                    }}
+                  >
+                    <div className="llm-row__title">
+                      <span
+                        className={`llm-dot${configured ? ' llm-dot--ok' : ''}`}
+                        role="img"
+                        aria-label={configured ? '已配置' : '未配置'}
                       />
-                    ))}
-                    {editingProvider.models.length === 0 && (
-                      <li className="llm-model-list__empty">
-                        {editingProvider.apiKey.trim()
-                          ? '暂无模型，请点击「刷新模型列表」获取，或手动添加'
-                          : '请先填写 API Key，再点击「刷新模型列表」获取可用模型'}
-                      </li>
-                    )}
-                  </ul>
-
-                  <div className="llm-model-add">
-                    <TextInput
-                      label="手动输入模型 ID"
-                      isLabelHidden
-                      value={newModelId}
-                      onChange={value => setNewModelId(value)}
-                      placeholder="手动输入模型 ID"
-                      isDisabled={saving}
-                      width="100%"
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          handleAddModel()
-                        }
-                      }}
-                    />
-                    <Button
-                      label="添加模型"
-                      variant="secondary"
-                      size="sm"
-                      onClick={handleAddModel}
-                      isDisabled={saving || !newModelId.trim()}
-                    >
-                      添加
-                    </Button>
+                      <span className="llm-row__name">{row.name}</span>
+                      {isCustom && <span className="llm-tag">自定义</span>}
+                      {isCurrent && <span className="llm-tag llm-tag--current">当前使用</span>}
+                    </div>
+                    <div className="llm-row__aside" onClick={e => e.stopPropagation()}>
+                      {provider && provider.models.length > 0 && (
+                        <span className="llm-row__count">{provider.models.length} 个模型</span>
+                      )}
+                      {isEditing ? (
+                        renderCollapseButton(row.name, Boolean(editing?.closing))
+                      ) : confirming ? (
+                        <>
+                          <Button label="取消删除" variant="ghost" size="sm" onClick={() => setConfirmingRemoveKey(null)}>
+                            取消
+                          </Button>
+                          <Button
+                            label={`确认删除 ${row.name}`}
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => void handleRemove(provider!.id)}
+                            isDisabled={saving}
+                          >
+                            确认删除
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            label={configured || provider ? `编辑 ${row.name}` : `配置 ${row.name}`}
+                            variant="secondary"
+                            size="sm"
+                            className="llm-glass-btn"
+                            onClick={() => startEdit(row)}
+                            isDisabled={saving}
+                          >
+                            {provider ? '编辑' : '配置'}
+                          </Button>
+                          {isCustom && provider && (
+                            <Button
+                              label={`删除 ${row.name}`}
+                              variant="ghost"
+                              size="sm"
+                              className="llm-row__remove"
+                              onClick={() => setConfirmingRemoveKey(row.key)}
+                              isDisabled={saving}
+                            >
+                              删除
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </SettingsField>
-              </SettingsSection>
+                  {isEditing && renderEditor()}
+                </li>
+              )
+            })}
 
-              <SettingsSection title="后台任务">
-                <SettingsRow
-                  label="后台任务模型"
-                  description="用于记忆提炼与主题整理；上下文压缩始终使用当前对话模型。"
-                  end={
-                    <SettingsSelect
-                      label="后台任务模型"
-                      isLabelHidden
-                      options={backgroundModelOptions}
-                      value={
-                        draft.backgroundModel
-                          ? toModelOptionValue(draft.backgroundModel)
-                          : FOLLOW_ACTIVE_MODEL
-                      }
-                      onChange={handleBackgroundModelChange}
-                      isDisabled={saving}
-                      width={220}
-                    />
-                  }
-                />
-              </SettingsSection>
+            {editing?.isNew ? (
+              <li className={`llm-row${editing.closing ? '' : ' llm-row--open'}`}>
+                <div className="llm-row__head" onClick={() => !editing.closing && closeEditor()}>
+                  <div className="llm-row__title">
+                    <span className="llm-dot" role="img" aria-label="未配置" />
+                    <span className="llm-row__name">新服务商</span>
+                    <span className="llm-tag">自定义</span>
+                  </div>
+                  <div className="llm-row__aside" onClick={e => e.stopPropagation()}>
+                    {renderCollapseButton('新服务商', Boolean(editing.closing))}
+                  </div>
+                </div>
+                {renderEditor()}
+              </li>
+            ) : (
+              <li className="llm-add-wrap">
+                <button
+                  type="button"
+                  className="llm-add"
+                  onClick={startAddCustom}
+                  onPointerMove={trackSheen}
+                  disabled={saving}
+                >
+                  <PlusIcon size={14} />
+                  添加自定义服务商
+                </button>
+              </li>
+            )}
+          </ul>
 
-              {submitError && (
-                <div className="settings-status settings-status--error">{submitError}</div>
-              )}
-            </SettingsPage>
-          </div>
+          {listError && <p className="llm-panel__error" role="alert">{listError}</p>}
 
-          <div className="settings-panel__footer">
-            <Button
-              label="取消"
-              variant="secondary"
-              onClick={() => setConfigModalOpen(false)}
+          <div className="llm-background" onPointerMove={trackSheen}>
+            <div className="llm-background__text">
+              <span className="llm-background__label">后台任务模型</span>
+              <span className="llm-background__hint">记忆提炼与主题整理</span>
+            </div>
+            <SettingsSelect
+              label="后台任务模型"
+              isLabelHidden
+              options={backgroundModelOptions}
+              value={registry.backgroundModel ? toModelOptionValue(registry.backgroundModel) : FOLLOW_ACTIVE_MODEL}
+              onChange={value => void handleBackgroundModelChange(value)}
               isDisabled={saving}
-            >
-              取消
-            </Button>
-            <Button
-              label={saving ? '保存中…' : '保存配置'}
-              variant="primary"
-              onClick={() => void handleSave()}
-              isDisabled={saving}
-            >
-              {saving ? '保存中…' : '保存配置'}
-            </Button>
+              width={240}
+            />
           </div>
         </div>
       </div>
     </div>
-  )
-}
-
-/**
- * 单个模型条目行 —— 名称 + 移除 + 可折叠「高级配置」区。
- * 高级区默认收起，包含：显示名 / 上下文窗口 / 思考强度 / 支持图片。
- */
-const ModelEntryRow: React.FC<{
-  entry: ModelEntry
-  disabled: boolean
-  onUpdate: (patch: Partial<ModelEntry>) => void
-  onRemove: () => void
-}> = ({ entry, disabled, onUpdate, onRemove }) => {
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-  const configuredEffort = entry.reasoningEffort ?? 'auto'
-  const capabilityEfforts = getSupportedReasoningEfforts(entry)
-  const supportedEfforts: readonly ReasoningEffort[] = capabilityEfforts
-    ?? (configuredEffort !== 'auto' ? ['auto', configuredEffort] : ['auto'])
-  const effectiveEffort = resolveModelReasoningEffort(entry)
-  const configuredValue = supportedEfforts.includes(configuredEffort) ? configuredEffort : 'auto'
-
-  const label = entry.displayName ?? entry.modelId
-  const showId = entry.displayName && entry.displayName !== entry.modelId
-
-  return (
-    <li className="llm-model-list__item">
-      <div className="llm-model-list__row">
-        <div className="llm-model-list__info">
-          <span className="llm-model-list__name">{label}</span>
-          {showId && (
-            <span className="llm-model-list__id">{entry.modelId}</span>
-          )}
-        </div>
-        <div className="llm-model-list__actions">
-          {advancedOpen && (
-            <span className="llm-model-list__badge" title="已展开高级配置">高级</span>
-          )}
-          <IconButton
-            label={`高级配置 ${label}`}
-            icon={<ChevronIcon size={14} direction={advancedOpen ? 'up' : 'down'} />}
-            variant="ghost"
-            size="sm"
-            className="llm-model-list__advanced-toggle"
-            onClick={() => setAdvancedOpen(!advancedOpen)}
-            isDisabled={disabled}
-            tooltip="高级配置"
-            aria-expanded={advancedOpen}
-          />
-          <IconButton
-            label={`移除 ${label}`}
-            icon={<span aria-hidden="true">×</span>}
-            variant="ghost"
-            size="sm"
-            className="llm-model-list__remove"
-            onClick={onRemove}
-            isDisabled={disabled}
-            tooltip="移除模型"
-          />
-        </div>
-      </div>
-
-      {advancedOpen && (
-        <div className="llm-model-list__advanced">
-          <TextInput
-            label="显示名"
-            value={entry.displayName ?? ''}
-            onChange={value =>
-              onUpdate(value.trim() ? { displayName: value } : { displayName: undefined })
-            }
-            placeholder="默认用模型 ID"
-            isDisabled={disabled}
-            width="100%"
-          />
-
-          <NumberInput
-            label="上下文窗口（tokens）"
-            value={entry.contextWindow ?? null}
-            onChange={value => onUpdate({ contextWindow: value ?? undefined })}
-            placeholder="留空则自动推断"
-            min={1024}
-            hasClear
-            isDisabled={disabled}
-            width="100%"
-          />
-          <span className="settings-help">如 128000；留空时按模型 ID 猜测。</span>
-
-          <SettingsSelect
-            label="思考强度"
-            options={supportedEfforts.map(value => ({
-              value,
-              label: reasoningSelectionLabel(entry.modelId, value)
-            }))}
-            value={configuredValue}
-            onChange={value =>
-              onUpdate({ reasoningEffort: value as ReasoningEffort })
-            }
-            isDisabled={disabled || supportedEfforts.length === 1}
-            width="100%"
-          />
-          <span className="settings-help">
-            {supportedEfforts.length === 1
-              ? capabilityEfforts === null
-                ? '该模型尚未登记可选档位，由服务商决定。'
-                : '该模型没有可选档位，由服务商决定。'
-              : '控制推理深度；自动由服务商决定。'}
-          </span>
-
-          <SettingsSelect
-            label="支持图片"
-            options={[
-              { value: 'auto', label: '自动（留空）' },
-              { value: 'yes', label: '是' },
-              { value: 'no', label: '否' }
-            ]}
-            value={
-              entry.supportsVision === undefined
-                ? 'auto'
-                : entry.supportsVision
-                  ? 'yes'
-                  : 'no'
-            }
-            onChange={value => {
-              const v = value
-              onUpdate({
-                supportsVision: v === 'auto' ? undefined : v === 'yes'
-              })
-            }}
-            isDisabled={disabled}
-            width="100%"
-          />
-        </div>
-      )}
-    </li>
   )
 }

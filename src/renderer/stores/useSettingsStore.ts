@@ -59,7 +59,7 @@ export interface SettingsState {
   /** @deprecated 请使用 saveLlmRegistry */
   saveModelConfig: (config: ModelConfig) => Promise<void>
   setActiveModel: (providerId: string, modelEntryId: string) => Promise<void>
-  fetchProviderModels: (baseUrl: string, apiKey: string) => Promise<
+  fetchProviderModels: (baseUrl: string, apiKey: string, providerId?: string) => Promise<
     { ok: true; modelIds: string[] } | { ok: false; message: string }
   >
   setConfigModalOpen: (isOpen: boolean) => void
@@ -205,11 +205,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     try {
       await window.api.invoke('save-llm-registry', registry)
       const derived = deriveModelState(registry)
-      set({
-        llmRegistry: registry,
-        ...derived,
-        isConfigModalOpen: false
-      })
+      set({ llmRegistry: registry, ...derived })
     } catch (err) {
       console.error('保存 LLM 注册表失败:', err)
       throw err
@@ -247,8 +243,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
   },
 
-  fetchProviderModels: async (baseUrl: string, apiKey: string) => {
-    return window.api.invoke('fetch-provider-models', { baseUrl, apiKey })
+  fetchProviderModels: async (baseUrl: string, apiKey: string, providerId?: string) => {
+    return window.api.invoke('fetch-provider-models', { baseUrl, apiKey, providerId })
   },
 
   setConfigModalOpen: (isOpen: boolean) => {

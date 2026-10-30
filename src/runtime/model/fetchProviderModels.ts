@@ -2,6 +2,22 @@
  * 从服务商 API 拉取可用模型列表（OpenAI 兼容 /models 端点）
  */
 import type { TransportFetchImpl } from './types'
+import type { LlmRegistry } from '../../shared/config/llmRegistry'
+import { isMaskedApiKey } from '../../shared/config/apiKeyMask'
+
+/**
+ * 渲染层只持有掩码 key。掩码占位仅在接口地址与该服务商已保存的地址一致时还原为磁盘明文，
+ * 避免明文 key 被发往渲染层任意指定的地址。
+ */
+export function resolveFetchApiKey(
+  params: { baseUrl: string; apiKey: string; providerId?: string },
+  onDisk: LlmRegistry | null
+): string {
+  if (!isMaskedApiKey(params.apiKey)) return params.apiKey
+  const saved = onDisk?.providers.find(p => p.id === params.providerId)
+  const normalize = (url: string): string => url.trim().replace(/\/+$/, '')
+  return saved && normalize(saved.baseUrl) === normalize(params.baseUrl) ? saved.apiKey : params.apiKey
+}
 
 export interface FetchModelsParams {
   baseUrl: string

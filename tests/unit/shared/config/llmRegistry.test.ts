@@ -9,6 +9,7 @@ import {
   mergeFetchedModelEntries,
   groupSelectableModels,
   resolveActiveModelAfterSave,
+  removeProviderFromRegistry,
   getActiveModelReasoningEffort,
   resolveBackgroundModelConfig,
   resolveBackgroundModelRef,
@@ -331,6 +332,46 @@ describe('resolveActiveModelAfterSave', () => {
       nextProviders
     )
     expect(result).toEqual({ providerId: 'preset-glm', modelEntryId: saving.models[0]!.id })
+  })
+})
+
+describe('removeProviderFromRegistry', () => {
+  function twoProviders(): { registry: LlmRegistry; a: ProviderConfig; b: ProviderConfig } {
+    const a = createProviderFromPreset('glm', 'key-a')
+    const b = createProviderFromPreset('deepseek', 'key-b')
+    return {
+      a,
+      b,
+      registry: {
+        version: 2,
+        providers: [a, b],
+        activeModel: { providerId: a.id, modelEntryId: a.models[0]!.id },
+        backgroundModel: { providerId: a.id, modelEntryId: a.models[1]!.id },
+        fallbacks: [
+          { providerId: a.id, modelEntryId: a.models[0]!.id },
+          { providerId: b.id, modelEntryId: b.models[0]!.id }
+        ]
+      }
+    }
+  }
+
+  it('删除活跃模型所在服务商后，活跃模型改指向剩余服务商，失效的后台模型与降级项被清理', () => {
+    const { registry, a, b } = twoProviders()
+    const next = removeProviderFromRegistry(registry, a.id)
+
+    expect(next.providers).toEqual([b])
+    expect(next.activeModel).toEqual({ providerId: b.id, modelEntryId: b.models[0]!.id })
+    expect(next.backgroundModel).toBeUndefined()
+    expect(next.fallbacks).toEqual([{ providerId: b.id, modelEntryId: b.models[0]!.id }])
+  })
+
+  it('删除无关服务商时保持活跃模型与后台模型不变', () => {
+    const { registry, a, b } = twoProviders()
+    const next = removeProviderFromRegistry(registry, b.id)
+
+    expect(next.activeModel).toEqual(registry.activeModel)
+    expect(next.backgroundModel).toEqual(registry.backgroundModel)
+    expect(next.providers).toEqual([a])
   })
 })
 

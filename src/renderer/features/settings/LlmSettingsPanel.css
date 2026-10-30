@@ -1,0 +1,1024 @@
+/* 模型服务商设置：液态玻璃。极光层只是玻璃折射的素材，内容始终在其上方。 */
+
+.llm-panel,
+dialog.llm-picker {
+  --glass-fill: light-dark(rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.055));
+  --glass-fill-hover: light-dark(rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.09));
+  --glass-fill-open: light-dark(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.075));
+  --glass-well: light-dark(rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.045));
+  --glass-edge: light-dark(rgba(70, 80, 130, 0.16), rgba(255, 255, 255, 0.1));
+  --glass-ring: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.12));
+  --glass-shadow:
+    0 12px 32px -16px light-dark(rgba(40, 50, 120, 0.3), rgba(0, 0, 0, 0.7)),
+    0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+  --glass-inset:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.16)),
+    inset 0 -1px 0 light-dark(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.03)),
+    inset 0 0 0 0.5px var(--glass-ring);
+  --glass-blur: blur(18px) saturate(160%);
+  --glass-sheen-color: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.15));
+  --llm-ease: var(--ease-out-expo);
+}
+
+.llm-panel {
+  position: relative;
+  isolation: isolate;
+}
+
+/* 极光 */
+.llm-panel__aurora {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 80% 75% at 50% 42%, #000 38%, transparent 100%);
+}
+
+.llm-panel__blob {
+  position: absolute;
+  width: 520px;
+  height: 520px;
+  border-radius: 50%;
+  will-change: transform;
+  /* 光斑在玻璃背后，持续移动会让每块玻璃每帧重算模糊；只在交互时漂移，空闲零开销 */
+  animation-play-state: paused;
+}
+
+.llm-panel:hover .llm-panel__blob {
+  animation-play-state: running;
+}
+
+.llm-panel__blob--a {
+  top: -120px;
+  left: -40px;
+  background: radial-gradient(closest-side, light-dark(rgba(129, 140, 248, 0.38), rgba(99, 102, 241, 0.3)), transparent);
+  animation: llm-drift-a 24s ease-in-out infinite alternate;
+}
+
+.llm-panel__blob--b {
+  top: 30%;
+  right: -90px;
+  background: radial-gradient(closest-side, light-dark(rgba(34, 211, 238, 0.3), rgba(20, 184, 166, 0.2)), transparent);
+  animation: llm-drift-b 30s ease-in-out infinite alternate;
+}
+
+.llm-panel__blob--c {
+  bottom: -160px;
+  left: 28%;
+  background: radial-gradient(closest-side, light-dark(rgba(251, 113, 133, 0.26), rgba(236, 72, 153, 0.15)), transparent);
+  animation: llm-drift-c 36s ease-in-out infinite alternate;
+}
+
+@keyframes llm-drift-a {
+  to { transform: translate3d(90px, 60px, 0) scale(1.15); }
+}
+
+@keyframes llm-drift-b {
+  to { transform: translate3d(-110px, 70px, 0) scale(0.9); }
+}
+
+@keyframes llm-drift-c {
+  to { transform: translate3d(70px, -80px, 0) scale(1.1); }
+}
+
+.llm-panel__scroll {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px 28px 4px;
+}
+
+.llm-panel__column {
+  display: grid;
+  gap: 22px;
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.llm-panel__error {
+  margin: -10px 4px 0;
+  color: var(--color-error);
+  font-size: 0.8rem;
+}
+
+/* 服务商列表 */
+.llm-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.llm-row,
+.llm-background {
+  position: relative;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 18px;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  box-shadow: var(--glass-shadow), var(--glass-inset);
+}
+
+.llm-row {
+  /* backwards：入场结束后不再锁定 transform，悬停上浮才能生效 */
+  animation: llm-rise 560ms var(--llm-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 50ms);
+  transition:
+    background-color 0.3s var(--llm-ease),
+    box-shadow 0.4s var(--llm-ease),
+    transform 0.4s var(--ease-overshoot);
+}
+
+.llm-row:not(.llm-row--open):hover {
+  background: var(--glass-fill-hover);
+  transform: translateY(-1px);
+}
+
+.llm-row--open {
+  background: var(--glass-fill-open);
+}
+
+@keyframes llm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+
+/* 指针高光 */
+.llm-row__head,
+.llm-add,
+.llm-background {
+  --mx: 50%;
+  --my: 0%;
+  /* 高光伪元素沉到内容之下，悬停时不会洗白文字 */
+  isolation: isolate;
+}
+
+.llm-row__head::before,
+.llm-add::before,
+.llm-background::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  /* --mx/--my 由指针事件写在元素上，渐变必须在此处解析才会跟随 */
+  background: radial-gradient(280px circle at var(--mx) var(--my), var(--glass-sheen-color), transparent 64%);
+  z-index: -1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.35s var(--llm-ease);
+}
+
+.llm-row__head:hover::before,
+.llm-add:hover::before,
+.llm-background:hover::before {
+  opacity: 1;
+}
+
+.llm-row__head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 12px 16px;
+  border-radius: 18px;
+  cursor: pointer;
+}
+
+.llm-row__title,
+.llm-row__aside {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.llm-row__aside {
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.llm-row__name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-row__count {
+  margin-right: 4px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.llm-row__chevron {
+  color: var(--text-muted);
+}
+
+.llm-row .llm-row__remove {
+  color: var(--color-error);
+}
+
+.llm-dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--text-placeholder);
+}
+
+.llm-dot--ok {
+  background: var(--color-success);
+  box-shadow: none;
+}
+
+.llm-dot--ok::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--color-success);
+  opacity: 0.35;
+  animation: llm-breathe 3.2s ease-in-out infinite;
+}
+
+@keyframes llm-breathe {
+  60%, 100% { transform: scale(2.4); opacity: 0; }
+}
+
+.llm-tag {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 999px;
+  background: var(--glass-well);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.llm-tag--current {
+  border-color: color-mix(in srgb, var(--color-success) 38%, transparent);
+  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  color: light-dark(#15803d, var(--color-success));
+}
+
+/* 保存成功：一道高光扫过整行 */
+.llm-row--saved::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    105deg,
+    transparent 30%,
+    light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.24)) 50%,
+    transparent 70%
+  );
+  background-size: 260% 100%;
+  pointer-events: none;
+  animation: llm-saved-sweep 1000ms var(--llm-ease) both;
+}
+
+@keyframes llm-saved-sweep {
+  from { background-position: 130% 0; opacity: 1; }
+  to { background-position: -130% 0; opacity: 0; }
+}
+
+/* 新增入口 */
+.llm-add-wrap {
+  list-style: none;
+}
+
+.llm-add {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  border: 0.5px dashed color-mix(in srgb, var(--text-muted) 55%, transparent);
+  border-radius: 18px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+  transition:
+    background-color 0.3s var(--llm-ease),
+    border-color 0.3s var(--llm-ease),
+    color 0.3s var(--llm-ease);
+}
+
+.llm-add:hover:not(:disabled) {
+  border-style: solid;
+  border-color: var(--glass-edge);
+  background: var(--glass-fill);
+  color: var(--text-primary);
+}
+
+.llm-add:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* 后台任务模型 */
+.llm-background {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.llm-background__text {
+  position: relative;
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.llm-background__label {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.llm-background__hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+/* 编辑卡片：高度由网格行展开，避免测量内容高度 */
+.llm-editor {
+  display: grid;
+  grid-template-rows: 1fr;
+  margin: 0 8px 8px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 10px;
+  background: var(--glass-well);
+  animation: llm-unfold 520ms var(--llm-ease) both;
+}
+
+@keyframes llm-unfold {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    margin-bottom: 0;
+  }
+}
+
+/* 与 LlmSettingsPanel.tsx 的 FOLD_MS 保持一致 */
+.llm-editor--closing {
+  pointer-events: none;
+  animation: llm-fold 320ms var(--llm-ease) both;
+}
+
+@keyframes llm-fold {
+  to {
+    grid-template-rows: 0fr;
+    opacity: 0;
+    margin-bottom: 0;
+    border-width: 0;
+  }
+}
+
+/* 内边距放在 content 上：网格行收到 0 时，容器自身不能带 padding，否则收不到底 */
+.llm-editor__inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.llm-editor__content {
+  padding: 16px 16px 14px;
+}
+
+.llm-editor__fields {
+  display: grid;
+  gap: 14px;
+}
+
+/* 与 Astryx 表单标签同档，自绘字段才不会比输入框标签小一号 */
+.llm-field__label,
+.llm-readonly__label {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
+.llm-readonly {
+  display: grid;
+  gap: 6px;
+}
+
+.llm-readonly__value {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  word-break: break-all;
+}
+
+.llm-key-field {
+  position: relative;
+}
+
+.llm-key-field__toggle {
+  position: absolute;
+  right: 6px;
+  bottom: 4px;
+}
+
+.llm-advanced__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 0.2s var(--llm-ease);
+}
+
+.llm-advanced__toggle:hover {
+  color: var(--text-primary);
+}
+
+.llm-advanced__body {
+  display: grid;
+  gap: 6px;
+  padding: 10px 0 2px 18px;
+  animation: llm-fade-down 320ms var(--llm-ease) both;
+}
+
+@keyframes llm-fade-down {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+/* 模型目录 */
+.llm-models {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 0.5px solid var(--glass-edge);
+}
+
+.llm-models__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.llm-models__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.llm-models__count {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09));
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* 7 行 = 7 * 行高 41px + 6 * 间距 6px，再加上下各 2px 内边距，留给焦点环 */
+.llm-models__list {
+  display: grid;
+  gap: 6px;
+  max-height: calc(7 * 41px + 6 * 6px + 4px);
+  margin: -2px;
+  padding: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  list-style: none;
+}
+
+.llm-models__empty {
+  padding: 22px 12px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.llm-models__add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  animation: llm-fade-down 280ms var(--llm-ease) both;
+}
+
+.llm-models__add-row > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.llm-models .llm-models__add {
+  justify-self: start;
+}
+
+.llm-editor__notice {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+.llm-editor__error {
+  margin: 14px 0 0;
+  color: var(--color-error);
+  font-size: 0.8rem;
+}
+
+.llm-editor__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.llm-model-row {
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 10px;
+  background: light-dark(rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.04));
+  transition: background-color 0.25s var(--llm-ease);
+}
+
+.llm-model-row--enter {
+  animation: llm-rise 420ms var(--llm-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 30ms);
+}
+
+.llm-model-row:hover,
+.llm-model-row--open {
+  background: light-dark(rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.075));
+}
+
+.llm-model-row__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 6px;
+}
+
+.llm-model-row__summary {
+  display: flex;
+  align-items: baseline;
+  flex: 1;
+  gap: 10px;
+  min-width: 0;
+  min-height: 40px;
+  padding: 10px 6px 10px 12px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.llm-model-row__summary:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.llm-model-row__name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-model-row__id {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-model-row__chevron {
+  align-self: center;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.llm-model-row__panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 12px;
+  padding: 4px 12px 14px;
+  animation: llm-fade-down 320ms var(--llm-ease) both;
+}
+
+.llm-model-row__field {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+@container (max-width: 480px) {
+  .llm-model-row__panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.llm-editor__inner {
+  container-type: inline-size;
+}
+
+/* 获取可用模型 */
+dialog.llm-picker {
+  padding: 0;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 24px;
+  background: light-dark(rgba(255, 255, 255, 0.6), rgba(28, 28, 34, 0.55));
+  -webkit-backdrop-filter: blur(30px) saturate(190%);
+  backdrop-filter: blur(30px) saturate(190%);
+  box-shadow:
+    0 36px 90px -24px light-dark(rgba(30, 40, 110, 0.4), rgba(0, 0, 0, 0.85)),
+    var(--glass-inset);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+dialog.llm-picker::backdrop {
+  background: light-dark(rgba(190, 200, 255, 0.2), rgba(0, 0, 0, 0.48));
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.llm-picker__body {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  max-height: min(75vh, 640px);
+  animation: llm-pop 480ms var(--ease-overshoot) both;
+}
+
+.llm-picker__body::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(55% 45% at 0% 0%, light-dark(rgba(129, 140, 248, 0.3), rgba(99, 102, 241, 0.22)), transparent),
+    radial-gradient(50% 45% at 100% 100%, light-dark(rgba(34, 211, 238, 0.24), rgba(20, 184, 166, 0.16)), transparent);
+  pointer-events: none;
+}
+
+@keyframes llm-pop {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.965);
+  }
+}
+
+.llm-picker__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 20px 20px 6px 24px;
+}
+
+.llm-picker__title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.llm-picker__summary {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.llm-picker__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 24px 8px;
+}
+
+.llm-picker__search {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 12px;
+  background: var(--glass-well);
+  color: var(--text-placeholder);
+  transition: box-shadow 0.25s var(--llm-ease), border-color 0.25s var(--llm-ease);
+}
+
+.llm-picker__search:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-focus) 16%, transparent);
+}
+
+.llm-picker__search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.86rem;
+}
+
+.llm-picker__link {
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 0.2s var(--llm-ease);
+}
+
+.llm-picker__link:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.llm-picker__link:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.llm-picker__list {
+  flex: 1;
+  min-height: 160px;
+  max-height: 380px;
+  overflow-y: auto;
+  padding: 4px 14px 8px 18px;
+}
+
+.llm-picker__row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  /* 长列表只渲染可见行 */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 40px;
+  transition: background-color 0.2s var(--llm-ease);
+}
+
+.llm-picker__row--enter {
+  animation: llm-rise 420ms var(--llm-ease) backwards;
+  animation-delay: calc(var(--i, 0) * 24ms);
+}
+
+.llm-picker__row:hover:not(.llm-picker__row--added) {
+  background: var(--glass-fill-hover);
+}
+
+.llm-picker__row--checked:not(.llm-picker__row--added) {
+  background: light-dark(rgba(99, 102, 241, 0.1), rgba(255, 255, 255, 0.08));
+}
+
+.llm-picker__row--added {
+  cursor: default;
+}
+
+.llm-picker__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.llm-picker__check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid color-mix(in srgb, var(--text-muted) 60%, transparent);
+  border-radius: 6px;
+  background: var(--glass-well);
+  color: var(--bg-app);
+  transition:
+    background-color 0.25s var(--llm-ease),
+    border-color 0.25s var(--llm-ease);
+}
+
+.llm-picker__check svg {
+  transform: scale(0);
+  transition: transform 0.35s var(--ease-overshoot);
+}
+
+.llm-picker__input:checked + .llm-picker__check {
+  border-color: var(--text-primary);
+  background: var(--text-primary);
+}
+
+.llm-picker__input:checked + .llm-picker__check svg {
+  transform: scale(1);
+}
+
+.llm-picker__input:disabled + .llm-picker__check {
+  opacity: 0.5;
+}
+
+.llm-picker__input:focus-visible + .llm-picker__check {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+.llm-picker__id {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-picker__row--added .llm-picker__id {
+  color: var(--text-muted);
+}
+
+.llm-picker__tag {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09));
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.llm-picker__notice {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 36px 16px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  text-align: center;
+}
+
+.llm-picker__notice p {
+  margin: 0;
+  word-break: break-word;
+}
+
+.llm-picker__skeleton-row {
+  display: block;
+  height: 38px;
+  margin: 4px 0;
+  border-radius: 12px;
+  background:
+    linear-gradient(
+      100deg,
+      transparent 20%,
+      light-dark(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.12)) 50%,
+      transparent 80%
+    ),
+    light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  background-size: 220% 100%, auto;
+  animation: llm-shimmer 1.5s linear infinite;
+  animation-delay: calc(var(--i, 0) * 90ms);
+}
+
+@keyframes llm-shimmer {
+  from { background-position: 130% 0, 0 0; }
+  to { background-position: -130% 0, 0 0; }
+}
+
+.llm-picker__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 24px 18px;
+  border-top: 0.5px solid var(--glass-edge);
+}
+
+/* 玻璃按钮：只用半透明填充和内高光，不叠 backdrop-filter。它们都位于已经带模糊的玻璃面内，再叠一层既无视觉收益又增加 GPU 开销 */
+.llm-panel .llm-glass-btn,
+dialog.llm-picker .llm-glass-btn {
+  border: 0.5px solid var(--glass-edge);
+  background: light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08));
+  color: var(--text-primary);
+  box-shadow:
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.16)),
+    inset 0 0 0 0.5px var(--glass-ring),
+    0 4px 12px -8px light-dark(rgba(40, 50, 120, 0.4), rgba(0, 0, 0, 0.7));
+  transition:
+    transform 0.25s var(--ease-overshoot),
+    background-color 0.25s var(--llm-ease),
+    box-shadow 0.3s var(--llm-ease);
+}
+
+.llm-panel .llm-glass-btn:hover:not(:disabled),
+dialog.llm-picker .llm-glass-btn:hover:not(:disabled) {
+  background: light-dark(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.14));
+  transform: translateY(-1px);
+  box-shadow:
+    inset 0 1px 0 light-dark(#fff, rgba(255, 255, 255, 0.22)),
+    inset 0 0 0 0.5px var(--glass-ring),
+    0 8px 18px -8px light-dark(rgba(40, 50, 120, 0.5), rgba(0, 0, 0, 0.8));
+}
+
+.llm-panel .llm-glass-btn:active:not(:disabled),
+dialog.llm-picker .llm-glass-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.llm-panel .llm-glass-btn--primary,
+dialog.llm-picker .llm-glass-btn--primary {
+  border-color: light-dark(rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.55));
+  background: linear-gradient(
+    165deg,
+    light-dark(rgba(96, 165, 250, 0.95), rgba(255, 255, 255, 0.92)),
+    light-dark(rgba(59, 130, 246, 0.82), rgba(212, 212, 220, 0.8))
+  );
+  color: light-dark(#fff, #18181b);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.25),
+    0 8px 18px -8px light-dark(rgba(37, 99, 235, 0.65), rgba(0, 0, 0, 0.7));
+}
+
+.llm-panel .llm-glass-btn--primary:hover:not(:disabled),
+dialog.llm-picker .llm-glass-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(
+    165deg,
+    light-dark(rgba(125, 185, 252, 1), #fff),
+    light-dark(rgba(79, 140, 248, 0.92), rgba(228, 228, 235, 0.9))
+  );
+}
+
+.llm-panel .llm-glass-btn:disabled,
+dialog.llm-picker .llm-glass-btn:disabled {
+  opacity: 0.5;
+  box-shadow: inset 0 0 0 0.5px var(--glass-ring);
+}
+
+/* 折叠箭头 */
+.llm-row .llm-row__collapse {
+  color: var(--text-muted);
+}
+
+.llm-row .llm-row__collapse:hover {
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .llm-panel *,
+  .llm-panel *::before,
+  .llm-panel *::after,
+  .llm-picker,
+  .llm-picker *,
+  .llm-picker *::before {
+    animation: none !important;
+    transition: none !important;
+  }
+}
