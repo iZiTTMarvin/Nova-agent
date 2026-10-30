@@ -262,7 +262,7 @@ export const SubagentPresetForm: React.FC<SubagentPresetFormProps> = ({
           <>
             <span className="glass-chip">已选 {permission.selectedCount} / {permission.total}</span>
             <span className={`glass-chip${permission.canWrite ? ' glass-chip--caution' : ''}`}>
-              {permission.canWrite ? '可修改工作区' : '只读'}
+              {permission.canWrite ? '具备工作区修改权限' : '仅只读权限'}
             </span>
           </>
         }

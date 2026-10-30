@@ -29,6 +29,7 @@ import {
 import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage, SettingsSelect } from './settingsKit'
 import { trackSheen } from './glass'
 import { SubagentToolGroups, summarizeToolPermission } from './SubagentToolGroups'
+import { CodeIcon, CompassIcon, GitForkIcon, ShieldCheckIcon } from '../../components/Icons'
 import './SubagentsSettingsPanel.css'
 
 interface AbilityTemplate {
@@ -584,7 +585,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                   <div className="subagent-form__field">
                     <TextInput
                       label="稳定 ID"
-                      description="创建前可以调整；创建后不可修改。"
+                      description="预设的唯一标识，创建后保持稳定。"
                       value={draft.preset.id}
                       onChange={id => {
                         setDraft(current => ({ ...current, preset: { ...current.preset, id } }))
@@ -627,7 +628,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
             {route.kind === 'create' && route.step === 2 && (
               <div className="subagent-page">
-                <PageHeader eyebrow="步骤 2 / 2" title="检查配置" subtitle="保存失败不会清空当前输入。" />
+                <PageHeader eyebrow="步骤 2 / 2" title="检查配置" subtitle="核对提示词与可用工具。" />
                 <SubagentPresetForm
                   draft={draft}
                   tools={tools}
@@ -649,8 +650,9 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
             {selected?.builtin && (
               <div className="subagent-page">
-                <PageHeader
-                  eyebrow="内置能力（只读）"
+                <SubagentHero
+                  id={selected.id}
+                  eyebrow="系统预置"
                   title={selected.name}
                   subtitle={selected.description}
                   action={<Button label="复制为自定义" variant="secondary" size="sm" onClick={() => copyBuiltin(selected)}>复制为自定义</Button>}
@@ -675,7 +677,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                     title="工具与权限"
                     aside={
                       <span className={`glass-chip${builtinPermission.canWrite ? ' glass-chip--caution' : ''}`}>
-                        {builtinPermission.canWrite ? '可修改工作区' : '只读权限上限'}
+                        {builtinPermission.canWrite ? '具备工作区修改权限' : '仅只读权限'}
                       </span>
                     }
                   >
@@ -690,7 +692,8 @@ export const SubagentsSettingsPanel: React.FC = () => {
 
             {selected && !selected.builtin && (
               <div className="subagent-page">
-                <PageHeader
+                <SubagentHero
+                  id={selected.id}
                   eyebrow={selected.origin === 'project' ? '项目配置' : '全局配置'}
                   title={selected.name}
                   subtitle={<>ID：<code>{selected.id}</code></>}
@@ -730,7 +733,38 @@ export const SubagentsSettingsPanel: React.FC = () => {
   )
 }
 
-/** 详情页头：状态标签、名称、说明，右侧可放操作 */
+function getSubagentIcon(id: string): React.ReactNode {
+  if (id === 'code') return <CodeIcon size={20} />
+  if (id === 'explore') return <CompassIcon size={20} />
+  if (id === 'review') return <ShieldCheckIcon size={20} />
+  return <GitForkIcon size={20} />
+}
+
+/** 详情页头 Hero 卡片：智能体标识、状态标签、名称、说明，右侧操作 */
+function SubagentHero(props: {
+  id?: string
+  eyebrow: string
+  title: string
+  subtitle?: React.ReactNode
+  action?: React.ReactNode
+}) {
+  return (
+    <header className="subagent-hero glass-card">
+      <div className="subagent-hero__avatar" aria-hidden="true">
+        {getSubagentIcon(props.id ?? props.title)}
+      </div>
+      <div className="subagent-hero__content">
+        <div className="subagent-hero__meta">
+          <span className="glass-chip">{props.eyebrow}</span>
+        </div>
+        <h3 className="subagent-hero__title">{props.title}</h3>
+        {props.subtitle != null && <div className="subagent-hero__desc">{props.subtitle}</div>}
+      </div>
+      {props.action && <div className="subagent-hero__action">{props.action}</div>}
+    </header>
+  )
+}
+
 function PageHeader(props: { eyebrow: string; title: string; subtitle?: React.ReactNode; action?: React.ReactNode }) {
   return (
     <header className="subagent-header">

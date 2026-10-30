@@ -189,12 +189,19 @@
   color: var(--text-primary);
 }
 
+.glass-chip--caution {
+  border-color: color-mix(in srgb, var(--color-warning) 34%, var(--glass-edge));
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--glass-well));
+  color: light-dark(color-mix(in srgb, var(--color-warning) 80%, #78350f), var(--color-warning));
+}
+
 .glass-chip--caution::before {
-  content: '';
+  content: "";
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--color-warning);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-warning) 45%, transparent);
 }
 
 /* 分段控件：滑块跟随选中项 */
@@ -207,7 +214,7 @@
   grid-auto-columns: minmax(64px, 1fr);
   padding: 3px;
   border: 0.5px solid var(--glass-edge);
-  border-radius: 12px;
+  border-radius: 999px;
   background: var(--glass-well);
   box-shadow: inset 0 1px 2px light-dark(rgba(0, 0, 0, 0.05), rgba(0, 0, 0, 0.3));
 }
@@ -216,13 +223,14 @@
   position: absolute;
   inset: 3px auto 3px 3px;
   width: calc((100% - 6px) / var(--n));
-  border-radius: 9px;
-  background: light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.14));
+  border-radius: 999px;
+  background: light-dark(#ffffff, rgba(255, 255, 255, 0.16));
   box-shadow:
-    0 1px 3px light-dark(rgba(40, 50, 120, 0.18), rgba(0, 0, 0, 0.45)),
-    inset 0 1px 0 light-dark(#fff, rgba(255, 255, 255, 0.18));
+    0 1px 3px light-dark(rgba(20, 30, 80, 0.12), rgba(0, 0, 0, 0.45)),
+    0 0.5px 1px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.2)),
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.18));
   transform: translateX(calc(var(--i) * 100%));
-  transition: transform 0.35s var(--ease-overshoot);
+  transition: transform 0.32s var(--ease-overshoot);
   pointer-events: none;
 }
 
@@ -231,7 +239,7 @@
   z-index: 1;
   padding: 5px 14px;
   border: none;
-  border-radius: 9px;
+  border-radius: 999px;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -344,5 +352,32 @@
   .glass-tile,
   .glass-tabs__thumb {
     transition: none;
+  }
+}
+
+/* 设置页面轻量过渡动效：GPU 驱动的微淡入与微缩放 */
+@keyframes settings-view-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.988) translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes settings-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  @keyframes settings-view-enter {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .glass-tabs__thumb {
+    transition-duration: 0.01ms;
   }
 }

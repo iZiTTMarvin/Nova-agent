@@ -27,7 +27,7 @@ export const skillsI18n = {
   panelTitle: '技能',
   panelDesc: '技能是可被 / 唤起或由模型调用的指令模板。内置技能随应用分发，也可在本地或项目中自定义。',
   thirdPartyTitle: '共享其他工具的技能',
-  thirdPartyHint: '默认只使用 Nova 自己的技能（~/.nova/skills）。开启后，Nova 会直接读取对应目录中的技能，不复制、不修改；关闭立即停止读取。',
+  thirdPartyHint: '开启后将直接读取对应目录中的技能，无需复制且随时可关闭。',
   thirdPartyUserLabel: (id: string) => `~/${id}/skills`,
   thirdPartyProjectLabel: (id: string) => `项目 ${id}/skills`,
   thirdPartyCount: (n: number) => `${n} 个技能`,
@@ -96,7 +96,7 @@ export const skillsI18n = {
 
 export const rulesI18n = {
   panelTitle: '规则',
-  panelDesc: '规则用于约束 Agent 行为，可始终生效或按文件路径生效（路径匹配将在后续版本支持）。',
+  panelDesc: '用于约束 Agent 的行为准则与编码规范，按全局或项目范围生效。',
   create: '+ 新建',
   empty: '暂无规则文件',
   selectHint: '选择规则文件进行编辑',
@@ -111,7 +111,7 @@ export const rulesI18n = {
 
 export const subagentsI18n = {
   panelTitle: '子代理',
-  panelDesc: '子代理是专用于探索、编码等任务的独立 Agent 配置，可由主 Agent 通过 task 工具调用。',
+  panelDesc: '专用于探索、编码与审查等特定任务的独立 Agent，由主 Agent 自动协同调度。',
   create: '+ 新建子代理',
   empty: '暂无子代理',
   builtin: '内置',

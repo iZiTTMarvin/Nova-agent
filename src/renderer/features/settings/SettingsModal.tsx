@@ -104,7 +104,7 @@ const NAV_GROUPS: NavGroupMeta[] = [
       {
         id: 'memory',
         label: '记忆',
-        description: '查看与编辑当前工作区的跨会话记忆文件（按工作区哈希隔离）。',
+        description: '查看与管理当前工作区的跨会话记忆，帮助 Agent 更好地了解项目背景。',
         keywords: 'memory 自动学习',
         icon: <BrainIcon size={16} />
       },

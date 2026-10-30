@@ -27,6 +27,7 @@
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+  animation: settings-view-enter 220ms var(--ease-out-expo) both;
 }
 
 .subagents-toolbar {
@@ -141,9 +142,94 @@
 }
 
 .subagent-back {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 2px;
+}
+
+.subagent-back button {
+  transition:
+    transform 0.2s var(--ease-out-expo),
+    background-color 0.2s var(--glass-ease),
+    color 0.2s var(--glass-ease);
+}
+
+.subagent-back button:hover:not(:disabled) {
+  transform: translateX(-2px);
+}
+
+.subagent-back button:active:not(:disabled) {
+  transform: translateX(-3px) scale(0.98);
+}
+
+/* 详情 Hero 卡片：智能体标识、标题、状态徽章与操作收纳在统一玻璃卡片内 */
+.subagent-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px 20px;
+  border-radius: 18px;
+}
+
+.subagent-hero__avatar {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 12px;
+  background: var(--glass-well);
+  color: var(--accent-primary);
+  box-shadow: var(--glass-inset);
+}
+
+.subagent-hero__content {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.subagent-hero__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.subagent-hero__title {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.subagent-hero__desc {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.84rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.subagent-hero__desc code {
+  padding: 1px 6px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 6px;
+  background: var(--glass-well);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+
+.subagent-hero__action {
   flex-shrink: 0;
 }
 
+/* 创建向导步骤页头 */
 .subagent-header {
   display: flex;
   align-items: flex-start;
@@ -177,6 +263,17 @@
 .subagent-header p code {
   font-family: var(--font-mono);
   font-size: 0.8rem;
+}
+
+/* 详情卡片错落进入微动效 */
+.subagent-form .settings-card:nth-of-type(1) {
+  animation: settings-view-enter 230ms 25ms var(--ease-out-expo) both;
+}
+.subagent-form .settings-card:nth-of-type(2) {
+  animation: settings-view-enter 250ms 50ms var(--ease-out-expo) both;
+}
+.subagent-form .settings-card:nth-of-type(3) {
+  animation: settings-view-enter 270ms 75ms var(--ease-out-expo) both;
 }
 
 /* 底部悬浮操作条：随滚动停靠在详情底部 */
@@ -266,4 +363,8 @@
   .subagents-skeleton {
     grid-template-columns: minmax(0, 1fr);
   }
+}
+
+.subagent-tile:active {
+  transform: translateY(0) scale(0.985);
 }

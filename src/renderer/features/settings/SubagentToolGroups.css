@@ -15,32 +15,56 @@
   clip-path: inset(50%);
 }
 
-/* 分组之间用发丝线隔开，分组名与胶囊之间留出固定间距 */
+/* 工具分组：以轻量微玻璃内衬卡片分块，风险分类一目了然 */
 .subagent-tools__group {
   display: grid;
-  gap: 9px;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 14px;
+  background: light-dark(rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.025));
+  transition: background-color 0.25s var(--glass-ease), border-color 0.25s var(--glass-ease);
 }
 
 .subagent-tools__group + .subagent-tools__group {
-  padding-top: 16px;
-  border-top: 0.5px solid var(--glass-edge);
+  padding-top: 12px;
 }
 
 .subagent-tools__title {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  align-self: start;
   gap: 6px;
-  color: var(--text-muted);
-  font-size: 0.76rem;
+  width: fit-content;
+  padding: 2.5px 10px 2.5px 8px;
+  border: 0.5px solid var(--glass-edge);
+  border-radius: 999px;
+  background: var(--glass-well);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
   font-weight: 500;
+  line-height: 1.4;
+}
+
+.subagent-tools__title::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.6;
+}
+
+.subagent-tools__title--caution {
+  border-color: color-mix(in srgb, var(--color-warning) 32%, var(--glass-edge));
+  background: color-mix(in srgb, var(--color-warning) 8%, var(--glass-well));
+  color: light-dark(color-mix(in srgb, var(--color-warning) 80%, #78350f), var(--color-warning));
 }
 
 .subagent-tools__title--caution::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
   background: var(--color-warning);
+  opacity: 1;
+  box-shadow: 0 0 5px color-mix(in srgb, var(--color-warning) 50%, transparent);
 }
 
 .subagent-tools__list {

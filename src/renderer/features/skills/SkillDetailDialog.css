@@ -9,6 +9,7 @@ dialog.skill-detail {
   box-shadow:
     0 24px 60px -20px light-dark(rgba(30, 40, 100, 0.4), rgba(0, 0, 0, 0.75)),
     var(--glass-inset);
+  animation: settings-view-enter 220ms var(--ease-out-expo) both;
 }
 
 .skill-detail__header {

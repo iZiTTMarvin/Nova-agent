@@ -17,7 +17,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.explore,
     name: 'explore',
-    description: '只读探索：搜代码、读文件、做调研，不修改任何文件。',
+    description: '代码探索：只读检索工作区代码与文件，完成技术调研与结构分析。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是一个只读探索助手。分析代码、搜索模式、读文件、做调研。
@@ -26,7 +26,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.code,
     name: 'code',
-    description: '受限编程：可读、写、跑命令，写操作需父 agent 权限审批。',
+    description: '代码编写：在指定工作区执行文件读写与命令，完成具体的编码与调试任务。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'edit', 'write', 'bash', 'shell_session'],
     prompt: `你是一个受限编程助手。在指定工作区内读、写、执行命令完成任务。
@@ -35,7 +35,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.review,
     name: 'review',
-    description: '独立审查：只读检查改动的正确性、范围、架构边界与安全，产出 markdown 审查报告。',
+    description: '代码审查：独立检查代码改动的正确性、规范与安全性，产出审查报告。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是独立代码审查助手。你不修改任何文件。
@@ -45,7 +45,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.generalPurpose,
     name: 'general-purpose',
-    description: '通用混合执行：有界的读写、检索与命令验证，遵循父会话权限与 shared 隔离；不适合纯探索、主要编码或独立审查的场景。',
+    description: '通用执行：结合工作区读写、网络检索与命令验证，处理综合性混合任务。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context', 'edit', 'write', 'bash', 'shell_session', 'web_search', 'run_code'],
     prompt: `你是通用执行助手，处理不适合纯探索、主要编码或独立审查的有界混合任务。
@@ -56,7 +56,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.critic,
     name: 'critic',
-    description: '只读挑刺：攻击一页纸并做消融，不修改任何文件。',
+    description: '方案挑刺：针对技术方案进行缺陷推演与冗余消融，输出改进建议。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
     prompt: `你是只读批评者。你收到一份「一页纸」（目标、做完能做什么、不做的、技术选择）和工作区。
@@ -66,7 +66,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
   {
     id: BUILTIN_SUBAGENT_IDS.inspector,
     name: 'inspector',
-    description: '独立核验：只读加 shell，按一页纸逐条真操作，不改源码或测试。',
+    description: '独立核验：执行真实测试与命令操作核查功能达成度，不改动源码。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'bash', 'shell_session'],
     prompt: `你是独立核验者。你只收到「一页纸」和工作区，不知道实施过程。

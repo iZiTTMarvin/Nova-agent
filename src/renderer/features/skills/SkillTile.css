@@ -66,3 +66,7 @@
   font-size: 1.1rem;
   line-height: 1;
 }
+
+.skill-tile:active {
+  transform: translateY(0) scale(0.985);
+}
