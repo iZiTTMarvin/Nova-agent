@@ -142,14 +142,17 @@ test.describe('学习表面主路径', () => {
     test.setTimeout(150_000)
     const sessionId = await createLearnSession(nova)
 
-    nova.provider.enqueue(checkpointToolTurn('call_ckpt_e2e', 'CKPT_ANCHOR_TEXT'))
+    nova.provider.enqueue(
+      checkpointToolTurn('call_ckpt_e2e', 'CKPT_ANCHOR_TEXT\n\n```suggestions\n- 出题时不该出现的建议\n```')
+    )
     await sendLearningPrompt(nova, '数据保存后刷新为什么还在？')
     await waitLearnTurnSettled(nova, sessionId)
 
-    // 停靠面板替换输入区：同屏只有一个可编辑输入框
+    // 停靠面板替换输入区：同屏只有一个可编辑输入框；待答期间不出追问建议
     const dock = learningDock(nova)
     await expect(dock).toBeVisible()
-    await expect(nova.page.getByRole('button', { name: '考考我', exact: true })).toHaveCount(0)
+    await expect(learningFlow(nova).getByRole('group', { name: '接下来可以问' })).toHaveCount(0)
+    await expect(nova.page.getByText('出题时不该出现的建议', { exact: false })).toHaveCount(0)
     await expect(dock).toContainText(CHECKPOINT_QUESTION)
     for (const label of ['提示', '直接讲', '跳过']) {
       await expect(dock.getByRole('button', { name: label, exact: true })).toBeEnabled()
@@ -196,18 +199,39 @@ test.describe('学习表面主路径', () => {
     expect(rowBox!.y).toBeGreaterThan(anchorBox!.y)
     expect(rowBox!.y).toBeLessThan(hintBox!.y)
 
-    await expect(nova.page.getByRole('button', { name: '画图演示', exact: true })).toHaveCount(1)
-    await expect(nova.page.getByRole('button', { name: '考考我', exact: true })).toHaveCount(1)
-    nova.provider.enqueue({ kind: 'text', text: 'QUIZ_QUICK_ACTION_ACK' })
-    await nova.page.getByRole('button', { name: '考考我', exact: true }).click()
-    await expect(learningMain(nova).getByRole('article', { name: 'Message from user' }).last()).toHaveText(
-      '按答辩老师的视角，针对刚才讲的内容考我一道题'
-    )
-    await expect(nova.page.getByText('QUIZ_QUICK_ACTION_ACK', { exact: false })).toBeVisible()
-    await waitLearnTurnSettled(nova, sessionId)
-
     // 所有用户气泡与侧栏标题都不含内部指令、内部概念或 id
     await expectNoInstructionLeak(nova)
+    expect(nova.pageErrors).toEqual([])
+  })
+
+  test('回复末尾的推荐另起一行显示为建议，点击原样发送', async ({ nova }) => {
+    test.setTimeout(120_000)
+    const sessionId = await createLearnSession(nova)
+
+    nova.provider.enqueue({
+      kind: 'text',
+      text: ['IPC 把请求从界面交给主进程。', '', '```suggestions', '- 主进程收到后怎么分发？', '- 画一下这条请求链路', '```'].join('\n')
+    })
+    await sendLearningPrompt(nova, '界面怎么调用主进程？')
+    await waitLearnTurnSettled(nova, sessionId)
+
+    const flow = learningFlow(nova)
+    const suggestions = flow.getByRole('group', { name: '接下来可以问' })
+    await expect(suggestions.getByRole('button')).toHaveText(['主进程收到后怎么分发？', '画一下这条请求链路'])
+    // 推荐块不在正文里显示
+    await expect(flow.getByText('- 主进程收到后怎么分发？', { exact: false })).toHaveCount(0)
+
+    nova.provider.enqueue({ kind: 'text', text: 'SUGGESTION_FOLLOWUP' })
+    await suggestions.getByRole('button', { name: '主进程收到后怎么分发？' }).click()
+    await expect(learningMain(nova).getByRole('article', { name: 'Message from user' }).last()).toHaveText(
+      '主进程收到后怎么分发？'
+    )
+    await expect(nova.page.getByText('SUGGESTION_FOLLOWUP', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+
+    // 建议只跟着最后一条回复；新回复没写推荐就不显示，不用固定文案顶替
+    await expect(flow.getByRole('group', { name: '接下来可以问' })).toHaveCount(0)
+    await expect(flow.getByRole('button', { name: '主进程收到后怎么分发？' })).toHaveCount(0)
     expect(nova.pageErrors).toEqual([])
   })
 

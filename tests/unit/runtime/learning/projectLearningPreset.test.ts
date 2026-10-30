@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { projectLearningPreset } from '../../../../src/runtime/learning/preset/projectLearningPreset'
+import { LEARNING_SUGGESTIONS_FENCE } from '../../../../src/shared/learning/suggestions'
 
 describe('projectLearningPreset', () => {
   it('角色材料保留讲解口吻与学习工具约束，不引入 Skill 依赖', () => {
@@ -12,6 +13,10 @@ describe('projectLearningPreset', () => {
     expect(material).toContain('present_visualization')
     expect(material).toContain('默认只讲不考')
     expect(material.toLowerCase()).not.toContain('skill')
+  })
+
+  it('要求回复末尾写的推荐块与 Renderer 解析的围栏同名', () => {
+    expect(projectLearningPreset.roleMaterial).toContain('```' + LEARNING_SUGGESTIONS_FENCE)
   })
 
   it('讲解先说用途再讲运行顺序，例子不出知识点的场景', () => {
@@ -29,13 +34,14 @@ describe('projectLearningPreset', () => {
     expect(material).toContain('不写总结式结尾')
   })
 
-  it('每轮指令等于四行固定文本', () => {
+  it('每轮指令是固定文本，并在离生成最近的位置重申推荐块', () => {
     expect(projectLearningPreset.renderTurnInstruction()).toBe(
       [
         '[当前模式: learn — 项目讲解]',
         '只读源码与大纲；应用内学习状态仅通过 learning_checkpoint / learning_assess 写入。',
         '禁止修改仓库、执行 shell、编排子代理或切换模式；需要改代码请返回开发会话。',
-        '用户选主题、答题与跳过由产品命令处理，不要替用户执行这些动作。'
+        '用户选主题、答题与跳过由产品命令处理，不要替用户执行这些动作。',
+        `本轮回答末尾按【下一步推荐】附 \`\`\`${LEARNING_SUGGESTIONS_FENCE} 代码块，2–3 条贴着本轮内容和用户刚才的话；本轮出了题就不写。`
       ].join('\n')
     )
   })

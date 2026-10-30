@@ -3,6 +3,7 @@
  * 只引用字符串和纯函数，不依赖运行时执行层。
  */
 import type { ToolAuthorizationPolicy } from '../../permissions/PermissionCoordinator'
+import { LEARNING_SUGGESTIONS_FENCE } from '../../../shared/learning/suggestions'
 import { createLearnToolAuthorizationPolicy } from '../policy/createLearnToolAuthorizationPolicy'
 import { getLearnCoachRoleMaterial } from '../teaching/coachRoleMaterial'
 
@@ -17,7 +18,8 @@ const LEARN_TURN_INSTRUCTION = [
   '[当前模式: learn — 项目讲解]',
   '只读源码与大纲；应用内学习状态仅通过 learning_checkpoint / learning_assess 写入。',
   '禁止修改仓库、执行 shell、编排子代理或切换模式；需要改代码请返回开发会话。',
-  '用户选主题、答题与跳过由产品命令处理，不要替用户执行这些动作。'
+  '用户选主题、答题与跳过由产品命令处理，不要替用户执行这些动作。',
+  `本轮回答末尾按【下一步推荐】附 \`\`\`${LEARNING_SUGGESTIONS_FENCE} 代码块，2–3 条贴着本轮内容和用户刚才的话；本轮出了题就不写。`
 ].join('\n')
 
 const LEARN_BASE_RULES = [

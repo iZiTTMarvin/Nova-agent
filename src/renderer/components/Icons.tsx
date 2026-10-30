@@ -446,6 +446,14 @@ export const ArrowLeftIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   </svg>
 )
 
+/** 转折箭头图标 - 学习回复下方的追问建议 */
+export const CornerDownRightIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <polyline points="15 10 20 15 15 20" />
+    <path d="M4 4v7a4 4 0 0 0 4 4h12" />
+  </svg>
+)
+
 /** 芯片/模型图标 - 模型配置设置 */
 export const CpuIcon: React.FC<IconProps> = ({ size = 16, ...props }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>

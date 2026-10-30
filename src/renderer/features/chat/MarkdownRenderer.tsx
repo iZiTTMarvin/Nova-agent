@@ -29,6 +29,7 @@ import { findOpenDisplayMathStart, transformMathSyntax } from './mathSyntax'
 import { MathFence, MathInlineCode, MATH_FENCE_LANGUAGES } from './MathBlock'
 import { MermaidDiagram } from './MermaidDiagram'
 import { useInlineUiScope } from '../inline-ui/InlineUiScope'
+import { LEARNING_SUGGESTIONS_FENCE } from '../../../shared/learning/suggestions'
 import './MarkdownRenderer.css'
 
 const LANG_EXT_MAP: Record<string, string> = {
@@ -143,6 +144,21 @@ const OpenUiFence: React.FC<{ code: string; interactive: boolean }> = ({ code, i
   )
 }
 
+/**
+ * 学习回复的「下一步推荐」围栏：有学习作用域时由回复下方的建议条渲染，正文不显示；
+ * 流式中语言名还没写完（如 ```sugg）也先隐藏，避免闪出空代码块。
+ */
+const SuggestionsFence: React.FC<{ code: string; language: string; isStreaming: boolean }> = ({ code, language, isStreaming }) => {
+  const scope = useInlineUiScope()
+  if (scope) return null
+  return <CodeBlock language={language} code={code} isStreaming={isStreaming} />
+}
+
+function isSuggestionsFence(lang: string, isStreaming: boolean): boolean {
+  if (lang === LEARNING_SUGGESTIONS_FENCE) return true
+  return isStreaming && lang.length >= 2 && LEARNING_SUGGESTIONS_FENCE.startsWith(lang)
+}
+
 /** 单块 Markdown 渲染单元；content 不变时 React.memo 短路，不重建 AST */
 const MarkdownChunk = React.memo<{
   content: string
@@ -172,6 +188,9 @@ const COMPLETED_COMPONENTS: MarkdownComponents = {
     if (lang === 'openui') {
       return <OpenUiFence code={code} interactive={true} />
     }
+    if (isSuggestionsFence(lang, false)) {
+      return <SuggestionsFence code={code} language={lang} isStreaming={false} />
+    }
     return <CodeBlock language={lang} code={code} isStreaming={false} />
   },
   inlineCode({ children }) {
@@ -198,6 +217,9 @@ const STREAMING_COMPONENTS: MarkdownComponents = {
     }
     if (lang === 'openui') {
       return <OpenUiFence code={code} interactive={false} />
+    }
+    if (isSuggestionsFence(lang, true)) {
+      return <SuggestionsFence code={code} language={lang} isStreaming={true} />
     }
     return <CodeBlock language={lang} code={code} isStreaming={true} />
   }

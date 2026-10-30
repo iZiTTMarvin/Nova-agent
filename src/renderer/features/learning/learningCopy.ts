@@ -48,11 +48,7 @@ export const LEARNING_START_SUGGESTIONS = [
   '模拟答辩老师考考我'
 ] as const
 
-/** 最后一条回复下的快捷动作：文本会原样成为用户气泡，只能用自然口吻。 */
-export const LEARNING_ACTION_VISUALIZE_LABEL = '画图演示'
-export const LEARNING_ACTION_VISUALIZE_PROMPT = '把刚才讲的内容画成一张可交互的图，标出关键模块和数据流向'
-export const LEARNING_ACTION_QUIZ_LABEL = '考考我'
-export const LEARNING_ACTION_QUIZ_PROMPT = '按答辩老师的视角，针对刚才讲的内容考我一道题'
+export const LEARNING_SUGGESTIONS_LABEL = '接下来可以问'
 
 /** 学习会话里可视化卡片点击未发送时的提示。 */
 export const LEARNING_VIZ_AWAITING_NOTICE = '先回答当前问题，或选「直接讲」「跳过」'

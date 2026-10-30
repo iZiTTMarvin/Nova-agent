@@ -55,10 +55,51 @@
   color: var(--color-warning);
 }
 
-.learning-msg__quick-actions {
+/*
+ * 最后一条回复下方的追问建议：左对齐、竖排、无边框，像正文的延续而不是一排按钮。
+ * 负外边距让图标与正文左缘光学对齐；悬停只提亮文字和一层很淡的底色。
+ */
+.learning-suggestions {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin: 2px 0 16px -8px;
+}
+
+.learning-suggestions__item.astryx-button {
+  height: auto;
+  min-height: 32px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 6px 8px;
+  justify-content: flex-start;
+  color: var(--text-secondary);
+  font-size: var(--font-size-base);
+  font-weight: 400;
+}
+
+.learning-suggestions__item.astryx-button:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.learning-suggestions__content {
+  display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 10px;
+  min-width: 0;
+  text-align: left;
+}
+
+.learning-suggestions__icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.learning-suggestions__text {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ── 题目行 ────────────────────────────────────────────── */

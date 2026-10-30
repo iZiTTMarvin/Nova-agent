@@ -1,5 +1,4 @@
 import { Fragment, useCallback, useMemo, useRef } from 'react'
-import { Button } from '@astryxdesign/core/Button'
 import { ChatMessage, ChatMessageBubble } from '@astryxdesign/core/Chat'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { CheckIcon, CopyIcon } from '../../components/Icons'
@@ -10,17 +9,15 @@ import {
   LEARNING_CHECKPOINT_TOOL_NAME,
   parseCheckpointToolResult
 } from '../../../shared/learning/checkpointToolResult'
+import { parseLearningSuggestions, stripLearningSuggestions } from '../../../shared/learning/suggestions'
 import { formatFullTimestamp } from '../../lib/time'
 import { TurnProcessTree } from '../chat/TurnProcessTree'
 import { buildTurnRenderModel, resolveTurnPhase, type TurnBuildCache } from '../chat/turnProcessModel'
 import { AssistantPendingIndicator } from '../chat/AssistantPendingIndicator'
 import { useEffectiveMessage } from '../chat/useEffectiveMessage'
 import { LearningQuestionRow } from './LearningQuestionRow'
+import { LearningSuggestions } from './LearningSuggestions'
 import {
-  LEARNING_ACTION_QUIZ_LABEL,
-  LEARNING_ACTION_QUIZ_PROMPT,
-  LEARNING_ACTION_VISUALIZE_LABEL,
-  LEARNING_ACTION_VISUALIZE_PROMPT,
   LEARNING_COPY_MESSAGE,
   LEARNING_MESSAGE_COPIED,
   LEARNING_TURN_ERROR,
@@ -32,6 +29,7 @@ import {
  * 学习会话复用开发侧同一套回合渲染管线（TurnProcessTree → ProcessTraceList →
  * ToolCallGroup / ToolTraceRow / ThinkingBlock），不另建工具轨迹渲染器。
  * 题目行锚定在产生它的回复之后；找不到锚点的题渲染在对话末尾。
+ * 最后一条回复下方另起一行放「下一步」建议，不与复制、时间挤在同一行。
  */
 const LEARN_MODE = 'learn' as const
 
@@ -67,7 +65,7 @@ function topicDividerLabel(text: string, projection: LearningSurfaceProjection |
 function CopyMessageButton({ message }: { message: ExtendedMessage }): React.ReactElement {
   const { copied, isDecaying, copy } = useCopyFeedback()
   const handleCopy = useCallback(() => {
-    const text = message.content || messageText(message)
+    const text = stripLearningSuggestions(message.content || messageText(message))
     copy(text)
   }, [message, copy])
   return (
@@ -242,25 +240,6 @@ export function LearningConversation({
                 !isGenerating ? (
                   <div className="chat-msg__footer chat-msg__footer--assistant">
                     <CopyMessageButton message={message} />
-                    {message.id === lastAssistantId && !hasAwaitingQuestion && !message.isError && !message.interrupted
-                      && messageText(message).trim() && (
-                      <div className="learning-msg__quick-actions">
-                        <Button
-                          label={LEARNING_ACTION_VISUALIZE_LABEL}
-                          variant="ghost"
-                          size="sm"
-                          isDisabled={actionsDisabled}
-                          onClick={() => onSendMessage(LEARNING_ACTION_VISUALIZE_PROMPT)}
-                        />
-                        <Button
-                          label={LEARNING_ACTION_QUIZ_LABEL}
-                          variant="ghost"
-                          size="sm"
-                          isDisabled={actionsDisabled}
-                          onClick={() => onSendMessage(LEARNING_ACTION_QUIZ_PROMPT)}
-                        />
-                      </div>
-                    )}
                     <span className="chat-msg__timestamp">
                       {formatFullTimestamp(message.timestamp)}
                     </span>
@@ -284,6 +263,14 @@ export function LearningConversation({
             {rows.map(question => (
               <LearningQuestionRow key={question.checkpointId} sessionId={sessionId} question={question} />
             ))}
+            {message.id === lastAssistantId && !isGenerating && !hasAwaitingQuestion && !message.isError
+              && !message.interrupted && messageText(message).trim() && (
+              <LearningSuggestions
+                suggestions={parseLearningSuggestions(messageText(message))}
+                disabled={actionsDisabled}
+                onSend={onSendMessage}
+              />
+            )}
           </Fragment>
         )
       })}
