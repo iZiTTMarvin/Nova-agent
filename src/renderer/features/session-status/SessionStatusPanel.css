@@ -138,6 +138,24 @@ html[data-pane-dragging='true'] .chat-workspace {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  animation: session-status-topbar-label-in 200ms var(--ease-out-expo) both;
+}
+
+.session-status__topbar-capsule > .session-status__count {
+  overflow: hidden;
+  white-space: nowrap;
+  animation: session-status-topbar-label-in 200ms var(--ease-out-expo) both;
+}
+
+@keyframes session-status-topbar-label-in {
+  from {
+    max-width: 0;
+    opacity: 0;
+  }
+  to {
+    max-width: 110px;
+    opacity: 1;
+  }
 }
 
 .session-status {
@@ -627,7 +645,10 @@ html[data-pane-dragging='true'] .chat-workspace {
   color: var(--text-secondary);
 }
 
-.status-sprite[data-running="true"],
+.status-sprite[data-running="true"] {
+  color: var(--color-brand);
+}
+
 .status-sprite[data-complete="true"] {
   color: var(--color-success);
 }
@@ -657,10 +678,6 @@ html[data-pane-dragging='true'] .chat-workspace {
   stroke-linecap: round;
   stroke-linejoin: round;
   transform-origin: 8px 8px;
-}
-
-.status-sprite__dot {
-  display: none;
 }
 
 .status-sprite[data-running="true"] .status-sprite__face {
@@ -714,7 +731,8 @@ html[data-pane-dragging='true'] .chat-workspace {
   .session-status-rail,
   .session-status,
   .session-status *,
-  .session-status__topbar-capsule {
+  .session-status__topbar-capsule,
+  .session-status__topbar-capsule * {
     transition-duration: 1ms !important;
     transition-delay: 0ms !important;
     animation: none !important;

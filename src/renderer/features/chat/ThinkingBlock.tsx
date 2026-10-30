@@ -145,7 +145,9 @@ export const ThinkingBlock: React.FC<ThinkingBlockProps> = React.memo(function T
         aria-expanded={isOpen}
         onClick={() => setIsOpen(v => !v)}
       >
-        <ThinkIcon size={14} className="thinking-block__icon" />
+        <span className="thinking-block__icon-slot" aria-hidden="true">
+          <ThinkIcon size={12} className="thinking-block__icon" />
+        </span>
         <span className="thinking-block__title">
           {title}
         </span>

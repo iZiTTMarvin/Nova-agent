@@ -18,6 +18,7 @@ import { useSettingsStore } from './useSettingsStore'
 import { useAgentStore } from './useAgentStore'
 import { useSubagentProjectionStore } from '../features/subagents/projection'
 import { useCodeIndexStore } from './useCodeIndexStore'
+import { useFileTreeStore } from '../features/inspector/useFileTreeStore'
 
 /** 上一次处理的 currentSessionId，用于判断是否需要 resetAgentRuntime */
 let lastDispatchedSessionId: string | null | undefined = undefined
@@ -30,6 +31,7 @@ let unsubscribe: (() => void) | null = null
  * - chat: 同步 sessions 列表 + currentSessionId，按需重载消息
  * - settings: 同步 currentProject/currentMode 镜像
  * - code index: 切换当前工作区桶并补拉权威快照
+ * - file tree: 工作区变化时清空旧目录与预览选择
  * - agent: 会话切换时清空挂起的权限弹窗
  */
 export function dispatchWorkspaceChange(state: WorkspaceState): void {
@@ -41,6 +43,7 @@ export function dispatchWorkspaceChange(state: WorkspaceState): void {
   // 0. workspace store：更新事实源（幂等）
   useWorkspaceStore.setState({ ...state, initialized: true })
   useSubagentProjectionStore.getState().syncSessionList(state.availableSessions)
+  if (workspaceChanged) useFileTreeStore.getState().reset()
 
   // 1. chat store：同步 sessions + currentSessionId（内部按需重载消息）
   useChatStore.getState().syncFromWorkspace({

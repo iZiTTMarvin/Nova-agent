@@ -19,6 +19,7 @@ import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useFileTreeStore } from '../inspector/useFileTreeStore'
 import {
   compactPathForTrace,
+  getReadPreviewLocation,
   getToolTraceActionChinese,
   getToolTraceTarget,
   getFileToolPreviewText,
@@ -222,6 +223,9 @@ function NestedActivityList({
     <div className="tool-trace-row__nested">
       {activities.map(activity => (
         <div key={activity.toolCallId} className="tool-trace-row__nested-row">
+          <span className="tool-trace-row__icon-slot" aria-hidden="true">
+            <TraceFileBadgeOrIcon toolName={activity.toolName} ext="" />
+          </span>
           <span className="tool-trace-row__action">{getToolTraceActionChinese(activity.toolName)}</span>
           <span className="tool-trace-row__target">
             {getToolTraceTarget(activity.toolName, activity.args, workspaceRoot)}
@@ -310,7 +314,7 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
     const relPath = rawPath ? compactPathForTrace(rawPath, workspaceRoot) : ''
     if (!relPath) return
     useLayoutStore.getState().openFiles()
-    useFileTreeStore.getState().selectFile(relPath)
+    useFileTreeStore.getState().selectFile(relPath, getReadPreviewLocation(name, args))
   }
 
   const handleOpenDir = () => {
@@ -342,10 +346,10 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
           aria-label={statusLabel ? `${fullTitle}，${statusLabel}` : fullTitle}
           title={fullTitle}
         />
-        <span className="tool-trace-row__action" aria-hidden="true">{actionText}</span>
         <span className="tool-trace-row__icon-slot" aria-hidden="true">
           <TraceFileBadgeOrIcon toolName={name} ext={fileParts?.ext || ''} />
         </span>
+        <span className="tool-trace-row__action" aria-hidden="true">{actionText}</span>
 
         {(isFileTool || isLs) && (
           <button

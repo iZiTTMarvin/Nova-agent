@@ -80,6 +80,9 @@
 .tool-trace-row__icon-slot {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
@@ -292,7 +295,7 @@
 .tool-trace-row__nested-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;

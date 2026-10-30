@@ -16,6 +16,10 @@ test('新会话按钮和快捷键复用草稿，首发后才出现历史，reloa
   expect((await nova.getWorkspace()).currentSessionId).toBe(first)
   await expect(nova.page.locator('.sidebar-session-row')).toHaveCount(0)
   await expect(access(metadata)).rejects.toThrow()
+  await nova.page.getByRole('button', { name: '当前会话操作', exact: true }).click()
+  await expect(nova.page.getByRole('menuitem')).toHaveCount(1)
+  await expect(nova.page.getByRole('menuitem', { name: '本会话不记忆', exact: true })).toBeVisible()
+  await nova.page.keyboard.press('Escape')
   await nova.page.reload()
   await expect(input).toBeEditable()
   expect((await nova.getWorkspace()).currentSessionId).toBe(first)
@@ -97,5 +101,60 @@ test('草稿图片在重复点击和切面后保留，拒发可恢复，纯图�
   const disk = await readFile(path.join(nova.profileRoot, 'userData', 'sessions', first, 'messages.jsonl'), 'utf8')
   expect(disk).toContain(`nova-image://${first}/`)
   expect(nova.provider.requests).toHaveLength(1)
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('首条消息发送时输入区连续落到底部且焦点留在输入框', async ({ nova }) => {
+  nova.provider.enqueue({ kind: 'hold', id: 'first-composer-motion', text: 'FIRST_COMPOSER_MOTION_DONE' })
+  const input = nova.page.getByLabel('消息输入')
+  await input.fill('检查首次发送的输入区过渡')
+
+  const sampleMotion = () => nova.page.evaluate(() => {
+    const stack = document.querySelector<HTMLElement>('.chat-composer-stack')!
+    const editor = document.querySelector<HTMLElement>('[aria-label="消息输入"]')!
+    const initialTop = stack.getBoundingClientRect().top
+    const samples: Array<{ top: number; sameNode: boolean }> = []
+    const started = performance.now()
+    return new Promise<{ initialTop: number; finalTop: number; samples: typeof samples; focused: boolean }>(resolve => {
+      const sample = () => {
+        const current = document.querySelector<HTMLElement>('.chat-composer-stack')!
+        samples.push({ top: current.getBoundingClientRect().top, sameNode: current === stack })
+        if (performance.now() - started < 450) {
+          requestAnimationFrame(sample)
+          return
+        }
+        const active = document.activeElement
+        resolve({
+          initialTop,
+          finalTop: current.getBoundingClientRect().top,
+          samples,
+          focused: active === editor || editor.contains(active)
+        })
+      }
+      requestAnimationFrame(sample)
+    })
+  })
+  const sampling = sampleMotion()
+  await nova.page.getByRole('button', { name: '发送', exact: true }).click()
+  const motion = await sampling
+
+  expect(motion.finalTop).toBeGreaterThan(motion.initialTop + 100)
+  expect(motion.samples.every(sample => sample.sameNode)).toBe(true)
+  expect(motion.samples.some(sample =>
+    sample.top > motion.initialTop + 24 && sample.top < motion.finalTop - 24
+  )).toBe(true)
+  expect(motion.focused).toBe(true)
+
+  await nova.provider.waitForRequestCount(1)
+  nova.provider.release('first-composer-motion')
+  await nova.waitUntilIdle()
+  const reverseSampling = sampleMotion()
+  await nova.page.getByRole('button', { name: /^新会话/ }).first().click()
+  const reverse = await reverseSampling
+  expect(reverse.finalTop).toBeLessThan(reverse.initialTop - 100)
+  expect(reverse.samples.some(sample =>
+    sample.top < reverse.initialTop - 24 && sample.top > reverse.finalTop + 24
+  )).toBe(true)
+  await expect(nova.page.locator('.welcome-wordmark')).toBeVisible()
   expect(nova.pageErrors).toEqual([])
 })

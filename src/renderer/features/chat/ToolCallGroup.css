@@ -149,6 +149,15 @@
   white-space: nowrap;
 }
 
+.tool-call-group__item-icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
 .tool-call-group__item-icon {
   flex-shrink: 0;
   color: var(--text-secondary);

@@ -123,9 +123,10 @@ describe('ThinkingBlock.css 视觉契约', () => {
     expect(css).toMatch(/height:\s*28px/)
     expect(css).toMatch(/white-space:\s*nowrap/)
   })
-  it('左侧竖线 + 透明底，展开后有细滚动条', () => {
-    expect(css).toMatch(/\.thinking-block__content[\s\S]*border-left:\s*2px/)
-    expect(css).toMatch(/\.thinking-block__content[\s\S]*background:\s*transparent/)
+  it('轻边框内容块与稳定滚动槽位区分嵌套层级', () => {
+    expect(css).toMatch(/\.thinking-block__content[\s\S]*border:\s*0\.5px/)
+    expect(css).toMatch(/\.thinking-block__content[\s\S]*border-radius:/)
     expect(css).toMatch(/scrollbar-width:\s*thin/)
+    expect(css).toMatch(/scrollbar-gutter:\s*stable/)
   })
 })

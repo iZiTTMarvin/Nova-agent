@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   getActivityHeadline,
+  getReadPreviewLocation,
   getToolTraceAction,
   getToolTraceActionChinese,
   getToolTraceTarget,
@@ -161,5 +162,17 @@ describe('getToolGroupTraceParts', () => {
       target: '2 文件',
       suffix: ''
     })
+  })
+})
+
+describe('getReadPreviewLocation', () => {
+  it('把分页读取参数转换为一基行号，非分页读取和其他工具不带定位', () => {
+    expect(getReadPreviewLocation('read', { path: 'a.ts', offset: 79, limit: 5 })).toEqual({
+      startLine: 80,
+      endLine: 84
+    })
+    expect(getReadPreviewLocation('read', { path: 'a.ts', offset: 119 })).toEqual({ startLine: 120 })
+    expect(getReadPreviewLocation('read', { path: 'a.ts' })).toBeNull()
+    expect(getReadPreviewLocation('write', { path: 'a.ts', offset: 79, limit: 5 })).toBeNull()
   })
 })

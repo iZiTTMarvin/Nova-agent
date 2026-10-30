@@ -66,15 +66,15 @@ export const WindowControls: React.FC = () => {
   )
 }
 
-/** 当前会话 ⋯ 菜单：置顶/取消置顶、复制/导出、删除。仅普通会话可用（子会话由父会话管理）。 */
+/** 当前会话菜单：草稿仅提供首发前设置，正式会话提供导出与删除。 */
 const SessionMoreMenu: React.FC = () => {
   const sessions = useChatStore(state => state.sessions)
   const currentSessionId = useChatStore(state => state.currentSessionId)
   const deleteSession = useChatStore(state => state.deleteSession)
-  const setSessionPinned = useChatStore(state => state.setSessionPinned)
 
   const currentSession = sessions.find(s => s.id === currentSessionId)
   if (!currentSession || currentSession.kind !== 'primary') return null
+  if (currentSession.isDraft && currentSession.mode === 'learn') return null
 
   const handleDelete = async () => {
     const response = await confirmDialog({
@@ -122,23 +122,21 @@ const SessionMoreMenu: React.FC = () => {
           })
         }}
       />}
-      <DropdownMenuItem
-        label={currentSession.pinned ? '取消置顶' : '置顶'}
-        onClick={() => void setSessionPinned(currentSession.id, !currentSession.pinned)}
-      />
-      <DropdownMenuItem
-        label="复制全部对话"
-        onClick={() => void exportSession(currentSession.id, 'clipboard')}
-      />
-      <DropdownMenuItem
-        label="导出为 .md 文件"
-        onClick={() => void exportSession(currentSession.id, 'file')}
-      />
-      <DropdownMenuItem
-        label="删除"
-        style={{ color: 'var(--color-error)' }}
-        onClick={() => void handleDelete()}
-      />
+      {!currentSession.isDraft && <>
+        <DropdownMenuItem
+          label="复制全部对话"
+          onClick={() => void exportSession(currentSession.id, 'clipboard')}
+        />
+        <DropdownMenuItem
+          label="导出为 .md 文件"
+          onClick={() => void exportSession(currentSession.id, 'file')}
+        />
+        <DropdownMenuItem
+          label="删除"
+          style={{ color: 'var(--color-error)' }}
+          onClick={() => void handleDelete()}
+        />
+      </>}
     </DropdownMenu>
   )
 }

@@ -128,4 +128,26 @@ describe('useFileTreeStore', () => {
     })
     expect(useFileTreeStore.getState().filterLoading).toBe(false)
   })
+
+  it('文件选择与读取范围一起更新，普通选择和关闭时清除范围', () => {
+    const store = useFileTreeStore.getState()
+    store.selectFile('src/a.ts', { startLine: 80, endLine: 84 })
+    expect(useFileTreeStore.getState()).toMatchObject({
+      selectedFile: 'src/a.ts',
+      selectedFileLocation: { startLine: 80, endLine: 84 }
+    })
+
+    store.selectFile('src/b.ts')
+    expect(useFileTreeStore.getState()).toMatchObject({
+      selectedFile: 'src/b.ts',
+      selectedFileLocation: null
+    })
+
+    store.selectFile('src/a.ts', { startLine: 120 })
+    store.selectFile(null)
+    expect(useFileTreeStore.getState()).toMatchObject({
+      selectedFile: null,
+      selectedFileLocation: null
+    })
+  })
 })

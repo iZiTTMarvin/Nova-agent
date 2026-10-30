@@ -1,4 +1,5 @@
 import { expect, test } from '../fixtures/nova'
+import { SETTINGS_SET } from '../../../src/shared/ipc/channels'
 
 type Delta = Record<string, unknown>
 
@@ -21,6 +22,9 @@ function finishDelta(): Delta {
 }
 
 test('agile 及时展示已收到内容，并保持慢流、突发代码块和思考转正文的顺序', async ({ nova }, testInfo) => {
+  await nova.invoke(SETTINGS_SET, { streamSmoothness: 'instant' })
+  await nova.page.reload()
+  await expect(nova.page.getByLabel('消息输入')).toBeEditable()
   const firstChunk = `${'首包内容'.repeat(35)}AGILE_FIRST_CHUNK_TAIL`
   nova.provider.enqueue({
     kind: 'raw',
@@ -97,6 +101,7 @@ test('agile 及时展示已收到内容，并保持慢流、突发代码块和�
   await expect(nova.page.getByText('THINKING_TO_TEXT_OK', { exact: false })).toBeVisible()
   await nova.waitUntilIdle()
 
+  console.info(`[streaming-display] firstVisibleMs=${firstVisibleMs} p95FrameMs=${p95FrameMs} maxFrameMs=${maxFrameMs}`)
   await testInfo.attach('streaming-display-metrics.json', {
     body: Buffer.from(JSON.stringify({ firstVisibleMs, p95FrameMs, maxFrameMs }, null, 2)),
     contentType: 'application/json'

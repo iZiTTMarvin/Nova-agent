@@ -1,5 +1,5 @@
 /**
- * L3 原子行文案：等宽 [Action] [Target]
+ * L3 原子行文案：等宽 [Icon] [Action] [Target]
  *
  * Action 用短英文动词（对齐 Cursor / Codex 轨迹观感），Target 为路径/命令/关键词等核心参数。
  */
@@ -493,6 +493,20 @@ export function splitFilePath(path: string, workspaceRoot?: string | null): File
   const filename = norm.slice(lastSlash + 1)
   const ext = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() || '' : ''
   return { filename, dir, ext }
+}
+
+export function getReadPreviewLocation(
+  toolName: string,
+  args: Record<string, unknown>
+): { startLine: number; endLine?: number } | null {
+  if (toolName !== 'read') return null
+  const hasOffset = typeof args.offset === 'number' && Number.isFinite(args.offset)
+  const hasLimit = typeof args.limit === 'number' && Number.isFinite(args.limit)
+  if (!hasOffset && !hasLimit) return null
+  const startLine = Math.max(0, Math.floor(hasOffset ? args.offset as number : 0)) + 1
+  if (!hasLimit) return { startLine }
+  const lineCount = Math.max(1, Math.floor(args.limit as number))
+  return { startLine, endLine: startLine + lineCount - 1 }
 }
 
 export interface ToolGroupHeaderInfo {

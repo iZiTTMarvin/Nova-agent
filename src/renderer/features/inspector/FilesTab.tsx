@@ -99,6 +99,8 @@ const PREVIEW_RENDER_LINE_LIMIT = 2000
 
 const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
   const selectFile = useFileTreeStore(s => s.selectFile)
+  const location = useFileTreeStore(s => s.selectedFileLocation)
+  const codeRef = useRef<HTMLPreElement>(null)
   const [preview, setPreview] = useState<FsReadFilePreviewResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -129,12 +131,36 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
     }
   }, [relativePath])
 
-  const { lines, lineCapped } = useMemo(() => {
-    if (!preview || preview.binary) return { lines: [], lineCapped: false }
+  const { lines, lineCapped, firstLineNumber, totalLineCount } = useMemo(() => {
+    if (!preview || preview.binary) {
+      return { lines: [], lineCapped: false, firstLineNumber: 1, totalLineCount: 0 }
+    }
     const all = preview.content.split('\n')
-    if (all.length <= PREVIEW_RENDER_LINE_LIMIT) return { lines: all, lineCapped: false }
-    return { lines: all.slice(0, PREVIEW_RENDER_LINE_LIMIT), lineCapped: true }
-  }, [preview])
+    const maxStart = Math.max(0, all.length - PREVIEW_RENDER_LINE_LIMIT)
+    const start = location
+      ? Math.min(Math.max(0, location.startLine - 101), maxStart)
+      : 0
+    return {
+      lines: all.slice(start, start + PREVIEW_RENDER_LINE_LIMIT),
+      lineCapped: all.length > PREVIEW_RENDER_LINE_LIMIT,
+      firstLineNumber: start + 1,
+      totalLineCount: all.length
+    }
+  }, [preview, location])
+
+  useEffect(() => {
+    if (!location || !preview || preview.binary) return
+    const code = codeRef.current
+    const target = code?.querySelector<HTMLElement>(`[data-line-number="${location.startLine}"]`)
+    if (!code || !target) return
+    const codeRect = code.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const top = code.scrollTop + targetRect.top - codeRect.top - (code.clientHeight - targetRect.height) / 2
+    code.scrollTo({
+      top: Math.max(0, top),
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+    })
+  }, [location, preview, firstLineNumber])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -168,7 +194,9 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
         <div className="inspector-preview__banner">文件过大，仅显示前 512KB</div>
       )}
       {lineCapped && (
-        <div className="inspector-preview__banner">仅显示前 {PREVIEW_RENDER_LINE_LIMIT} 行</div>
+        <div className="inspector-preview__banner">
+          仅显示第 {firstLineNumber}–{firstLineNumber + lines.length - 1} 行，共 {totalLineCount} 行
+        </div>
       )}
       {loading && <div className="inspector-empty__hint">加载中…</div>}
       {error && <div className="inspector-tree__error">{error}</div>}
@@ -178,12 +206,19 @@ const FilePreview: React.FC<{ relativePath: string }> = ({ relativePath }) => {
         </div>
       )}
       {preview && !preview.binary && (
-        <pre className="inspector-preview__code">
+        <pre ref={codeRef} className="inspector-preview__code">
           {lines.map((line, idx) => {
+            const lineNumber = firstLineNumber + idx
             const tokens = highlightLineCached(line, relativePath, highlightLine)
+            const isTarget = location !== null && lineNumber >= location.startLine && lineNumber <= (location.endLine ?? location.startLine)
             return (
-              <div key={idx} className="inspector-preview__line">
-                <span className="inspector-preview__lineno">{idx + 1}</span>
+              <div
+                key={lineNumber}
+                className="inspector-preview__line"
+                data-line-number={lineNumber}
+                data-read-target={isTarget ? 'true' : undefined}
+              >
+                <span className="inspector-preview__lineno">{lineNumber}</span>
                 <span className="inspector-preview__text">
                   {tokens.map((token, tIdx) => (
                     <span key={tIdx} className={`diff-token diff-token--${token.type}`}>{token.text}</span>
@@ -353,11 +388,6 @@ const FileTreeView: React.FC = () => {
 export const FilesTab: React.FC = () => {
   const currentProjectPath = useWorkspaceStore(s => s.currentProjectPath)
   const selectedFile = useFileTreeStore(s => s.selectedFile)
-  const reset = useFileTreeStore(s => s.reset)
-
-  useEffect(() => {
-    reset()
-  }, [currentProjectPath, reset])
 
   if (!currentProjectPath) {
     return null

@@ -6,6 +6,11 @@ import { create } from 'zustand'
 import type { FsEntry, FsListDirectoryResult } from '../../../shared/fs/types'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 
+export interface FilePreviewLocation {
+  startLine: number
+  endLine?: number
+}
+
 export interface FileTreeState {
   nodes: Record<string, FsEntry[] | undefined>
   expanded: Record<string, boolean>
@@ -17,12 +22,13 @@ export interface FileTreeState {
   filterError: string | undefined
   filterGeneration: number
   selectedFile: string | null
+  selectedFileLocation: FilePreviewLocation | null
 
   loadDir: (relativeDir?: string) => Promise<void>
   toggleExpand: (relativePath: string) => void
   setExpanded: (relativePath: string, open: boolean) => void
   setFilter: (filter: string) => void
-  selectFile: (relativePath: string | null) => void
+  selectFile: (relativePath: string | null, location?: FilePreviewLocation | null) => void
   collapseAll: () => void
   refresh: () => Promise<void>
   reset: () => void
@@ -42,6 +48,7 @@ const INITIAL: Pick<
   | 'filterError'
   | 'filterGeneration'
   | 'selectedFile'
+  | 'selectedFileLocation'
 > = {
   nodes: {},
   expanded: { [ROOT_KEY]: true },
@@ -52,7 +59,8 @@ const INITIAL: Pick<
   filterLoading: false,
   filterError: undefined,
   filterGeneration: 0,
-  selectedFile: null
+  selectedFile: null,
+  selectedFileLocation: null
 }
 
 async function invokeListDirectory(relativeDir: string): Promise<FsEntry[]> {
@@ -174,7 +182,10 @@ export const useFileTreeStore = create<FileTreeState>((set, get) => {
       }
     },
 
-    selectFile: (relativePath) => set({ selectedFile: relativePath }),
+    selectFile: (relativePath, location = null) => set({
+      selectedFile: relativePath,
+      selectedFileLocation: relativePath ? location : null
+    }),
 
     collapseAll: () => {
       set({ expanded: { [ROOT_KEY]: true } })

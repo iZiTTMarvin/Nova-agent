@@ -17,6 +17,7 @@ import { useFileTreeStore } from '../inspector/useFileTreeStore'
 import {
   compactPathForTrace,
   getActivityHeadline,
+  getReadPreviewLocation,
   getToolTraceActionChinese,
   splitFilePath
 } from './toolTraceDisplay'
@@ -136,8 +137,10 @@ function FileOrDirItem({
         }}
         title={`在侧边栏查看目录 ${displayTarget}`}
       >
+        <span className="tool-call-group__item-icon-slot" aria-hidden="true">
+          <FileBadgeOrIcon toolName="ls" ext="" />
+        </span>
         <span className="tool-call-group__item-action">{actionText}</span>
-        <FileBadgeOrIcon toolName="ls" ext="" />
         <span className="tool-call-group__item-filename">{displayTarget}</span>
         {dir && filename ? <span className="tool-call-group__item-dirname">{dir}</span> : null}
         {status}
@@ -151,7 +154,7 @@ function FileOrDirItem({
   const openFile = (): void => {
     if (!relPath) return
     useLayoutStore.getState().openFiles()
-    useFileTreeStore.getState().selectFile(relPath)
+    useFileTreeStore.getState().selectFile(relPath, getReadPreviewLocation(block.toolName, args))
   }
   return (
     <div
@@ -167,8 +170,10 @@ function FileOrDirItem({
       }}
       title={`在侧边栏查看 ${filename || relPath}`}
     >
+      <span className="tool-call-group__item-icon-slot" aria-hidden="true">
+        <FileBadgeOrIcon toolName={block.toolName} ext={ext} />
+      </span>
       <span className="tool-call-group__item-action">{actionText}</span>
-      <FileBadgeOrIcon toolName={block.toolName} ext={ext} />
       <span className="tool-call-group__item-filename">{filename || 'file'}</span>
       {dir ? <span className="tool-call-group__item-dirname">{dir}</span> : null}
       {status}

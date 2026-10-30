@@ -248,6 +248,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     composerInputHandleRef.current?.focus()
   }, [])
   const composerBoxRef = useRef<HTMLDivElement>(null)
+  const composerStackRef = useRef<HTMLDivElement>(null)
+  const composerStackTopRef = useRef<number | null>(null)
+  const composerMotionRef = useRef<Animation | null>(null)
   const imeEnterGuard = useImeEnterGuard()
   const slashSkillsRef = useRef(slashSkills)
   slashSkillsRef.current = slashSkills
@@ -652,16 +655,23 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     const text = inputVal.trim()
     const images = imageAttachments
     const sendingSessionId = useChatStore.getState().currentSessionId
+    const shouldRestoreFocus = composerBoxRef.current?.contains(document.activeElement) ?? false
+    const restoreComposerFocus = () => {
+      if (!shouldRestoreFocus) return
+      requestAnimationFrame(() => composerInputHandleRef.current?.focus())
+    }
     const clearAcceptedDraft = () => {
       if (useChatStore.getState().currentSessionId !== sendingSessionId) return
       setInputVal(current => current === inputVal ? '' : current)
       setImageAttachments(current => current === images ? [] : current)
+      restoreComposerFocus()
     }
     // 本地拒绝恢复草稿：只在输入框仍空时回填，避免覆盖用户新输入
     const restoreRejectedDraft = (rejectedText: string) => {
       if (useChatStore.getState().currentSessionId !== sendingSessionId) return
       setInputVal(current => current === '' ? rejectedText : current)
       setImageAttachments(current => current.length === 0 ? images : current)
+      restoreComposerFocus()
     }
 
     // 用户主动发送：无论之前是否上滚离开底部，都恢复跟随，让用户看到自己刚发的消息。
@@ -884,6 +894,32 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   // ── 空状态引导界面 ─────────────────────────────────────────
   const isEmptyState = messages.length === 0 && !isSessionLoading
 
+  useLayoutEffect(() => {
+    const stack = composerStackRef.current
+    if (!stack) {
+      composerStackTopRef.current = null
+      return
+    }
+    const nextTop = stack.getBoundingClientRect().top
+    const previousTop = composerStackTopRef.current
+    composerStackTopRef.current = nextTop
+    composerMotionRef.current?.cancel()
+    composerMotionRef.current = null
+    if (previousTop === null || isSessionLoading || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const deltaY = previousTop - nextTop
+    if (Math.abs(deltaY) < 2) return
+    const animation = stack.animate(
+      [{ transform: `translateY(${deltaY}px)` }, { transform: 'translateY(0)' }],
+      { duration: 260, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' }
+    )
+    composerMotionRef.current = animation
+    animation.onfinish = () => {
+      if (composerMotionRef.current === animation) composerMotionRef.current = null
+    }
+  }, [isEmptyState, isSessionLoading])
+
+  useEffect(() => () => composerMotionRef.current?.cancel(), [])
+
   // ── 聊天消息渲染界面 ────────────────────────────────────────
   return (
     <div
@@ -1036,7 +1072,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
             getBoundingClientRect 强制同步 flush 布局。ChatPanel 在 bash/流式期间因 store
             更新频繁重渲染，每次都会触发对上方巨大消息 DOM 的强制 layout + 投影 spring，
             导致合成循环（Recalculate style / Pre-paint / Layerize / Commit）持续打满、界面卡死。
-            composer 不需要布局补间动画，改为普通 div。
+            composer 不使用随渲染运行的 layout 动画，改为普通 div。
           */}
           <div
             className="w-full flex flex-col items-center pointer-events-none"
@@ -1098,8 +1134,8 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 <PlanApprovalCard review={planReviewForCurrentSession} />
               </div>
             ) : (
-              /* 同上：去掉 layout 动画，避免每次渲染强制 flush 布局；上下文条垫在卡片正下方并与之连体 */
-              <div className="chat-composer-stack w-full">
+              /* 输入栈仅在空态切换时做一次位置补间；上下文条垫在卡片正下方并与之连体 */
+              <div ref={composerStackRef} className="chat-composer-stack w-full">
               <div
               ref={composerBoxRef}
               onCompositionEnd={imeEnterGuard.handleCompositionEnd}
