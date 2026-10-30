@@ -7,7 +7,6 @@
 import React, { useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { NumberInput } from '@astryxdesign/core/NumberInput'
-import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl'
 import { Switch } from '@astryxdesign/core/Switch'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import {
@@ -30,7 +29,7 @@ import {
   GET_APP_UPDATE_STATE,
   INSTALL_APP_UPDATE,
 } from '../../../shared/ipc/channels'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
+import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage, SettingsSegmented, SettingsSelect } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 import type { Mode } from '../../../shared/session/types'
 import type { AppUpdateSnapshot } from '../../../shared/update'
@@ -247,15 +246,14 @@ export const GeneralSettingsPanel: React.FC = () => {
   const updateAction = getUpdateAction(updateSnapshot)
 
   return (
-    <div className="settings-panel">
+    <SettingsGlassPanel className="general-settings-panel">
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsSection title="行为">
-            <SettingsRow
-              icon={<CompassIcon size={16} />}
+          <SettingsCard title="运行与权限" description="默认行为模式、权限等级与工作区目录。">
+            <SettingsCardRow
               label="默认运行模式"
               description="新建会话时使用的默认行为模式。"
-              end={
+              control={
                 <SettingsSelect
                   label="默认运行模式"
                   isLabelHidden
@@ -267,11 +265,10 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-            <SettingsRow
-              icon={<ShieldIcon size={16} />}
+            <SettingsCardRow
               label="默认权限模式"
-              description="新建会话使用；已有会话保留自己的权限模式。"
-              end={
+              description="新建会话的默认权限等级。"
+              control={
                 <SettingsSelect
                   label="默认权限模式"
                   isLabelHidden
@@ -283,14 +280,13 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-            <SettingsRow
-              icon={<FolderIcon size={16} />}
+            <SettingsCardRow
               label="默认工作区"
-              description="未选择项目时，新会话在这个目录下创建并使用；留空使用 ~/.nova/workspace。"
-              end={
-                <>
-                  <span className="settings-status settings-path" title={settings.defaultWorkspacePath ?? '~/.nova/workspace'}>
-                    {settings.defaultWorkspacePath ?? '默认（~/.nova/workspace）'}
+              description="未指定项目时的默认目录，留空使用系统默认路径。"
+              control={
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span className="glass-chip" title={settings.defaultWorkspacePath ?? '~/.nova/workspace'}>
+                    {settings.defaultWorkspacePath ?? '默认 (~/.nova/workspace)'}
                   </span>
                   <Button
                     label="选择文件夹"
@@ -312,14 +308,13 @@ export const GeneralSettingsPanel: React.FC = () => {
                       恢复默认
                     </Button>
                   ) : null}
-                </>
+                </div>
               }
             />
-            <SettingsRow
-              icon={<SlidersIcon size={16} />}
+            <SettingsCardRow
               label="单次任务工具轮数上限"
-              description="默认不限制：长任务不会因轮数被截断，死循环由自动检测处理并交给你裁决。想限制花销时填一个 1~1000 的上限，留空即恢复不限制。"
-              end={
+              description="单次对话中工具连续调用的轮数限制，留空表示不设限制。"
+              control={
                 <NumberInput
                   label="单次任务工具轮数上限"
                   isLabelHidden
@@ -334,50 +329,47 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-          </SettingsSection>
+          </SettingsCard>
 
-          <SettingsSection title="外观">
-            <SettingsRow
-              icon={<ContrastIcon size={16} />}
-              label="主题"
-              description="界面主题外观。"
-              end={
-                <SegmentedControl
-                  label="主题"
+          <SettingsCard title="界面与交互" description="个性化视觉主题与打字机输出动效。">
+            <SettingsCardRow
+              label="主题外观"
+              description="选择应用的明暗视觉主题。"
+              control={
+                <SettingsSegmented
+                  label="主题外观"
                   value={theme}
                   onChange={value => void updateTheme(value as NovaSettingsDto['theme'])}
-                  isDisabled={saving}
-                >
-                  <SegmentedControlItem value="system" label="跟随系统" />
-                  <SegmentedControlItem value="light" label="浅色" />
-                  <SegmentedControlItem value="dark" label="深色" />
-                </SegmentedControl>
+                  options={[
+                    { value: 'system', label: '跟随系统' },
+                    { value: 'light', label: '浅色' },
+                    { value: 'dark', label: '深色' }
+                  ]}
+                />
               }
             />
-            <SettingsRow
-              icon={<SlidersIcon size={16} />}
+            <SettingsCardRow
               label="流式输出节奏"
-              description="平滑：回复像打字机一样匀速放出，爆发输出时观感稳定；即时：模型吐出多少立刻显示多少。"
-              end={
-                <SegmentedControl
+              description="平滑模式按打字机节奏均匀吐字，即时模式随网络分块即时渲染。"
+              control={
+                <SettingsSegmented
                   label="流式输出节奏"
                   value={streamSmoothness}
                   onChange={value => void updateStreamSmoothness(value as NovaSettingsDto['streamSmoothness'])}
-                  isDisabled={saving}
-                >
-                  <SegmentedControlItem value="smooth" label="平滑" />
-                  <SegmentedControlItem value="instant" label="即时" />
-                </SegmentedControl>
+                  options={[
+                    { value: 'smooth', label: '平滑' },
+                    { value: 'instant', label: '即时' }
+                  ]}
+                />
               }
             />
-          </SettingsSection>
+          </SettingsCard>
 
-          <SettingsSection title="终端">
-            <SettingsRow
-              icon={<TerminalIcon size={16} />}
+          <SettingsCard title="终端环境" description="执行 Shell 命令与工具进程的底层配置。">
+            <SettingsCardRow
               label="默认 Shell"
-              description="bash 工具使用的 shell，留空时使用系统默认。修改后按回车或移开焦点保存。"
-              end={
+              description="执行命令所用的终端解释器，留空使用系统默认。"
+              control={
                 <TextInput
                   label="默认 Shell"
                   isLabelHidden
@@ -393,11 +385,10 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-            <SettingsRow
-              icon={<ClockIcon size={16} />}
+            <SettingsCardRow
               label="持久终端会话"
-              description="开启后，长时间运行的命令超时不再被强制终止，而是转为可继续交互的终端会话；关闭后退回超时即终止的行为。"
-              end={
+              description="长命令执行时保持会话存活，支持后续交互。"
+              control={
                 <Switch
                   label="持久终端会话"
                   isLabelHidden
@@ -407,14 +398,13 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-          </SettingsSection>
+          </SettingsCard>
 
-          <SettingsSection title="系统通知">
-            <SettingsRow
-              icon={<BellIcon size={16} />}
+          <SettingsCard title="桌面通知" description="任务完成与需要人工确认时的系统通知策略。">
+            <SettingsCardRow
               label="任务完成时通知我"
-              description="任务到达完成或失败、以及等待你批准（授权/提问/计划）时弹系统通知。"
-              end={
+              description="当任务执行完成或等待批准时推送系统通知。"
+              control={
                 <Switch
                   label="任务完成时通知我"
                   isLabelHidden
@@ -424,11 +414,10 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-            <SettingsRow
-              icon={<EyeOffIcon size={16} />}
+            <SettingsCardRow
               label="仅在窗口失焦时通知"
-              description="你正看着窗口时不打扰；切到别的应用后才弹通知。"
-              end={
+              description="当前处于应用窗口时不打扰，切至后台时才触发通知。"
+              control={
                 <Switch
                   label="仅在窗口失焦时通知"
                   isLabelHidden
@@ -438,45 +427,41 @@ export const GeneralSettingsPanel: React.FC = () => {
                 />
               }
             />
-          </SettingsSection>
+          </SettingsCard>
 
-          <SettingsSection title="应用更新">
-            <SettingsRow
-              icon={<DownloadIcon size={16} />}
-              label="应用版本"
-              description={describeUpdateState(updateSnapshot)}
-              end={
-                <>
-                  {updateAction && (
-                    <Button
-                      label={updateAction.label}
-                      size="sm"
-                      onClick={() => void runUpdateAction(updateAction.channel)}
-                    >
-                      {updateAction.label}
-                    </Button>
-                  )}
+          <SettingsCard
+            title="应用与更新"
+            description={describeUpdateState(updateSnapshot)}
+            aside={
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {updateAction && (
                   <Button
-                    label="检查更新"
-                    variant="secondary"
+                    label={updateAction.label}
                     size="sm"
-                    onClick={() => void runUpdateAction(CHECK_APP_UPDATE)}
-                    isDisabled={
-                      updateSnapshot?.status === 'checking' || updateSnapshot?.status === 'downloading'
-                    }
+                    variant="primary"
+                    onClick={() => void runUpdateAction(updateAction.channel)}
                   >
-                    {updateSnapshot?.status === 'checking' ? '正在检查…' : '检查更新'}
+                    {updateAction.label}
                   </Button>
-                </>
-              }
-            />
+                )}
+                <Button
+                  label="检查更新"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void runUpdateAction(CHECK_APP_UPDATE)}
+                  isDisabled={
+                    updateSnapshot?.status === 'checking' || updateSnapshot?.status === 'downloading'
+                  }
+                >
+                  {updateSnapshot?.status === 'checking' ? '正在检查…' : '检查更新'}
+                </Button>
+              </div>
+            }
+          >
             {updateActionError && (
-              <SettingsField>
-                <span className="settings-status settings-status--error">{updateActionError}</span>
-              </SettingsField>
+              <span className="settings-status settings-status--error">{updateActionError}</span>
             )}
-          </SettingsSection>
-
+          </SettingsCard>
         </SettingsPage>
       </div>
       {(error || saved) && (
@@ -496,6 +481,6 @@ export const GeneralSettingsPanel: React.FC = () => {
           void update('defaultPermissionMode', 'full_access')
         }}
       />
-    </div>
+    </SettingsGlassPanel>
   )
 }

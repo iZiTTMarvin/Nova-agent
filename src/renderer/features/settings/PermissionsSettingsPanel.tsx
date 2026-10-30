@@ -5,13 +5,17 @@
  * - 查看规则详情（工具名、行为、匹配条件、范围）
  * - 删除单条规则
  * - 新增规则（简易表单）
- *
- * 注意：权限规则 ≠ 规则文件（RuleFileEntry）。本面板只管工具调用授权规则。
  */
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { SettingsField, SettingsPage, SettingsRow, SettingsSection, SettingsSelect } from './settingsKit'
+import {
+  SettingsCard,
+  SettingsCardRow,
+  SettingsGlassPanel,
+  SettingsPage,
+  SettingsSelect
+} from './settingsKit'
 import type {
   PermissionBehavior,
   PermissionRuleDto,
@@ -23,19 +27,16 @@ const BEHAVIOR_LABEL: Record<PermissionBehavior, BehaviorLabel> = {
   allow: '允许',
   deny: '拒绝'
 }
-const BEHAVIOR_CLASS: Record<PermissionBehavior, string> = {
-  allow: 'perm-rule__behavior--allow',
-  deny: 'perm-rule__behavior--deny'
-}
 
 function ruleDescription(rule: PermissionRuleDto): string | undefined {
   const parts: string[] = []
-  if (rule.commandPrefix) parts.push(`前缀: ${rule.commandPrefix}`)
-  if (rule.commandRegex) parts.push(`正则: ${rule.commandRegex}`)
-  if (rule.filePath) parts.push(`文件: ${rule.filePath}`)
-  parts.push(rule.scope === 'project' ? '项目级' : '全局')
-  if (rule.description) parts.push(rule.description)
-  return parts.length > 0 ? parts.join('，') : undefined
+  if (rule.commandPrefix) parts.push(`前缀：${rule.commandPrefix}`)
+  if (rule.commandRegex) parts.push(`正则：${rule.commandRegex}`)
+  if (rule.filePath) parts.push(`路径：${rule.filePath}`)
+  if (rule.description && !rule.description.includes(rule.toolName)) {
+    parts.push(rule.description)
+  }
+  return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
 export const PermissionsSettingsPanel: React.FC = () => {
@@ -100,105 +101,115 @@ export const PermissionsSettingsPanel: React.FC = () => {
   }
 
   return (
-    <div className="settings-panel">
+    <SettingsGlassPanel className="permissions-settings-panel">
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsSection
+          <SettingsCard
             title="新增规则"
-            description="匹配优先级：项目级 > 全局；显式工具 > 通配；同级 deny 优先于 allow。"
+            description="为工具执行配置默认规则。项目级规则优先于全局设定。"
           >
-            <SettingsField>
-              <div className="perm-rule-form">
-                <SettingsSelect
-                  label="工具"
-                  isLabelHidden
-                  options={[
-                    { value: 'bash', label: 'bash' },
-                    { value: 'write', label: 'write' },
-                    { value: 'edit', label: 'edit' },
-                    { value: '*', label: '所有工具 (*)' }
-                  ]}
-                  value={toolName}
-                  onChange={value => setToolName(value)}
-                  width={120}
-                  isDisabled={adding}
-                />
-                <SettingsSelect
-                  label="行为"
-                  isLabelHidden
-                  options={[
-                    { value: 'allow', label: '允许' },
-                    { value: 'deny', label: '拒绝' }
-                  ]}
-                  value={behavior}
-                  onChange={value => setBehavior(value as PermissionBehavior)}
-                  width={100}
-                  isDisabled={adding}
-                />
-                <SettingsSelect
-                  label="范围"
-                  isLabelHidden
-                  options={[
-                    { value: 'project', label: '本项目' },
-                    { value: 'global', label: '全局' }
-                  ]}
-                  value={scope}
-                  onChange={value => setScope(value as 'global' | 'project')}
-                  width={120}
-                  isDisabled={adding}
-                />
-                <TextInput
-                  label="命令前缀"
-                  isLabelHidden
-                  value={commandPrefix}
-                  onChange={value => setCommandPrefix(value)}
-                  placeholder="命令前缀（可选，如 npm install）"
-                  width="100%"
-                  isDisabled={adding}
-                />
-                <Button
-                  label={adding ? '添加中…' : '添加'}
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void handleAdd()}
-                  isDisabled={adding}
-                >
-                  {adding ? '添加中…' : '添加'}
-                </Button>
-              </div>
-            </SettingsField>
-          </SettingsSection>
+            <div className="perm-rule-form">
+              <SettingsSelect
+                label="工具"
+                isLabelHidden
+                options={[
+                  { value: 'bash', label: 'bash' },
+                  { value: 'write', label: 'write' },
+                  { value: 'edit', label: 'edit' },
+                  { value: '*', label: '所有工具 (*)' }
+                ]}
+                value={toolName}
+                onChange={value => setToolName(value)}
+                width={120}
+                isDisabled={adding}
+              />
+              <SettingsSelect
+                label="行为"
+                isLabelHidden
+                options={[
+                  { value: 'allow', label: '允许' },
+                  { value: 'deny', label: '拒绝' }
+                ]}
+                value={behavior}
+                onChange={value => setBehavior(value as PermissionBehavior)}
+                width={100}
+                isDisabled={adding}
+              />
+              <SettingsSelect
+                label="范围"
+                isLabelHidden
+                options={[
+                  { value: 'project', label: '本项目' },
+                  { value: 'global', label: '全局' }
+                ]}
+                value={scope}
+                onChange={value => setScope(value as 'global' | 'project')}
+                width={110}
+                isDisabled={adding}
+              />
+              <TextInput
+                label="命令前缀"
+                isLabelHidden
+                value={commandPrefix}
+                onChange={value => setCommandPrefix(value)}
+                placeholder="命令前缀（可选，如 npm install）"
+                isDisabled={adding}
+              />
+              <Button
+                label={adding ? '添加中…' : '添加'}
+                variant="primary"
+                size="sm"
+                onClick={() => void handleAdd()}
+                isDisabled={adding}
+              >
+                {adding ? '添加中…' : '添加'}
+              </Button>
+            </div>
+          </SettingsCard>
 
-          <SettingsSection title={`当前规则（${rules.length} 条）`}>
+          <SettingsCard
+            title={`当前生效规则（${rules.length} 条）`}
+            description="在操作授权提示中选择「始终允许」也会自动沉淀为持久化规则。"
+            aside={
+              <Button
+                label={loading ? '刷新中…' : '刷新'}
+                variant="ghost"
+                size="sm"
+                onClick={() => void loadRules()}
+                isDisabled={loading}
+              >
+                {loading ? '刷新中…' : '刷新'}
+              </Button>
+            }
+          >
             {loading && (
-              <SettingsField>
-                <span className="settings-help">加载中…</span>
-              </SettingsField>
+              <span className="settings-help">加载中…</span>
             )}
             {!loading && rules.length === 0 && (
-              <SettingsField>
-                <span className="settings-help">
-                  暂无持久化规则。权限弹窗中选择「始终允许」会自动创建规则。
-                </span>
-              </SettingsField>
+              <span className="settings-help">
+                暂无权限规则。在授权弹窗中选择「始终允许」或通过上方直接添加。
+              </span>
             )}
             {!loading &&
               rules.map(rule => (
-                <SettingsRow
+                <SettingsCardRow
                   key={rule.id}
                   label={
-                    <span className="perm-rule__label">
-                      <span className={`perm-rule__behavior ${BEHAVIOR_CLASS[rule.behavior]}`}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <span className={`glass-chip ${rule.behavior === 'allow' ? 'glass-chip--success' : 'glass-chip--danger'}`}>
                         {BEHAVIOR_LABEL[rule.behavior]}
                       </span>
-                      <span className="perm-rule__tool">{rule.toolName}</span>
-                    </span>
+                      <code style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {rule.toolName}
+                      </code>
+                      <span className="glass-chip">{rule.scope === 'project' ? '项目' : '全局'}</span>
+                    </div>
                   }
                   description={ruleDescription(rule)}
-                  end={
+                  control={
                     <Button
                       label="删除"
-                      variant="destructive"
+                      variant="ghost"
                       size="sm"
                       className="perm-rule__delete"
                       onClick={() => void handleDelete(rule.id)}
@@ -208,13 +219,13 @@ export const PermissionsSettingsPanel: React.FC = () => {
                   }
                 />
               ))}
-          </SettingsSection>
+          </SettingsCard>
 
           {error && (
             <div className="settings-status settings-status--gap settings-status--error">{error}</div>
           )}
         </SettingsPage>
       </div>
-    </div>
+    </SettingsGlassPanel>
   )
 }

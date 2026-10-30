@@ -11,6 +11,7 @@ import {
 } from '../../stores/useCodeIndexStore'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { formatSettingsRelativeTime } from './formatDateTime'
+import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage } from './settingsKit'
 
 export const CodeIndexSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -78,100 +79,105 @@ export const CodeIndexSettingsPanel: React.FC = () => {
   const enabledForSession = snapshot?.enabled === true
 
   return (
-    <div className="settings-panel code-index-settings-panel">
-      <Banner
-        status="warning"
-        title="代码索引是实验性功能，默认关闭。首次建立期间不会阻塞聊天。"
-        container="section"
-        className="settings-panel__warning-banner"
-      />
-
-      <div className="settings-panel__toolbar">
-        <Button
-          label="重建索引"
-          variant="secondary"
-          size="sm"
-          type="button"
-          onClick={() => void runCommand('rebuild')}
-          isDisabled={!currentProject || !enabledForSession || commandPending}
-        >
-          重建索引
-        </Button>
-        <Button
-          label="打开索引目录"
-          variant="primary"
-          size="sm"
-          type="button"
-          onClick={() => void runCommand('open-dir')}
-          isDisabled={!currentProject || commandPending}
-        >
-          打开索引目录
-        </Button>
-      </div>
-
-      {!currentProject && (
-        <p className="settings-panel__muted code-index-settings-panel__empty">
-          请先打开工作区项目以查看代码索引。
-        </p>
-      )}
-
-      {currentProject && (
-        <div className="code-index-settings-panel__status-card" aria-live="polite">
-          <StatusRow label="状态" value={formatStatus(snapshot)} />
-          <StatusRow label="最后更新" value={formatRelativeTime(snapshot?.lastCompletedAt ?? null)} />
-          <StatusRow label="数据库" value={formatBytes(snapshot?.databaseBytes ?? 0)} />
-        </div>
-      )}
-
-      {settings && (
-        <section className="code-index-settings-panel__controls" aria-label="代码索引开关">
-          <h4 className="code-index-settings-panel__section-title">代码索引</h4>
-          <div className="code-index-settings-panel__toggle-row">
-            <div className="code-index-settings-panel__toggle-copy">
-              <span className="code-index-settings-panel__toggle-label">启用代码索引</span>
-              <p className="code-index-settings-panel__toggle-hint">
-                为当前工作区建立本地符号与依赖索引，帮助 Agent 更快定位代码。
+    <SettingsGlassPanel className="code-index-settings-panel">
+      <div className="settings-panel__scroll">
+        <SettingsPage>
+          <SettingsCard
+            title="代码索引状态"
+            description={currentProject ? `工作区：${currentProject}` : "请先打开工作区项目以查看索引"}
+            aside={
+              currentProject ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Button
+                    label="重建索引"
+                    variant="secondary"
+                    size="sm"
+                    type="button"
+                    onClick={() => void runCommand("rebuild")}
+                    isDisabled={!enabledForSession || commandPending}
+                  >
+                    重建索引
+                  </Button>
+                  <Button
+                    label="打开索引目录"
+                    variant="primary"
+                    size="sm"
+                    type="button"
+                    onClick={() => void runCommand("open-dir")}
+                    isDisabled={commandPending}
+                  >
+                    打开索引目录
+                  </Button>
+                </div>
+              ) : undefined
+            }
+          >
+            {currentProject ? (
+              <div style={{ display: "grid", gap: "10px" }} aria-live="polite">
+                <SettingsCardRow
+                  label="状态"
+                  control={<span className="glass-chip">{formatStatus(snapshot)}</span>}
+                />
+                <SettingsCardRow
+                  label="最后更新"
+                  control={<span className="subagent-value">{formatRelativeTime(snapshot?.lastCompletedAt ?? null)}</span>}
+                />
+                <SettingsCardRow
+                  label="数据库"
+                  control={<span className="subagent-value">{formatBytes(snapshot?.databaseBytes ?? 0)}</span>}
+                />
+              </div>
+            ) : (
+              <p className="settings-panel__muted code-index-settings-panel__empty">
+                请先打开工作区项目以查看代码索引。
               </p>
-              <p className="code-index-settings-panel__toggle-hint">
-                索引只保存结构信息，不复制源码，可随时删除重建。
-              </p>
-              <p className="code-index-settings-panel__toggle-hint code-index-settings-panel__toggle-hint--important">
-                对新建会话生效，不影响正在进行的会话。
-              </p>
+            )}
+          </SettingsCard>
+
+          {settings && (
+            <SettingsCard title="代码索引">
+              <SettingsCardRow
+                label="启用代码索引"
+                description="为当前工作区建立本地符号与依赖索引，帮助 Agent 更快定位代码。索引只保存结构信息，不复制源码，可随时删除重建。对新建会话生效，不影响正在进行的会话。"
+                control={
+                  <Switch
+                    label="启用代码索引"
+                    isLabelHidden
+                    value={settings.codeIndexEnabled}
+                    onChange={checked => void updateEnabled(checked)}
+                    isDisabled={saving}
+                  />
+                }
+              />
+            </SettingsCard>
+          )}
+
+          {currentProject && snapshot?.enabled && (
+            <SettingsCard title="覆盖率统计">
+              <CoverageDetails snapshot={snapshot} />
+            </SettingsCard>
+          )}
+
+          {snapshot?.failure && (
+            <div className="settings-status settings-status--warning settings-status--gap" role="status">
+              {formatFailureCategory(snapshot.failure.code)}
             </div>
-            <Switch
-              label="启用代码索引"
-              isLabelHidden
-              value={settings.codeIndexEnabled}
-              onChange={checked => void updateEnabled(checked)}
-              isDisabled={saving}
-            />
-          </div>
-        </section>
-      )}
+          )}
 
-      {currentProject && snapshot?.enabled && (
-        <CoverageDetails snapshot={snapshot} />
-      )}
+          {saved && !error && !statusError && (
+            <div className="settings-status settings-status--ok" role="status">
+              已保存
+            </div>
+          )}
 
-      {snapshot?.failure && (
-        <div className="settings-status settings-status--warning settings-status--gap" role="status">
-          {formatFailureCategory(snapshot.failure.code)}
-        </div>
-      )}
-
-      {saved && !error && !statusError && (
-        <div className="settings-status settings-status--ok" role="status">
-          已保存
-        </div>
-      )}
-
-      {(error || statusError) && (
-        <div className="settings-status settings-status--error" role="alert">
-          {error ?? statusError}
-        </div>
-      )}
-    </div>
+          {(error || statusError) && (
+            <div className="settings-status settings-status--error" role="alert">
+              {error ?? statusError}
+            </div>
+          )}
+        </SettingsPage>
+      </div>
+    </SettingsGlassPanel>
   )
 }
 

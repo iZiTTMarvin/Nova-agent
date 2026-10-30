@@ -5,7 +5,7 @@
 import React, { useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { TextInput } from '@astryxdesign/core/TextInput'
-import { SettingsActions, SettingsField, SettingsPage, SettingsSection } from './settingsKit'
+import { SettingsCard, SettingsGlassPanel, SettingsPage } from './settingsKit'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
 
 export const WebSearchSettingsPanel: React.FC = () => {
@@ -65,14 +65,14 @@ export const WebSearchSettingsPanel: React.FC = () => {
   }
 
   return (
-    <div className="settings-panel">
+    <SettingsGlassPanel className="websearch-settings-panel">
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsSection
-            title="Tavily"
-            description="默认使用 Exa / Keenable 免密钥搜索，失败时尝试 Bing / DuckDuckGo；Tavily 是可选增强。"
+          <SettingsCard
+            title="Tavily 增强搜索"
+            description="默认使用内置免密钥搜索，配置 Tavily 可进一步增强复杂技术检索与网页内容抓取质量。"
           >
-            <SettingsField>
+            <div style={{ display: "grid", gap: "10px" }}>
               <TextInput
                 label="Tavily API Key（可选）"
                 type="password"
@@ -84,8 +84,7 @@ export const WebSearchSettingsPanel: React.FC = () => {
                 width="100%"
               />
               <span className="settings-help">
-                不填也能搜索；填写后可提升搜索质量，并在爬虫失败时自动兜底。Key 仅保存在本机。
-                {' '}
+                Key 仅保存在本机环境中。{" "}
                 <a
                   href="https://app.tavily.com"
                   target="_blank"
@@ -94,29 +93,27 @@ export const WebSearchSettingsPanel: React.FC = () => {
                   获取 Tavily API Key →
                 </a>
               </span>
-            </SettingsField>
-            <SettingsActions>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "4px" }}>
               <Button
-                label={saving ? '保存中…' : '保存'}
+                label={saving ? "保存中…" : "保存配置"}
                 variant="primary"
                 size="sm"
                 isDisabled={saving}
                 onClick={() => void saveApiKey()}
               >
-                {saving ? '保存中…' : '保存'}
+                {saving ? "保存中…" : "保存配置"}
               </Button>
               {saved && !error && (
                 <span className="settings-status settings-status--ok">已保存</span>
               )}
-            </SettingsActions>
-            {error && (
-              <SettingsField>
+              {error && (
                 <span className="settings-status settings-status--error">{error}</span>
-              </SettingsField>
-            )}
-          </SettingsSection>
+              )}
+            </div>
+          </SettingsCard>
         </SettingsPage>
       </div>
-    </div>
+    </SettingsGlassPanel>
   )
 }

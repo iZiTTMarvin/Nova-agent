@@ -204,6 +204,31 @@
   box-shadow: 0 0 5px color-mix(in srgb, var(--color-warning) 45%, transparent);
 }
 
+.glass-chip--success {
+  border-color: color-mix(in srgb, #10b981 35%, var(--glass-edge));
+  background: color-mix(in srgb, #10b981 10%, var(--glass-well));
+  color: light-dark(#065f46, #34d399);
+}
+
+.glass-chip--danger {
+  border-color: color-mix(in srgb, #ef4444 35%, var(--glass-edge));
+  background: color-mix(in srgb, #ef4444 10%, var(--glass-well));
+  color: light-dark(#991b1b, #f87171);
+}
+
+.perm-rule-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.perm-rule-form .astryx-text-input {
+  flex: 1;
+  min-width: 160px;
+}
+
 /* 分段控件：滑块跟随选中项 */
 .glass-tabs {
   --n: 2;

@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog } from '@astryxdesign/core/Dialog'
-import { SettingsField, SettingsPage, SettingsSection } from './settingsKit'
+import { SettingsCard, SettingsGlassPanel, SettingsPage } from './settingsKit'
 import type { StorageUsageReport, StorageCleanupResult, SessionStorageBreakdown } from '../../../shared/storage/types'
 import { formatSettingsDateTime } from './formatDateTime'
 
@@ -33,6 +33,7 @@ export const StorageSettingsPanel: React.FC = () => {
   const [actionId, setActionId] = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<StorageCleanupResult | null>(null)
   const [confirmAction, setConfirmAction] = useState<StorageConfirmAction | null>(null)
+  const [showAllSessions, setShowAllSessions] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -116,121 +117,138 @@ export const StorageSettingsPanel: React.FC = () => {
   const sessionRows = report?.sessions ?? []
   const orphanEntries = report?.orphanEntries ?? []
 
+  const visibleRows = showAllSessions ? sessionRows : sessionRows.slice(0, 10)
+
   return (
-    <div className="settings-panel">
+    <SettingsGlassPanel className="storage-settings-panel">
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsSection
-            title="全局操作"
-            description={`总占用：${report ? formatBytes(report.totalBytes) : '-'}${
-              report && report.orphanBytes > 0 ? `（零散数据 ${formatBytes(report.orphanBytes)}）` : ''
-            }`}
-          >
-            <SettingsField>
-              <div className="storage-actions">
-                <Button
-                  label="清理全部过期 checkpoint"
-                  variant="secondary"
-                  size="sm"
-                  onClick={handlePruneAll}
-                  isDisabled={actionId !== null}
-                >
-                  清理全部过期 checkpoint
-                </Button>
-                <Button
-                  label="立即运行 GC"
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleRunGc}
-                  isDisabled={actionId !== null}
-                >
-                  立即运行 GC
-                </Button>
-              </div>
-              {lastResult && lastResult.freedBytes > 0 && (
-                <div className="storage-result">
-                  已释放 {formatBytes(lastResult.freedBytes)}，涉及 {lastResult.affectedSessions} 个会话
+          <SettingsCard
+            title="空间管理"
+            description="清理过期的会话快照与磁盘缓存数据。"
+            aside={
+              report ? (
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  <span className="glass-chip">总占用 {formatBytes(report.totalBytes)}</span>
+                  {report.orphanBytes > 0 && (
+                    <span className="glass-chip">零散数据 {formatBytes(report.orphanBytes)}</span>
+                  )}
                 </div>
-              )}
-              {lastResult && lastResult.freedBytes === 0 && (
-                <div className="storage-result storage-result--empty">没有可清理的内容</div>
-              )}
-            </SettingsField>
-          </SettingsSection>
-
-          <SettingsSection
-            title="会话占用明细"
-            action={
+              ) : undefined
+            }
+          >
+            <div className="storage-actions" style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <Button
-                label={loading ? '刷新中…' : '刷新'}
+                label="清理全部过期快照"
+                variant="secondary"
+                size="sm"
+                onClick={handlePruneAll}
+                isDisabled={actionId !== null}
+              >
+                清理全部过期快照
+              </Button>
+              <Button
+                label="立即清理缓存 (GC)"
+                variant="secondary"
+                size="sm"
+                onClick={handleRunGc}
+                isDisabled={actionId !== null}
+              >
+                立即清理缓存 (GC)
+              </Button>
+            </div>
+            {lastResult && lastResult.freedBytes > 0 && (
+              <div className="storage-result" style={{ fontSize: "0.82rem", color: "var(--accent-primary)" }}>
+                已释放 {formatBytes(lastResult.freedBytes)}，涉及 {lastResult.affectedSessions} 个会话
+              </div>
+            )}
+            {lastResult && lastResult.freedBytes === 0 && (
+              <div className="storage-result storage-result--empty" style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+                暂无过期内容需要清理
+              </div>
+            )}
+          </SettingsCard>
+
+          <SettingsCard
+            title="会话占用明细"
+            description={sessionRows.length > 0 ? (showAllSessions ? `展示全部 ${sessionRows.length} 个会话` : `当前显示前 10 个会话（共 ${sessionRows.length} 个）`) : "按磁盘空间统计各会话数据。"}
+            aside={
+              <Button
+                label={loading ? "刷新中…" : "刷新"}
                 variant="secondary"
                 size="sm"
                 onClick={() => void load()}
                 isDisabled={loading}
               >
-                {loading ? '刷新中…' : '刷新'}
+                {loading ? "刷新中…" : "刷新"}
               </Button>
             }
           >
             {error && (
-              <SettingsField>
-                <span className="settings-status settings-status--error">{error}</span>
-              </SettingsField>
+              <span className="settings-status settings-status--error">{error}</span>
             )}
-            <SettingsField>
-              {sessionRows.length === 0 && orphanEntries.length === 0 ? (
-                <span className="settings-help">暂无可显示的会话数据。</span>
-              ) : (
-                <>
-                  {sessionRows.length > 0 && (
-                    <div className="storage-table">
-                      <div className="storage-table__header">
-                        <span className="storage-table__cell">会话 / 工作区 / 最近更新</span>
-                        <span className="storage-table__cell storage-table__cell--right">消息历史</span>
-                        <span className="storage-table__cell storage-table__cell--right">Checkpoint</span>
-                        <span className="storage-table__cell storage-table__cell--right">产物</span>
-                        <span className="storage-table__cell storage-table__cell--right">合计</span>
-                        <span className="storage-table__cell storage-table__cell--actions">操作</span>
-                      </div>
-                      {sessionRows.map(row => (
-                        <SessionStorageRow
-                          key={row.sessionId}
-                          row={row}
-                          isBusy={actionId !== null}
-                          onPrune={() => handlePruneSession(row.sessionId)}
-                          onDelete={() => handleDeleteSession(row)}
-                        />
-                      ))}
+            {sessionRows.length === 0 && orphanEntries.length === 0 ? (
+              <span className="settings-help">暂无可显示的会话数据。</span>
+            ) : (
+              <>
+                {sessionRows.length > 0 && (
+                  <div className="storage-table">
+                    <div className="storage-table__header">
+                      <span className="storage-table__cell">会话 / 工作区 / 最近更新</span>
+                      <span className="storage-table__cell storage-table__cell--right">消息历史</span>
+                      <span className="storage-table__cell storage-table__cell--right">快照</span>
+                      <span className="storage-table__cell storage-table__cell--right">产物</span>
+                      <span className="storage-table__cell storage-table__cell--right">合计</span>
+                      <span className="storage-table__cell storage-table__cell--actions">操作</span>
                     </div>
-                  )}
-                  {orphanEntries.length > 0 && (
-                    <div className="storage-orphan-list" aria-label="无对应会话的数据">
-                      <div className="storage-orphan-list__title">系统数据 / 无对应会话</div>
-                      <p className="storage-orphan-list__hint">
-                        内部协调目录和未知孤立数据不会作为普通会话展示，也不能从这里删除。
-                      </p>
-                      {orphanEntries.map(entry => (
-                        <div
-                          className={`storage-orphan-list__item storage-orphan-list__item--${entry.kind}`}
-                          key={entry.relativePath}
+                    {visibleRows.map(row => (
+                      <SessionStorageRow
+                        key={row.sessionId}
+                        row={row}
+                        isBusy={actionId !== null}
+                        onPrune={() => handlePruneSession(row.sessionId)}
+                        onDelete={() => handleDeleteSession(row)}
+                      />
+                    ))}
+                    {sessionRows.length > 10 && (
+                      <div style={{ display: "flex", justifyContent: "center", padding: "10px 0 4px" }}>
+                        <Button
+                          label={showAllSessions ? "收起会话明细" : `展开剩余 ${sessionRows.length - 10} 个会话`}
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowAllSessions(!showAllSessions)}
                         >
-                          <span>{entry.kind === 'system' ? '系统数据' : '无对应会话'}</span>
-                          <span title={entry.relativePath}>{entry.relativePath}</span>
-                          <span>{formatBytes(entry.bytes)}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </SettingsField>
-          </SettingsSection>
+                          {showAllSessions ? "收起会话明细" : `展开剩余 ${sessionRows.length - 10} 个会话（共 ${sessionRows.length} 个）`}
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {orphanEntries.length > 0 && (
+                  <div className="storage-orphan-list" aria-label="无对应会话的数据">
+                    <div className="storage-orphan-list__title">系统存储数据</div>
+                    {orphanEntries.map(entry => (
+                      <div
+                        className={`storage-orphan-list__item storage-orphan-list__item--${entry.kind}`}
+                        key={entry.relativePath}
+                      >
+                        <span>{entry.kind === "system" ? "系统数据" : "孤立数据"}</span>
+                        <span title={entry.relativePath}>{entry.relativePath}</span>
+                        <span>{formatBytes(entry.bytes)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </SettingsCard>
         </SettingsPage>
       </div>
       {confirmAction && (
         <Dialog
           isOpen
           purpose="form"
+          className="glass-dialog"
           width="min(480px, calc(100vw - 32px))"
           aria-labelledby="storage-confirm-title"
           onOpenChange={open => {
@@ -238,12 +256,12 @@ export const StorageSettingsPanel: React.FC = () => {
           }}
         >
           <h3 id="storage-confirm-title">
-            {confirmAction.type === 'delete-session' ? '彻底删除会话？' : '清理所有过期 checkpoint？'}
+            {confirmAction.type === "delete-session" ? "彻底删除会话？" : "清理所有过期快照？"}
           </h3>
           <p>
-            {confirmAction.type === 'delete-session'
-              ? `将删除「${confirmAction.row.title ?? confirmAction.row.sessionId}」的消息、checkpoint 和命令产物，且无法恢复。`
-              : '被清理的快照将无法用于回退或拒绝恢复。'}
+            {confirmAction.type === "delete-session"
+              ? `将永久删除「${confirmAction.row.title ?? confirmAction.row.sessionId}」的消息与产物，操作无法恢复。`
+              : "被清理的快照将无法再用于回退恢复。"}
           </p>
           <div className="storage-confirm__actions">
             <Button
@@ -255,17 +273,17 @@ export const StorageSettingsPanel: React.FC = () => {
               取消
             </Button>
             <Button
-              label={confirmAction.type === 'delete-session' ? '彻底删除' : '清理快照'}
-              variant={confirmAction.type === 'delete-session' ? 'destructive' : 'primary'}
+              label={confirmAction.type === "delete-session" ? "彻底删除" : "清理快照"}
+              variant={confirmAction.type === "delete-session" ? "destructive" : "primary"}
               size="sm"
               onClick={handleConfirmAction}
             >
-              {confirmAction.type === 'delete-session' ? '彻底删除' : '清理快照'}
+              {confirmAction.type === "delete-session" ? "彻底删除" : "清理快照"}
             </Button>
           </div>
         </Dialog>
       )}
-    </div>
+    </SettingsGlassPanel>
   )
 }
 

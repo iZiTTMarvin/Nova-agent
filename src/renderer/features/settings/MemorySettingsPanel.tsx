@@ -15,7 +15,7 @@ import { BrainIcon, CloseIcon, EditIcon, FolderIcon, GlobeIcon, SparklesIcon } f
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { confirmDialog } from '../confirm/confirmDialog'
 import { formatSettingsDateTime } from './formatDateTime'
-import { SettingsRow, SettingsSection } from './settingsKit'
+import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage, SettingsRow, SettingsSection } from './settingsKit'
 import { containsSensitiveMemoryText } from '../../../shared/memory/sensitiveText'
 import { getModelDisplayName, resolveBackgroundModelRef } from '../../../shared/config/llmRegistry'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
@@ -766,6 +766,7 @@ export const MemorySettingsPanel: React.FC = () => {
 
       {fileEditorOpen && (
         <Dialog
+          className="glass-dialog memory-file-dialog"
           isOpen={fileEditorOpen}
           onOpenChange={nextOpen => {
             if (!nextOpen) void handleCloseFileEditor()
@@ -774,7 +775,6 @@ export const MemorySettingsPanel: React.FC = () => {
           padding={0}
           width="min(1080px, calc(100vw - 48px))"
           maxHeight="min(86vh, 760px)"
-          className="memory-file-dialog"
           aria-labelledby="memory-file-dialog-title"
         >
           <header className="memory-file-dialog__header">
