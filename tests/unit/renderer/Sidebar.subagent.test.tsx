@@ -16,6 +16,7 @@ import { act, renderDom } from './renderDom'
 vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
   FolderIcon: () => null,
+  FolderOpenIcon: () => null,
   SettingsIcon: () => null,
   PlusIcon: () => null,
   PinIcon: () => null,

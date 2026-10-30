@@ -1,7 +1,7 @@
 /**
  * ToolTraceRow — L3 原子过程行
  *
- * 与 ToolCallGroup 时间线保持一致的中文动词、文件扩展名徽标与分层排版；
+ * 与 ToolCallGroup 时间线保持一致的中文动词、文件类型图标与分层排版；
  * 点击整行展开 L4 详情（参数/结果/文件预览）。
  */
 import React, { useMemo, useRef, useState } from 'react'
@@ -13,6 +13,7 @@ import {
   SearchIcon,
   TerminalIcon
 } from '../../components/Icons'
+import { FileTypeIcon } from './FileTypeIcon'
 import { isPermissionDeniedResult } from './renderingPolicy'
 import { AWAITING_PERMISSION_LABEL, getToolOutcomeLabel, resolveToolOutcome } from './toolOutcome'
 import { useLayoutStore } from '../../stores/useLayoutStore'
@@ -23,6 +24,7 @@ import {
   getToolTraceActionChinese,
   getToolTraceTarget,
   getFileToolPreviewText,
+  resolveDirectoryTarget,
   splitFilePath
 } from './toolTraceDisplay'
 import { clampBashShellOutputForDisplay } from './bashOutputDisplay'
@@ -78,50 +80,20 @@ function TraceFileBadgeOrIcon({
   ext: string
 }) {
   if (toolName === 'ls') {
-    return <FolderIcon size={12} className="tool-trace-row__icon tool-trace-row__icon--folder" />
+    return <FolderIcon size={14} className="tool-trace-row__icon tool-trace-row__icon--folder" />
   }
   if (toolName === 'grep' || toolName === 'find' || toolName === 'web_search') {
-    return <SearchIcon size={12} className="tool-trace-row__icon" />
+    return <SearchIcon size={14} className="tool-trace-row__icon" />
   }
   if (toolName === 'bash') {
-    return <TerminalIcon size={12} className="tool-trace-row__icon" />
+    return <TerminalIcon size={14} className="tool-trace-row__icon" />
   }
   if (toolName === 'web_fetch') {
-    return <GlobeIcon size={12} className="tool-trace-row__icon" />
+    return <GlobeIcon size={14} className="tool-trace-row__icon" />
   }
 
-  const normalizedExt = ext.toLowerCase()
-  if (normalizedExt === 'ts' || normalizedExt === 'mts' || normalizedExt === 'cts') {
-    return <span className="file-badge file-badge--ts">TS</span>
-  }
-  if (normalizedExt === 'tsx') {
-    return <span className="file-badge file-badge--tsx">TSX</span>
-  }
-  if (normalizedExt === 'js' || normalizedExt === 'mjs' || normalizedExt === 'cjs') {
-    return <span className="file-badge file-badge--js">JS</span>
-  }
-  if (normalizedExt === 'jsx') {
-    return <span className="file-badge file-badge--jsx">JSX</span>
-  }
-  if (normalizedExt === 'json') {
-    return <span className="file-badge file-badge--json">JSON</span>
-  }
-  if (normalizedExt === 'md' || normalizedExt === 'markdown') {
-    return <span className="file-badge file-badge--md">MD</span>
-  }
-  if (normalizedExt === 'py') {
-    return <span className="file-badge file-badge--py">PY</span>
-  }
-  if (normalizedExt === 'css' || normalizedExt === 'scss' || normalizedExt === 'less') {
-    return <span className="file-badge file-badge--css">CSS</span>
-  }
-  if (normalizedExt === 'html') {
-    return <span className="file-badge file-badge--html">HTML</span>
-  }
-  if (normalizedExt) {
-    return <span className="file-badge file-badge--generic">{normalizedExt.slice(0, 3).toUpperCase()}</span>
-  }
-  return <FileIcon size={12} className="tool-trace-row__icon" />
+  if (!ext) return <FileIcon size={14} className="tool-trace-row__icon" />
+  return <FileTypeIcon ext={ext} />
 }
 
 /** L4：仅在展开时挂载的重内容 */
@@ -284,7 +256,12 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   const isLs = name === 'ls'
   const isBash = name === 'bash'
 
-  const fileParts = isFileTool || isLs ? splitFilePath(rawPath || (isLs ? '.' : ''), workspaceRoot) : null
+  const dirTarget = isLs ? resolveDirectoryTarget(rawPath, workspaceRoot) : null
+  const fileParts = dirTarget
+    ? { filename: dirTarget.filename, dir: dirTarget.dir, ext: '' }
+    : isFileTool
+      ? splitFilePath(rawPath, workspaceRoot)
+      : null
   const command = isBash ? (args.command as string) || '' : ''
   const generalTarget = !isFileTool && !isLs && !isBash ? getToolTraceTarget(name, args, workspaceRoot) : ''
 
@@ -318,7 +295,7 @@ export const ToolTraceRow: React.FC<ToolTraceRowProps> = React.memo(function Too
   }
 
   const handleOpenDir = () => {
-    const relPath = rawPath && rawPath !== '.' ? compactPathForTrace(rawPath, workspaceRoot) : ''
+    const relPath = dirTarget?.relPath ?? ''
     useLayoutStore.getState().openFiles()
     useFileTreeStore.getState().selectFile(null)
     if (relPath) {

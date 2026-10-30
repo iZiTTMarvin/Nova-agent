@@ -338,6 +338,18 @@
   background-color: var(--sidebar-row-hover);
 }
 
+/* 项目文件夹图标：默认弱色，悬停时跟随项目名提亮 */
+.sidebar-project-folder-icon {
+  color: var(--text-muted);
+  transition: color var(--transition-fast);
+}
+
+.sidebar-project-header:hover .sidebar-project-folder-icon,
+.sidebar-project-header:focus-within .sidebar-project-folder-icon,
+.sidebar-project-header--menu-open .sidebar-project-folder-icon {
+  color: var(--text-secondary);
+}
+
 .sidebar-project-header__actions {
   display: none;
   align-items: center;
@@ -629,7 +641,7 @@
 /*
  * 项目内会话列表：行距与 SideNavSection 自带的 2px gap 一致，项目头到首行同样 2px。
  * 高亮盒与项目头同宽同边距，层级关系只通过行内文字缩进表达——
- * 项目名缩进 = 标题行内边距 8px + 折叠箭头 13px + 间距 6px = 27px，由行内条目补齐。
+ * 项目名缩进 = 标题行内边距 8px + 文件夹图标 15px + 间距 6px = 29px，由行内条目补齐。
  * StyleX 原子类带 :not() 提权，需 !important。
  */
 .sidebar-project-children {
@@ -640,7 +652,7 @@
 }
 
 .sidebar-project-children .sidebar-session-row :is(button, a).astryx-side-nav-item {
-  padding-inline-start: 27px !important;
+  padding-inline-start: 29px !important;
 }
 
 /* 底部操作区：无顶部分隔线，避免侧栏被横线切开 */

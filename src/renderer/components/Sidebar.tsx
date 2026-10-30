@@ -20,6 +20,7 @@ import {
 import {
   NovaLogo,
   FolderIcon,
+  FolderOpenIcon,
   SettingsIcon,
   PlusIcon,
   PinIcon,
@@ -62,6 +63,12 @@ const SIDEBAR_SESSION_PREVIEW_COUNT = 5
 const EXPANDED_PROJECTS_KEY = 'nova.sidebar.expandedProjects'
 const PINNED_PROJECTS_KEY = 'nova.sidebar.pinnedProjects'
 const ARCHIVED_PROJECTS_KEY = 'nova.sidebar.archivedProjects'
+
+/** 项目行的折叠指示：收起为合上的文件夹，展开为打开的文件夹（尺寸决定会话行缩进，见 Sidebar.css） */
+function ProjectFolderIcon({ expanded }: { expanded: boolean }) {
+  const Icon = expanded ? FolderOpenIcon : FolderIcon
+  return <Icon size={15} className="sidebar-project-folder-icon shrink-0" aria-hidden="true" />
+}
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false
@@ -1008,13 +1015,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                     <div className="sidebar-drop-indicator--after" aria-hidden="true" />
                   )}
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <span
-                      className={`text-text-muted transition-transform duration-150 inline-block shrink-0 ${
-                        isExpanded ? 'rotate-0' : '-rotate-90'
-                      }`}
-                    >
-                      <ChevronDownIcon size={13} />
-                    </span>
+                    <ProjectFolderIcon expanded={isExpanded} />
                     <span className="text-[13px] font-semibold text-text-primary truncate">
                       {getProjectName(projectPath)}
                     </span>
@@ -1126,7 +1127,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                         size="sm"
                         width="100%"
                         type="button"
-                        className="w-full text-left pl-[27px] pr-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+                        className="w-full text-left pl-[29px] pr-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
                         onClick={(e) => {
                           e.stopPropagation()
                           setExpandedSessionLists(prev => ({
@@ -1181,13 +1182,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                           onClick={() => toggleProjectExpand(projectPath)}
                         >
                           <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <span
-                              className={`text-text-muted transition-transform duration-150 inline-block shrink-0 ${
-                                isExpanded ? 'rotate-0' : '-rotate-90'
-                              }`}
-                            >
-                              <ChevronDownIcon size={13} />
-                            </span>
+                            <ProjectFolderIcon expanded={isExpanded} />
                             <span className="text-[13px] font-semibold text-text-muted truncate">
                               {getProjectName(projectPath)}
                             </span>

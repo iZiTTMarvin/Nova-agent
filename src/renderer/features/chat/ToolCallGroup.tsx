@@ -7,6 +7,7 @@
  */
 import React, { useCallback, useRef, useState } from 'react'
 import { ChevronIcon, FileIcon, FolderIcon } from '../../components/Icons'
+import { FileTypeIcon } from './FileTypeIcon'
 import { TurnProcessCollapsible } from './TurnProcessCollapsible'
 import { ActivityScrollBox } from './ActivityScrollBox'
 import { ToolTraceRow, selectAnchoredRequest } from './ToolTraceRow'
@@ -19,6 +20,7 @@ import {
   getActivityHeadline,
   getReadPreviewLocation,
   getToolTraceActionChinese,
+  resolveDirectoryTarget,
   splitFilePath
 } from './toolTraceDisplay'
 import {
@@ -54,41 +56,10 @@ export function groupOpenKey(groupId: string): string {
 
 function FileBadgeOrIcon({ toolName, ext }: { toolName: string; ext: string }) {
   if (toolName === 'ls') {
-    return <FolderIcon size={12} className="tool-call-group__item-icon tool-call-group__item-icon--folder" />
+    return <FolderIcon size={14} className="tool-call-group__item-icon tool-call-group__item-icon--folder" />
   }
-
-  const normalizedExt = ext.toLowerCase()
-  if (normalizedExt === 'ts' || normalizedExt === 'mts' || normalizedExt === 'cts') {
-    return <span className="file-badge file-badge--ts">TS</span>
-  }
-  if (normalizedExt === 'tsx') {
-    return <span className="file-badge file-badge--tsx">TSX</span>
-  }
-  if (normalizedExt === 'js' || normalizedExt === 'mjs' || normalizedExt === 'cjs') {
-    return <span className="file-badge file-badge--js">JS</span>
-  }
-  if (normalizedExt === 'jsx') {
-    return <span className="file-badge file-badge--jsx">JSX</span>
-  }
-  if (normalizedExt === 'json') {
-    return <span className="file-badge file-badge--json">JSON</span>
-  }
-  if (normalizedExt === 'md' || normalizedExt === 'markdown') {
-    return <span className="file-badge file-badge--md">MD</span>
-  }
-  if (normalizedExt === 'py') {
-    return <span className="file-badge file-badge--py">PY</span>
-  }
-  if (normalizedExt === 'css' || normalizedExt === 'scss' || normalizedExt === 'less') {
-    return <span className="file-badge file-badge--css">CSS</span>
-  }
-  if (normalizedExt === 'html') {
-    return <span className="file-badge file-badge--html">HTML</span>
-  }
-  if (normalizedExt) {
-    return <span className="file-badge file-badge--generic">{normalizedExt.slice(0, 3).toUpperCase()}</span>
-  }
-  return <FileIcon size={12} className="tool-call-group__item-icon" />
+  if (!ext) return <FileIcon size={14} className="tool-call-group__item-icon" />
+  return <FileTypeIcon ext={ext} />
 }
 
 const FILE_TOOL_NAMES = new Set(['read', 'write', 'edit', 'save_plan'])
@@ -112,10 +83,8 @@ function FileOrDirItem({
   ) : null
 
   if (block.toolName === 'ls') {
-    const rawPath = (args.path as string) || '.'
-    const { filename, dir } = splitFilePath(rawPath, workspaceRoot)
-    const displayTarget = filename || dir || '.'
-    const relPath = rawPath && rawPath !== '.' ? compactPathForTrace(rawPath, workspaceRoot) : ''
+    const { filename, dir, relPath } = resolveDirectoryTarget((args.path as string) || '', workspaceRoot)
+    const displayTarget = filename
     const openDir = (): void => {
       useLayoutStore.getState().openFiles()
       useFileTreeStore.getState().selectFile(null)

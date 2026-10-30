@@ -9,6 +9,7 @@ import {
   getToolTraceActionChinese,
   getToolTraceTarget,
   getToolGroupTraceParts,
+  resolveDirectoryTarget,
   splitFilePath
 } from '../../../src/renderer/features/chat/toolTraceDisplay'
 
@@ -148,6 +149,30 @@ describe('splitFilePath', () => {
       dir: '',
       ext: 'md'
     })
+  })
+})
+
+describe('resolveDirectoryTarget', () => {
+  it('"."、空路径和等于工作区的绝对路径都显示为项目根目录', () => {
+    const root = 'D:\\work\\nova_web'
+    for (const path of ['.', './', '', 'D:\\work\\nova_web', 'd:/work/nova_web/']) {
+      expect(resolveDirectoryTarget(path, root)).toEqual({
+        isRoot: true,
+        relPath: '',
+        filename: '项目根目录',
+        dir: ''
+      })
+    }
+  })
+
+  it('子目录按目录名加上级路径拆开，去掉尾部斜杠；文件系统根不算项目根', () => {
+    expect(resolveDirectoryTarget('D:\\work\\nova_web\\src\\renderer\\', 'D:\\work\\nova_web')).toEqual({
+      isRoot: false,
+      relPath: 'src/renderer',
+      filename: 'renderer',
+      dir: 'src/'
+    })
+    expect(resolveDirectoryTarget('/', 'D:\\work\\nova_web').isRoot).toBe(false)
   })
 })
 

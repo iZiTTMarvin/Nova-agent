@@ -178,8 +178,8 @@ export function getToolTraceTarget(
       return pattern ? truncateTarget(pattern) : 'files'
     }
     case 'ls': {
-      const path = (args.path as string) || ''
-      return path ? truncateTarget(compact(path)) : '.'
+      const target = resolveDirectoryTarget((args.path as string) || '', workspaceRoot)
+      return target.isRoot ? target.filename : truncateTarget(target.relPath)
     }
     case 'web_search': {
       const query = (args.query as string) || ''
@@ -493,6 +493,31 @@ export function splitFilePath(path: string, workspaceRoot?: string | null): File
   const filename = norm.slice(lastSlash + 1)
   const ext = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() || '' : ''
   return { filename, dir, ext }
+}
+
+/** 目录行里代替 "." 或工作区绝对路径的可读名称 */
+export const WORKSPACE_ROOT_LABEL = '项目根目录'
+
+export interface DirectoryTarget {
+  /** 指向工作区根目录（"."、空路径或等于工作区路径） */
+  isRoot: boolean
+  /** 相对工作区的目录路径，根目录为空串 */
+  relPath: string
+  filename: string
+  dir: string
+}
+
+/** 目录类工具（ls）的目标拆解：根目录统一显示为名称，其余沿用「目录名 + 上级路径」 */
+export function resolveDirectoryTarget(path: string, workspaceRoot?: string | null): DirectoryTarget {
+  const compacted = compactPathForTrace(path || '.', workspaceRoot).replace(/\\/g, '/')
+  // 单独的 "/" 是文件系统根，不能被去尾斜杠后误判为工作区根
+  const trimmed = compacted === '/' ? compacted : compacted.replace(/\/+$/, '')
+  const root = workspaceRoot?.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+  const isRoot =
+    trimmed === '' || trimmed === '.' || (root !== undefined && trimmed.toLowerCase() === root)
+  if (isRoot) return { isRoot: true, relPath: '', filename: WORKSPACE_ROOT_LABEL, dir: '' }
+  const { filename, dir } = splitFilePath(trimmed)
+  return { isRoot: false, relPath: trimmed, filename, dir }
 }
 
 export function getReadPreviewLocation(

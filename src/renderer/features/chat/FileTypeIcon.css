@@ -1,0 +1,22 @@
+/* 文件类型图标：只靠色调区分类别，亮暗两套取值保证在行背景上可辨认 */
+.file-type-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.file-type-icon--code {
+  color: light-dark(#2563eb, #9eb7ff);
+}
+
+.file-type-icon--markup {
+  color: light-dark(#c2410c, #ffa258);
+}
+
+.file-type-icon--data {
+  color: light-dark(#a16207, #deb433);
+}
+
+/* 文档保持中性灰，Markdown 读取频繁，不抢文件名的视觉重心 */
+.file-type-icon--doc {
+  color: var(--text-secondary);
+}
