@@ -31,9 +31,6 @@ interface LlmProviderEditorProps {
   onCancel: () => void
 }
 
-/** 只有前若干行播入场动画，长列表不会同时挂上几十个动画 */
-const ENTER_ANIMATED_ROWS = 10
-
 type ToolDialect = NonNullable<ProviderConfig['toolDialect']>
 
 const EyeIcon: React.FC<{ size?: number }> = ({ size = 14 }) => (
@@ -191,11 +188,10 @@ export const LlmProviderEditor: React.FC<LlmProviderEditorProps> = ({
             </header>
 
             <ul className="llm-models__list">
-              {draft.models.map((entry, index) => (
+              {draft.models.map(entry => (
                 <ModelRow
                   key={entry.id}
                   entry={entry}
-                  index={index}
                   disabled={saving}
                   expanded={expandedModelId === entry.id}
                   onToggle={() => setExpandedModelId(prev => (prev === entry.id ? null : entry.id))}
@@ -286,13 +282,12 @@ export const LlmProviderEditor: React.FC<LlmProviderEditorProps> = ({
 
 const ModelRow: React.FC<{
   entry: ModelEntry
-  index: number
   disabled: boolean
   expanded: boolean
   onToggle: () => void
   onUpdate: (patch: Partial<ModelEntry>) => void
   onRemove: () => void
-}> = ({ entry, index, disabled, expanded, onToggle, onUpdate, onRemove }) => {
+}> = ({ entry, disabled, expanded, onToggle, onUpdate, onRemove }) => {
   const configuredEffort = entry.reasoningEffort ?? 'auto'
   const capabilityEfforts = getSupportedReasoningEfforts(entry)
   const supportedEfforts: readonly ReasoningEffort[] = capabilityEfforts
@@ -304,10 +299,7 @@ const ModelRow: React.FC<{
   const vision = entry.supportsVision === undefined ? 'auto' : entry.supportsVision ? 'yes' : 'no'
 
   return (
-    <li
-      className={`llm-model-row${expanded ? ' llm-model-row--open' : ''}${index < ENTER_ANIMATED_ROWS ? ' llm-model-row--enter' : ''}`}
-      style={{ '--i': index } as React.CSSProperties}
-    >
+    <li className={`llm-model-row${expanded ? ' llm-model-row--open' : ''}`}>
       <div className="llm-model-row__head">
         <button
           type="button"

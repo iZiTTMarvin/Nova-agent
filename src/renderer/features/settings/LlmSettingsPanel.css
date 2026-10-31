@@ -1,4 +1,4 @@
-/* 模型服务商设置：液态玻璃。极光层只是玻璃折射的素材，内容始终在其上方。 */
+/* 模型服务商设置：轻量彩虹液态玻璃。底层为三色静态环境光晕，卡片通过半透明填充与内高光透出彩光，模糊仅用于模态弹窗。 */
 
 .llm-panel,
 dialog.llm-picker {
@@ -7,16 +7,13 @@ dialog.llm-picker {
   --glass-fill-open: light-dark(rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.075));
   --glass-well: light-dark(rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.045));
   --glass-edge: light-dark(rgba(70, 80, 130, 0.16), rgba(255, 255, 255, 0.1));
-  --glass-ring: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.12));
+  --glass-ring: light-dark(rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.11));
   --glass-shadow:
-    0 12px 32px -16px light-dark(rgba(40, 50, 120, 0.3), rgba(0, 0, 0, 0.7)),
-    0 1px 2px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+    0 10px 26px -14px light-dark(rgba(40, 50, 120, 0.16), rgba(0, 0, 0, 0.55)),
+    0 1px 2px light-dark(rgba(0, 0, 0, 0.03), rgba(0, 0, 0, 0.24));
   --glass-inset:
-    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.16)),
-    inset 0 -1px 0 light-dark(rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.03)),
-    inset 0 0 0 0.5px var(--glass-ring);
-  --glass-blur: blur(18px) saturate(160%);
-  --glass-sheen-color: light-dark(rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.15));
+    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.14));
+  --glass-blur: blur(14px) saturate(140%);
   --llm-ease: var(--ease-out-expo);
 }
 
@@ -25,61 +22,18 @@ dialog.llm-picker {
   isolation: isolate;
 }
 
-/* 极光 */
+/* 彩虹环境底光：保持靛紫、青绿、玫红三色光晕原位透出，单层静态绘制，零逐帧位移重绘 */
 .llm-panel__aurora {
   position: absolute;
   inset: 0;
   z-index: 0;
-  overflow: hidden;
   pointer-events: none;
+  background:
+    radial-gradient(260px circle at 220px 140px, light-dark(rgba(129, 140, 248, 0.38), rgba(99, 102, 241, 0.3)), transparent 100%),
+    radial-gradient(230px circle at calc(100% - 140px) 46%, light-dark(rgba(34, 211, 238, 0.3), rgba(20, 184, 166, 0.2)), transparent 100%),
+    radial-gradient(240px circle at 48% calc(100% - 80px), light-dark(rgba(251, 113, 133, 0.26), rgba(236, 72, 153, 0.15)), transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 75% at 50% 42%, #000 38%, transparent 100%);
   mask-image: radial-gradient(ellipse 80% 75% at 50% 42%, #000 38%, transparent 100%);
-}
-
-.llm-panel__blob {
-  position: absolute;
-  width: 520px;
-  height: 520px;
-  border-radius: 50%;
-  will-change: transform;
-  /* 光斑在玻璃背后，持续移动会让每块玻璃每帧重算模糊；只在交互时漂移，空闲零开销 */
-  animation-play-state: paused;
-}
-
-.llm-panel:hover .llm-panel__blob {
-  animation-play-state: running;
-}
-
-.llm-panel__blob--a {
-  top: -120px;
-  left: -40px;
-  background: radial-gradient(closest-side, light-dark(rgba(129, 140, 248, 0.38), rgba(99, 102, 241, 0.3)), transparent);
-  animation: llm-drift-a 24s ease-in-out infinite alternate;
-}
-
-.llm-panel__blob--b {
-  top: 30%;
-  right: -90px;
-  background: radial-gradient(closest-side, light-dark(rgba(34, 211, 238, 0.3), rgba(20, 184, 166, 0.2)), transparent);
-  animation: llm-drift-b 30s ease-in-out infinite alternate;
-}
-
-.llm-panel__blob--c {
-  bottom: -160px;
-  left: 28%;
-  background: radial-gradient(closest-side, light-dark(rgba(251, 113, 133, 0.26), rgba(236, 72, 153, 0.15)), transparent);
-  animation: llm-drift-c 36s ease-in-out infinite alternate;
-}
-
-@keyframes llm-drift-a {
-  to { transform: translate3d(90px, 60px, 0) scale(1.15); }
-}
-
-@keyframes llm-drift-b {
-  to { transform: translate3d(-110px, 70px, 0) scale(0.9); }
-}
-
-@keyframes llm-drift-c {
-  to { transform: translate3d(70px, -80px, 0) scale(1.1); }
 }
 
 .llm-panel__scroll {
@@ -118,67 +72,25 @@ dialog.llm-picker {
   position: relative;
   border: 0.5px solid var(--glass-edge);
   border-radius: 18px;
-  background: var(--glass-fill);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  background-color: var(--glass-fill);
   box-shadow: var(--glass-shadow), var(--glass-inset);
 }
 
 .llm-row {
-  /* backwards：入场结束后不再锁定 transform，悬停上浮才能生效 */
-  animation: llm-rise 560ms var(--llm-ease) backwards;
-  animation-delay: calc(var(--i, 0) * 50ms);
   transition:
-    background-color 0.3s var(--llm-ease),
-    box-shadow 0.4s var(--llm-ease),
-    transform 0.4s var(--ease-overshoot);
+    background-color 0.18s var(--llm-ease),
+    border-color 0.18s var(--llm-ease),
+    transform 0.18s var(--llm-ease);
 }
 
 .llm-row:not(.llm-row--open):hover {
-  background: var(--glass-fill-hover);
+  background-color: var(--glass-fill-hover);
+  border-color: light-dark(rgba(70, 80, 130, 0.24), rgba(255, 255, 255, 0.16));
   transform: translateY(-1px);
 }
 
 .llm-row--open {
-  background: var(--glass-fill-open);
-}
-
-@keyframes llm-rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px) scale(0.985);
-  }
-}
-
-/* 指针高光 */
-.llm-row__head,
-.llm-add,
-.llm-background {
-  --mx: 50%;
-  --my: 0%;
-  /* 高光伪元素沉到内容之下，悬停时不会洗白文字 */
-  isolation: isolate;
-}
-
-.llm-row__head::before,
-.llm-add::before,
-.llm-background::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  /* --mx/--my 由指针事件写在元素上，渐变必须在此处解析才会跟随 */
-  background: radial-gradient(280px circle at var(--mx) var(--my), var(--glass-sheen-color), transparent 64%);
-  z-index: -1;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.35s var(--llm-ease);
-}
-
-.llm-row__head:hover::before,
-.llm-add:hover::before,
-.llm-background:hover::before {
-  opacity: 1;
+  background-color: var(--glass-fill-open);
 }
 
 .llm-row__head {
@@ -243,21 +155,7 @@ dialog.llm-picker {
 
 .llm-dot--ok {
   background: var(--color-success);
-  box-shadow: none;
-}
-
-.llm-dot--ok::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: var(--color-success);
-  opacity: 0.35;
-  animation: llm-breathe 3.2s ease-in-out infinite;
-}
-
-@keyframes llm-breathe {
-  60%, 100% { transform: scale(2.4); opacity: 0; }
+  box-shadow: 0 0 6px color-mix(in srgb, var(--color-success) 55%, transparent);
 }
 
 .llm-tag {
@@ -265,7 +163,7 @@ dialog.llm-picker {
   padding: 2px 8px;
   border: 0.5px solid var(--glass-edge);
   border-radius: 999px;
-  background: var(--glass-well);
+  background-color: var(--glass-well);
   color: var(--text-secondary);
   font-size: 0.75rem;
   line-height: 1.4;
@@ -273,30 +171,24 @@ dialog.llm-picker {
 
 .llm-tag--current {
   border-color: color-mix(in srgb, var(--color-success) 38%, transparent);
-  background: color-mix(in srgb, var(--color-success) 14%, transparent);
+  background-color: color-mix(in srgb, var(--color-success) 14%, transparent);
   color: light-dark(#15803d, var(--color-success));
 }
 
-/* 保存成功：一道高光扫过整行 */
+/* 保存成功反馈 */
 .llm-row--saved::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background: linear-gradient(
-    105deg,
-    transparent 30%,
-    light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.24)) 50%,
-    transparent 70%
-  );
-  background-size: 260% 100%;
+  background-color: color-mix(in srgb, var(--color-success) 10%, transparent);
   pointer-events: none;
-  animation: llm-saved-sweep 1000ms var(--llm-ease) both;
+  animation: llm-saved-sweep 420ms var(--llm-ease) forwards;
 }
 
 @keyframes llm-saved-sweep {
-  from { background-position: 130% 0; opacity: 1; }
-  to { background-position: -130% 0; opacity: 0; }
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* 新增入口 */
@@ -314,21 +206,21 @@ dialog.llm-picker {
   padding: 14px;
   border: 0.5px dashed color-mix(in srgb, var(--text-muted) 55%, transparent);
   border-radius: 18px;
-  background: transparent;
+  background-color: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: 0.86rem;
   cursor: pointer;
   transition:
-    background-color 0.3s var(--llm-ease),
-    border-color 0.3s var(--llm-ease),
-    color 0.3s var(--llm-ease);
+    background-color 0.18s var(--llm-ease),
+    border-color 0.18s var(--llm-ease),
+    color 0.18s var(--llm-ease);
 }
 
 .llm-add:hover:not(:disabled) {
   border-style: solid;
   border-color: var(--glass-edge);
-  background: var(--glass-fill);
+  background-color: var(--glass-fill);
   color: var(--text-primary);
 }
 
@@ -364,15 +256,15 @@ dialog.llm-picker {
   font-size: 0.75rem;
 }
 
-/* 编辑卡片：高度由网格行展开，避免测量内容高度 */
+/* 编辑卡片：grid-template-rows 从 0fr 到 1fr 平滑展开与收起，不残留 transform 容器 */
 .llm-editor {
   display: grid;
   grid-template-rows: 1fr;
   margin: 0 8px 8px;
   border: 0.5px solid var(--glass-edge);
   border-radius: 10px;
-  background: var(--glass-well);
-  animation: llm-unfold 520ms var(--llm-ease) both;
+  background-color: var(--glass-well);
+  animation: llm-unfold 200ms var(--llm-ease);
 }
 
 @keyframes llm-unfold {
@@ -386,7 +278,7 @@ dialog.llm-picker {
 /* 与 LlmSettingsPanel.tsx 的 FOLD_MS 保持一致 */
 .llm-editor--closing {
   pointer-events: none;
-  animation: llm-fold 320ms var(--llm-ease) both;
+  animation: llm-fold 160ms var(--llm-ease) forwards;
 }
 
 @keyframes llm-fold {
@@ -398,7 +290,6 @@ dialog.llm-picker {
   }
 }
 
-/* 内边距放在 content 上：网格行收到 0 时，容器自身不能带 padding，否则收不到底 */
 .llm-editor__inner {
   min-height: 0;
   overflow: hidden;
@@ -429,7 +320,7 @@ dialog.llm-picker {
 .llm-readonly__value {
   padding: 9px 12px;
   border-radius: 10px;
-  background: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
+  background-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
   color: var(--text-secondary);
   font-family: var(--font-mono);
   font-size: 0.8rem;
@@ -457,7 +348,7 @@ dialog.llm-picker {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: color 0.2s var(--llm-ease);
+  transition: color 0.16s var(--llm-ease);
 }
 
 .llm-advanced__toggle:hover {
@@ -468,13 +359,13 @@ dialog.llm-picker {
   display: grid;
   gap: 6px;
   padding: 10px 0 2px 18px;
-  animation: llm-fade-down 320ms var(--llm-ease) both;
+  animation: llm-fade-down 150ms var(--llm-ease);
 }
 
 @keyframes llm-fade-down {
   from {
     opacity: 0;
-    transform: translateY(-6px);
+    transform: translateY(-3px);
   }
 }
 
@@ -507,7 +398,7 @@ dialog.llm-picker {
 .llm-models__count {
   padding: 1px 8px;
   border-radius: 999px;
-  background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09));
+  background-color: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09));
   color: var(--text-secondary);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
@@ -538,7 +429,7 @@ dialog.llm-picker {
   display: flex;
   align-items: center;
   gap: 8px;
-  animation: llm-fade-down 280ms var(--llm-ease) both;
+  animation: llm-fade-down 150ms var(--llm-ease);
 }
 
 .llm-models__add-row > :first-child {
@@ -572,18 +463,18 @@ dialog.llm-picker {
 .llm-model-row {
   border: 0.5px solid var(--glass-edge);
   border-radius: 10px;
-  background: light-dark(rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.04));
-  transition: background-color 0.25s var(--llm-ease);
+  background-color: light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.04));
+  transition: background-color 0.16s var(--llm-ease);
 }
 
-.llm-model-row--enter {
-  animation: llm-rise 420ms var(--llm-ease) backwards;
-  animation-delay: calc(var(--i, 0) * 30ms);
+.llm-model-row:not(.llm-model-row--open) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 41px;
 }
 
 .llm-model-row:hover,
 .llm-model-row--open {
-  background: light-dark(rgba(255, 255, 255, 0.86), rgba(255, 255, 255, 0.075));
+  background-color: light-dark(rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.075));
 }
 
 .llm-model-row__head {
@@ -645,7 +536,7 @@ dialog.llm-picker {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px 12px;
   padding: 4px 12px 14px;
-  animation: llm-fade-down 320ms var(--llm-ease) both;
+  animation: llm-fade-down 150ms var(--llm-ease);
 }
 
 .llm-model-row__field {
@@ -654,35 +545,29 @@ dialog.llm-picker {
   gap: 6px;
 }
 
-@container (max-width: 480px) {
+@media (max-width: 720px) {
   .llm-model-row__panel {
     grid-template-columns: minmax(0, 1fr);
   }
 }
 
-.llm-editor__inner {
-  container-type: inline-size;
-}
-
-/* 获取可用模型 */
+/* 获取可用模型弹窗：单层背景模糊，避免 ::backdrop 与 dialog 双重离屏模糊 */
 dialog.llm-picker {
   padding: 0;
   border: 0.5px solid var(--glass-edge);
   border-radius: 24px;
-  background: light-dark(rgba(255, 255, 255, 0.6), rgba(28, 28, 34, 0.55));
-  -webkit-backdrop-filter: blur(30px) saturate(190%);
-  backdrop-filter: blur(30px) saturate(190%);
+  background-color: light-dark(rgba(255, 255, 255, 0.84), rgba(28, 28, 34, 0.82));
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   box-shadow:
-    0 36px 90px -24px light-dark(rgba(30, 40, 110, 0.4), rgba(0, 0, 0, 0.85)),
+    0 24px 60px -20px light-dark(rgba(30, 40, 110, 0.32), rgba(0, 0, 0, 0.78)),
     var(--glass-inset);
   color: var(--text-primary);
   overflow: hidden;
 }
 
 dialog.llm-picker::backdrop {
-  background: light-dark(rgba(190, 200, 255, 0.2), rgba(0, 0, 0, 0.48));
-  -webkit-backdrop-filter: blur(6px);
-  backdrop-filter: blur(6px);
+  background: light-dark(rgba(15, 23, 42, 0.22), rgba(0, 0, 0, 0.5));
 }
 
 .llm-picker__body {
@@ -691,7 +576,7 @@ dialog.llm-picker::backdrop {
   display: flex;
   flex-direction: column;
   max-height: min(75vh, 640px);
-  animation: llm-pop 480ms var(--ease-overshoot) both;
+  animation: llm-pop 150ms var(--llm-ease);
 }
 
 .llm-picker__body::before {
@@ -700,15 +585,15 @@ dialog.llm-picker::backdrop {
   inset: 0;
   z-index: -1;
   background:
-    radial-gradient(55% 45% at 0% 0%, light-dark(rgba(129, 140, 248, 0.3), rgba(99, 102, 241, 0.22)), transparent),
-    radial-gradient(50% 45% at 100% 100%, light-dark(rgba(34, 211, 238, 0.24), rgba(20, 184, 166, 0.16)), transparent);
+    radial-gradient(55% 45% at 0% 0%, light-dark(rgba(129, 140, 248, 0.16), rgba(99, 102, 241, 0.12)), transparent),
+    radial-gradient(50% 45% at 100% 100%, light-dark(rgba(34, 211, 238, 0.12), rgba(20, 184, 166, 0.08)), transparent);
   pointer-events: none;
 }
 
 @keyframes llm-pop {
   from {
     opacity: 0;
-    transform: translateY(14px) scale(0.965);
+    transform: translateY(4px);
   }
 }
 
@@ -748,9 +633,9 @@ dialog.llm-picker::backdrop {
   padding: 0 12px;
   border: 0.5px solid var(--glass-edge);
   border-radius: 12px;
-  background: var(--glass-well);
+  background-color: var(--glass-well);
   color: var(--text-placeholder);
-  transition: box-shadow 0.25s var(--llm-ease), border-color 0.25s var(--llm-ease);
+  transition: border-color 0.16s var(--llm-ease);
 }
 
 .llm-picker__search:focus-within {
@@ -777,7 +662,7 @@ dialog.llm-picker::backdrop {
   font: inherit;
   font-size: 0.8rem;
   cursor: pointer;
-  transition: color 0.2s var(--llm-ease);
+  transition: color 0.16s var(--llm-ease);
 }
 
 .llm-picker__link:hover:not(:disabled) {
@@ -808,20 +693,15 @@ dialog.llm-picker::backdrop {
   /* 长列表只渲染可见行 */
   content-visibility: auto;
   contain-intrinsic-size: auto 40px;
-  transition: background-color 0.2s var(--llm-ease);
-}
-
-.llm-picker__row--enter {
-  animation: llm-rise 420ms var(--llm-ease) backwards;
-  animation-delay: calc(var(--i, 0) * 24ms);
+  transition: background-color 0.15s var(--llm-ease);
 }
 
 .llm-picker__row:hover:not(.llm-picker__row--added) {
-  background: var(--glass-fill-hover);
+  background-color: var(--glass-fill-hover);
 }
 
 .llm-picker__row--checked:not(.llm-picker__row--added) {
-  background: light-dark(rgba(99, 102, 241, 0.1), rgba(255, 255, 255, 0.08));
+  background-color: light-dark(rgba(99, 102, 241, 0.1), rgba(255, 255, 255, 0.08));
 }
 
 .llm-picker__row--added {
@@ -842,21 +722,21 @@ dialog.llm-picker::backdrop {
   height: 18px;
   border: 1px solid color-mix(in srgb, var(--text-muted) 60%, transparent);
   border-radius: 6px;
-  background: var(--glass-well);
+  background-color: var(--glass-well);
   color: var(--bg-app);
   transition:
-    background-color 0.25s var(--llm-ease),
-    border-color 0.25s var(--llm-ease);
+    background-color 0.16s var(--llm-ease),
+    border-color 0.16s var(--llm-ease);
 }
 
 .llm-picker__check svg {
   transform: scale(0);
-  transition: transform 0.35s var(--ease-overshoot);
+  transition: transform 0.2s var(--llm-ease);
 }
 
 .llm-picker__input:checked + .llm-picker__check {
   border-color: var(--text-primary);
-  background: var(--text-primary);
+  background-color: var(--text-primary);
 }
 
 .llm-picker__input:checked + .llm-picker__check svg {
@@ -889,7 +769,7 @@ dialog.llm-picker::backdrop {
   margin-left: auto;
   padding: 1px 8px;
   border-radius: 999px;
-  background: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09));
+  background-color: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.09));
   color: var(--text-muted);
   font-size: 0.75rem;
 }
@@ -915,22 +795,7 @@ dialog.llm-picker::backdrop {
   height: 38px;
   margin: 4px 0;
   border-radius: 12px;
-  background:
-    linear-gradient(
-      100deg,
-      transparent 20%,
-      light-dark(rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.12)) 50%,
-      transparent 80%
-    ),
-    light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
-  background-size: 220% 100%, auto;
-  animation: llm-shimmer 1.5s linear infinite;
-  animation-delay: calc(var(--i, 0) * 90ms);
-}
-
-@keyframes llm-shimmer {
-  from { background-position: 130% 0, 0 0; }
-  to { background-position: -130% 0, 0 0; }
+  background-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
 }
 
 .llm-picker__footer {
@@ -941,35 +806,27 @@ dialog.llm-picker::backdrop {
   border-top: 0.5px solid var(--glass-edge);
 }
 
-/* 玻璃按钮：只用半透明填充和内高光，不叠 backdrop-filter。它们都位于已经带模糊的玻璃面内，再叠一层既无视觉收益又增加 GPU 开销 */
+/* 玻璃按钮：只用纯色半透明填充和内高光，不做 background-image 与 box-shadow 过渡 */
 .llm-panel .llm-glass-btn,
 dialog.llm-picker .llm-glass-btn {
   border: 0.5px solid var(--glass-edge);
-  background: light-dark(rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.08));
+  background-color: light-dark(rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.08));
   color: var(--text-primary);
-  box-shadow:
-    inset 0 1px 0 light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.16)),
-    inset 0 0 0 0.5px var(--glass-ring),
-    0 4px 12px -8px light-dark(rgba(40, 50, 120, 0.4), rgba(0, 0, 0, 0.7));
+  box-shadow: var(--glass-inset);
   transition:
-    transform 0.25s var(--ease-overshoot),
-    background-color 0.25s var(--llm-ease),
-    box-shadow 0.3s var(--llm-ease);
+    transform 0.16s var(--llm-ease),
+    background-color 0.16s var(--llm-ease);
 }
 
 .llm-panel .llm-glass-btn:hover:not(:disabled),
 dialog.llm-picker .llm-glass-btn:hover:not(:disabled) {
-  background: light-dark(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.14));
+  background-color: light-dark(rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.13));
   transform: translateY(-1px);
-  box-shadow:
-    inset 0 1px 0 light-dark(#fff, rgba(255, 255, 255, 0.22)),
-    inset 0 0 0 0.5px var(--glass-ring),
-    0 8px 18px -8px light-dark(rgba(40, 50, 120, 0.5), rgba(0, 0, 0, 0.8));
 }
 
 .llm-panel .llm-glass-btn:active:not(:disabled),
 dialog.llm-picker .llm-glass-btn:active:not(:disabled) {
-  transform: translateY(0) scale(0.97);
+  transform: translateY(0) scale(0.98);
 }
 
 .llm-panel .llm-glass-btn--primary,
@@ -978,13 +835,10 @@ dialog.llm-picker .llm-glass-btn--primary {
   background: linear-gradient(
     165deg,
     light-dark(rgba(96, 165, 250, 0.95), rgba(255, 255, 255, 0.92)),
-    light-dark(rgba(59, 130, 246, 0.82), rgba(212, 212, 220, 0.8))
+    light-dark(rgba(59, 130, 246, 0.85), rgba(212, 212, 220, 0.82))
   );
   color: light-dark(#fff, #18181b);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.55),
-    inset 0 0 0 0.5px rgba(255, 255, 255, 0.25),
-    0 8px 18px -8px light-dark(rgba(37, 99, 235, 0.65), rgba(0, 0, 0, 0.7));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 
 .llm-panel .llm-glass-btn--primary:hover:not(:disabled),
@@ -999,7 +853,7 @@ dialog.llm-picker .llm-glass-btn--primary:hover:not(:disabled) {
 .llm-panel .llm-glass-btn:disabled,
 dialog.llm-picker .llm-glass-btn:disabled {
   opacity: 0.5;
-  box-shadow: inset 0 0 0 0.5px var(--glass-ring);
+  box-shadow: none;
 }
 
 /* 折叠箭头 */

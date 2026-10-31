@@ -98,15 +98,11 @@ export function SettingsActions(props: { className?: string; children: ReactNode
   return <div className={cx('settings-field settings-actions', props.className)}>{props.children}</div>
 }
 
-/** 玻璃面板根：自带玻璃变量与折射用的底层光斑，内容放在其上方 */
+/** 玻璃面板根：自带玻璃变量与静态柔和底光，内容放在其上方 */
 export function SettingsGlassPanel(props: { className?: string; children: ReactNode }) {
   return (
     <div className={cx('settings-panel settings-glass settings-glass-panel', props.className)}>
-      <div className="glass-aurora" aria-hidden="true">
-        <span className="glass-aurora__blob glass-aurora__blob--a" />
-        <span className="glass-aurora__blob glass-aurora__blob--b" />
-        <span className="glass-aurora__blob glass-aurora__blob--c" />
-      </div>
+      <div className="glass-aurora" aria-hidden="true" />
       {props.children}
     </div>
   )

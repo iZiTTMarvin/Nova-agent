@@ -294,13 +294,8 @@ button {
 }
 
 @keyframes settings-pane-enter {
-  0% {
-    opacity: 0;
-    transform: scale(0.985) translateY(6px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
+  from {
+    transform: translateY(3px);
   }
 }
 
@@ -315,21 +310,16 @@ button {
 
 @keyframes settings-pane-exit {
   0% {
-    transform: scale(1) translateY(0);
+    transform: translateY(0);
   }
   100% {
-    transform: scale(0.99) translateY(4px);
+    transform: translateY(3px);
   }
 }
 
 @keyframes settings-tab-in {
-  0% {
+  from {
     opacity: 0;
-    transform: translateY(3px);
-  }
-  100% {
-    opacity: 1;
-    transform: translateY(0);
   }
 }
 

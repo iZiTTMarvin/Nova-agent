@@ -1,8 +1,6 @@
 import type { PointerEvent } from 'react'
 
-/** 玻璃高光跟随指针：直接写 CSS 变量，不触发 React 重渲染 */
-export function trackSheen(e: PointerEvent<HTMLElement>): void {
-  const rect = e.currentTarget.getBoundingClientRect()
-  e.currentTarget.style.setProperty('--mx', `${e.clientX - rect.left}px`)
-  e.currentTarget.style.setProperty('--my', `${e.clientY - rect.top}px`)
+/** 玻璃悬停高光已改由纯 CSS 合成器 opacity 驱动，保留空实现以兼容调用方，避免 pointermove 触发同步布局与渐变重绘 */
+export function trackSheen(_e: PointerEvent<HTMLElement>): void {
+  // no-op
 }

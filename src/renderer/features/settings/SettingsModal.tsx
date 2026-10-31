@@ -275,9 +275,7 @@ const SettingsModalSession: React.FC<{
 }> = ({ shellRef, closing, onClose }) => {
   const [section, setSection] = useState<SettingsSection>(readStoredSection)
   const [visited, setVisited] = useState<Set<SettingsSection>>(() => new Set([readStoredSection()]))
-  const [enterActive, setEnterActive] = useState(true)
   const [query, setQuery] = useState('')
-  const firstSectionRef = useRef(true)
   const navRefs = useRef<Partial<Record<SettingsSection, HTMLElement | null>>>({})
   const escapeOwnedByNested = useRef(false)
 
@@ -301,16 +299,6 @@ const SettingsModalSession: React.FC<{
       dialog.removeEventListener('keydown', claimEscape, true)
     }
   }, [shellRef])
-
-  useEffect(() => {
-    if (firstSectionRef.current) {
-      firstSectionRef.current = false
-      return
-    }
-    setEnterActive(false)
-    const frame = requestAnimationFrame(() => setEnterActive(true))
-    return () => cancelAnimationFrame(frame)
-  }, [section])
 
   const selectSection = (id: SettingsSection) => {
     setSection(id)
@@ -476,7 +464,7 @@ const SettingsModalSession: React.FC<{
                 <div
                   key={id}
                   className={
-                    isActive && enterActive
+                    isActive
                       ? 'settings-shell__tab settings-shell__tab--enter'
                       : 'settings-shell__tab'
                   }
@@ -504,4 +492,3 @@ const SettingsModalSession: React.FC<{
     </Dialog>
   )
 }
-

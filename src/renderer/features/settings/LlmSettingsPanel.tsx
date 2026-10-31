@@ -42,7 +42,7 @@ interface EditingState {
 }
 
 /** 与 LlmSettingsPanel.css 中 llm-fold 的时长一致 */
-const FOLD_MS = 320
+const FOLD_MS = 160
 
 function toModelOptionValue(ref: { providerId: string; modelEntryId: string }): string {
   return `${ref.providerId}::${ref.modelEntryId}`
@@ -52,13 +52,6 @@ function toModelOptionValue(ref: { providerId: string; modelEntryId: string }): 
 function describeError(err: unknown, fallback: string): string {
   const raw = err instanceof Error ? err.message : ''
   return raw.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') || fallback
-}
-
-/** 玻璃高光跟随指针：直接写 CSS 变量，不触发 React 重渲染 */
-function trackSheen(e: React.PointerEvent<HTMLElement>): void {
-  const rect = e.currentTarget.getBoundingClientRect()
-  e.currentTarget.style.setProperty('--mx', `${e.clientX - rect.left}px`)
-  e.currentTarget.style.setProperty('--my', `${e.clientY - rect.top}px`)
 }
 
 function draftForRow(row: ProviderRowModel): ProviderConfig {
@@ -236,16 +229,12 @@ export const LlmSettingsPanel: React.FC = () => {
 
   return (
     <div className="settings-panel llm-panel">
-      <div className="llm-panel__aurora" aria-hidden="true">
-        <span className="llm-panel__blob llm-panel__blob--a" />
-        <span className="llm-panel__blob llm-panel__blob--b" />
-        <span className="llm-panel__blob llm-panel__blob--c" />
-      </div>
+      <div className="llm-panel__aurora" aria-hidden="true" />
 
       <div className="llm-panel__scroll">
         <div className="llm-panel__column">
           <ul className="llm-list" aria-label="模型服务商">
-            {rows.map((row, index) => {
+            {rows.map(row => {
               const { provider } = row
               const configured = Boolean(provider?.apiKey.trim() && provider.enabled)
               const isEditing = editing?.rowKey === row.key
@@ -256,14 +245,12 @@ export const LlmSettingsPanel: React.FC = () => {
                 <li
                   key={row.key}
                   className={`llm-row${isEditing && !editing?.closing ? ' llm-row--open' : ''}${savedKey === provider?.id ? ' llm-row--saved' : ''}`}
-                  style={{ '--i': index } as React.CSSProperties}
                   onAnimationEnd={e => {
                     if (e.animationName === 'llm-saved-sweep') setSavedKey(null)
                   }}
                 >
                   <div
                     className="llm-row__head"
-                    onPointerMove={trackSheen}
                     onClick={() => {
                       if (saving) return
                       if (!isEditing) startEdit(row)
@@ -354,7 +341,6 @@ export const LlmSettingsPanel: React.FC = () => {
                   type="button"
                   className="llm-add"
                   onClick={startAddCustom}
-                  onPointerMove={trackSheen}
                   disabled={saving}
                 >
                   <PlusIcon size={14} />
@@ -366,7 +352,7 @@ export const LlmSettingsPanel: React.FC = () => {
 
           {listError && <p className="llm-panel__error" role="alert">{listError}</p>}
 
-          <div className="llm-background" onPointerMove={trackSheen}>
+          <div className="llm-background">
             <div className="llm-background__text">
               <span className="llm-background__label">后台任务模型</span>
               <span className="llm-background__hint">记忆提炼与主题整理</span>

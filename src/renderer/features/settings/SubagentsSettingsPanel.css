@@ -27,7 +27,7 @@
   flex-direction: column;
   gap: 16px;
   min-width: 0;
-  animation: settings-view-enter 220ms var(--ease-out-expo) both;
+  animation: settings-view-enter 150ms var(--ease-out-expo);
 }
 
 .subagents-toolbar {
@@ -150,9 +150,9 @@
 
 .subagent-back button {
   transition:
-    transform 0.2s var(--ease-out-expo),
-    background-color 0.2s var(--glass-ease),
-    color 0.2s var(--glass-ease);
+    transform 0.16s var(--ease-out-expo),
+    background-color 0.16s var(--glass-ease),
+    color 0.16s var(--glass-ease);
 }
 
 .subagent-back button:hover:not(:disabled) {
@@ -265,18 +265,7 @@
   font-size: 0.8rem;
 }
 
-/* 详情卡片错落进入微动效 */
-.subagent-form .settings-card:nth-of-type(1) {
-  animation: settings-view-enter 230ms 25ms var(--ease-out-expo) both;
-}
-.subagent-form .settings-card:nth-of-type(2) {
-  animation: settings-view-enter 250ms 50ms var(--ease-out-expo) both;
-}
-.subagent-form .settings-card:nth-of-type(3) {
-  animation: settings-view-enter 270ms 75ms var(--ease-out-expo) both;
-}
-
-/* 底部悬浮操作条：随滚动停靠在详情底部 */
+/* 底部悬浮操作条：随滚动停靠在详情底部，覆盖内容时提供轻量背景模糊 */
 .subagent-actions {
   position: sticky;
   bottom: 0;
@@ -288,6 +277,9 @@
   margin-top: auto;
   padding: 12px 16px;
   border-radius: 16px;
+  background: light-dark(rgba(255, 255, 255, 0.84), rgba(32, 34, 40, 0.82));
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
 }
 
 .subagent-actions > :last-child {

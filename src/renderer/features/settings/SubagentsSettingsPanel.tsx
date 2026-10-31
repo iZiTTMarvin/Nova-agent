@@ -27,7 +27,7 @@ import {
   type SubagentPresetDraft
 } from './SubagentPresetForm'
 import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage, SettingsSelect } from './settingsKit'
-import { trackSheen } from './glass'
+
 import { SubagentToolGroups, summarizeToolPermission } from './SubagentToolGroups'
 import { CodeIcon, CompassIcon, GitForkIcon, ShieldCheckIcon } from '../../components/Icons'
 import './SubagentsSettingsPanel.css'
@@ -512,7 +512,7 @@ export const SubagentsSettingsPanel: React.FC = () => {
                       <li
                         key={item.id}
                         className={`subagent-tile glass-tile glass-tile--interactive${item.enabled ? '' : ' subagent-tile--off'}`}
-                        onPointerMove={trackSheen}
+
                       >
                         <button
                           type="button"

@@ -6,7 +6,7 @@
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  animation: settings-view-enter 220ms var(--ease-out-expo) both;
+  animation: settings-view-enter 150ms var(--ease-out-expo);
 }
 
 .rules-toolbar {
@@ -44,9 +44,9 @@
   font-size: 0.8rem;
   cursor: pointer;
   transition:
-    background-color 0.25s var(--glass-ease),
-    border-color 0.25s var(--glass-ease),
-    color 0.25s var(--glass-ease);
+    background-color 0.16s var(--glass-ease),
+    border-color 0.16s var(--glass-ease),
+    color 0.16s var(--glass-ease);
 }
 
 .rules-file:hover:not(.glass-chip--accent) {
@@ -66,7 +66,6 @@
   gap: 10px;
   min-height: 0;
   padding: 14px 16px 14px;
-  animation: settings-fade-in 180ms var(--ease-out-expo) both;
 }
 
 .rules-editor__head {
@@ -134,11 +133,11 @@ dialog.rules-create-dialog {
   padding: 22px;
   border: 0.5px solid var(--glass-edge);
   border-radius: 20px;
-  background: light-dark(rgba(255, 255, 255, 0.84), rgba(38, 40, 48, 0.8));
-  -webkit-backdrop-filter: blur(28px) saturate(170%);
-  backdrop-filter: blur(28px) saturate(170%);
+  background: light-dark(rgba(255, 255, 255, 0.86), rgba(38, 40, 48, 0.84));
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
   box-shadow:
-    0 24px 60px -20px light-dark(rgba(30, 40, 100, 0.4), rgba(0, 0, 0, 0.75)),
+    0 20px 48px -16px light-dark(rgba(30, 40, 100, 0.28), rgba(0, 0, 0, 0.7)),
     var(--glass-inset);
 }
 

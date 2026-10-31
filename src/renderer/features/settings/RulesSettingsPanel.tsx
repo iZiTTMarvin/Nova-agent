@@ -198,8 +198,8 @@ export const RulesSettingsPanel: React.FC = () => {
   }
 
   const scopeHint = scope === 'workspace'
-    ? `仅对该项目生效 · ${projectRoot}`
-    : '对所有项目生效 · ~/.nova/rules'
+    ? `仅对该项目生效（${projectRoot}）`
+    : '对所有项目生效（~/.nova/rules）'
 
   return (
     <SettingsGlassPanel className="rules-panel">

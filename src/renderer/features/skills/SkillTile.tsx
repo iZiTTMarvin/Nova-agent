@@ -4,7 +4,6 @@
 import React from 'react'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import type { SkillSummary } from '../../../shared/skills/types'
-import { trackSheen } from '../settings/glass'
 import { skillsI18n } from './i18n'
 import './SkillTile.css'
 
@@ -23,7 +22,7 @@ export const SkillTile: React.FC<SkillTileProps> = ({ skill, onOpen, onUse, onEx
     : skill.descriptionZh || skill.description
 
   return (
-    <li className="skill-tile glass-tile glass-tile--interactive" onPointerMove={trackSheen}>
+    <li className="skill-tile glass-tile glass-tile--interactive">
       <button type="button" className="skill-tile__main" onClick={() => onOpen(skill)}>
         <span className="skill-tile__name">{skill.name}</span>
         <span className={`skill-tile__desc${skill.invalid ? ' skill-tile__desc--invalid' : ''}`}>
