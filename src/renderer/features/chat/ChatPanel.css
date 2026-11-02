@@ -146,6 +146,14 @@
   display: flex;
   flex-direction: column;
   background-color: var(--surface-glass);
+  /* 消息内浮层依赖此处的层叠上下文（原先由 transform 顺带提供） */
+  isolation: isolate;
+}
+
+/* 只有右侧状态面板展开时阅读柱才会平移，也才需要为它建合成层：
+   常驻 translate3d 会让整条消息流成为独立栅格层，折叠改高后右缘会残留旧帧文字。
+   触发条件与 --status-clearance 同源。 */
+.chat-workspace:has(.session-status-rail[data-expanded="true"]) .chat-messages__flow-inner {
   transform: translate3d(calc(-1 * var(--status-shift, 0px)), 0, 0);
 }
 
