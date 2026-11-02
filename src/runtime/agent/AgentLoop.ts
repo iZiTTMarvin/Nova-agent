@@ -48,7 +48,12 @@ import { isToolDirectlyPresented } from '../code-mode'
 import { TurnDispatcher } from './turn'
 import type { AgentTurnRoute, AgentTurnOutcome } from './turn'
 import { getModeInstruction } from './promptBuilder/modeInstruction'
-import { createAgentContext, getEffectiveToolDefinitions, type AgentContext } from './core/AgentContext'
+import {
+  createAgentContext,
+  getBaselineToolDefinitions,
+  getEffectiveToolDefinitions,
+  type AgentContext
+} from './core/AgentContext'
 import { resolveRequestProjectionPolicy } from '../request-projection'
 import { StreamProcessor } from './stream/StreamProcessor'
 import { createSummaryProjection, runAgentLoop, type LoopEndResult } from './core/runAgentLoop'
@@ -250,6 +255,7 @@ export class AgentLoop {
       systemPrompt: config?.systemPrompt ?? '你是 Nova 的编程助手。',
       systemPromptLayers: config?.systemPromptLayers,
       toolSummaryRenderer: config?.toolSummaryRenderer,
+      reuseFrozenSystemPrompt: config?.reuseFrozenSystemPrompt,
       // 不传即不限制：主会话的轮次边界由循环检测兜底，上限只来自显式配置
       maxToolRounds: config?.maxToolRounds ?? null,
       contextWindow: config?.contextWindow,
@@ -307,7 +313,7 @@ export class AgentLoop {
       })
     })
     this.hookManager = new HookManager(eventBus)
-    this.ctx.systemPrompt = this.buildFrozenSystemPrompt()
+    this.ctx.systemPrompt = config?.reuseFrozenSystemPrompt ?? this.buildFrozenSystemPrompt()
 
     if (this.ctx.systemPrompt) {
       this.ctx.messages.push({
@@ -356,7 +362,7 @@ export class AgentLoop {
         modeInstruction: layers.modeInstruction ?? '',
         taskPolicy: layers.taskPolicy ?? '',
         toolSummary: entryCount !== undefined && this.config.toolSummaryRenderer
-          ? this.config.toolSummaryRenderer(getEffectiveToolDefinitions(this.ctx, entryCount))
+          ? this.config.toolSummaryRenderer(getBaselineToolDefinitions(this.ctx, entryCount))
           : layers.toolSummary ?? '',
         memorySnapshot: layers.memorySnapshot ?? ''
       })
@@ -372,6 +378,11 @@ export class AgentLoop {
   /** 返回当前应使用的工具调用方言 */
   getToolDialect(): ToolDialect {
     return this.ctx.dialect
+  }
+
+  /** 返回当前运行模式，供执行期工具披露使用 */
+  getMode(): Mode {
+    return this.ctx.mode
   }
 
   /**
@@ -881,10 +892,7 @@ export class AgentLoop {
     this.compactionService.updateTokenEstimate()
 
     // AgentLoop 装配 kernel 依赖，并在 kernel 返回后统一处理终态。
-    const activeToolCountBeforeBatch = (): number =>
-      this.ctx.toolAvailability ? this.ctx.toolAvailability.getActiveToolNames().length : 0
     const executeBatch = async (toolCalls: ChatToolCall[], mid: string) => {
-      const activeBefore = activeToolCountBeforeBatch()
       const result = await executeToolBatch({
         toolCalls,
         messageId: mid,
@@ -928,11 +936,6 @@ export class AgentLoop {
           ? { assertExecutionCurrent: this.assertExecutionCurrent }
           : {})
       })
-      // 激活扩张下一请求的工具面时显式切 epoch：这一次 shape 变化是可解释的，
-      // 不应作为前缀回归告警；单调扩张后 surface 重新稳定
-      if (activeToolCountBeforeBatch() > activeBefore) {
-        this.bumpCacheEpoch('toolset_change')
-      }
       return result
     }
 

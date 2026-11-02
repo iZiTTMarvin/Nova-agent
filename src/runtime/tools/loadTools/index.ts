@@ -15,10 +15,15 @@ import {
   listLiveDeferredGroupIds
 } from '../catalog'
 
+/** load_tools 结果中完整调用契约段落的稳定标记 */
+export const LOAD_TOOLS_CONTRACT_MARKER = 'tool_group_contract:'
+
 export interface LoadToolsDeps {
   getAvailability: () => ToolAvailability | null
   /** 创建时已完成的注册清单；live 组 enum / 描述的唯一来源 */
   registeredToolNames: readonly string[]
+  /** 由装配层提供的成员调用契约投影；缺省则只披露成员名 */
+  renderActivatedContract?: (memberNames: readonly string[]) => string
 }
 
 export function createLoadToolsTool(deps: LoadToolsDeps): ToolExecutor {
@@ -59,7 +64,8 @@ export function createLoadToolsTool(deps: LoadToolsDeps): ToolExecutor {
         return { success: false, output: '', error: result.error }
       }
 
-      const members = listGroupToolNames(result.group)
+      const registered = new Set(deps.registeredToolNames)
+      const members = listGroupToolNames(result.group).filter(name => registered.has(name))
       const nextActive = availability.getActiveToolNames().length
       console.log(
         formatToolEconomyActivationLog({
@@ -71,20 +77,24 @@ export function createLoadToolsTool(deps: LoadToolsDeps): ToolExecutor {
         })
       )
 
-      const output = result.alreadyActive
+      const lines = result.alreadyActive
         ? [
             `Tool group "${result.group}" is already loaded.`,
             `Members: ${members.join(', ')}`,
             `${LOAD_TOOLS_ACTIVATED_MARKER}${result.group}`
-          ].join('\n')
+          ]
         : [
             `Activated tool group "${result.group}".`,
             `Members: ${members.join(', ')}`,
             `These tools become available on the next model step.`,
             `${LOAD_TOOLS_ACTIVATED_MARKER}${result.group}`
-          ].join('\n')
+          ]
+      const contract = deps.renderActivatedContract?.(members)?.trim() ?? ''
+      if (contract) {
+        lines.push(`${LOAD_TOOLS_CONTRACT_MARKER}${result.group}`, contract)
+      }
 
-      return { success: true, output }
+      return { success: true, output: lines.join('\n') }
     }
   }
 }

@@ -205,6 +205,39 @@ describe('请求体契约快照（改造前基线）', () => {
         tools.map(t => (t.function as { name: string }).name)
       ).toEqual(['ls', 'read', 'grep'])
     })
+
+    it('追加工具后基线锚点 cache_control 逐字节不变', async () => {
+      interceptor = interceptFetch()
+      const client = new OpenAICompatibleModelClient({
+        ...BASE_CONFIG,
+        cacheStrategy: 'anthropic'
+      })
+      const baseline: ToolDefinition[] = STABLE_TOOLS.map((tool, index) =>
+        index === STABLE_TOOLS.length - 1 ? { ...tool, cacheAnchor: true as const } : tool
+      )
+      await drainChat(client, [{ role: 'user', content: '基线' }], baseline)
+      const raw1 = interceptor.rawBody
+      expect(raw1).toBeTruthy()
+      const tools1 = (JSON.parse(raw1!) as { tools: Array<Record<string, unknown>> }).tools
+      expect(tools1.at(-1)?.cache_control).toEqual({ type: 'ephemeral' })
+
+      const appended: ToolDefinition[] = [
+        ...baseline,
+        {
+          name: 'task',
+          description: '委派任务',
+          parameters: { type: 'object', properties: {} }
+        }
+      ]
+      await drainChat(client, [{ role: 'user', content: '追加' }], appended)
+      const raw2 = interceptor.rawBody
+      expect(raw2).toBeTruthy()
+      const tools2 = (JSON.parse(raw2!) as { tools: Array<Record<string, unknown>> }).tools
+      expect(JSON.stringify(tools2.slice(0, tools1.length))).toBe(JSON.stringify(tools1))
+      expect(tools2.at(-1)).not.toHaveProperty('cache_control')
+      const markerCount = JSON.stringify(tools2).split('"cache_control"').length - 1
+      expect(markerCount).toBe(1)
+    })
   })
 
   describe('generic + cacheStrategy=auto：禁止出现缓存/reasoning 相关字段', () => {

@@ -288,6 +288,7 @@ function parseCompactionLedger(value: unknown): CompactionLedger | null {
     updatedAt?: unknown
     revision?: unknown
     budgetAnchor?: unknown
+    activatedToolDisclosure?: unknown
   }
   if ((candidate.version !== 2 && candidate.version !== 3 && candidate.version !== CONTEXT_SNAPSHOT_VERSION) || !Array.isArray(candidate.entries)) return null
 
@@ -328,8 +329,20 @@ function parseCompactionLedger(value: unknown): CompactionLedger | null {
   if (!Number.isSafeInteger(revision) || Number(revision) < 0) return null
   const budgetAnchor = candidate.budgetAnchor === undefined ? undefined : parseRequestBudgetAnchor(candidate.budgetAnchor)
   if (budgetAnchor === null || (budgetAnchor && budgetAnchor.revision !== revision)) return null
-  return { version: CONTEXT_SNAPSHOT_VERSION, entries, state, tailFrom, updatedAt: candidate.updatedAt,
-    revision: Number(revision), ...(budgetAnchor ? { budgetAnchor } : {}) }
+  const activatedToolDisclosure =
+    typeof candidate.activatedToolDisclosure === 'string' && candidate.activatedToolDisclosure.trim()
+      ? candidate.activatedToolDisclosure
+      : undefined
+  return {
+    version: CONTEXT_SNAPSHOT_VERSION,
+    entries,
+    state,
+    tailFrom,
+    updatedAt: candidate.updatedAt,
+    revision: Number(revision),
+    ...(budgetAnchor ? { budgetAnchor } : {}),
+    ...(activatedToolDisclosure ? { activatedToolDisclosure } : {})
+  }
 
 }
 
@@ -1576,7 +1589,10 @@ export class SessionStore {
     if (state === null) {
       delete session.toolAvailability
     } else {
-      session.toolAvailability = { version: 1, activatedGroups: [...state.activatedGroups] }
+      session.toolAvailability = {
+        version: state.version,
+        activatedGroups: [...state.activatedGroups]
+      }
     }
     session.updatedAt = Date.now()
     this.saveMetadata(session)

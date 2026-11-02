@@ -164,6 +164,11 @@ export interface AgentLoopConfig {
   /** 6 层 system prompt（优先于 systemPrompt 字符串） */
   systemPromptLayers?: SystemPromptLayers
   toolSummaryRenderer?: (definitions: import('../model/types').ToolDefinition[]) => string
+  /**
+   * 同一 cache epoch 内复用的冻结 system prompt。
+   * 有值时构造期不再按当前工具面重算 messages[0]。
+   */
+  reuseFrozenSystemPrompt?: string
   /** 本轮捕获的会话权限模式；裸构造测试默认请求批准。 */
   permissionMode?: import('../../shared/session/types').PermissionMode
   /** 能力上限（如只读子代理）；缺省表示无上限。 */

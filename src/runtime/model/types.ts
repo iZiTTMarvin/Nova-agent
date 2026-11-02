@@ -130,6 +130,11 @@ export interface ToolDefinition {
   description: string
   /** JSON Schema 格式的参数定义 */
   parameters: Record<string, unknown>
+  /**
+   * 仅本地投影：Anthropic 工具前缀的稳定 cache_control 锚点。
+   * ModelClient 不会把它写进 function schema，只用来选择 marker 下标。
+   */
+  cacheAnchor?: true
 }
 
 // ── 模型配置 ─────────────────────────────────────────────

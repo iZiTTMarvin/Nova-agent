@@ -68,16 +68,16 @@ describe('ToolAvailability 三态投影', () => {
     expect(providerNames).not.toContain('task')
   })
 
-  it('on：激活后下一投影生效（next-step activation），顺序稳定', () => {
+  it('on：激活后下一投影生效（next-step activation），旧工具是新工具的前缀', () => {
     const availability = createAvailability('on')
+    const before = availability.filterDefinitions(FULL_DEFS).map(def => def.name)
     expect(availability.activate('agent')).toEqual({ ok: true, group: 'agent', alreadyActive: false })
 
     const names = availability.filterDefinitions(FULL_DEFS).map(def => def.name)
     expect(names).toContain('task')
-    // 稳定排序：输入乱序输出仍按名称有序，两次投影一致（无 Map/Set 抖动）
+    expect(names.slice(0, before.length)).toEqual(before)
     const shuffled = [...FULL_DEFS].reverse()
     expect(availability.filterDefinitions(shuffled).map(def => def.name)).toEqual(names)
-    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)))
   })
 
   it('重复激活幂等：already_loaded，不重复记录激活', () => {
@@ -143,13 +143,21 @@ describe('激活态持久化与恢复', () => {
   it('损坏 / 未知版本的持久化字段被忽略，且不阻断后续消息回填', () => {
     const availability = createAvailability('on')
     const corrupt = availability.restoreFromSessionState({
-      version: 2,
+      version: 99,
       activatedGroups: ['agent']
     })
     expect(corrupt.usable).toBe(false)
     expect(corrupt.restoredGroups).toEqual([])
     expect(availability.restoreFromSessionState('corrupt').usable).toBe(false)
     expect(availability.restoreFromSessionState(null).usable).toBe(false)
+    expect(availability.restoreFromSessionState({
+      version: 2,
+      activatedGroups: ['agent', 42]
+    }).usable).toBe(false)
+    expect(availability.restoreFromSessionState({
+      version: 2,
+      activatedGroups: ['agent', '']
+    }).usable).toBe(false)
 
     // 损坏字段视同缺失：消息 marker 回填仍可接管
     const backfill = availability.backfillFromMessages([
@@ -196,22 +204,22 @@ describe('激活态持久化与恢复', () => {
     expect(again.restoredGroups).toEqual(['agent'])
   })
 
-  it('持久化快照：无激活组返回 null，有则按名称排序', () => {
+  it('持久化快照：无激活组返回 null，有则按激活先后写入 v2', () => {
     const availability = createAvailability('on')
     expect(availability.getPersistableState()).toBeNull()
     availability.activate('agent')
     expect(availability.getPersistableState()).toEqual({
-      version: 1,
+      version: 2,
       activatedGroups: ['agent']
     })
   })
 
   it('激活后通过持久化回调通知宿主', () => {
     const availability = createAvailability('on')
-    const persisted: Array<{ version: 1; activatedGroups: readonly string[] }> = []
+    const persisted: Array<{ version: 1 | 2; activatedGroups: readonly string[] }> = []
     availability.setPersistCallback(state => persisted.push(state))
     availability.activate('agent')
-    expect(persisted).toEqual([{ version: 1, activatedGroups: ['agent'] }])
+    expect(persisted).toEqual([{ version: 2, activatedGroups: ['agent'] }])
   })
 })
 
@@ -281,6 +289,23 @@ describe('load_tools 工具', () => {
     expect(second.success).toBe(true)
     expect(second.output).toContain('already loaded')
     expect(second.output).toContain(`${LOAD_TOOLS_ACTIVATED_MARKER}agent`)
+  })
+
+  it('部分成员注册时，成员列表与契约回调都只包含已注册项', async () => {
+    const availability = createAvailability('on')
+    const tool = createLoadToolsTool({
+      getAvailability: () => availability,
+      registeredToolNames: REGISTERED,
+      renderActivatedContract: members => `contract:${members.join(',')}`
+    })
+    const result = await tool.execute(
+      { group: 'agent' },
+      { workingDir: process.cwd(), readState: createReadState() }
+    )
+    expect(result.success).toBe(true)
+    expect(result.output).toContain('Members: task\n')
+    expect(result.output).toContain('contract:task')
+    expect(result.output).not.toContain('task_followup')
   })
 
   it('enum 仅含 live 组；描述不含历史组与预留组', () => {
@@ -359,5 +384,136 @@ describe('Tool Economy 诊断', () => {
     expect(diagnostics.visibleToolCount).toBe(diagnostics.fullToolCount - 1)
     // would-be 指标仍按 on 语义计算，供 shadow 评估对比
     expect(diagnostics.wouldHideTools).toEqual(['task'])
+  })
+})
+
+describe('economy=on 激活顺序与 required pin', () => {
+  const ORDER_DEFS = [
+    ...FULL_DEFS,
+    stubDefinition('browser_open'),
+    stubDefinition('browser_observe')
+  ]
+
+  function availabilityOn(names = ORDER_DEFS.map(def => def.name)): ToolAvailability {
+    const availability = new ToolAvailability()
+    availability.setEconomyMode('on')
+    availability.bindRegisteredToolNames(names)
+    return availability
+  }
+
+  it('economy=off 输出顺序与历史行为一致', () => {
+    const availability = createAvailability('off')
+    expect(availability.filterDefinitions(FULL_DEFS).map(def => def.name)).toEqual(
+      REGISTERED.filter(name => name !== 'load_tools')
+    )
+  })
+
+  it('依次激活 agent → browser 与反向激活均满足旧 tools 是新 tools 的前缀', () => {
+    const forward = availabilityOn()
+    const forward0 = forward.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    forward.activate('agent')
+    const forward1 = forward.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    forward.activate('browser')
+    const forward2 = forward.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    expect(forward1.slice(0, forward0.length)).toEqual(forward0)
+    expect(forward2.slice(0, forward1.length)).toEqual(forward1)
+    expect(forward2.slice(forward1.length)).toEqual(['browser_open', 'browser_observe'])
+
+    const reverse = availabilityOn()
+    reverse.filterDefinitions(ORDER_DEFS)
+    reverse.activate('browser')
+    const reverse1 = reverse.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    reverse.activate('agent')
+    const reverse2 = reverse.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    expect(reverse2.slice(0, reverse1.length)).toEqual(reverse1)
+    expect(reverse2.slice(reverse1.length)).toContain('task')
+    expect(forward2).not.toEqual(reverse2)
+  })
+
+  it('重复激活不重复、不重排', () => {
+    const availability = availabilityOn()
+    availability.activate('browser')
+    availability.activate('agent')
+    const once = availability.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    expect(availability.activate('browser')).toEqual({
+      ok: true,
+      group: 'browser',
+      alreadyActive: true
+    })
+    expect(availability.filterDefinitions(ORDER_DEFS).map(def => def.name)).toEqual(once)
+  })
+
+  it('运行中新增 required pin 纯追加；删除后不再出现在可见面', () => {
+    const availability = availabilityOn()
+    const baseline = availability.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    availability.setRequiredToolNames(['task'])
+    const pinned = availability.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    expect(pinned.slice(0, baseline.length)).toEqual(baseline)
+    expect(pinned.at(-1)).toBe('task')
+    availability.setRequiredToolNames([])
+    expect(availability.filterDefinitions(ORDER_DEFS).map(def => def.name)).toEqual(baseline)
+  })
+
+  it('mode 核心集变化后重建基线，不保留旧模式缺失工具', () => {
+    const availability = availabilityOn()
+    const plan = projectEffectiveToolDefinitions('plan', ORDER_DEFS, availability)
+    expect(plan.map(def => def.name)).not.toContain('write')
+
+    const defaultMode = projectEffectiveToolDefinitions('default', ORDER_DEFS, availability)
+    expect(defaultMode.map(def => def.name)).toContain('write')
+  })
+
+  it('v2 恢复后再次激活只追加', () => {
+    const first = availabilityOn()
+    first.activate('browser')
+    first.activate('agent')
+    const persisted = first.getPersistableState()
+    const restored = availabilityOn()
+    const result = restored.restoreFromSessionState(persisted)
+    expect(result.usable).toBe(true)
+    expect(result.orderMigrated).toBe(false)
+    const before = restored.filterDefinitions(ORDER_DEFS).map(def => def.name)
+    restored.activate('agent')
+    expect(restored.filterDefinitions(ORDER_DEFS).map(def => def.name)).toEqual(before)
+  })
+
+  it('v1 能从成功 load_tools 历史恢复真实顺序', () => {
+    const availability = availabilityOn()
+    const restored = availability.restoreFromSessionState(
+      { version: 1, activatedGroups: ['agent', 'browser'] },
+      [
+        {
+          role: 'assistant',
+          toolCalls: [
+            { id: 'c1', name: 'load_tools', arguments: JSON.stringify({ group: 'browser' }) },
+            { id: 'c2', name: 'load_tools', arguments: JSON.stringify({ group: 'agent' }) }
+          ]
+        },
+        {
+          role: 'tool',
+          toolCallId: 'c1',
+          content: `${LOAD_TOOLS_ACTIVATED_MARKER}browser`
+        },
+        {
+          role: 'tool',
+          toolCallId: 'c2',
+          content: `${LOAD_TOOLS_ACTIVATED_MARKER}agent`
+        }
+      ]
+    )
+    expect(restored.usable).toBe(true)
+    expect(restored.orderMigrated).toBe(false)
+    expect(restored.restoredGroups).toEqual(['browser', 'agent'])
+  })
+
+  it('v1 无法恢复顺序时采用确定性顺序并标记一次性迁移', () => {
+    const availability = availabilityOn()
+    const restored = availability.restoreFromSessionState({
+      version: 1,
+      activatedGroups: ['browser', 'agent']
+    })
+    expect(restored.usable).toBe(true)
+    expect(restored.orderMigrated).toBe(true)
+    expect(restored.restoredGroups).toEqual(['agent', 'browser'])
   })
 })

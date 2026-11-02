@@ -4,7 +4,12 @@ export type { AgentEvent, AgentEventCallback, AgentState, AgentLoopConfig, Syste
 
 // 主进程公共契约：以下符号被 main/ipc 消费，收敛走 barrel 以与 agent 内部布局解耦。
 // 渲染进程不消费本 barrel（含运行时值会破坏 renderer bundle tree-shaking）。
-export { renderModeToolInventory, renderToolInventory } from './promptBuilder/toolPromptRenderer'
+export {
+  renderModeToolInventory,
+  renderToolInventory,
+  renderXmlToolContracts,
+  xmlToolDisclosureCovers
+} from './promptBuilder/toolPromptRenderer'
 export { buildStableSystemPrompt, buildDomainAgentRole, normalizeFrozenSystemPrompt, getStableSystemPrompt } from './promptBuilder/modePrompt'
 export { getHeadlessExecutionInstruction } from './promptBuilder/modeInstruction'
 export type { RecoveryState } from './recovery/RecoveryStateMachine'
@@ -16,7 +21,11 @@ export { estimateTokens, estimateContextTokens, estimateChatMessageTokens } from
 export { discoverProjectRules, discoverProjectRulesFile } from './context/projectRulesDiscovery'
 export { renderBaseRules, renderMinimalEngineeringPolicy } from './promptRenderer'
 export { calculateContextBreakdown } from './context/contextBreakdownCalculator'
-export { projectEffectiveToolDefinitions, applyLedgerToolVisibility } from './core/AgentContext'
+export {
+  projectEffectiveToolDefinitions,
+  projectBaselineToolDefinitions,
+  applyLedgerToolVisibility
+} from './core/AgentContext'
 export {
   listRuleFiles,
   readRuleFile,

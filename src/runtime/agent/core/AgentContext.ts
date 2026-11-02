@@ -121,6 +121,21 @@ export function projectEffectiveToolDefinitions(
   return applyToolPresentation(presentation, availabilityVisible)
 }
 
+/** 稳定基线工具投影：供 system prompt 使用，不含运行中激活的 deferred 组。 */
+export function projectBaselineToolDefinitions(
+  mode: Mode,
+  definitions: readonly ToolDefinition[],
+  availability: ToolAvailability | null | undefined,
+  presentation: ToolPresentationMode = 'direct',
+  capabilityCeiling: PermissionCapabilityCeiling | null = null
+): ToolDefinition[] {
+  const runtimeVisible = getRuntimeVisibleTools(mode, definitions, capabilityCeiling)
+  const availabilityVisible = availability
+    ? availability.filterBaselineDefinitions(runtimeVisible)
+    : runtimeVisible
+  return applyToolPresentation(presentation, availabilityVisible)
+}
+
 /** 账本为空时从工具面拿掉 history_read；装配 toolSummary 必须走同一函数。 */
 export function applyLedgerToolVisibility(
   definitions: ToolDefinition[],
@@ -135,6 +150,19 @@ export function getEffectiveToolDefinitions(context: AgentContext, entryCount = 
   const definitions =
     context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
   const projected = projectEffectiveToolDefinitions(
+    context.mode,
+    definitions,
+    context.toolAvailability,
+    context.toolPresentation,
+    context.permissionCeiling
+  )
+  return applyLedgerToolVisibility(projected, entryCount)
+}
+
+export function getBaselineToolDefinitions(context: AgentContext, entryCount = context.compactionState?.entries.length ?? 0): ToolDefinition[] {
+  const definitions =
+    context.effectiveToolDefinitions?.() ?? context.toolRegistry?.getToolDefinitions() ?? []
+  const projected = projectBaselineToolDefinitions(
     context.mode,
     definitions,
     context.toolAvailability,

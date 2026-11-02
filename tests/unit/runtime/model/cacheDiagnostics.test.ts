@@ -47,6 +47,8 @@ function makeSnapshot(overrides: Partial<WireSnapshot> & {
     messages: msgs,
     exactBodyHash: 'exact-hash',
     bodyBytes: msgs.reduce((s, m) => s + m.bytes, 200),
+    rawBodyHash: '',
+    rawBodyBytes: 0,
     ...rest
   }
 }
@@ -128,6 +130,91 @@ describe('CacheDiagnostics wire 级 first-diff', () => {
     expect(result.prefixDiff?.commonPrefixBytes).toBe(400)
     expect(result.prefixDiff?.invalidatedSuffixBytes).toBe(800 + 1200)
     expect(result.prefixDiff?.estimatedInvalidatedTokens).toBe(Math.ceil(2000 / 4))
+  })
+
+  it('tools 纯追加不告警、不换代', () => {
+    const diag = new CacheDiagnostics()
+    const epoch = diag.getEpochId()
+    diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'tools-a',
+      toolHashes: ['h1', 'h2'],
+      toolsBytes: 80
+    }))
+    const result = diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'tools-b',
+      toolHashes: ['h1', 'h2', 'h3'],
+      toolsBytes: 120,
+      exactBodyHash: 'exact-2'
+    }))
+    expect(result.cacheBreakDetected).toBe(false)
+    expect(result.firstDiffIndex).toBeNull()
+    expect(result.prefixDiff?.toolsDiffKind).toBe('append')
+    expect(diag.getEpochId()).toBe(epoch)
+  })
+
+  it('中间插入、删除、重排、定义改写均检出', () => {
+    const diag = new CacheDiagnostics()
+    diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'base',
+      toolHashes: ['a', 'c']
+    }))
+    const inserted = diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'inserted',
+      toolHashes: ['a', 'b', 'c'],
+      exactBodyHash: 'i'
+    }))
+    expect(inserted.cacheBreakDetected).toBe(true)
+    expect(inserted.firstDiffPart).toBe('tools')
+    expect(inserted.prefixDiff?.toolsDiffKind).toBe('insert')
+
+    diag.bumpEpoch('toolset_change')
+    diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'full',
+      toolHashes: ['a', 'b', 'c']
+    }))
+    const removed = diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'removed',
+      toolHashes: ['a', 'b'],
+      exactBodyHash: 'r'
+    }))
+    expect(removed.prefixDiff?.toolsDiffKind).toBe('remove')
+
+    diag.bumpEpoch('toolset_change')
+    diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'ordered',
+      toolHashes: ['a', 'b', 'c']
+    }))
+    const reordered = diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'reordered',
+      toolHashes: ['c', 'b', 'a'],
+      exactBodyHash: 'o'
+    }))
+    expect(reordered.prefixDiff?.toolsDiffKind).toBe('reorder')
+
+    diag.bumpEpoch('toolset_change')
+    diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'def',
+      toolHashes: ['a', 'b']
+    }))
+    const rewritten = diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'rewritten',
+      toolHashes: ['a', 'x'],
+      exactBodyHash: 'w'
+    }))
+    expect(rewritten.prefixDiff?.toolsDiffKind).toBe('rewrite')
+  })
+
+  it('旧快照缺逐工具信息时不得把 toolsHash 变化当成 append-only', () => {
+    const diag = new CacheDiagnostics()
+    diag.recordWireSnapshot(makeSnapshot({ toolsHash: 'tools-a' }))
+    const result = diag.recordWireSnapshot(makeSnapshot({
+      toolsHash: 'tools-b',
+      toolHashes: ['h1', 'h2', 'h3'],
+      exactBodyHash: 'exact-2'
+    }))
+    expect(result.cacheBreakDetected).toBe(true)
+    expect(result.firstDiffPart).toBe('tools')
+    expect(result.prefixDiff?.toolsDiffKind).toBe('unknown')
   })
 
   it('toolsHash 变化 → firstDiffIndex 为 0，firstDiffPart=tools', () => {

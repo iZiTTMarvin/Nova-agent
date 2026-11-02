@@ -23,7 +23,10 @@ import {
 } from '../runtime/tools/availability'
 import { validateRegisteredToolsAreCataloged } from '../runtime/tools/catalog'
 import { createLoadToolsTool } from '../runtime/tools/loadTools'
-import { applyLedgerToolVisibility, projectEffectiveToolDefinitions } from '../runtime/agent/core/AgentContext'
+import {
+  applyLedgerToolVisibility,
+  projectBaselineToolDefinitions
+} from '../runtime/agent/core/AgentContext'
 import { ArtifactStore } from '../runtime/artifacts/ArtifactStore'
 import { lsTool } from '../runtime/tools/lsTool'
 import { readTool } from '../runtime/tools/readTool'
@@ -204,7 +207,7 @@ async function main(): Promise<void> {
     toolEconomyEnabled ? toolAvailability : null,
     codeGraphController?.queryPort ?? null
   )
-  const definitions = projectEffectiveToolDefinitions(
+  const baselineDefinitions = projectBaselineToolDefinitions(
     'default',
     registry.getToolDefinitions(),
     toolAvailability
@@ -230,7 +233,7 @@ async function main(): Promise<void> {
     ...stablePromptLayers,
     toolSummary: renderModeToolInventory(
       'default',
-      applyLedgerToolVisibility(definitions, 0),
+      applyLedgerToolVisibility(baselineDefinitions, 0),
       { dialect: 'native' }
     )
   }

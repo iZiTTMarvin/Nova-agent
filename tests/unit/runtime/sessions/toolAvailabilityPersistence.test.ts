@@ -14,6 +14,7 @@ import type { SessionMessage } from '../../../../src/runtime/sessions/types'
 import { CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
 import {
   LOAD_TOOLS_ACTIVATED_MARKER,
+  TOOL_AVAILABILITY_PERSIST_VERSION,
   ToolAvailability
 } from '../../../../src/runtime/tools/availability'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
@@ -176,6 +177,66 @@ describe('旧消息 marker 回填（兼容路径）', () => {
     const next = createAvailability()
     next.restoreFromSessionState(new SessionStore(tmpDir).load(session.id)?.toolAvailability)
     expect(next.isToolAvailable('task')).toBe(true)
+  })
+})
+
+describe('激活顺序 v2 往返与 v1 迁移', () => {
+  it('新格式按激活先后写读往返', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    store.updateToolAvailability(session.id, {
+      version: TOOL_AVAILABILITY_PERSIST_VERSION,
+      activatedGroups: ['browser', 'agent']
+    })
+    const loaded = new SessionStore(tmpDir).load(session.id)
+    expect(loaded?.toolAvailability).toEqual({
+      version: 2,
+      activatedGroups: ['browser', 'agent']
+    })
+    const availability = createAvailability()
+    const restored = availability.restoreFromSessionState(loaded?.toolAvailability)
+    expect(restored.restoredGroups).toEqual(['browser', 'agent'])
+    expect(restored.orderMigrated).toBe(false)
+  })
+
+  it('回滚 reader 只接受 version 1，v2 走消息回填且不扩大能力', () => {
+    const store = new SessionStore(tmpDir)
+    const session = store.create('/ws')
+    store.updateToolAvailability(session.id, {
+      version: TOOL_AVAILABILITY_PERSIST_VERSION,
+      activatedGroups: ['agent']
+    })
+    const raw = new SessionStore(tmpDir).load(session.id)?.toolAvailability
+    const legacyParse = (value: unknown): { version: 1; activatedGroups: string[] } | null => {
+      if (!value || typeof value !== 'object') return null
+      const obj = value as { version?: unknown; activatedGroups?: unknown }
+      if (obj.version !== 1 || !Array.isArray(obj.activatedGroups)) return null
+      return { version: 1, activatedGroups: obj.activatedGroups.filter((item): item is string => typeof item === 'string') }
+    }
+    expect(legacyParse(raw)).toBeNull()
+
+    const availability = createAvailability()
+    const backfill = availability.backfillFromMessages([
+      {
+        id: 'm0',
+        parentId: null,
+        role: 'assistant',
+        content: '',
+        toolCalls: [{ id: 'c1', name: 'load_tools', arguments: JSON.stringify({ group: 'agent' }) }],
+        timestamp: Date.now()
+      },
+      {
+        id: 'a',
+        parentId: null,
+        role: 'tool',
+        content: `${LOAD_TOOLS_ACTIVATED_MARKER}agent`,
+        toolCallId: 'c1',
+        timestamp: Date.now()
+      }
+    ])
+    expect(backfill.restoredGroups).toEqual(['agent'])
+    expect(availability.isToolAvailable('task')).toBe(true)
+    expect(availability.isToolAvailable('browser_open')).toBe(false)
   })
 })
 

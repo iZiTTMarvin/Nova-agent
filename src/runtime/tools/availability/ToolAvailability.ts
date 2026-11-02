@@ -12,6 +12,8 @@ import {
   getToolGroup,
   isLoadableToolGroup,
   isKnownToolGroup,
+  listDefinedGroupIds,
+  listGroupToolNames,
   listLiveDeferredGroupIds,
   normalizeGroupAlias
 } from '../catalog'
@@ -24,9 +26,18 @@ export type ToolActivationReason = 'model' | 'required' | 'restored'
 /** load_tools 成功结果中的稳定标记，供旧消息历史回填恢复 */
 export const LOAD_TOOLS_ACTIVATED_MARKER = 'tool_group_activated:'
 
-/** 会话持久化形状（与 SessionData.toolAvailability 字段对齐） */
+/** 当前写入的激活态 schema；主路径只写此版本。 */
+export const TOOL_AVAILABILITY_PERSIST_VERSION = 2 as const
+
+/**
+ * 会话持久化形状（与 SessionData.toolAvailability 字段对齐）。
+ *
+ * 兼容 persist v1：该版本把 activatedGroups 按名称排序后落盘，丢失真实激活顺序。
+ * 读取 v1 时若能从成功的 load_tools 历史重建顺序则沿用；否则用 Catalog 声明顺序
+ * 做一次性迁移。删除条件：现场与夹具不再出现 version:1。
+ */
 export interface ToolAvailabilityPersistState {
-  readonly version: 1
+  readonly version: 1 | typeof TOOL_AVAILABILITY_PERSIST_VERSION
   readonly activatedGroups: readonly string[]
 }
 
@@ -71,14 +82,27 @@ export interface ToolAvailabilityDiagnostics {
 
 const SCHEMA_TOKEN_CHARS = 4
 
+export interface ToolAvailabilityRestoreResult {
+  readonly restoredGroups: readonly string[]
+  readonly usable: boolean
+  /** v1 无法从成功 load_tools 历史恢复真实顺序时，已采用 Catalog 确定性顺序 */
+  readonly orderMigrated: boolean
+}
+
 export class ToolAvailability {
   private economyMode: ToolEconomyMode = 'off'
-  private readonly activatedGroups = new Set<string>()
+  /** 激活先后的唯一真源；不得按名称重排。 */
+  private readonly activatedGroupOrder: string[] = []
   private requiredToolNames: ReadonlySet<string> = new Set()
   /** 装配期绑定的注册清单只读投影，用于判定 live deferred 组 */
   private registeredToolNames: ReadonlySet<string> = new Set()
   /** 已从会话持久态或消息回填初始化，后续消息扫描不再重建状态 */
   private durableRestored = false
+  /**
+   * economy=on 的基线工具名（core + load_tools + 首次投影时 required pin）。
+   * 激活只追加；mode 或注册核心集变化时按当前定义重建基线。
+   */
+  private baselineNames: string[] | null = null
   private readonly activations: ToolEconomyActivationRecord[] = []
   /** 通过执行闸门的 deferred 工具观察集（使用率 / unused activation 判定） */
   private readonly observedDeferredToolCalls = new Set<string>()
@@ -96,6 +120,7 @@ export class ToolAvailability {
   /** 绑定注册清单（装配期一次）；可用性判定全部以此为只读投影 */
   bindRegisteredToolNames(names: Iterable<string>): void {
     this.registeredToolNames = new Set(names)
+    this.baselineNames = null
   }
 
   /**
@@ -107,7 +132,12 @@ export class ToolAvailability {
   }
 
   getActivatedGroups(): ReadonlySet<string> {
-    return this.activatedGroups
+    return new Set(this.activatedGroupOrder)
+  }
+
+  /** 真实激活先后；persist v2 与 wire 追加段共用此顺序。 */
+  getActivatedGroupOrder(): readonly string[] {
+    return this.activatedGroupOrder
   }
 
   setPersistCallback(cb: ((state: ToolAvailabilityPersistState) => void) | null): void {
@@ -155,9 +185,9 @@ export class ToolAvailability {
       }
     }
 
-    const alreadyActive = this.activatedGroups.has(normalized)
+    const alreadyActive = this.activatedGroupOrder.includes(normalized)
     if (!alreadyActive) {
-      this.activatedGroups.add(normalized)
+      this.activatedGroupOrder.push(normalized)
       this.activations.push({ group: normalized, reason, at: Date.now() })
       this.persistActivatedGroups()
     }
@@ -182,19 +212,26 @@ export class ToolAvailability {
   /**
    * 模型可见面投影（mode 过滤之后调用）。
    * off/shadow 返回全量面（隐藏 load_tools 连接器），与历史 wire 一致；
-   * on 返回 core + 激活组成员 + required pin + 连接器（存在 live 组时），按名称稳定排序。
+   * on 返回冻结基线（core + load_tools + 装配期 required pin）再按激活先后追加组成员。
    */
   filterDefinitions<T extends { name: string }>(definitions: readonly T[]): T[] {
     if (this.economyMode !== 'on') {
       return definitions.filter(def => def.name !== 'load_tools')
     }
-    const liveGroups = listLiveDeferredGroupIds(this.registeredToolNames)
-    return definitions
-      .filter(def => {
-        if (def.name === 'load_tools') return liveGroups.length > 0
-        return this.isToolActive(def.name)
-      })
-      .sort((a, b) => a.name.localeCompare(b.name))
+    this.ensureBaselineFrozen(definitions)
+    return this.materializeProjection(definitions, 'full')
+  }
+
+  /**
+   * 稳定基线投影：供 system prompt 使用，不含运行中追加工具。
+   * off/shadow 与 filterDefinitions 相同，保持默认字节。
+   */
+  filterBaselineDefinitions<T extends { name: string }>(definitions: readonly T[]): T[] {
+    if (this.economyMode !== 'on') {
+      return this.filterDefinitions(definitions)
+    }
+    this.ensureBaselineFrozen(definitions)
+    return this.materializeProjection(definitions, 'baseline')
   }
 
   /**
@@ -202,21 +239,30 @@ export class ToolAvailability {
    * 未知版本 / 损坏字段 → usable=false 且不占位 durable 态，由调用方回退消息回填并修复落盘。
    * 已删除的组（历史 web / memory）与预留空组安全忽略，不因历史状态重新出现。
    */
-  restoreFromSessionState(raw: unknown): { restoredGroups: readonly string[]; usable: boolean } {
+  restoreFromSessionState(
+    raw: unknown,
+    messages: readonly ToolGroupMarkerMessage[] = []
+  ): ToolAvailabilityRestoreResult {
+    this.resetActivationState()
     const parsed = parsePersistState(raw)
-    this.activatedGroups.clear()
     if (!parsed) {
-      return { restoredGroups: [], usable: false }
+      return { restoredGroups: [], usable: false, orderMigrated: false }
     }
-    for (const group of parsed.activatedGroups) {
-      const normalized = normalizeGroupAlias(group)
-      if (!isLoadableToolGroup(normalized)) continue
-      if (this.activatedGroups.has(normalized)) continue
-      this.activatedGroups.add(normalized)
-      this.activations.push({ group: normalized, reason: 'restored', at: Date.now() })
+    const persisted = uniqueLoadableGroups(parsed.activatedGroups)
+    let order = persisted
+    let orderMigrated = false
+    if (parsed.version === 1) {
+      const recovered = recoverActivationOrderFromMessages(messages, persisted)
+      if (recovered) {
+        order = recovered
+      } else {
+        order = deterministicGroupOrder(persisted)
+        orderMigrated = persisted.length > 0
+      }
     }
+    this.applyRestoredGroups(order)
     this.durableRestored = true
-    return { restoredGroups: [...this.activatedGroups].sort(), usable: true }
+    return { restoredGroups: [...this.activatedGroupOrder], usable: true, orderMigrated }
   }
 
   /**
@@ -227,47 +273,21 @@ export class ToolAvailability {
     restoredGroups: readonly string[]
   } {
     if (this.durableRestored) {
-      return { restoredGroups: [...this.activatedGroups].sort() }
+      return { restoredGroups: [...this.activatedGroupOrder] }
     }
-    this.activatedGroups.clear()
-    const pendingById = new Map<string, string>()
-
-    for (const message of messages) {
-      if (message.role === 'assistant' && message.toolCalls) {
-        for (const call of message.toolCalls) {
-          if (call.name !== 'load_tools') continue
-          const group = parseLoadToolsGroupArg(call.arguments)
-          if (!group) continue
-          if (call.id) {
-            pendingById.set(call.id, group)
-          }
-          // 无 toolCallId 时无法配对结果，跳过
-        }
-      }
-
-      if (message.role === 'tool' && message.toolCallId) {
-        const group = pendingById.get(message.toolCallId)
-        if (!group) continue
-        pendingById.delete(message.toolCallId)
-        const normalized = normalizeGroupAlias(group)
-        if (messageText(message.content).includes(`${LOAD_TOOLS_ACTIVATED_MARKER}${group}`)) {
-          if (isLoadableToolGroup(normalized) && !this.activatedGroups.has(normalized)) {
-            this.activatedGroups.add(normalized)
-            this.activations.push({ group: normalized, reason: 'restored', at: Date.now() })
-          }
-        }
-      }
-    }
-
-    // 无配对结果的调用：保守起见不激活（避免失败调用污染状态）
+    this.resetActivationState()
+    this.applyRestoredGroups(scanSuccessfulLoadToolsGroups(messages))
     this.durableRestored = true
-    return { restoredGroups: [...this.activatedGroups].sort() }
+    return { restoredGroups: [...this.activatedGroupOrder] }
   }
 
   /** 会话级持久化快照；无激活组时返回 null（调用方省略字段） */
   getPersistableState(): ToolAvailabilityPersistState | null {
-    if (this.activatedGroups.size === 0) return null
-    return { version: 1, activatedGroups: [...this.activatedGroups].sort() }
+    if (this.activatedGroupOrder.length === 0) return null
+    return {
+      version: TOOL_AVAILABILITY_PERSIST_VERSION,
+      activatedGroups: [...this.activatedGroupOrder]
+    }
   }
 
   /** load_tools 连接器描述由 Catalog + 注册清单派生（见 catalog.buildLoadToolsDescription） */
@@ -293,7 +313,7 @@ export class ToolAvailability {
     const wouldMissTools = [...this.observedDeferredToolCalls].filter(
       name => !activeToolNames.has(name)
     )
-    const unusedGroups = [...this.activatedGroups].filter(group =>
+    const unusedGroups = this.activatedGroupOrder.filter(group =>
       deferredRegistered.every(name => getToolGroup(name) !== group ||
         !this.observedDeferredToolCalls.has(name))
     )
@@ -307,7 +327,7 @@ export class ToolAvailability {
       fullToolSchemaChars: fullChars,
       toolSchemaCharReduction: charReduction,
       estimatedToolSchemaTokenReduction: Math.ceil(charReduction / SCHEMA_TOKEN_CHARS),
-      activeGroups: [...this.activatedGroups].sort(),
+      activeGroups: [...this.activatedGroupOrder],
       availableGroups: [...liveGroups],
       activations: [...this.activations],
       loadToolsCallCount: this.loadToolsCallCount,
@@ -321,7 +341,7 @@ export class ToolAvailability {
     if (toolName === 'load_tools') return true
     const group = getToolGroup(toolName)
     if (group === null) return true
-    return this.requiredToolNames.has(toolName) || this.activatedGroups.has(group)
+    return this.requiredToolNames.has(toolName) || this.activatedGroupOrder.includes(group)
   }
 
   /** economy=on 语义下的可见工具名集合（与当前模式无关，shadow 评估复用） */
@@ -338,19 +358,168 @@ export class ToolAvailability {
       // 持久化失败不阻断激活；下一轮装配会从消息回填兜底恢复
     }
   }
+
+  private resetActivationState(): void {
+    this.activatedGroupOrder.length = 0
+    this.activations.length = 0
+    this.baselineNames = null
+  }
+
+  private applyRestoredGroups(groups: readonly string[]): void {
+    for (const group of groups) {
+      const normalized = normalizeGroupAlias(group)
+      if (!isLoadableToolGroup(normalized)) continue
+      if (this.activatedGroupOrder.includes(normalized)) continue
+      this.activatedGroupOrder.push(normalized)
+      this.activations.push({ group: normalized, reason: 'restored', at: Date.now() })
+    }
+  }
+
+  private ensureBaselineFrozen<T extends { name: string }>(definitions: readonly T[]): void {
+    const liveGroups = listLiveDeferredGroupIds(this.registeredToolNames)
+    const pinnedAtBaseline = this.baselineNames === null
+      ? [...this.requiredToolNames]
+      : this.baselineNames.filter(name => getToolGroup(name) !== null)
+    this.baselineNames = definitions
+      .filter(def => {
+        if (def.name === 'load_tools') return liveGroups.length > 0
+        return getToolGroup(def.name) === null || pinnedAtBaseline.includes(def.name)
+      })
+      .map(def => def.name)
+      .sort((a, b) => a.localeCompare(b))
+  }
+
+  private materializeProjection<T extends { name: string }>(
+    definitions: readonly T[],
+    scope: 'baseline' | 'full'
+  ): T[] {
+    const byName = new Map<string, T>()
+    for (const def of definitions) {
+      if (!byName.has(def.name)) byName.set(def.name, def)
+    }
+    const result: T[] = []
+    const seen = new Set<string>()
+    const baseline = this.baselineNames ?? []
+
+    for (const name of baseline) {
+      const def = byName.get(name)
+      if (!def) continue
+      if (!this.isProjectedVisible(def.name)) continue
+      result.push(def)
+      seen.add(name)
+    }
+
+    if (scope === 'full') {
+      for (const group of this.activatedGroupOrder) {
+        for (const name of listGroupToolNames(group)) {
+          if (seen.has(name)) continue
+          const def = byName.get(name)
+          if (!def) continue
+          if (!this.isProjectedVisible(name)) continue
+          result.push(def)
+          seen.add(name)
+        }
+      }
+      for (const name of this.requiredToolNames) {
+        if (seen.has(name)) continue
+        const def = byName.get(name)
+        if (!def) continue
+        if (!this.isProjectedVisible(name)) continue
+        result.push(def)
+        seen.add(name)
+      }
+    }
+
+    return stampCacheAnchor(result, new Set(baseline))
+  }
+
+  private isProjectedVisible(toolName: string): boolean {
+    if (toolName === 'load_tools') {
+      return listLiveDeferredGroupIds(this.registeredToolNames).length > 0
+    }
+    return this.isToolActive(toolName)
+  }
 }
 
 function parsePersistState(raw: unknown): ToolAvailabilityPersistState | null {
   if (raw === null || typeof raw !== 'object') return null
   const obj = raw as { version?: unknown; activatedGroups?: unknown }
-  if (obj.version !== 1) return null
+  if (obj.version !== 1 && obj.version !== TOOL_AVAILABILITY_PERSIST_VERSION) return null
   if (!Array.isArray(obj.activatedGroups)) return null
   const groups: string[] = []
   for (const item of obj.activatedGroups) {
-    if (typeof item !== 'string' || !item.trim()) continue
+    if (typeof item !== 'string' || !item.trim()) return null
     groups.push(item)
   }
-  return { version: 1, activatedGroups: groups }
+  return { version: obj.version, activatedGroups: groups }
+}
+
+function stampCacheAnchor<T extends { name: string }>(tools: T[], baselineNames: ReadonlySet<string>): T[] {
+  if (tools.length === 0 || baselineNames.size === 0) return tools
+  let anchorIndex = -1
+  for (let i = 0; i < tools.length; i++) {
+    if (baselineNames.has(tools[i].name)) anchorIndex = i
+  }
+  if (anchorIndex < 0) return tools
+  return tools.map((tool, index) =>
+    index === anchorIndex ? ({ ...tool, cacheAnchor: true } as T) : tool
+  )
+}
+
+function uniqueLoadableGroups(groups: readonly string[]): string[] {
+  const result: string[] = []
+  for (const group of groups) {
+    const normalized = normalizeGroupAlias(group)
+    if (!isLoadableToolGroup(normalized)) continue
+    if (result.includes(normalized)) continue
+    result.push(normalized)
+  }
+  return result
+}
+
+function deterministicGroupOrder(groups: readonly string[]): string[] {
+  const wanted = new Set(groups)
+  const ordered = listDefinedGroupIds().filter(id => wanted.has(id))
+  for (const group of groups) {
+    if (!ordered.includes(group)) ordered.push(group)
+  }
+  return ordered
+}
+
+function recoverActivationOrderFromMessages(
+  messages: readonly ToolGroupMarkerMessage[],
+  persisted: readonly string[]
+): string[] | null {
+  if (persisted.length === 0) return []
+  const wanted = new Set(persisted)
+  const recovered = scanSuccessfulLoadToolsGroups(messages).filter(group => wanted.has(group))
+  if (recovered.length !== wanted.size) return null
+  return recovered
+}
+
+function scanSuccessfulLoadToolsGroups(messages: readonly ToolGroupMarkerMessage[]): string[] {
+  const pendingById = new Map<string, string>()
+  const groups: string[] = []
+  for (const message of messages) {
+    if (message.role === 'assistant' && message.toolCalls) {
+      for (const call of message.toolCalls) {
+        if (call.name !== 'load_tools') continue
+        const group = parseLoadToolsGroupArg(call.arguments)
+        if (!group) continue
+        if (call.id) pendingById.set(call.id, group)
+      }
+    }
+    if (message.role === 'tool' && message.toolCallId) {
+      const group = pendingById.get(message.toolCallId)
+      if (!group) continue
+      pendingById.delete(message.toolCallId)
+      const normalized = normalizeGroupAlias(group)
+      if (!messageText(message.content).includes(`${LOAD_TOOLS_ACTIVATED_MARKER}${group}`)) continue
+      if (!isLoadableToolGroup(normalized) || groups.includes(normalized)) continue
+      groups.push(normalized)
+    }
+  }
+  return groups
 }
 
 function parseLoadToolsGroupArg(argumentsJson: string): string | null {

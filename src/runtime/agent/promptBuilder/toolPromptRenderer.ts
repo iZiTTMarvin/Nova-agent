@@ -33,6 +33,10 @@ function summarizeParameters(parameters?: ToolDefinition['parameters']): string 
 /** load_tools 连接器可见时附加的按需加载说明；文本冻结，任何字节变化会作废全部会话的前缀缓存。 */
 const LOAD_TOOLS_HINT =
   'Tool groups load on demand: call load_tools to see and activate deferred groups; activated tools join on the next model step.'
+const XML_ACTIVATED_TOOL_RULE =
+  '- `name` must be one of the tools listed below, or a tool later activated by a successful load_tools call whose result included the full calling contract.'
+const XML_ACTIVATED_TOOL_HINT =
+  'load_tools results include the full XML calling contract for newly activated tools; keep using this catalog for baseline tools.'
 
 /** 渲染 native 模式下的简洁工具目录。 */
 function renderNativeInventory(tools: ToolDefinition[]): string {
@@ -106,18 +110,7 @@ function renderXmlToolExample(t: ToolDefinition): string {
 function renderXmlInventory(tools: ToolDefinition[]): string {
   if (tools.length === 0) return ''
 
-  const toolBlocks = tools.map(t => {
-    const parts = [
-      `### ${t.name}`,
-      t.description.trim(),
-      '',
-      '示例调用：',
-      '```xml',
-      renderXmlToolExample(t),
-      '```'
-    ]
-    return parts.join('\n')
-  })
+  const toolBlocks = renderXmlToolContracts(tools)
 
   return [
     '## Tool catalog (XML inband calls)',
@@ -131,16 +124,42 @@ function renderXmlInventory(tools: ToolDefinition[]): string {
     '```',
     '',
     'Rules:',
-    '- `name` must be one of the tools listed below; never call unlisted tools.',
+    tools.some(t => t.name === 'load_tools')
+      ? XML_ACTIVATED_TOOL_RULE
+      : '- `name` must be one of the tools listed below; never call unlisted tools.',
     '- One `<parameter name="...">value</parameter>` per parameter; path arguments such as `filePath` are never omitted.',
     '- String values are plain text, without JSON quotes or escaping.',
     '- Numbers / booleans / arrays / objects are JSON literals.',
     '- Emit calls consecutively; stop after all calls and wait for results.',
     '- Do not output `<tool_response>`; results are returned to you.',
-    ...(tools.some(t => t.name === 'load_tools') ? [LOAD_TOOLS_HINT] : []),
+    ...(tools.some(t => t.name === 'load_tools')
+      ? [LOAD_TOOLS_HINT, XML_ACTIVATED_TOOL_HINT]
+      : []),
     '',
-    ...toolBlocks
+    toolBlocks
   ].join('\n')
+}
+
+/** 已激活工具的 XML 调用契约（不含总目录规则，供 tool_result / 压缩交接追加）。 */
+export function renderXmlToolContracts(tools: readonly ToolDefinition[]): string {
+  if (tools.length === 0) return ''
+  return tools.map(t => {
+    const parts = [
+      `### ${t.name}`,
+      t.description.trim(),
+      '',
+      '示例调用：',
+      '```xml',
+      renderXmlToolExample(t),
+      '```'
+    ]
+    return parts.join('\n')
+  }).join('\n\n')
+}
+
+/** XML 披露语料是否包含这些工具当前的完整调用契约。 */
+export function xmlToolDisclosureCovers(tools: readonly ToolDefinition[], corpus: string): boolean {
+  return tools.every(tool => corpus.includes(renderXmlToolContracts([tool])))
 }
 
 /** 根据方言渲染工具目录。 */

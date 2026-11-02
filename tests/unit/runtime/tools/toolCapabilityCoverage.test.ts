@@ -36,6 +36,7 @@ function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): To
   const registry = new ToolRegistry()
   registerLearningTools(registry)
   registerBuiltinTools(registry, {
+    mode: 'default',
     skillRegistry: {} as SkillRegistry,
     getAgentLoop: () => null,
     getMemoryRetrievalService: () => null,

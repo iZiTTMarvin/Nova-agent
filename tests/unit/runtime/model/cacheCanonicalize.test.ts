@@ -63,16 +63,20 @@ describe('canonicalizeForCacheComparison', () => {
     const msgsN1 = canonN1.messages as unknown[]
     expect(JSON.stringify(msgsN1.slice(0, msgsN.length))).toBe(JSON.stringify(msgsN))
 
-    // tools 段规范化后一致（cache_control 被剥离）
     expect(JSON.stringify(canonN.tools)).toBe(JSON.stringify(canonN1.tools))
+    expect(JSON.stringify(canonN.tools)).toContain('cache_control')
   })
 
-  it('Anthropic 档案：所有 cache_control 被剥离', () => {
+  it('Anthropic 档案：消息 cache_control 被剥离，工具锚点保留', () => {
     const body = buildAnthropicBody()
     const canon = canonicalizeForCacheComparison(body, 'anthropic')
 
     const serialized = JSON.stringify(canon)
-    expect(serialized).not.toContain('cache_control')
+    const messages = JSON.stringify(canon.messages)
+    expect(messages).not.toContain('cache_control')
+    expect(serialized).toContain('cache_control')
+    const tools = canon.tools as Array<Record<string, unknown>>
+    expect(tools[1]?.cache_control).toEqual({ type: 'ephemeral' })
   })
 
   it('Anthropic 档案：非 marker 字段变化时结果不同', () => {

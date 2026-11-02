@@ -13,6 +13,8 @@ import type { ReasoningEffort } from '../../../shared/config/llmRegistry'
 import type { ContextBudgetManager } from '../ContextBudgetManager'
 import { ContextBudgetExceededError, ContextRecoveryFailedError, resolveProductionBudgetLimits } from '../ContextBudgetManager'
 import { getEffectiveToolDefinitions, type AgentContext } from '../core/AgentContext'
+import { renderXmlToolContracts } from '../promptBuilder/toolPromptRenderer'
+import { listGroupToolNames } from '../../tools/catalog'
 import { collectRequiredFacts, completeHandoff } from './handoffValidation'
 import { formatPointerStub } from '../core/renderHandoffPacket'
 import type { SummaryProjection } from '../../request-projection'
@@ -941,6 +943,7 @@ export class CompactionService {
       maxStubTokens
     )
     const anchors = this.getRealityAnchors?.()
+    const activatedToolDisclosure = this.renderActivatedToolDisclosure()
     return {
       version: CONTEXT_SNAPSHOT_VERSION,
       revision: (prev?.revision ?? 0) + 1,
@@ -955,8 +958,21 @@ export class CompactionService {
         revision: (prev?.state?.revision ?? 0) + 1
       },
       tailFrom: parts.cutAt ?? firstTail?.origin ?? null,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      ...(activatedToolDisclosure ? { activatedToolDisclosure } : {})
     }
+  }
+
+  private renderActivatedToolDisclosure(): string | undefined {
+    if (this.context.dialect !== 'xml') return undefined
+    const availability = this.context.toolAvailability
+    if (!availability || availability.getEconomyMode() !== 'on') return undefined
+    const groups = availability.getActivatedGroupOrder()
+    if (groups.length === 0) return undefined
+    const wanted = new Set(groups.flatMap(group => [...listGroupToolNames(group)]))
+    const defs = getEffectiveToolDefinitions(this.context).filter(def => wanted.has(def.name))
+    const contract = renderXmlToolContracts(defs)
+    return contract.trim() ? contract : undefined
   }
 
   private resolveTaskVerbatim(

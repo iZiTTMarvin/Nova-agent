@@ -82,6 +82,7 @@ export interface CapturedRequest {
   index: number
   purpose: NonNullable<ChatOptions['purpose']>
   messageCount: number
+  toolNames: readonly string[]
   usage?: NormalizedUsage
 }
 
@@ -111,7 +112,8 @@ export class CapturingModelClient implements ModelClient {
     this.records.push({
       index: this.records.length + 1,
       purpose: options?.purpose ?? 'main',
-      messageCount: messages.length
+      messageCount: messages.length,
+      toolNames: tools?.map(tool => tool.name) ?? []
     })
     const record = this.records[this.records.length - 1]
     for await (const event of this.inner.chat(messages, tools, options)) {
@@ -128,16 +130,19 @@ export class CapturingModelClient implements ModelClient {
 /** 失败输出：把全部请求的归一化 usage 列成可定位的表格（含哪次请求、哪项指标） */
 export function formatRequestsTable(requests: readonly CapturedRequest[]): string {
   const lines = [
-    'seq  purpose              messages  promptTokens  cacheRead  uncachedInput'
+    'seq  purpose              messages  tools  promptTokens  cacheRead  cacheWrite  uncached  output'
   ]
   for (const r of requests) {
     lines.push(
       `#${String(r.index).padEnd(4)}`
       + `${r.purpose.padEnd(20)}`
       + `${String(r.messageCount).padEnd(9)}`
+      + `${String(r.toolNames.length).padEnd(6)}`
       + `${(r.usage ? String(r.usage.promptTokens) : 'n/a').padEnd(13)}`
       + `${(r.usage ? String(r.usage.cacheReadTokens) : 'n/a').padEnd(10)}`
-      + `${r.usage ? String(r.usage.uncachedInputTokens) : 'n/a'}`
+      + `${(r.usage ? String(r.usage.cacheWriteTokens) : 'n/a').padEnd(12)}`
+      + `${(r.usage ? String(r.usage.uncachedInputTokens) : 'n/a').padEnd(9)}`
+      + `${r.usage ? String(r.usage.outputTokens) : 'n/a'}`
     )
   }
   return lines.join('\n')

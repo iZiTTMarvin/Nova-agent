@@ -31,6 +31,7 @@ import { getToolPermissionDescriptor } from '../../../../src/shared/permissions/
 function buildRegistry(overrides: Partial<BuiltinToolRegistrationDeps> = {}): ToolRegistry {
   const registry = new ToolRegistry()
   registerBuiltinTools(registry, {
+    mode: 'default',
     skillRegistry: {} as SkillRegistry,
     getAgentLoop: () => null,
     getMemoryRetrievalService: () => null,

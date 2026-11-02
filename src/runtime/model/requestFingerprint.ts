@@ -28,6 +28,10 @@ export interface WireSnapshot {
   model: string
   toolsHash: string
   toolsBytes: number
+  /**
+   * 有序逐工具哈希。旧持久化快照缺省，诊断层按“无法确认 append-only”处理。
+   */
+  toolHashes?: string[]
   messages: MessageSegmentFingerprint[]
   /**
    * 规范化后请求体的哈希（16 hex；Anthropic 档案会剥离滚动 cache_control）。
@@ -104,7 +108,8 @@ export function computeWireSnapshot(
   const shareable = canonical === body && memo !== undefined
   const messages = (canonical.messages as Array<Record<string, unknown>> | undefined) ?? []
   const tools = (canonical.tools as Array<Record<string, unknown>> | undefined) ?? []
-  const toolsJson = JSON.stringify(tools)
+  const toolJsons = tools.map(tool => JSON.stringify(tool))
+  const toolsJson = `[${toolJsons.join(',')}]`
   const bodyJson =
     shareable && memo.bodyJson !== undefined
       ? memo.bodyJson
@@ -149,6 +154,7 @@ export function computeWireSnapshot(
     model: typeof canonical.model === 'string' ? canonical.model : '',
     toolsHash: hashString(toolsJson),
     toolsBytes: utf8Bytes(toolsJson),
+    toolHashes: toolJsons.map(json => hashString(json)),
     messages: fingerprints,
     exactBodyHash: exactShared ? memo.exactBodyHash! : hashString(bodyJson),
     bodyBytes: exactShared && memo.bodyBytes !== undefined ? memo.bodyBytes : utf8Bytes(bodyJson),

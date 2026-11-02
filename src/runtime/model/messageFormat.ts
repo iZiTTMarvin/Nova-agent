@@ -3,14 +3,14 @@
  *
  * 由 CacheProfile.marker 驱动是否向消息和工具定义注入 cache_control：
  * - none：不做任何事（OpenAI/DeepSeek 等服务端自动缓存）
- * - cache_control：对 system 消息 + 最后 2 条非 system 消息 + 最后一个工具定义
+ * - cache_control：对 system 消息 + 最后 2 条非 system 消息 + 投影指定的工具锚点
  *   打 cache_control: { type: 'ephemeral' }
  *
  * 标记点设计（参考 OpenClacky + Claude Code）：
  * - system 消息标记：系统提示约 350 tokens，整个会话逐字节不变，首轮写入后后续每轮命中
  * - 消息级双标记（openclacky 验证）：滚动双缓冲，Turn N 标记 [-2] 和 [-1]，
  *   Turn N+1 时 [-2] 仍带标记 → cache_read 命中
- * - 工具级标记最后一个：Anthropic 前缀匹配，最后一个工具标记覆盖所有前面的工具定义
+ * - 工具级标记落在稳定基线锚点：追加 deferred 工具不得移动该 marker，否则会改写既有 tools 前缀
  *
  * 总标记点 = 1(system) + 2(消息) + 1(工具) = 4，刚好在 Anthropic 的 4 断点限制内
  */
@@ -141,17 +141,25 @@ export function applyCacheMarkers(
   })
 }
 
-/** 向工具定义数组的最后一个工具注入 cache_control */
+/**
+ * 向工具定义数组注入 cache_control。
+ * 锚点由有序投影显式指定；未指定时落在最后一项，保持 economy=off 既有行为。
+ */
 export function applyToolCacheMarker(
   apiTools: Record<string, unknown>[],
-  marker: CacheMarker
+  marker: CacheMarker,
+  anchorIndex?: number
 ): Record<string, unknown>[] {
   if (marker !== 'cache_control' || apiTools.length === 0) {
     return apiTools
   }
 
+  const index =
+    anchorIndex !== undefined && anchorIndex >= 0 && anchorIndex < apiTools.length
+      ? anchorIndex
+      : apiTools.length - 1
   const result = apiTools.map(t => ({ ...t }))
-  result[result.length - 1].cache_control = { type: 'ephemeral' }
+  result[index].cache_control = { type: 'ephemeral' }
   return result
 }
 

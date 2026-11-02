@@ -154,6 +154,27 @@ describe('compaction', () => {
       const ledger = makeCompactionLedger({ summary: '冻结 state' })
       expect(renderHandoffPacket(ledger)).toBe(renderHandoffPacket(ledger))
     })
+
+    it('XML 已激活工具契约进入交接包，不改写冻结 prompt 前缀', () => {
+      const disclosure = [
+        '### task',
+        '委派子代理',
+        '',
+        '示例调用：',
+        '```xml',
+        '<invoke name="task"></invoke>',
+        '```'
+      ].join('\n')
+      const ledger = {
+        ...makeCompactionLedger({ summary: '压缩摘要' }),
+        activatedToolDisclosure: disclosure
+      }
+      const packet = renderHandoffPacket(ledger)
+      expect(packet).toContain('<invoke name="task"')
+      const rebuilt = rebuildWithCompression('frozen-baseline-system', ledger, [])
+      expect(String(rebuilt[0].content).startsWith('frozen-baseline-system')).toBe(true)
+      expect(String(rebuilt[0].content)).toContain('<invoke name="task"')
+    })
   })
 
   describe('rollbackBefore', () => {

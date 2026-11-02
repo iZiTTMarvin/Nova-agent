@@ -477,4 +477,9 @@ export interface CompactionLedger {
   state: StateDoc | null
   tailFrom: MessageOrigin | null
   updatedAt: number
+  /**
+   * XML 方言下已激活工具的完整调用说明。
+   * 压缩裁剪 load_tools 历史后仍须让模型能调用这些工具；Native 不写此字段。
+   */
+  activatedToolDisclosure?: string
 }

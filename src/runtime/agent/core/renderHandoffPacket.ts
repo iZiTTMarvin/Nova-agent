@@ -48,6 +48,9 @@ export function renderHandoffPacket(ledger: CompactionLedger): string {
   const verbatim = ledger.state ? renderTaskVerbatim(ledger.state) : null
   if (verbatim) parts.push(verbatim)
   if (ledger.state?.realityLine) parts.push(ledger.state.realityLine)
+  if (ledger.activatedToolDisclosure?.trim()) {
+    parts.push(ledger.activatedToolDisclosure.trim())
+  }
   return parts.join('\n\n')
 }
 

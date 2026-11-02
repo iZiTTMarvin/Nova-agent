@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   renderModeToolInventory,
   renderToolInventory,
-  renderWorkingDirectoryHint
+  renderWorkingDirectoryHint,
+  renderXmlToolContracts,
+  xmlToolDisclosureCovers
 } from '../../../../src/runtime/agent/promptBuilder/toolPromptRenderer'
 import type { ToolDefinition } from '../../../../src/runtime/model/types'
 
@@ -57,8 +59,31 @@ describe('toolPromptRenderer', () => {
       .not.toContain('Tool groups load on demand')
     expect(renderToolInventory(withConnector, { dialect: 'xml' }))
       .toContain('Tool groups load on demand')
+    expect(renderToolInventory(withConnector, { dialect: 'xml' }))
+      .toContain('or a tool later activated by a successful load_tools call')
     expect(renderToolInventory(sampleTools, { dialect: 'xml' }))
       .not.toContain('Tool groups load on demand')
+    expect(renderToolInventory(sampleTools, { dialect: 'xml' }))
+      .toContain('`name` must be one of the tools listed below; never call unlisted tools.')
+  })
+
+  it('xmlToolDisclosureCovers 要求当前完整契约，invoke 字样或旧参数均不足', () => {
+    const tools = [
+      { name: 'task', description: '委派', parameters: { type: 'object', properties: {} } },
+      { name: 'task_followup', description: '追问', parameters: { type: 'object', properties: {} } }
+    ]
+    const corpus = renderXmlToolContracts(tools)
+    expect(xmlToolDisclosureCovers(tools, 'Activated tool group "agent".')).toBe(false)
+    expect(xmlToolDisclosureCovers(
+      tools,
+      tools.map(tool => `<invoke name="${tool.name}"></invoke>`).join('\n')
+    )).toBe(false)
+    expect(xmlToolDisclosureCovers(tools, corpus)).toBe(true)
+    expect(xmlToolDisclosureCovers(
+      [{ ...tools[0], description: '新契约' }],
+      corpus
+    )).toBe(false)
+    expect(xmlToolDisclosureCovers([], 'anything')).toBe(true)
   })
 
   it('Plan 的 XML 工具目录不暴露写入、命令或子代理工具', () => {

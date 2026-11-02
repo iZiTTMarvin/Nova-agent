@@ -141,6 +141,22 @@ describe('messageFormat 缓存标记适配器', () => {
     it('空工具数组返回空数组', () => {
       expect(applyToolCacheMarker([], 'cache_control')).toEqual([])
     })
+
+    it('显式锚点保持在指定下标，不随数组尾部追加移动', () => {
+      const baseline = [
+        { type: 'function', function: { name: 'ls' } },
+        { type: 'function', function: { name: 'read' } }
+      ]
+      const appended = [
+        ...baseline,
+        { type: 'function', function: { name: 'task' } }
+      ]
+      const markedBaseline = applyToolCacheMarker(baseline, 'cache_control', 1)
+      const markedAppended = applyToolCacheMarker(appended, 'cache_control', 1)
+      expect(markedBaseline[1].cache_control).toEqual({ type: 'ephemeral' })
+      expect(JSON.stringify(markedAppended.slice(0, 2))).toBe(JSON.stringify(markedBaseline))
+      expect(markedAppended[2]).not.toHaveProperty('cache_control')
+    })
   })
 
   describe('sanitizeToolMessages 工具调用配对规整', () => {

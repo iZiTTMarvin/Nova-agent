@@ -52,8 +52,13 @@ import {
   getSharedQuickJsCodeRuntime
 } from '../../../runtime/code-mode'
 import type { ToolAvailability } from '../../../runtime/tools/availability'
-import type { AgentLoop } from '../../../runtime/agent'
+import {
+  projectEffectiveToolDefinitions,
+  renderXmlToolContracts,
+  type AgentLoop
+} from '../../../runtime/agent'
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
+import type { Mode } from '../../../shared/session/types'
 import type { MemoryRetrievalService } from '../../../runtime/memory/retrieval/MemoryRetrievalService'
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
@@ -62,6 +67,7 @@ import type { RunCoordinator } from '../../../runtime/run'
 import type { SubagentCatalogEntry } from '../../../shared/subagents'
 
 export interface BuiltinToolRegistrationDeps {
+  mode: Mode
   skillRegistry: SkillRegistry
   /** invoke_skill 执行时惰性读取；工具创建可早于 AgentLoop */
   getAgentLoop: () => AgentLoop | null
@@ -245,7 +251,19 @@ export function registerBuiltinTools(
   toolRegistry.register(
     createLoadToolsTool({
       getAvailability: deps.getToolAvailability ?? (() => null),
-      registeredToolNames: toolRegistry.getToolDefinitions().map(def => def.name)
+      registeredToolNames: toolRegistry.getToolDefinitions().map(def => def.name),
+      renderActivatedContract: memberNames => {
+        if (deps.getAgentLoop()?.getToolDialect() !== 'xml') return ''
+        const wanted = new Set(memberNames)
+        return renderXmlToolContracts(
+          projectEffectiveToolDefinitions(
+            deps.getAgentLoop()?.getMode() ?? deps.mode,
+            toolRegistry.getToolDefinitions(),
+            deps.getToolAvailability?.() ?? null,
+            getProcessToolPresentationMode()
+          ).filter(def => wanted.has(def.name))
+        )
+      }
     })
   )
   toolRegistry.register(

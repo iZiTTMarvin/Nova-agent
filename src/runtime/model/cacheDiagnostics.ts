@@ -23,6 +23,16 @@ export type PrefixDiffPart =
   | 'unknown'
 
 /** 前缀差分诊断（含量级） */
+/** 工具数组相对上一快照的变化种类 */
+export type ToolsDiffKind =
+  | 'unchanged'
+  | 'append'
+  | 'insert'
+  | 'remove'
+  | 'reorder'
+  | 'rewrite'
+  | 'unknown'
+
 export interface PrefixDiffDiagnostic {
   epochId: string
   firstDiffIndex: number | null
@@ -38,6 +48,7 @@ export interface PrefixDiffDiagnostic {
   expectedReuseTokens: number
   /** 请求用途标记（压缩摘要等受控内部调用）；仅识别来源，不豁免告警 */
   purpose?: ChatRequestPurpose
+  toolsDiffKind?: ToolsDiffKind
 }
 
 /** 缓存诊断结果 */
@@ -406,11 +417,13 @@ export function computePrefixDiff(
     }
   }
 
-  if (prev.toolsHash !== curr.toolsHash) {
+  const toolsDiffKind = classifyToolsDiff(prev, curr)
+  if (toolsDiffKind !== 'unchanged' && toolsDiffKind !== 'append') {
     return {
       ...base,
       firstDiffIndex: 0,
       firstDiffPart: 'tools',
+      toolsDiffKind,
       commonPrefixBytes: 0,
       invalidatedSuffixBytes: prev.bodyBytes || sumMessageBytes(prev.messages),
       estimatedInvalidatedTokens: bytesToTokens(prev.bodyBytes || sumMessageBytes(prev.messages)),
@@ -421,7 +434,8 @@ export function computePrefixDiff(
   const prevMsgs = prev.messages
   const currMsgs = curr.messages
   const sharedLen = Math.min(prevMsgs.length, currMsgs.length)
-  let commonPrefixBytes = 0
+  const toolsPrefixBytes = toolsDiffKind === 'append' ? prev.toolsBytes : 0
+  let commonPrefixBytes = toolsPrefixBytes
 
   for (let i = 0; i < sharedLen; i++) {
     if (prevMsgs[i].whole === currMsgs[i].whole) {
@@ -434,6 +448,7 @@ export function computePrefixDiff(
       ...base,
       firstDiffIndex: i,
       firstDiffPart: part,
+      toolsDiffKind,
       commonPrefixBytes,
       invalidatedSuffixBytes,
       estimatedInvalidatedTokens: bytesToTokens(invalidatedSuffixBytes),
@@ -447,6 +462,7 @@ export function computePrefixDiff(
       ...base,
       firstDiffIndex: sharedLen,
       firstDiffPart: 'content',
+      toolsDiffKind,
       commonPrefixBytes,
       invalidatedSuffixBytes,
       estimatedInvalidatedTokens: bytesToTokens(invalidatedSuffixBytes),
@@ -454,16 +470,52 @@ export function computePrefixDiff(
     }
   }
 
-  // 纯追加或完全相同
+  // 纯追加或完全相同（含 tools 尾部追加）
   return {
     ...base,
     firstDiffIndex: null,
     firstDiffPart: null,
+    toolsDiffKind,
     commonPrefixBytes,
     invalidatedSuffixBytes: 0,
     estimatedInvalidatedTokens: 0,
     expectedReuseTokens: bytesToTokens(commonPrefixBytes)
   }
+}
+
+export function classifyToolsDiff(prev: WireSnapshot, curr: WireSnapshot): ToolsDiffKind {
+  if (prev.toolsHash === curr.toolsHash) return 'unchanged'
+  const prevHashes = prev.toolHashes
+  const currHashes = curr.toolHashes
+  if (!prevHashes || !currHashes) return 'unknown'
+  return classifyToolHashes(prevHashes, currHashes)
+}
+
+function classifyToolHashes(prev: readonly string[], curr: readonly string[]): ToolsDiffKind {
+  if (prev.length === curr.length && prev.every((hash, index) => hash === curr[index])) {
+    return 'unchanged'
+  }
+  if (prev.length <= curr.length && prev.every((hash, index) => hash === curr[index])) {
+    return 'append'
+  }
+  if (curr.length < prev.length && curr.every((hash, index) => hash === prev[index])) {
+    return 'remove'
+  }
+  if (prev.length === curr.length) {
+    const sortedPrev = [...prev].sort()
+    const sortedCurr = [...curr].sort()
+    if (sortedPrev.every((hash, index) => hash === sortedCurr[index])) return 'reorder'
+    return 'rewrite'
+  }
+  if (curr.length > prev.length) {
+    let cursor = 0
+    for (const hash of curr) {
+      if (cursor < prev.length && hash === prev[cursor]) cursor++
+    }
+    if (cursor === prev.length) return 'insert'
+    return 'rewrite'
+  }
+  return 'remove'
 }
 
 function locateSegmentDiff(

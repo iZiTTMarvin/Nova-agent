@@ -221,7 +221,12 @@ export class OpenAICompatibleModelClient implements ModelClient {
           parameters: t.parameters
         }
       }))
-      body.tools = applyToolCacheMarker(rawTools, this.cacheMarker)
+      const anchorIndex = tools.findIndex(tool => tool.cacheAnchor === true)
+      body.tools = applyToolCacheMarker(
+        rawTools,
+        this.cacheMarker,
+        anchorIndex >= 0 ? anchorIndex : undefined
+      )
     }
 
     // 白名单：仅 kimi/openai（promptCacheKey==='session'）且 options 有 key、且未禁用时注入

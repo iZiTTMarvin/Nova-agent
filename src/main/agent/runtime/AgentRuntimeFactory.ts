@@ -11,11 +11,15 @@ import {
   estimateTokens,
   discoverProjectRules,
   projectEffectiveToolDefinitions,
+  projectBaselineToolDefinitions,
   applyLedgerToolVisibility,
+  xmlToolDisclosureCovers,
   getSubAgentSpec,
   listSubAgents,
   createAssistantCompletionPolicy
 } from '../../../runtime/agent'
+import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
+import { renderCompactedSystem } from '../../../runtime/agent/core/renderHandoffPacket'
 import { TurnDispatcher } from '../../../runtime/agent/turn'
 import { runSkillFork } from '../../../runtime/skills/runSkillFork'
 import { loadLlmRegistry, loadModelConfig } from '../../../runtime/model/config'
@@ -28,6 +32,8 @@ import { createModelClient } from '../../services/createModelClient'
 import { ModelClientPool } from '../../../runtime/model/ModelClientPool'
 import { ToolRegistry } from '../../../runtime/tools/ToolRegistry'
 import { ToolAvailability, resolveToolEconomyMode } from '../../../runtime/tools/availability'
+import { getToolGroup, listGroupToolNames } from '../../../runtime/tools/catalog'
+import type { ToolDefinition } from '../../../runtime/model/types'
 import {
   getProcessToolPresentationMode,
   renderCodeModeSdkSection,
@@ -47,6 +53,7 @@ import {
 import type { ModelClient } from '../../../runtime/model/ModelClient'
 import {
   getSessionActiveMessages,
+  extractTextFromSerializableContent,
   type SessionData,
   type SessionStore
 } from '../../../runtime/sessions'
@@ -243,6 +250,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   assertLearningModuleAvailable(session.mode)
 
   registerBuiltinTools(toolRegistry, {
+    mode: session.mode,
     skillRegistry,
     getAgentLoop: () => loop,
     getMemoryRetrievalService,
@@ -303,32 +311,33 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   toolAvailability.bindRegisteredToolNames(
     toolRegistry.getToolDefinitions().map(def => def.name)
   )
+  let availabilityOrderMigrated = false
   if (session.toolAvailability !== undefined) {
-    const restored = toolAvailability.restoreFromSessionState(session.toolAvailability)
+    const restored = toolAvailability.restoreFromSessionState(
+      session.toolAvailability,
+      session.messages
+    )
     if (restored.usable) {
+      availabilityOrderMigrated =
+        session.toolAvailability.version === 1 && restored.restoredGroups.length > 0
       if (restored.restoredGroups.length > 0 && toolAvailability.getEconomyMode() !== 'off') {
         console.log(
           `[tool-economy] session-restore groups=${restored.restoredGroups.join(',')} mode=${toolAvailability.getEconomyMode()}`
         )
       }
+      const persistable = toolAvailability.getPersistableState()
+      const persistedVersion = session.toolAvailability.version
+      if (persistedVersion === 1) {
+        sessionStore.updateToolAvailability(sessionId, persistable)
+      }
     } else {
-      // 字段损坏：视同缺失，回退消息回填并修复落盘
-      const backfill = toolAvailability.backfillFromMessages(session.messages)
-      sessionStore.updateToolAvailability(
-        sessionId,
-        backfill.restoredGroups.length > 0
-          ? { version: 1, activatedGroups: [...backfill.restoredGroups] }
-          : null
-      )
+      toolAvailability.backfillFromMessages(session.messages)
+      sessionStore.updateToolAvailability(sessionId, toolAvailability.getPersistableState())
     }
   } else {
-    // 旧会话兼容：消息 marker 回填一次并落盘，此后不再依赖消息扫描
     const { restoredGroups } = toolAvailability.backfillFromMessages(session.messages)
     if (restoredGroups.length > 0) {
-      sessionStore.updateToolAvailability(sessionId, {
-        version: 1,
-        activatedGroups: [...restoredGroups]
-      })
+      sessionStore.updateToolAvailability(sessionId, toolAvailability.getPersistableState())
     }
   }
   toolAvailability.setPersistCallback(state => {
@@ -352,6 +361,16 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   // 呈现模式进程级一次解析（会话内稳定）：code-readonly 时只读探索工具改由 SDK 暴露
   const toolPresentation = getProcessToolPresentationMode()
   const contextSnapshot = sessionStore.loadContextSnapshot(sessionId)
+  const ledgerEntryCount = contextSnapshot?.entries.length ?? 0
+  const baselineToolDefinitions = applyLedgerToolVisibility(
+    projectBaselineToolDefinitions(
+      session.mode,
+      toolRegistry.getToolDefinitions(),
+      toolAvailability,
+      toolPresentation
+    ),
+    ledgerEntryCount
+  )
   const effectiveToolDefinitions = applyLedgerToolVisibility(
     projectEffectiveToolDefinitions(
       session.mode,
@@ -359,7 +378,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
       toolAvailability,
       toolPresentation
     ),
-    contextSnapshot?.entries.length ?? 0
+    ledgerEntryCount
   )
   let sdkSection = ''
   if (toolPresentation === 'code-readonly') {
@@ -379,18 +398,56 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
 
   const toolSummaryRenderer = (definitions: typeof effectiveToolDefinitions) =>
     renderModeToolInventory(session.mode, definitions, { dialect: toolDialect }) + sdkSection
-  const toolSummary = toolSummaryRenderer(effectiveToolDefinitions)
+  const baselineToolSummary = toolSummaryRenderer(baselineToolDefinitions)
+  const effectiveToolSummary = toolSummaryRenderer(effectiveToolDefinitions)
+  const stableToolSummaries = [baselineToolSummary]
+  if (toolAvailability.getEconomyMode() === 'on') {
+    const baselineNames = new Set(baselineToolDefinitions.map(def => def.name))
+    const groups = toolAvailability.getActivatedGroupOrder()
+    for (let count = 1; count <= groups.length; count++) {
+      const allowedGroups = new Set(groups.slice(0, count))
+      const prefixDefinitions = effectiveToolDefinitions.filter(def => {
+        if (baselineNames.has(def.name)) return true
+        const group = getToolGroup(def.name)
+        return group !== null && allowedGroups.has(group)
+      })
+      stableToolSummaries.push(toolSummaryRenderer(prefixDefinitions))
+    }
+  }
+  const baseSystemPromptLayers = {
+    agentRole: promptProfile.agentRole,
+    baseRules: promptProfile.baseRules,
+    projectRules,
+    memoryContext,
+    skillContext: promptProfile.skillContext,
+    taskPolicy: promptProfile.taskPolicy,
+    memorySnapshot: getSessionMemorySnapshotText(session, novaSettings.memoryEnabled)
+  }
+  const stableSystemPrompts = stableToolSummaries.flatMap(toolSummary => {
+    const prompt = SystemPromptBuilder.build({ ...baseSystemPromptLayers, toolSummary })
+    return contextSnapshot ? [prompt, renderCompactedSystem(prompt, contextSnapshot)] : [prompt]
+  })
+  const systemPromptEpoch = needsFrozenSystemPromptEpoch({
+    dialect: toolDialect,
+    availability: toolAvailability,
+    session,
+    ledgerDisclosure: contextSnapshot?.activatedToolDisclosure,
+    effectiveToolDefinitions,
+    stableSystemPrompts
+  })
+  const toolSummary = systemPromptEpoch && toolDialect === 'xml'
+    ? effectiveToolSummary
+    : baselineToolSummary
 
+  const reuseFrozenSystemPrompt =
+    !systemPromptEpoch && typeof session.frozenSystemPrompt === 'string'
+      ? session.frozenSystemPrompt
+      : undefined
   const agentLoop = new AgentLoop(modelPool, eventBus, {
+    ...(reuseFrozenSystemPrompt ? { reuseFrozenSystemPrompt } : {}),
     systemPromptLayers: {
-      agentRole: promptProfile.agentRole,
-      baseRules: promptProfile.baseRules,
-      projectRules,
-      memoryContext,
-      skillContext: promptProfile.skillContext,
-      taskPolicy: promptProfile.taskPolicy,
-      toolSummary,
-      memorySnapshot: getSessionMemorySnapshotText(session, novaSettings.memoryEnabled)
+      ...baseSystemPromptLayers,
+      toolSummary
     },
     toolSummaryRenderer,
     skillsTokenEstimate,
@@ -532,6 +589,9 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   if (prevDiagState) {
     agentLoop.restoreDiagnosticPersistState(prevDiagState)
   }
+  if (availabilityOrderMigrated || systemPromptEpoch) {
+    agentLoop.bumpCacheEpoch(availabilityOrderMigrated ? 'session_init' : 'toolset_change')
+  }
   agentLoop.setDiagnosticPersistCallback((state) => {
     saveDiagnosticState(sessionsDir, sessionId, state)
   })
@@ -584,4 +644,34 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     setAskQuestionHandler: (handler) => agentLoop.setAskQuestionHandler(handler),
     toolAuthorizationPolicy
   }
+}
+
+function needsFrozenSystemPromptEpoch(input: {
+  dialect: ReturnType<typeof preferredToolDialect>
+  availability: ToolAvailability
+  session: SessionData
+  ledgerDisclosure: string | undefined
+  effectiveToolDefinitions: readonly ToolDefinition[]
+  stableSystemPrompts: readonly string[]
+}): boolean {
+  const frozen = input.session.frozenSystemPrompt
+  if (frozen !== undefined) {
+    const hasXmlCatalog = frozen.includes('## Tool catalog (XML inband calls)')
+    if ((input.dialect === 'xml') !== hasXmlCatalog) return true
+    if (!input.stableSystemPrompts.includes(frozen)) return true
+  }
+  if (input.dialect !== 'xml' || input.availability.getEconomyMode() !== 'on') return false
+
+  const groups = input.availability.getActivatedGroupOrder()
+  if (groups.length === 0) return false
+  const wanted = new Set(groups.flatMap(group => [...listGroupToolNames(group)]))
+  const activatedDefinitions = input.effectiveToolDefinitions.filter(def => wanted.has(def.name))
+  const corpus = [
+    frozen ?? '',
+    input.ledgerDisclosure ?? '',
+    ...getSessionActiveMessages(input.session).map(message =>
+      message.role === 'tool' ? extractTextFromSerializableContent(message.content) : ''
+    )
+  ].join('\n')
+  return !xmlToolDisclosureCovers(activatedDefinitions, corpus)
 }
