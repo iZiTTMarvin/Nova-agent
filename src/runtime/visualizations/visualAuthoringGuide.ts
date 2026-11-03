@@ -18,6 +18,7 @@ Layout
 - The card header already shows the title: start with the figure or a tab row.
 - One idea per visual: at most one control row, one .viz-canvas and one .viz-inspector. Don't nest bordered boxes; put a .viz-grid, .viz-lanes, SVG or .viz-table directly in the canvas. Cards and cells hold one short phrase (~12–20 chars); explanations, rules and file:line lists go in the .viz-inspector, updated on click.
 - Flat: 1px var(--viz-border) borders, no shadows or gradients; var(--viz-accent) only marks the selected item; status pills are .viz-badge with data-tone="success" | "warning" | "danger".
+- Typography: body and control text 14px, titles 16px, supporting text and SVG labels at least 12px after scaling. Buttons at least 36px tall and native checkboxes/radios 18px. Never shrink text or targets to fit; wrap, simplify or move detail into the inspector.
 
 Archetypes (flows, lifecycles and layered architecture use the inline Flow, Walkthrough or Architecture widget instead)
 1. Dependency audit: optional .viz-kpis row of 2–3 .viz-card items with .viz-stat, a 2-column .viz-grid of .viz-card items (.viz-card-head with name + .viz-badge, one-line role and version in .viz-muted), and a .viz-inspector with the selected item's reason, .viz-file-ref and follow-up button.

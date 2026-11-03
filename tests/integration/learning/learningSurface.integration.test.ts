@@ -575,4 +575,98 @@ describe('learning surface projection', () => {
 
     await harness.close()
   })
+
+  it('两个会话交错完成大量答题后，问题、回答与评估仍各自归属且重开一致', async () => {
+    const { harness, workspace } = await openHarness()
+    const sessionIds = ['sess-heavy-a', 'sess-heavy-b'] as const
+    const questionCount = 100
+    const cursors = new Map<string, number>(sessionIds.map(sessionId => [sessionId, 0]))
+
+    for (let index = 0; index < questionCount; index++) {
+      for (const sessionId of sessionIds) {
+        const checkpointId = `ckpt-${sessionId}-${index}`
+        const commandId = `cmd-${sessionId}-${index}`
+        const cursorVersion = cursors.get(sessionId)!
+        await harness.progress.saveCheckpoint({
+          workspaceRoot: workspace,
+          sessionId,
+          runId: `run-${sessionId}-${index}`,
+          checkpointId,
+          cursorVersion,
+          question: `问题-${sessionId}-${index}`,
+          rubricJson: JSON.stringify({
+            targetClaim: `目标-${sessionId}-${index}`,
+            knowledgeRevision: null,
+            verificationMethod: 'open_answer',
+            criteria: '回答对应当前题目'
+          })
+        })
+        const answer = await harness.progress.applyCommand({
+          commandId,
+          sessionId,
+          expectedClearGeneration: 0,
+          expectedCursorVersion: cursorVersion + 1,
+          action: {
+            type: 'answer',
+            checkpointId,
+            text: `回答-${sessionId}-${index}`,
+            optionIds: []
+          }
+        })
+        expect(answer.ok).toBe(true)
+        const outbox = await harness.progress.getPendingOutbox(sessionId, commandId)
+        const attemptId = (JSON.parse(outbox!.payload_json) as { attemptId: string }).attemptId
+        await harness.progress.submitAssessment({
+          workspaceRoot: workspace,
+          sessionId,
+          runId: `assess-${sessionId}-${index}`,
+          cursorVersion: cursorVersion + 2,
+          submissionJson: JSON.stringify({
+            attemptId,
+            checkpointId,
+            verdict: index % 2 === 0 ? 'understanding_observed' : 'needs_clarification',
+            summary: `评估-${sessionId}-${index}`,
+            factReferences: []
+          })
+        })
+        await harness.progress.markOutboxDelivered(commandId)
+        cursors.set(sessionId, cursorVersion + 3)
+      }
+    }
+
+    const expectIsolatedSurface = async (
+      progress: Awaited<ReturnType<typeof createLearningDbHarness>>['progress'],
+      sessionId: string
+    ): Promise<void> => {
+      const surface = await progress.getSurface(workspace, sessionId)
+      expect(surface.cursorVersion).toBe(questionCount * 3)
+      expect(surface.questions).toHaveLength(questionCount)
+      for (let index = 0; index < questionCount; index++) {
+        expect(surface.questions[index]).toMatchObject({
+          checkpointId: `ckpt-${sessionId}-${index}`,
+          question: `问题-${sessionId}-${index}`,
+          state: 'answered',
+          assessment: {
+            verdict: index % 2 === 0 ? 'understanding_observed' : 'needs_clarification',
+            summary: `评估-${sessionId}-${index}`,
+            disputed: false
+          }
+        })
+      }
+      const context = await progress.getLearningContext({ workspaceRoot: workspace, sessionId, page: 0 }) as {
+        attempt: { answer: string } | null
+      }
+      expect(context.attempt?.answer).toBe(`回答-${sessionId}-${questionCount - 1}`)
+    }
+
+    for (const sessionId of sessionIds) await expectIsolatedSurface(harness.progress, sessionId)
+    await harness.close()
+
+    const reopened = await createLearningDbHarness(join(tempDir, 'learning.db'))
+    try {
+      for (const sessionId of sessionIds) await expectIsolatedSurface(reopened.progress, sessionId)
+    } finally {
+      await reopened.close()
+    }
+  }, 30_000)
 })

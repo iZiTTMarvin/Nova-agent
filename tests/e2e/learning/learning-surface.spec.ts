@@ -524,6 +524,102 @@ test.describe('学习表面主路径', () => {
     })
   }
 
+  test('学习可视化在内联与展开视图保持可读尺寸', async ({ nova }, testInfo) => {
+    test.setTimeout(120_000)
+    await nova.page.setViewportSize({ width: 1280, height: 860 })
+    const sessionId = await createLearnSession(nova)
+    const html = `<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"></head>
+<body>
+  <div class="viz-workbench">
+    <div class="viz-toolbar">
+      <span class="viz-title">请求处理状态</span>
+      <span class="viz-badge" data-tone="success">已完成</span>
+    </div>
+    <div class="viz-card">
+      <p class="viz-note">主进程已经确认写入，界面可以展示最终结果。</p>
+      <div class="viz-controls">
+        <label><input id="completion" type="checkbox"> 我已理解这一步</label>
+        <button id="explore" class="viz-btn viz-btn-primary" type="button">深入讲讲</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    document.getElementById('explore').addEventListener('click', function () {
+      nova.emit('explore', { label: '请求处理', prompt: '深入讲讲' });
+    });
+  </script>
+</body>
+</html>`
+    nova.provider.enqueue(
+      {
+        kind: 'tool',
+        name: 'present_visualization',
+        arguments: { title: '学习状态与操作', html },
+        callId: 'call_readability_viz'
+      },
+      { kind: 'text', text: 'READABILITY_VIZ_SHOWN' }
+    )
+    await sendLearningPrompt(nova, '画出请求处理状态')
+    await expect(nova.page.getByText('READABILITY_VIZ_SHOWN', { exact: false })).toBeVisible()
+    await waitLearnTurnSettled(nova, sessionId)
+
+    const card = nova.page.getByTestId('visualization-card')
+    await expect(card).toHaveAttribute('data-state', 'ok')
+    const inlineFrame = await contentFrameOf(await settledFrame(card))
+    await expect(inlineFrame.getByText('主进程已经确认写入，界面可以展示最终结果。')).toBeVisible()
+
+    const screenshotDir = path.resolve(__dirname, '../../../test-results/e2e/learning-readability')
+    await mkdir(screenshotDir, { recursive: true })
+    const capture = async (name: string): Promise<void> => {
+      const file = path.join(screenshotDir, `${name}.png`)
+      await nova.page.screenshot({ path: file, animations: 'disabled' })
+      await testInfo.attach(`${name}.png`, { path: file, contentType: 'image/png' })
+    }
+    const expectReadable = async (frame: Frame): Promise<void> => {
+      const metrics = await frame.evaluate(() => {
+        const fontSize = (selector: string): number => {
+          const element = document.querySelector(selector)
+          if (!element) throw new Error(`缺少可读性测量元素 ${selector}`)
+          return Number.parseFloat(getComputedStyle(element).fontSize)
+        }
+        const button = document.querySelector('.viz-btn')!.getBoundingClientRect()
+        const checkbox = document.querySelector('input[type="checkbox"]')!.getBoundingClientRect()
+        return {
+          body: Number.parseFloat(getComputedStyle(document.body).fontSize),
+          note: fontSize('.viz-note'),
+          badge: fontSize('.viz-badge'),
+          buttonFont: fontSize('.viz-btn'),
+          buttonHeight: button.height,
+          checkboxWidth: checkbox.width,
+          checkboxHeight: checkbox.height
+        }
+      })
+      expect(metrics.body).toBeGreaterThanOrEqual(14)
+      expect(metrics.note).toBeGreaterThanOrEqual(14)
+      expect(metrics.badge).toBeGreaterThanOrEqual(12)
+      expect(metrics.buttonFont).toBeGreaterThanOrEqual(14)
+      expect(metrics.buttonHeight).toBeGreaterThanOrEqual(36)
+      expect(metrics.checkboxWidth).toBeGreaterThanOrEqual(18)
+      expect(metrics.checkboxHeight).toBeGreaterThanOrEqual(18)
+    }
+
+    await capture('inline-before')
+    await expectReadable(inlineFrame)
+    await inlineFrame.getByLabel('我已理解这一步').check()
+    await expect(inlineFrame.locator('#completion')).toBeChecked()
+
+    await card.getByRole('button', { name: '展开' }).click()
+    const dialog = nova.page.getByRole('dialog', { name: '学习状态与操作' })
+    await expect(dialog).toBeVisible()
+    const modalFrame = await contentFrameOf(dialog.getByTestId('visualization-frame'))
+    await expect(modalFrame.locator('.viz-title')).toHaveText('请求处理状态')
+    await expectReadable(modalFrame)
+    await capture('expanded-after')
+    expect(nova.pageErrors).toEqual([])
+  })
+
   test('学习会话里的可视化点击进入学习对话，答题期间只提示不发送', async ({ nova }) => {
     test.setTimeout(150_000)
     const sessionId = await createLearnSession(nova)
@@ -802,7 +898,7 @@ test.describe('学习表面主路径', () => {
     expect(nova.pageErrors).toEqual([])
   })
 
-  test('学习输入框对齐开发体验：发送即刻清空草稿并上屏用户气泡、支持 MiniMax-M2.7 思考强度与 16 步阶段泳道沙盘', async ({
+  test('学习输入框对齐开发体验：发送即刻清空草稿并上屏用户气泡、支持 MiniMax-M3.1-Flash 思考强度与 16 步阶段泳道沙盘', async ({
     nova
   }, testInfo) => {
     test.setTimeout(180_000)
@@ -810,7 +906,7 @@ test.describe('学习表面主路径', () => {
     const screenshotDir = path.resolve(__dirname, '../../../test-results/e2e/intelligent-ui')
     await mkdir(screenshotDir, { recursive: true })
 
-    // 切换模型为 MiniMax-M2.7，验证学习模式下思考强度控件与上下文用量指示器正常显示
+    // 切换模型为 MiniMax-M3.1-Flash，验证学习模式下思考强度控件与上下文用量指示器正常显示
     await nova.invoke('save-llm-registry', {
       version: 2,
       providers: [
@@ -820,7 +916,7 @@ test.describe('学习表面主路径', () => {
           baseUrl: nova.provider.baseUrl,
           apiKey: 'nova-e2e-key',
           enabled: true,
-          models: [{ id: 'minimax-m27', modelId: 'MiniMax-M2.7', displayName: 'MiniMax-M2.7' }]
+          models: [{ id: 'minimax-m27', modelId: 'MiniMax-M3.1-Flash', displayName: 'MiniMax-M3.1-Flash' }]
         }
       ],
       activeModel: { providerId: 'effort-provider', modelEntryId: 'minimax-m27' }
@@ -829,7 +925,7 @@ test.describe('学习表面主路径', () => {
     const sessionId = await createLearnSession(nova)
 
     const main = learningMain(nova)
-    await expect(main.getByRole('button', { name: '思考强度：High' })).toBeVisible()
+    await expect(main.getByRole('button', { name: '思考强度：Max' })).toBeVisible()
     await expect(main.getByRole('button', { name: /上下文容量/ })).toBeVisible()
     await expect(main.getByRole('button', { name: /工作区：/ })).toBeVisible()
 
@@ -1113,7 +1209,7 @@ test.describe('学习表面主路径', () => {
     await expect(inlineFrame.locator('#detailTitle')).toHaveText('11. 沙箱执行工具')
     expect(nova.provider.requests).toHaveLength(requestsBeforeLocalInteract)
 
-    // 留存内联视图截图（包含底部对齐开发模式的 Composer、MiniMax-M2.7 思考强度、上下文指示器与 16 步阶段泳道沙盘）
+    // 留存内联视图截图（包含底部对齐开发模式的 Composer、MiniMax-M3.1-Flash 思考强度、上下文指示器与 16 步阶段泳道沙盘）
     const inlineShotPath = path.join(screenshotDir, 'intelligent-ui-1-learning-composer-and-inline-16step.png')
     await nova.page.screenshot({ path: inlineShotPath, animations: 'disabled' })
     await testInfo.attach('intelligent-ui-1-learning-composer-and-inline-16step.png', {
