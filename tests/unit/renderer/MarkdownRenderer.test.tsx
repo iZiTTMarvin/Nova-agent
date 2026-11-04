@@ -270,3 +270,27 @@ describe('MarkdownRenderer mermaid 围栏路由', () => {
     tree.unmount()
   })
 })
+
+describe('MarkdownRenderer 表格行内代码中的竖线', () => {
+  const TABLE = [
+    '| 模块 | 要点 |',
+    '| --- | --- |',
+    '| 安全网关 | 拦截 `rm -rf` / `curl | sh`，弹窗确认 |',
+    '| 转义 | `a \\| b` 与 `x | y` |',
+    '',
+    '正文 `p | q` 不在表格里'
+  ].join('\n')
+
+  it.each([false, true])('isStreaming=%s 时代码段内的竖线不切列，原样显示', (isStreaming) => {
+    const renderer = renderDom(<MarkdownRenderer content={TABLE} isStreaming={isStreaming} />)
+    const rows = Array.from(renderer.container.querySelectorAll('tr'))
+    expect(rows).toHaveLength(3)
+    for (const row of rows) {
+      expect(row.querySelectorAll('th, td')).toHaveLength(2)
+    }
+    const codes = Array.from(renderer.container.querySelectorAll('code')).map(node => node.textContent)
+    expect(codes).toEqual(expect.arrayContaining(['curl | sh', 'a | b', 'x | y', 'p | q']))
+    expect(renderer.container.textContent).not.toContain('\uE000')
+    renderer.unmount()
+  })
+})

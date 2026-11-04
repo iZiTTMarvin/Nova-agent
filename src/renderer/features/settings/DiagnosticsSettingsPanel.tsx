@@ -46,11 +46,11 @@ export const DiagnosticsSettingsPanel: React.FC = () => {
         <SettingsPage>
           <SettingsCard
             title="应用诊断"
-            description="遇到异常时可导出包含运行日志和系统环境的诊断压缩包，便于分析排查。"
+            description="导出运行日志与系统环境，便于排查异常。"
           >
             <SettingsCardRow
               label="导出诊断日志包"
-              description="包含运行日志、系统配置与诊断摘要。敏感密钥与对话内容已自动过滤脱敏。"
+              description="敏感密钥与对话内容会自动过滤。"
               control={
                 <Button
                   label={exporting ? '导出中…' : '导出诊断包'}

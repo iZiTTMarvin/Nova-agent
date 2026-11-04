@@ -138,7 +138,7 @@ export const CodeIndexSettingsPanel: React.FC = () => {
             <SettingsCard title="代码索引">
               <SettingsCardRow
                 label="启用代码索引"
-                description="为当前工作区建立本地符号与依赖索引，帮助 Agent 更快定位代码。索引只保存结构信息，不复制源码，可随时删除重建。对新建会话生效，不影响正在进行的会话。"
+                description="为当前工作区建立本地符号与依赖索引，帮助 Agent 更快定位代码。索引只保存结构信息，不复制源码。对新建会话生效，不影响正在进行的会话。"
                 control={
                   <Switch
                     label="启用代码索引"

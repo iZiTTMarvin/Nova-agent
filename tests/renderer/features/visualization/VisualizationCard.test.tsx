@@ -324,7 +324,7 @@ describe('VisualizationCard', () => {
     send(frame.contentWindow, 'event', { name: 'select', data: { stage: 2 } })
     send(frame.contentWindow, 'event', { name: 'select', data: { stage: 3 } })
     expect(mocks.submit).toHaveBeenCalledTimes(1)
-    expect(mocks.submit).toHaveBeenCalledWith('【可视化】漏斗 · select\n{"stage":2}', 'event')
+    expect(mocks.submit).toHaveBeenCalledWith('【可视化】漏斗：select\n{"stage":2}', 'event')
 
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 2_000)
     try {
@@ -332,7 +332,7 @@ describe('VisualizationCard', () => {
     } finally {
       nowSpy.mockRestore()
     }
-    expect(mocks.submit).toHaveBeenLastCalledWith('【可视化】漏斗 · explore\nJWT：讲讲', 'event')
+    expect(mocks.submit).toHaveBeenLastCalledWith('【可视化】漏斗：explore\nJWT：讲讲', 'event')
   })
 
   it('Remark 只投递用户补充文本，恶意或超长 Ask/Remark 结构不进入对话', () => {
@@ -341,7 +341,7 @@ describe('VisualizationCard', () => {
     setUserActivation(true)
     act(() => frame.focus())
     send(frame.contentWindow, 'event', { name: 'remark', data: { blockId: 'owner-1', text: '  我想补充一个失败场景。  ' } })
-    expect(mocks.submit).toHaveBeenCalledWith('【可视化】学习图 · 补充资料\n我想补充一个失败场景。', 'event')
+    expect(mocks.submit).toHaveBeenCalledWith('【可视化】学习图：补充资料\n我想补充一个失败场景。', 'event')
 
     const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 2_000)
     try {

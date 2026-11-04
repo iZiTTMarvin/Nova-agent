@@ -1,8 +1,9 @@
 /**
  * CreateSkillDialog — 创建技能弹窗
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SkillCreateLocation } from '../../../shared/skills/types'
+import { confirmDialog } from '../confirm/confirmDialog'
 import { skillsI18n } from './i18n'
 import { Button } from '@astryxdesign/core/Button'
 import { Dialog } from '@astryxdesign/core/Dialog'
@@ -51,8 +52,12 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
   const [location, setLocation] = useState<SkillCreateLocation>('global')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 模板写入的正文与描述作为基线，只有用户在此之上改动才算有内容
+  const [baseline, setBaseline] = useState({ body: BLANK_BODY, description: '' })
+  const closeConfirmPending = useRef(false)
 
   const nameValid = useMemo(() => SLUG_RE.test(name.trim()), [name])
+  const hasContent = name.trim() !== '' || description !== baseline.description || body !== baseline.body
 
   const resetForm = useCallback(() => {
     setName('')
@@ -61,6 +66,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
     setTemplate('blank')
     setLocation('global')
     setError(null)
+    setBaseline({ body: BLANK_BODY, description: '' })
   }, [])
 
   useEffect(() => {
@@ -74,6 +80,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
     setTemplate(id)
     if (id === 'blank') {
       setBody(BLANK_BODY)
+      setBaseline(prev => ({ ...prev, body: BLANK_BODY }))
       return
     }
     try {
@@ -83,13 +90,38 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
       ])
       if (fullBody) {
         setBody(fullBody)
+        setBaseline(prev => ({ ...prev, body: fullBody }))
       }
       if (!description && skill?.description) {
-        setDescription(skill.description.slice(0, MAX_DESC))
+        const templateDescription = skill.description.slice(0, MAX_DESC)
+        setDescription(templateDescription)
+        setBaseline(prev => ({ ...prev, description: templateDescription }))
       }
     } catch {
       setError(skillsI18n.createTemplateLoadFailed)
     }
+  }
+
+  /** Esc、遮罩、关闭与取消共用：有内容先确认，空表单直接关闭 */
+  const requestClose = async () => {
+    if (submitting || closeConfirmPending.current) return
+    if (hasContent) {
+      closeConfirmPending.current = true
+      try {
+        const choice = await confirmDialog({
+          type: 'warning',
+          title: '放弃未保存的修改？',
+          message: '新建技能的内容尚未保存，关闭后会丢失。',
+          buttons: ['继续编辑', '放弃修改'],
+          defaultId: 0,
+          cancelId: 0
+        })
+        if (choice !== 1) return
+      } finally {
+        closeConfirmPending.current = false
+      }
+    }
+    onClose()
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -134,7 +166,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
     <Dialog
       isOpen={open}
       onOpenChange={nextOpen => {
-        if (!nextOpen) onClose()
+        if (!nextOpen) void requestClose()
       }}
       purpose="info"
       padding={0}
@@ -153,7 +185,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
           variant="ghost"
           size="sm"
           className="skill-dialog__close"
-          onClick={onClose}
+          onClick={() => void requestClose()}
         />
       </header>
 
@@ -248,7 +280,7 @@ export const CreateSkillDialog: React.FC<CreateSkillDialogProps> = ({
             variant="ghost"
             size="sm"
             type="button"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             isDisabled={submitting}
           />
           <Button

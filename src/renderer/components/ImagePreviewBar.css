@@ -57,12 +57,19 @@
 
 .image-preview-bar__thumb-btn:hover {
   border-color: var(--color-accent);
-  box-shadow: 0 2px 8px rgba(201, 100, 66, 0.12);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--color-accent) 12%, transparent);
   transform: translateY(-1px);
 }
 
 .image-preview-bar__thumb-btn:active {
   transform: scale(0.96);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .image-preview-bar__thumb-btn:hover,
+  .image-preview-bar__thumb-btn:active {
+    transform: none;
+  }
 }
 
 .image-preview-bar__name {

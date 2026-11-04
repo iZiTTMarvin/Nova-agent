@@ -15,6 +15,7 @@ import { IconButton } from '@astryxdesign/core/IconButton'
 import type { DiffEntry, DiffReviewStatus, SkippedFileInfo } from '../../../shared/diff/types'
 import { ChevronIcon, CheckIcon, UndoIcon } from '../../components/Icons'
 import { useLayoutStore } from '../../stores/useLayoutStore'
+import { scrollBehavior } from '../../hooks/usePrefersReducedMotion'
 import { useFileTreeStore } from '../inspector/useFileTreeStore'
 import { HunkView, countEntryChanges } from './diffLines'
 import './DiffViewer.css'
@@ -119,20 +120,6 @@ const FileDiffPanel: React.FC<{
 
   const stopPropagation = (e: React.MouseEvent | React.KeyboardEvent) => e.stopPropagation()
 
-  const headerProps = {
-    className: 'diff-file__header',
-    role: 'button' as const,
-    tabIndex: 0,
-    'aria-expanded': expanded,
-    onClick: toggleExpanded,
-    onKeyDown: (event: React.KeyboardEvent) => {
-      if (event.key === 'Enter' || event.key === ' ') {
-        event.preventDefault()
-        toggleExpanded()
-      }
-    }
-  }
-
   const fileStatusClass =
     reviewStatus === 'rejected' ? 'diff-file--rejected' :
     reviewStatus === 'accepted' ? 'diff-file--accepted' :
@@ -140,11 +127,15 @@ const FileDiffPanel: React.FC<{
 
   return (
     <div className={`diff-file ${fileStatusClass}${expanded ? ' diff-file--expanded' : ''}`}>
-      <div {...headerProps}>
-        <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
-        <span className="diff-file__name">{entry.filePath}</span>
-        <span className="diff-file__status-badge">{statusLabel}</span>
-        <FileChangeStats entry={entry} />
+      {/* 整行点击都能展开：折叠按钮自身不挂处理器，点击与 Enter/Space 冒泡到行上统一处理；
+          操作区与折叠按钮同级并阻止冒泡，避免交互控件互相嵌套 */}
+      <div className="diff-file__header" onClick={toggleExpanded}>
+        <button type="button" className="diff-file__toggle" aria-expanded={expanded}>
+          <ChevronIcon size={14} direction={expanded ? 'down' : 'right'} />
+          <span className="diff-file__name">{entry.filePath}</span>
+          <span className="diff-file__status-badge">{statusLabel}</span>
+          <FileChangeStats entry={entry} />
+        </button>
         <div className="diff-file__actions" onClick={stopPropagation} onKeyDown={stopPropagation}>
           {messageId && (
             <button
@@ -362,7 +353,7 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({
     if (showAllFiles) {
       setShowAllFiles(false)
       // 收起时平滑滚动回卡片头部，避免列表变短后画面位置丢失
-      headerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      headerRef.current?.scrollIntoView({ behavior: scrollBehavior(), block: 'start' })
     } else {
       setShowAllFiles(true)
     }
@@ -518,7 +509,7 @@ const DiffDirGroup: React.FC<{ dir: string; entries: DiffEntry[]; children: Reac
       const next = !value
       if (!next) {
         // 折叠时平滑滚动回分组头部，避免内容突然消失导致画面位置丢失
-        headerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        headerRef.current?.scrollIntoView({ behavior: scrollBehavior(), block: 'nearest' })
       }
       return next
     })

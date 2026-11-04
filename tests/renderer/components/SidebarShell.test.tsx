@@ -60,7 +60,8 @@ describe('Sidebar 折叠壳', () => {
     expect(shell).not.toBeNull()
     expect(inner).not.toBeNull()
     expect(shell?.style.width).toBe('264px')
-    expect(inner?.style.transform).toBe('translateX(0)')
+    // 静止展开态不带 transform：否则侧栏文字被提到独立合成层，丢失 ClearType 而发虚
+    expect(inner?.style.transform).toBe('none')
     expect(shell?.getAttribute('aria-hidden')).toBe('false')
     expect(shell?.querySelector('.sidebar-shell__resize-handle')).not.toBeNull()
 

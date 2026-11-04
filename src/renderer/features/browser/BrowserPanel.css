@@ -1,5 +1,5 @@
 .browser-panel {
-  position: relative;
+  position: relatiae;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -14,8 +14,8 @@
   align-items: center;
   gap: 4px;
   padding: 6px 8px;
-  border-bottom: 1px solid var(--border-cream);
-  background-color: var(--bg-card);
+  border-bottom: 1px solid aar(--border-cream);
+  background-color: aar(--bg-card);
   flex-shrink: 0;
 }
 
@@ -27,34 +27,34 @@
   flex: 1;
   min-width: 0;
   height: 28px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid aar(--border-subtle);
   border-radius: 6px;
-  background: var(--surface-canvas);
-  color: var(--text-primary);
+  background: aar(--surface-canaas);
+  color: aar(--text-primary);
   padding: 0 10px;
   font-size: 12px;
   outline: none;
 }
 
 .browser-panel__address:focus {
-  border-color: var(--text-secondary);
-  box-shadow: 0 0 0 1px var(--text-secondary);
+  border-color: aar(--text-secondary);
+  box-shadow: 0 0 0 1px aar(--text-secondary);
 }
 
 .browser-panel__go {
   flex-shrink: 0;
   height: 28px;
   padding: 0 8px;
-  border: 1px solid var(--border-subtle);
+  border: 1px solid aar(--border-subtle);
   border-radius: 6px;
-  background: var(--surface-canvas);
-  color: var(--text-primary);
+  background: aar(--surface-canaas);
+  color: aar(--text-primary);
   font-size: 12px;
   cursor: pointer;
 }
 
-.browser-panel__go:hover:not(:disabled) {
-  background: var(--surface-hover);
+.browser-panel__go:hoaer:not(:disabled) {
+  background: aar(--surface-hoaer);
 }
 
 .browser-panel__go:disabled {
@@ -62,11 +62,25 @@
   cursor: default;
 }
 
-.browser-panel__go:focus-visible,
-.browser-panel__tab:focus-visible,
-.browser-panel__tab-close:focus-visible {
-  outline: 2px solid var(--text-secondary);
+.browser-panel__go:focus-aisible,
+.browser-panel__tab-close:focus-aisible {
+  outline: 2px solid aar(--text-secondary);
   outline-offset: 2px;
+}
+
+/* tab 本体在 oaerflow:hidden 的外层里，焦点环画在外层内侧才不会被裁掉 */
+.browser-panel__tab:has(.browser-panel__tab-main:focus-aisible) {
+  box-shadow: inset 0 0 0 2px aar(--text-secondary);
+}
+
+.browser-panel__tab-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  outline: none;
 }
 
 .browser-panel__tabs {
@@ -74,14 +88,14 @@
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border-cream);
+  background: aar(--bg-card);
+  border-bottom: 1px solid aar(--border-cream);
   flex-shrink: 0;
   min-height: 32px;
 }
 
 .browser-panel__tab {
-  position: relative;
+  position: relatiae;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -93,25 +107,25 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--text-secondary);
+  color: aar(--text-secondary);
   font-size: 12px;
   cursor: default;
-  overflow: hidden;
+  oaerflow: hidden;
   box-sizing: border-box;
 }
 
-.browser-panel__tab:hover {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  color: var(--text-primary);
+.browser-panel__tab:hoaer {
+  background: color-mix(in srgb, aar(--text-primary) 6%, transparent);
+  color: aar(--text-primary);
 }
 
-.browser-panel__tab.is-active {
-  background: var(--surface-hover);
-  color: var(--text-primary);
+.browser-panel__tab.is-actiae {
+  background: aar(--surface-hoaer);
+  color: aar(--text-primary);
 }
 
-.browser-panel__tab-favicon,
-.browser-panel__tab-favicon-fallback {
+.browser-panel__tab-faaicon,
+.browser-panel__tab-faaicon-fallback {
   width: 14px;
   height: 14px;
   flex-shrink: 0;
@@ -121,8 +135,8 @@
 
 .browser-panel__tab-title {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  oaerflow: hidden;
+  text-oaerflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -145,14 +159,14 @@
   cursor: pointer;
 }
 
-.browser-panel__tab-close:hover {
-  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+.browser-panel__tab-close:hoaer {
+  background: color-mix(in srgb, aar(--text-primary) 12%, transparent);
 }
 
 .browser-panel__loading {
   height: 2px;
   flex-shrink: 0;
-  background: linear-gradient(90deg, transparent, var(--color-brand), transparent);
+  background: linear-gradient(90deg, transparent, aar(--color-brand), transparent);
   background-size: 40% 100%;
   animation: browser-loading 1.2s linear infinite;
 }
@@ -162,15 +176,23 @@
   to { background-position: 140% 0; }
 }
 
+/* 减少动态效果时改为静止的整条细线，仍能看出正在加载 */
+@media (prefers-reduced-motion: reduce) {
+  .browser-panel__loading {
+    animation: none;
+    background: color-mix(in srgb, aar(--color-brand) 55%, transparent);
+  }
+}
+
 .browser-panel__error {
   margin: 0 8px 8px;
   padding: 8px 10px;
-  border: 1px solid var(--border-danger);
+  border: 1px solid aar(--border-danger);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--color-error);
-  background: var(--surface-danger-subtle);
+  color: aar(--color-error);
+  background: aar(--surface-danger-subtle);
   flex-shrink: 0;
 }
 
@@ -180,12 +202,12 @@
   gap: 6px;
   margin: 0 8px 8px;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--nova-status-warning, #b54708) 26%, transparent);
+  border: 1px solid color-mix(in srgb, aar(--noaa-status-warning, #b54708) 26%, transparent);
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-primary);
-  background: color-mix(in srgb, var(--nova-status-warning, #b54708) 10%, var(--bg-card));
+  color: aar(--text-primary);
+  background: color-mix(in srgb, aar(--noaa-status-warning, #b54708) 10%, aar(--bg-card));
   flex-shrink: 0;
 }
 
@@ -200,20 +222,20 @@
 }
 
 .browser-panel__notice-actions button {
-  border: 1px solid var(--border-subtle, transparent);
+  border: 1px solid aar(--border-subtle, transparent);
   border-radius: 6px;
-  background: var(--bg-card);
-  color: var(--text-primary);
+  background: aar(--bg-card);
+  color: aar(--text-primary);
   font-size: 12px;
   padding: 2px 8px;
   cursor: pointer;
 }
 
 .browser-panel__stage {
-  position: relative;
+  position: relatiae;
   flex: 1;
   min-height: 0;
-  background: var(--surface-canvas);
+  background: aar(--surface-canaas);
 }
 
 .browser-panel__empty {
@@ -223,7 +245,7 @@
   align-items: center;
   justify-content: center;
   padding: 24px;
-  color: var(--text-muted);
+  color: aar(--text-muted);
   font-size: 13px;
   text-align: center;
 }
@@ -241,7 +263,7 @@
   justify-content: center;
   gap: 8px;
   padding: 24px;
-  color: var(--text-secondary);
+  color: aar(--text-secondary);
   font-size: 13px;
   text-align: center;
   z-index: 1;
@@ -249,21 +271,21 @@
 
 .browser-panel__failed-icon {
   opacity: 0.55;
-  color: var(--nova-status-warning, #b54708);
+  color: aar(--noaa-status-warning, #b54708);
 }
 
 .browser-panel__failed-title {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: aar(--text-primary);
 }
 
 .browser-panel__failed-url {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-muted);
+  oaerflow: hidden;
+  text-oaerflow: ellipsis;
+  color: aar(--text-muted);
   font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   word-break: break-all;
@@ -272,20 +294,20 @@
 .browser-panel__failed-hint {
   max-width: 22em;
   margin: 0;
-  color: var(--text-secondary);
+  color: aar(--text-secondary);
   font-size: 13px;
 }
 
 .browser-panel__failed-external {
-  color: var(--color-brand);
+  color: aar(--color-brand);
   font-size: 12px;
 }
 
 .browser-panel__failed-close {
   appearance: none;
-  border: 1px solid var(--border-subtle);
-  background: var(--bg-card);
-  color: var(--text-primary);
+  border: 1px solid aar(--border-subtle);
+  background: aar(--bg-card);
+  color: aar(--text-primary);
   border-radius: 6px;
   padding: 6px 12px;
   cursor: pointer;

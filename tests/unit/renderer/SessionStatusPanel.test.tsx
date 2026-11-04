@@ -95,7 +95,7 @@ describe('会话状态入口', () => {
   it('后台入口指向精确子会话，不切换父会话焦点', async () => {
     useSubagentProjectionStore.getState().hydrateParent('sess_1', [{ childSessionId: 'child-1', childRunId: 'run-child', parentSessionId: 'sess_1', parentToolCallId: 'task-1', profile: { profileId: 'inspector', name: '核验者', permissionCeiling: 'read_only' }, status: 'running', execution: 'background_read_only', artifactCount: 0, taskLabel: '核验页面' }])
     const view = panel(); await flush()
-    click(view.container.querySelector('[aria-label="查看核验者子会话"]')!)
+    click(view.container.querySelector('[aria-label^="查看核验者子会话"]')!)
     expect(useLayoutStore.getState()).toMatchObject({ inspectorSurface: 'subagent', subagentTarget: { parentSessionId: 'sess_1', childSessionId: 'child-1' } })
     expect(useChatStore.getState().currentSessionId).toBe('sess_1')
     view.unmount()

@@ -142,7 +142,17 @@
   left: 0;
   display: flex;
   justify-content: center;
+  gap: 8px;
   pointer-events: none;
+}
+
+.plan-review-card__footer > * {
+  pointer-events: auto;
+}
+
+/* 文件读不到时在卡片内展开参数里的预览，避免内容被固定高度截断后无处可看 */
+.plan-review-card__body.plan-review-card__body--expanded {
+  max-height: none;
 }
 
 .plan-review-card__view {

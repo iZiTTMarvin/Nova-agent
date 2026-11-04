@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 
 type Point = {
   x: number
@@ -174,12 +175,6 @@ function assignNearestTargets(source: Point[], target: Point[]): Point[] {
   return assigned
 }
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-}
-
 export interface NovaWorkingOrbProps {
   size?: number
 }
@@ -198,8 +193,11 @@ export const NovaWorkingOrb = React.memo(function NovaWorkingOrb({
     points: SHAPES[0].points
   }))
 
+  const reducedMotion = usePrefersReducedMotion()
+
+  // 订阅偏好：运行中开启「减少动态效果」时立即停下形状轮换
   useEffect(() => {
-    if (prefersReducedMotion()) return undefined
+    if (reducedMotion) return undefined
 
     const timer = window.setInterval(() => {
       setFrame(current => {
@@ -214,7 +212,7 @@ export const NovaWorkingOrb = React.memo(function NovaWorkingOrb({
     }, SHAPE_INTERVAL_MS)
 
     return () => window.clearInterval(timer)
-  }, [])
+  }, [reducedMotion])
 
   const pixelScale = size * SHAPE_SCALE
 

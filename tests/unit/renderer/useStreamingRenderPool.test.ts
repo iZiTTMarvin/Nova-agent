@@ -164,6 +164,31 @@ describe('useStreamingRenderPool', () => {
     return { ref, Probe }
   }
 
+  it('循环运行中收到新增量不取消重启帧循环，节拍保持连续', () => {
+    const props = { fullText: 'x'.repeat(200), isStreaming: true, style: 'agile' as const }
+    const { ref, Probe } = probeHook(props)
+    const cancelSpy = vi.spyOn(globalThis, 'cancelAnimationFrame')
+    const renderer = renderDom(React.createElement(Probe))
+    act(() => fakeRaf.advance(32))
+    expect(fakeRaf.pending).toHaveLength(1)
+
+    for (let i = 0; i < 5; i++) {
+      act(() => {
+        props.fullText += 'y'.repeat(20)
+        renderer.render(React.createElement(Probe))
+      })
+    }
+
+    // 增量只更新目标长度：没有取消帧，也没有叠加出第二条循环
+    expect(cancelSpy).not.toHaveBeenCalled()
+    expect(fakeRaf.pending).toHaveLength(1)
+    expect(ref.current!.targetLength).toBe(300)
+
+    renderer.unmount()
+    expect(fakeRaf.pending).toHaveLength(0)
+    cancelSpy.mockRestore()
+  })
+
   it('非流式时直接返回完整文本', () => {
     const { ref, Probe } = probeHook({ fullText: 'hello world', isStreaming: false })
     const renderer = renderDom(React.createElement(Probe))

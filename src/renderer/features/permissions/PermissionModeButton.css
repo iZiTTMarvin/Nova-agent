@@ -58,7 +58,8 @@
   color: var(--color-warning-on-fill);
 }
 
-@media (max-width: 720px) {
+/* 窄输入区只留盾牌图标，档位名仍由按钮可访问名与 tooltip 提供 */
+@container chat-composer (max-width: 560px) {
   .permission-mode__trigger {
     width: 32px;
     overflow: hidden;

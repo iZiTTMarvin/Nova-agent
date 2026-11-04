@@ -79,7 +79,7 @@ describe('createLearningVisualizationSubmitter', () => {
     invoke.mockClear()
 
     const submit = createLearningVisualizationSubmitter(SESSION_ID)
-    const outcome = await submit('【可视化】图 · explore\n模块：深入讲讲', 'event')
+    const outcome = await submit('【可视化】图：explore\n模块：深入讲讲', 'event')
 
     expect(outcome).toEqual({ status: 'blocked', notice: LEARNING_VIZ_AWAITING_NOTICE })
     expect(invoke).not.toHaveBeenCalledWith('learning:command', expect.anything())
@@ -103,7 +103,7 @@ describe('createLearningVisualizationSubmitter', () => {
     expect(useLearningStore.getState().commandPending).toBe(true)
 
     const submit = createLearningVisualizationSubmitter(SESSION_ID)
-    const outcome = await submit('【可视化】图 · explore\n模块：深入讲讲', 'event')
+    const outcome = await submit('【可视化】图：explore\n模块：深入讲讲', 'event')
 
     expect(outcome).toEqual({ status: 'blocked', notice: LEARNING_VIZ_BUSY_NOTICE })
     expect(invoke.mock.calls.filter(call => call[0] === 'learning:command')).toHaveLength(1)
@@ -114,7 +114,7 @@ describe('createLearningVisualizationSubmitter', () => {
 
   it('空闲时以 message 命令调用 learning:command，返回 sent', async () => {
     const submit = createLearningVisualizationSubmitter(SESSION_ID)
-    const text = '【可视化】图 · explore\n模块：深入讲讲'
+    const text = '【可视化】图：explore\n模块：深入讲讲'
     const outcome = await submit(text, 'event')
 
     expect(outcome).toEqual({ status: 'sent' })
@@ -133,7 +133,7 @@ describe('createLearningVisualizationSubmitter', () => {
     commandHandler = async () => ({ ok: false, code: 'busy', message: '忙' })
 
     const submit = createLearningVisualizationSubmitter(SESSION_ID)
-    const outcome = await submit('【可视化】图 · explore\n模块：深入讲讲', 'event')
+    const outcome = await submit('【可视化】图：explore\n模块：深入讲讲', 'event')
 
     expect(outcome).toEqual({ status: 'blocked', notice: LEARNING_VIZ_FAILED_NOTICE })
   })
@@ -144,7 +144,7 @@ describe('createLearningVisualizationSubmitter', () => {
     commandHandler = async () => ({ ok: false, code: 'busy', message: '忙' })
 
     const submit = createLearningVisualizationSubmitter(SESSION_ID)
-    await submit('【可视化】图 · explore\n模块：深入讲讲', 'event')
+    await submit('【可视化】图：explore\n模块：深入讲讲', 'event')
     const firstAction = (invoke.mock.calls.find(call => call[0] === 'learning:command')![1] as { command: { action: unknown } }).command.action
     expect(firstAction).toMatchObject({ type: 'message', interfaceState: { widgets: [widget] } })
 

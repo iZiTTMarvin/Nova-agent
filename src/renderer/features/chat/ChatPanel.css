@@ -936,6 +936,7 @@ button.code-index-status-chip:hover {
 .context-popover {
   position: absolute;
   bottom: 100%;
+  box-sizing: border-box;
   width: max-content;
   min-width: 180px;
   max-width: 320px;
@@ -948,7 +949,6 @@ button.code-index-status-chip:hover {
   font-size: 12px;
   color: var(--text-primary);
   user-select: none;
-  animation: popup-scale-in 150ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* 根据 context ring 在 composer 中的位置自动向左/右展开,避免遮挡回到底部按钮 */
@@ -1260,7 +1260,10 @@ button.code-index-status-chip:hover {
   pointer-events: auto;
 }
 
-/* 底栏在窄聊天列中分成两行；发送/停止按钮始终保留完整命中区。 */
+/*
+ * 底栏左右两组各自不换行：放不下时整组落到第二行，不会出现参差折行；
+ * 宽度逐级收窄时先收起文字只留图标，发送/停止按钮始终保留完整命中区。
+ */
 .chat-composer__footer {
   display: flex;
   flex-wrap: wrap;
@@ -1278,7 +1281,7 @@ button.code-index-status-chip:hover {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
 }
 
 .chat-composer__footer-start {
@@ -1326,6 +1329,53 @@ button.code-index-status-chip:hover {
   white-space: nowrap;
 }
 
+.chat-composer__footer button.code-index-status-chip:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/* 中等宽度：代码索引只留图标，文字转为读屏可读；模型名再收窄 */
+@container chat-composer (max-width: 560px) {
+  .chat-composer__footer .code-index-status-chip {
+    padding-inline: 6px;
+  }
+
+  .chat-composer__footer .code-index-status-chip__label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .chat-composer__footer-end .model-selector__label {
+    max-width: 96px;
+  }
+}
+
+/* 窄宽度：思考强度与模式标签只留图标，名称由按钮可访问名与 tooltip 提供 */
+@container chat-composer (max-width: 420px) {
+  .chat-composer__footer {
+    gap: 6px;
+  }
+
+  .chat-composer__footer-start,
+  .chat-composer__footer-end {
+    gap: 4px;
+  }
+
+  .chat-composer__footer-end .effort-control__label,
+  .chat-composer__footer .mode-switch__chip-label {
+    display: none;
+  }
+
+  .chat-composer__footer-end .model-selector__label {
+    max-width: 72px;
+  }
+}
+
+/* 最窄：左右两组各占一整行，右组两端对齐，发送按钮固定在行尾 */
 @container chat-composer (max-width: 320px) {
   .chat-composer__footer-start,
   .chat-composer__footer-end {
@@ -1334,11 +1384,10 @@ button.code-index-status-chip:hover {
 
   .chat-composer__footer-end {
     justify-content: space-between;
-    gap: 4px;
   }
 
   .chat-composer__footer-end .model-selector__label {
-    max-width: 96px;
+    max-width: 64px;
   }
 }
 
@@ -1425,8 +1474,8 @@ button.code-index-status-chip:hover {
 }
 
 .steering-queue__remove {
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1540,11 +1589,11 @@ button.code-index-status-chip:hover {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   border: 1px solid currentColor;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
   flex-shrink: 0;
   line-height: 1;

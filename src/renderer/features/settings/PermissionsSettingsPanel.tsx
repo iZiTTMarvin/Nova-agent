@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { TextInput } from '@astryxdesign/core/TextInput'
+import { confirmDialog } from '../confirm/confirmDialog'
 import {
   SettingsCard,
   SettingsCardRow,
@@ -28,7 +29,7 @@ const BEHAVIOR_LABEL: Record<PermissionBehavior, BehaviorLabel> = {
   deny: '拒绝'
 }
 
-function ruleDescription(rule: PermissionRuleDto): string | undefined {
+function ruleConditions(rule: PermissionRuleDto): string[] {
   const parts: string[] = []
   if (rule.commandPrefix) parts.push(`前缀：${rule.commandPrefix}`)
   if (rule.commandRegex) parts.push(`正则：${rule.commandRegex}`)
@@ -36,7 +37,7 @@ function ruleDescription(rule: PermissionRuleDto): string | undefined {
   if (rule.description && !rule.description.includes(rule.toolName)) {
     parts.push(rule.description)
   }
-  return parts.length > 0 ? parts.join(' · ') : undefined
+  return parts
 }
 
 export const PermissionsSettingsPanel: React.FC = () => {
@@ -91,9 +92,20 @@ export const PermissionsSettingsPanel: React.FC = () => {
     }
   }
 
-  const handleDelete = async (ruleId: string) => {
+  const handleDelete = async (rule: PermissionRuleDto) => {
+    const conditions = ruleConditions(rule)
+    const choice = await confirmDialog({
+      type: 'warning',
+      title: '删除权限规则？',
+      message: `将删除${rule.scope === 'project' ? '项目' : '全局'}规则：${BEHAVIOR_LABEL[rule.behavior]} ${rule.toolName}。`,
+      detail: conditions.length > 0 ? `匹配条件：${conditions.join('；')}` : '该规则对此工具的所有调用生效。',
+      buttons: ['取消', '删除'],
+      defaultId: 0,
+      cancelId: 0
+    })
+    if (choice !== 1) return
     try {
-      await window.api.invoke('permission:delete', { ruleId })
+      await window.api.invoke('permission:delete', { ruleId: rule.id })
       await loadRules()
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除规则失败')
@@ -191,34 +203,41 @@ export const PermissionsSettingsPanel: React.FC = () => {
               </span>
             )}
             {!loading &&
-              rules.map(rule => (
-                <SettingsCardRow
-                  key={rule.id}
-                  label={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                      <span className={`glass-chip ${rule.behavior === 'allow' ? 'glass-chip--success' : 'glass-chip--danger'}`}>
-                        {BEHAVIOR_LABEL[rule.behavior]}
+              rules.map(rule => {
+                const conditions = ruleConditions(rule)
+                return (
+                  <SettingsCardRow
+                    key={rule.id}
+                    label={
+                      <span className="perm-rule__label">
+                        <span className={`glass-chip ${rule.behavior === 'allow' ? 'glass-chip--success' : 'glass-chip--danger'}`}>
+                          {BEHAVIOR_LABEL[rule.behavior]}
+                        </span>
+                        <code className="perm-rule__tool">{rule.toolName}</code>
+                        <span className="glass-chip">{rule.scope === 'project' ? '项目' : '全局'}</span>
                       </span>
-                      <code style={{ fontSize: '0.86rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                        {rule.toolName}
-                      </code>
-                      <span className="glass-chip">{rule.scope === 'project' ? '项目' : '全局'}</span>
-                    </div>
-                  }
-                  description={ruleDescription(rule)}
-                  control={
-                    <Button
-                      label="删除"
-                      variant="ghost"
-                      size="sm"
-                      className="perm-rule__delete"
-                      onClick={() => void handleDelete(rule.id)}
-                    >
-                      删除
-                    </Button>
-                  }
-                />
-              ))}
+                    }
+                    description={
+                      conditions.length > 0 ? (
+                        <span className="perm-rule__conditions">
+                          {conditions.map(part => <span key={part}>{part}</span>)}
+                        </span>
+                      ) : undefined
+                    }
+                    control={
+                      <Button
+                        label={`删除 ${rule.toolName} 规则`}
+                        variant="ghost"
+                        size="sm"
+                        className="perm-rule__delete"
+                        onClick={() => void handleDelete(rule)}
+                      >
+                        删除
+                      </Button>
+                    }
+                  />
+                )
+              })}
           </SettingsCard>
 
           {error && (

@@ -68,6 +68,7 @@
   --surface-danger: color-mix(in srgb, var(--accent-error) 10%, transparent);
   --border-danger: color-mix(in srgb, var(--accent-error) 22%, transparent);
   --surface-warning: color-mix(in srgb, var(--accent-warning) 14%, transparent);
+  --surface-success: color-mix(in srgb, var(--accent-running) 12%, transparent);
   --surface-brand: light-dark(
     color-mix(in srgb, var(--accent-primary) 9%, transparent),
     color-mix(in srgb, var(--accent-primary) 16%, transparent)

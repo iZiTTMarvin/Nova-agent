@@ -134,13 +134,13 @@
   min-width: 0;
   /* 固定宽度并靠右：外壳变宽时内容带轻微位移与淡入，且面板内部不随动画逐帧重排 */
   margin-left: auto;
-  transform: translate3d(16px, 0, 0);
+  /* 静止的打开态用 none 留在主图层保住 ClearType；位移只在开合过渡中存在 */
+  transform: translateX(16px);
   transition: transform var(--transition-normal);
-  will-change: transform;
 }
 
 .inspector-panel--open .inspector-panel__inner {
-  transform: translate3d(0, 0, 0);
+  transform: none;
 }
 
 .inspector-panel--dragging .inspector-panel__inner {

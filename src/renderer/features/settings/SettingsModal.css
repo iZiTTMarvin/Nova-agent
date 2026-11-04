@@ -578,8 +578,17 @@
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: 0.82rem;
-  font-weight: 500;
+  font-weight: 600;
   word-break: break-all;
+}
+
+/* 规则条件分段展示，用间距代替分隔符 */
+.perm-rule__conditions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .perm-rule__delete {

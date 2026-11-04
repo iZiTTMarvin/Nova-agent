@@ -70,6 +70,8 @@ export interface RunViewState {
   cancelling: boolean
   cancellingSessionId: string | null
   cancelGraceExceeded: boolean
+  /** 停止或强制终止请求本身失败（未送达运行时）；运行仍在继续，界面需给出原因与重试 */
+  cancelError: { sessionId: string | null; message: string } | null
   forceTerminateRunId: string | null
   selectSession: (sessionId: string | null) => void
   pullSnapshot: (sessionId: string) => Promise<void>
@@ -77,6 +79,9 @@ export interface RunViewState {
   refreshInteractionProjection: () => Promise<void>
   refreshWaitingBadges: () => Promise<void>
   beginLocalCancel: (runId?: string | null) => void
+  /** 停止请求未送达：撤回本地「正在停止」，保留失败原因 */
+  failLocalCancel: (message: string) => void
+  dismissCancelError: () => void
   forceTerminate: () => Promise<void>
   resetForTests: () => void
 }
@@ -172,6 +177,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
   cancelling: false,
   cancellingSessionId: null,
   cancelGraceExceeded: false,
+  cancelError: null,
   forceTerminateRunId: null,
 
   selectSession: sessionId => {
@@ -244,6 +250,11 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       clearCancelGraceTimer()
       set({ cancelling: false, cancellingSessionId: null, cancelGraceExceeded: false, forceTerminateRunId: null })
     }
+    // 运行已结束，之前的停止失败提示不再有意义
+    const cancelError = get().cancelError
+    if (cancelError && cancelError.sessionId === snapshot.sessionId && isTerminalRunStatus(snapshot.status)) {
+      set({ cancelError: null })
+    }
     const enteredTerminal = isTerminalRunStatus(snapshot.status) && (!previous || !isTerminalRunStatus(previous.status))
     void (async () => {
       const { useChatStore } = await import('./useChatStore')
@@ -296,12 +307,23 @@ export const useRunStore = create<RunViewState>((set, get) => ({
     const cancellingSessionId = snapshot?.sessionId ??
       (get().cancelling ? get().cancellingSessionId : get().selectedSessionId)
     clearCancelGraceTimer()
-    set({ cancelling: true, cancellingSessionId, cancelGraceExceeded: false, forceTerminateRunId: target })
+    set({ cancelling: true, cancellingSessionId, cancelGraceExceeded: false, cancelError: null, forceTerminateRunId: target })
     cancelGraceTimer = setTimeout(() => {
       cancelGraceTimer = null
       if (get().cancelling) set({ cancelGraceExceeded: true })
     }, CANCEL_GRACE_MS)
   },
+
+  failLocalCancel: message => {
+    clearCancelGraceTimer()
+    const sessionId = get().cancellingSessionId ?? get().selectedSessionId
+    set({
+      cancelling: false, cancellingSessionId: null, cancelGraceExceeded: false, forceTerminateRunId: null,
+      cancelError: { sessionId, message }
+    })
+  },
+
+  dismissCancelError: () => set({ cancelError: null }),
 
   forceTerminate: async () => {
     const state = get()
@@ -315,6 +337,13 @@ export const useRunStore = create<RunViewState>((set, get) => ({
       })
     } catch (err) {
       console.error('[useRunStore] forceTerminate 失败:', err)
+      // 强制终止未送达时保持「正在停止」，只补充失败原因，用户可再次强制终止
+      set({
+        cancelError: {
+          sessionId: state.selectedSessionId,
+          message: `强制终止失败：${err instanceof Error ? err.message : String(err)}`
+        }
+      })
     }
   },
 
@@ -325,7 +354,7 @@ export const useRunStore = create<RunViewState>((set, get) => ({
     set({
       snapshot: null, lastSequence: 0, snapshotsByRunId: {}, activeRunIdBySessionId: {},
       lastSequenceByRunId: {}, selectedSessionId: null, pullTokenBySessionId: {}, waitingSessions: [],
-      cancelling: false, cancellingSessionId: null, cancelGraceExceeded: false, forceTerminateRunId: null
+      cancelling: false, cancellingSessionId: null, cancelGraceExceeded: false, cancelError: null, forceTerminateRunId: null
     })
   }
 }))

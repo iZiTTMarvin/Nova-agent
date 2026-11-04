@@ -26,6 +26,7 @@ import { MarkdownLink } from './MarkdownLink'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
 import { splitIncrementalMarkdown } from './incrementalMarkdown'
 import { findOpenDisplayMathStart, transformMathSyntax } from './mathSyntax'
+import { protectTableCodePipes, restoreTableCodePipes } from './tableCodePipes'
 import { MathFence, MathInlineCode, MATH_FENCE_LANGUAGES } from './MathBlock'
 import { MermaidDiagram } from './MermaidDiagram'
 import { useInlineUiScope } from '../inline-ui/InlineUiScope'
@@ -194,7 +195,7 @@ const COMPLETED_COMPONENTS: MarkdownComponents = {
     return <CodeBlock language={lang} code={code} isStreaming={false} />
   },
   inlineCode({ children }) {
-    return <MathInlineCode>{children}</MathInlineCode>
+    return <MathInlineCode>{restoreTableCodePipes(children)}</MathInlineCode>
   },
   link({ href, children }) {
     if (!href || !isSafeMarkdownHref(href)) {
@@ -227,6 +228,11 @@ const STREAMING_COMPONENTS: MarkdownComponents = {
 
 /** 测试用：累计「本帧重解析字符数」（仅 activeTail / 终态全文） */
 let __markdownReparseChars = 0
+
+/** 交给 Astryx 前的统一转译：数学定界符先变行内代码，再保护表格代码段内的竖线 */
+function prepareMarkdown(raw: string): string {
+  return protectTableCodePipes(transformMathSyntax(raw).text)
+}
 export function __takeMarkdownReparseChars(): number {
   const n = __markdownReparseChars
   __markdownReparseChars = 0
@@ -266,7 +272,7 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   // 终态：整段一次解析 + 完整高亮；清空流式缓存
   if (!isStreaming) {
     sealedCacheRef.current = EMPTY_SEALED_CACHE
-    const finalContent = transformMathSyntax(content).text
+    const finalContent = prepareMarkdown(content)
     __markdownReparseChars += finalContent.length
     return (
       <div className="markdown-body">
@@ -303,7 +309,7 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   }
 
   if (sealTo > prevEnd) {
-    const { text: transformed } = transformMathSyntax(content.slice(prevEnd, sealTo))
+    const transformed = prepareMarkdown(content.slice(prevEnd, sealTo))
     sealedCacheRef.current = {
       contentPrefix: content.slice(0, sealTo),
       sealedEnd: sealTo,
@@ -321,7 +327,7 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   }
 
   const { parts: sealedParts, sealedEnd } = sealedCacheRef.current
-  const activeTail = transformMathSyntax(content.slice(sealedEnd)).text
+  const activeTail = prepareMarkdown(content.slice(sealedEnd))
   __markdownReparseChars += content.length - sealedEnd
 
   return (

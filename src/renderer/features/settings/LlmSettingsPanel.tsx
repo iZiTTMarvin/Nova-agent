@@ -8,6 +8,7 @@ import { IconButton } from '@astryxdesign/core/IconButton'
 import { useSettingsStore, getDefaultLlmRegistry } from '../../stores/useSettingsStore'
 import { SettingsSelect } from './settingsKit'
 import { LlmProviderEditor } from './LlmProviderEditor'
+import { useSettingsUnsavedGuard } from './settingsUnsavedGuard'
 import { ChevronIcon, PlusIcon } from '../../components/Icons'
 import {
   type LlmRegistry,
@@ -36,6 +37,8 @@ interface ProviderRowModel {
 interface EditingState {
   rowKey: string
   draft: ProviderConfig
+  /** 打开编辑时的草稿快照，用于判定是否有未保存修改 */
+  initial: ProviderConfig
   isNew: boolean
   /** 折叠动画进行中：卡片仍挂载，播完再卸载 */
   closing?: boolean
@@ -145,12 +148,26 @@ export const LlmSettingsPanel: React.FC = () => {
     setConfirmingRemoveKey(null)
   }
 
-  const startEdit = (row: ProviderRowModel) =>
-    beginEditing({ rowKey: row.key, draft: draftForRow(row), isNew: false })
+  const startEdit = (row: ProviderRowModel) => {
+    const draft = draftForRow(row)
+    beginEditing({ rowKey: row.key, draft, initial: draft, isNew: false })
+  }
 
   const startAddCustom = () => {
     const draft = createCustomProvider('自定义服务商', DEFAULT_CUSTOM_BASE_URL)
-    beginEditing({ rowKey: draft.id, draft, isNew: true })
+    beginEditing({ rowKey: draft.id, draft, initial: draft, isNew: true })
+  }
+
+  // 折叠中的卡片已放弃编辑；JSON 比较足够，偶发的键序差异只会多问一次
+  const editorDirty = Boolean(
+    editing && !editing.closing && JSON.stringify(editing.draft) !== JSON.stringify(editing.initial)
+  )
+  useSettingsUnsavedGuard('llm', editorDirty)
+
+  const toggleRow = (row: ProviderRowModel, isEditing: boolean) => {
+    if (saving) return
+    if (!isEditing) startEdit(row)
+    else if (!editing?.closing) closeEditor()
   }
 
   const handleSave = async () => {
@@ -251,13 +268,19 @@ export const LlmSettingsPanel: React.FC = () => {
                 >
                   <div
                     className="llm-row__head"
-                    onClick={() => {
-                      if (saving) return
-                      if (!isEditing) startEdit(row)
-                      else if (!editing?.closing) closeEditor()
-                    }}
+                    onClick={() => toggleRow(row, isEditing)}
                   >
-                    <div className="llm-row__title">
+                    {/* 整行可点只为扩大鼠标命中区；键盘与读屏走标题按钮，避免可交互元素嵌套 */}
+                    <button
+                      type="button"
+                      className="llm-row__title"
+                      aria-expanded={isEditing && !editing?.closing}
+                      disabled={saving}
+                      onClick={e => {
+                        e.stopPropagation()
+                        toggleRow(row, isEditing)
+                      }}
+                    >
                       <span
                         className={`llm-dot${configured ? ' llm-dot--ok' : ''}`}
                         role="img"
@@ -266,7 +289,7 @@ export const LlmSettingsPanel: React.FC = () => {
                       <span className="llm-row__name">{row.name}</span>
                       {isCustom && <span className="llm-tag">自定义</span>}
                       {isCurrent && <span className="llm-tag llm-tag--current">当前使用</span>}
-                    </div>
+                    </button>
                     <div className="llm-row__aside" onClick={e => e.stopPropagation()}>
                       {provider && provider.models.length > 0 && (
                         <span className="llm-row__count">{provider.models.length} 个模型</span>
@@ -324,11 +347,19 @@ export const LlmSettingsPanel: React.FC = () => {
             {editing?.isNew ? (
               <li className={`llm-row${editing.closing ? '' : ' llm-row--open'}`}>
                 <div className="llm-row__head" onClick={() => !editing.closing && closeEditor()}>
-                  <div className="llm-row__title">
+                  <button
+                    type="button"
+                    className="llm-row__title"
+                    aria-expanded={!editing.closing}
+                    onClick={e => {
+                      e.stopPropagation()
+                      if (!editing.closing) closeEditor()
+                    }}
+                  >
                     <span className="llm-dot" role="img" aria-label="未配置" />
                     <span className="llm-row__name">新服务商</span>
                     <span className="llm-tag">自定义</span>
-                  </div>
+                  </button>
                   <div className="llm-row__aside" onClick={e => e.stopPropagation()}>
                     {renderCollapseButton('新服务商', Boolean(editing.closing))}
                   </div>

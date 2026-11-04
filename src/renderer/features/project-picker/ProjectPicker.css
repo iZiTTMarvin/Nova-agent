@@ -37,7 +37,7 @@
 }
 
 .project-picker-narrow__btn--active:hover {
-  background-color: rgba(201, 100, 66, 0.12);
+  background-color: color-mix(in srgb, var(--color-brand) 12%, transparent);
   color: var(--color-brand-hover);
   border-color: var(--color-brand-hover);
 }

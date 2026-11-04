@@ -18,9 +18,8 @@ import { SessionStatusPanel } from '../session-status/SessionStatusPanel'
 import { BrowserPanel } from '../browser/BrowserPanel'
 import { InspectorLauncher, InspectorOpenMenu } from './InspectorLauncher'
 import { InspectorResizeHandle } from './InspectorResizeHandle'
-import { InspectorTabStrip } from './InspectorTabStrip'
+import { InspectorTabStrip, inspectorTabId, inspectorTabPanelId } from './InspectorTabStrip'
 import { InspectorToggleButton } from './InspectorToggleButton'
-import { VIEW_META } from './inspectorViewMeta'
 import { useInspectorResize } from './useInspectorResize'
 import { useInspectorSlide } from './useInspectorSlide'
 import { useInspectorTabs } from './useInspectorTabs'
@@ -70,9 +69,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
 
   // 浏览器标签需要更宽的舞台；其余标签维持原有边界
   const widthMin = activeTab === 'browser' ? BROWSER_PANE_WIDTH_MIN : INSPECTOR_WIDTH_MIN
-  const { dragging, onResizeMouseDown, onResizeDoubleClick } = useInspectorResize({
+  const { dragging, onResizeMouseDown, onResizeDoubleClick, onResizeKeyDown, widthMax } = useInspectorResize({
     shellRef: asideRef,
     widthMin,
+    open: inspectorOpen,
     onCollapse: closeInspector,
     onDragSessionChange,
     onLiveWidthChange: (nextWidth) => {
@@ -158,6 +158,10 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
           <InspectorResizeHandle
             onMouseDown={onResizeMouseDown}
             onDoubleClick={onResizeDoubleClick}
+            onKeyDown={onResizeKeyDown}
+            valueNow={effectiveWidth}
+            valueMin={widthMin}
+            valueMax={widthMax}
             active={dragging}
           />
           <div
@@ -192,7 +196,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
                         className={`inspector-panel__pane${key === 'browser' ? ' inspector-panel__pane--browser' : ''}`}
                         hidden={key !== activeTab}
                         role="tabpanel"
-                        aria-label={VIEW_META[key].name}
+                        id={inspectorTabPanelId(key)}
+                        aria-labelledby={inspectorTabId(key)}
                       >
                         {renderPane(key)}
                       </div>

@@ -80,14 +80,14 @@ dialog.skill-detail {
 
 .skill-detail__meta dt {
   color: var(--text-muted);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
 }
 
 .skill-detail__meta dd {
   margin: 0;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
 
@@ -124,4 +124,10 @@ dialog.skill-detail {
   flex: 0 0 auto;
   padding: 12px 22px 18px;
   border-top: 0.5px solid var(--glass-edge);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.skill-detail {
+    animation: none;
+  }
 }

@@ -135,7 +135,7 @@ dialog.glass-dialog {
 .glass-chip--caution {
   border-color: color-mix(in srgb, var(--color-warning) 34%, var(--glass-edge));
   background-color: color-mix(in srgb, var(--color-warning) 7%, var(--glass-well));
-  color: light-dark(color-mix(in srgb, var(--color-warning) 80%, #78350f), var(--color-warning));
+  color: var(--color-warning-text);
 }
 
 .glass-chip--caution::before {
@@ -147,16 +147,17 @@ dialog.glass-dialog {
   box-shadow: 0 0 5px color-mix(in srgb, var(--color-warning) 45%, transparent);
 }
 
+/* 状态色全部取语义 token，浅色下混入文字色加深以保证对比度 */
 .glass-chip--success {
-  border-color: color-mix(in srgb, #10b981 35%, var(--glass-edge));
-  background-color: color-mix(in srgb, #10b981 10%, var(--glass-well));
-  color: light-dark(#065f46, #34d399);
+  border-color: color-mix(in srgb, var(--color-success) 35%, var(--glass-edge));
+  background-color: color-mix(in srgb, var(--color-success) 10%, var(--glass-well));
+  color: light-dark(color-mix(in srgb, var(--color-success) 65%, var(--text-primary)), var(--color-success));
 }
 
 .glass-chip--danger {
-  border-color: color-mix(in srgb, #ef4444 35%, var(--glass-edge));
-  background-color: color-mix(in srgb, #ef4444 10%, var(--glass-well));
-  color: light-dark(#991b1b, #f87171);
+  border-color: color-mix(in srgb, var(--color-error) 35%, var(--glass-edge));
+  background-color: color-mix(in srgb, var(--color-error) 10%, var(--glass-well));
+  color: light-dark(color-mix(in srgb, var(--color-error) 70%, var(--text-primary)), var(--color-error));
 }
 
 .perm-rule-form {

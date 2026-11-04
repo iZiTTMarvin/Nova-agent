@@ -65,7 +65,8 @@
 }
 
 .mode-switch__menu-item--active .mode-switch__menu-item-desc {
-  color: rgba(255, 255, 255, 0.78);
+  color: inherit;
+  opacity: 0.78;
 }
 
 .mode-switch__chip {
@@ -77,16 +78,17 @@
   border-radius: 8px;
 }
 
+/* 模式色随主题翻转：浅色用淡底深字，深色用深底亮字 */
 .mode-switch__chip--plan {
-  border-color: #c9973f;
-  background: #3a2f1d;
-  color: #f0c665;
+  border-color: color-mix(in srgb, var(--color-warning) 55%, transparent);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--bg-card));
+  color: var(--color-warning-text);
 }
 
 .mode-switch__chip--compose {
-  border-color: #7665b5;
-  background: #2e2940;
-  color: #cec3ff;
+  border-color: light-dark(rgba(99, 102, 241, 0.45), rgba(167, 155, 230, 0.5));
+  background: light-dark(rgba(99, 102, 241, 0.08), rgba(118, 101, 181, 0.22));
+  color: light-dark(#4338ca, #cec3ff);
 }
 
 .mode-switch__chip-main,
@@ -105,5 +107,5 @@
 
 .mode-switch__chip-main:hover,
 .mode-switch__chip-close:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }

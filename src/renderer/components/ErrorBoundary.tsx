@@ -19,6 +19,7 @@ interface State {
  */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null }
+  private titleRef = React.createRef<HTMLHeadingElement>()
 
   static getDerivedStateFromError(error: Error): State {
     return { error }
@@ -28,8 +29,15 @@ export class ErrorBoundary extends Component<Props, State> {
     console.error('[ErrorBoundary] 渲染层未捕获异常', error, info.componentStack)
   }
 
-  componentDidUpdate(prevProps: Props): void {
-    if (this.state.error && prevProps.resetKey !== this.props.resetKey) this.setState({ error: null })
+  componentDidUpdate(prevProps: Props, prevState: State): void {
+    if (this.state.error && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ error: null })
+      return
+    }
+    // 整页降级替换了原焦点所在的树，焦点移到标题，键盘与读屏用户能立即感知
+    if (this.state.error && !prevState.error && this.props.fallback === undefined) {
+      this.titleRef.current?.focus()
+    }
   }
 
   private handleReload = (): void => {
@@ -41,6 +49,7 @@ export class ErrorBoundary extends Component<Props, State> {
       if (this.props.fallback !== undefined) return this.props.fallback
       return (
         <div
+          role="alert"
           style={{
             display: 'flex',
             flexDirection: 'column',
@@ -53,7 +62,7 @@ export class ErrorBoundary extends Component<Props, State> {
             color: 'var(--text-primary)'
           }}
         >
-          <h2 style={{ marginBottom: 8 }}>界面遇到问题</h2>
+          <h2 ref={this.titleRef} tabIndex={-1} style={{ marginBottom: 8, outline: 'none' }}>界面遇到问题</h2>
           <p style={{ marginBottom: 16, maxWidth: 480, textAlign: 'center', color: 'var(--text-secondary)' }}>
             {this.state.error.message || '未知错误'}
           </p>

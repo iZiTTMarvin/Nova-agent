@@ -4,7 +4,7 @@
   margin: 8px 0;
   padding: 10px 12px;
   border-radius: 8px;
-  background: var(--nova-surface-soft, rgba(0, 0, 0, 0.03));
+  background: var(--surface-gutter);
   overflow-x: auto;
   text-align: center;
 }
@@ -24,7 +24,7 @@
 .mermaid-diagram__source {
   margin: 0;
   padding: 0;
-  font-family: var(--nova-font-mono, ui-monospace, monospace);
+  font-family: var(--font-mono);
   font-size: 0.85em;
   white-space: pre-wrap;
   text-align: left;
@@ -41,11 +41,11 @@
 }
 
 .mermaid-diagram--error {
-  border: 1px solid rgba(179, 64, 42, 0.4);
+  border: 1px solid color-mix(in srgb, var(--color-error) 40%, transparent);
 }
 
 .mermaid-diagram--error .mermaid-diagram__hint {
-  color: #b3402a;
+  color: var(--color-error);
   display: flex;
   align-items: center;
   gap: 8px;

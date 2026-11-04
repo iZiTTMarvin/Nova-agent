@@ -70,7 +70,7 @@ export const WebSearchSettingsPanel: React.FC = () => {
         <SettingsPage>
           <SettingsCard
             title="Tavily 增强搜索"
-            description="默认使用内置免密钥搜索，配置 Tavily 可进一步增强复杂技术检索与网页内容抓取质量。"
+            description="默认使用内置免密钥搜索；配置 Tavily 可提升复杂检索与网页抓取质量。"
           >
             <div style={{ display: "grid", gap: "10px" }}>
               <TextInput

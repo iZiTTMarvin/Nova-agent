@@ -10,6 +10,7 @@ import { usePanelPresence } from '../../hooks/usePanelPresence'
 import { afterStartupComplete } from '../../installWindowStartupSignal'
 import { WindowControls } from '../../components/ContentTopBar'
 import { rulesI18n, skillsI18n, subagentsI18n } from '../skills/i18n'
+import { SettingsUnsavedGuardProvider, useSettingsUnsavedRegistry } from './settingsUnsavedGuard'
 import {
   SettingsIcon,
   CpuIcon,
@@ -278,6 +279,20 @@ const SettingsModalSession: React.FC<{
   const [query, setQuery] = useState('')
   const navRefs = useRef<Partial<Record<SettingsSection, HTMLElement | null>>>({})
   const escapeOwnedByNested = useRef(false)
+  const unsaved = useSettingsUnsavedRegistry()
+  const closeConfirmPending = useRef(false)
+
+  // 所有关闭入口都经此处；已访问面板保持挂载，切换分区不丢草稿，因此只守卫关闭
+  const requestClose = async () => {
+    if (closing || closeConfirmPending.current) return
+    closeConfirmPending.current = true
+    try {
+      if (!(await unsaved.confirmLeave())) return
+    } finally {
+      closeConfirmPending.current = false
+    }
+    onClose()
+  }
 
   // 子 Dialog 的 Esc 会冒泡到壳层，但冒泡前它的关闭状态可能已提交并卸载；
   // 因此在捕获阶段（子 Dialog 仍在 DOM 中）判定本次 Esc 的归属。
@@ -370,7 +385,7 @@ const SettingsModalSession: React.FC<{
       isOpen
       variant="fullscreen"
       onOpenChange={open => {
-        if (!open && !escapeOwnedByNested.current) onClose()
+        if (!open && !escapeOwnedByNested.current) void requestClose()
       }}
       padding={0}
       className={closing ? 'settings-shell settings-shell--closing' : 'settings-shell'}
@@ -388,7 +403,7 @@ const SettingsModalSession: React.FC<{
           <button
             type="button"
             className="settings-shell__back"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             aria-label="返回应用"
           >
             <ArrowLeftIcon size={16} className="settings-shell__back-icon" />
@@ -456,6 +471,7 @@ const SettingsModalSession: React.FC<{
             <p className="settings-shell__desc">{active.description}</p>
           </header>
           <div className="settings-shell__content">
+            <SettingsUnsavedGuardProvider api={unsaved}>
             {SECTION_IDS.map(id => {
               if (!visited.has(id)) return null
               const { Panel } = SETTINGS_PANELS[id]
@@ -486,6 +502,7 @@ const SettingsModalSession: React.FC<{
                 </div>
               )
             })}
+            </SettingsUnsavedGuardProvider>
           </div>
         </main>
       </div>

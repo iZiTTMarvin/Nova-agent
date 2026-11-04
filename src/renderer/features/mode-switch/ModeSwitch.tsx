@@ -150,12 +150,12 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
           size: 'sm',
           isIconOnly: true,
           icon: <PlusIcon size={16} />,
-          tooltip: '添加工作流、上下文与工具'
+          tooltip: '添加'
         }}
       >
-        <div className="mode-switch__menu-title">添加工作流、上下文与工具</div>
+        <div className="mode-switch__menu-title">工作模式</div>
         {switchError && (
-          <div className="mode-switch__error" role="status">
+          <div className="mode-switch__error" role="alert">
             {switchError}
           </div>
         )}
@@ -209,7 +209,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
             className="mode-switch__chip-main"
             onClick={openMenu}
           >
-            {activeChip.label}
+            <span className="mode-switch__chip-label">{activeChip.label}</span>
           </Button>
           <IconButton
             label={`退出 ${activeChip.label}`}

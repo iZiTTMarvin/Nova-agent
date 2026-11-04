@@ -42,6 +42,8 @@ export interface SplitPaneResizeControls {
   dragging: boolean
   onResizeMouseDown: (e: React.MouseEvent) => void
   onResizeDoubleClick: () => void
+  /** 键盘等非拖拽方式改宽：按边界钳制后直接提交 */
+  onResizeToWidth: (width: number) => void
 }
 
 export function useSplitPaneResize({
@@ -155,13 +157,17 @@ export function useSplitPaneResize({
     [notifyDragSession]
   )
 
-  const onResizeDoubleClick = useCallback(() => {
-    const clampedDefault = clampWidth(defaultWidth)
-    onCommitWidthRef.current(clampedDefault)
+  const onResizeToWidth = useCallback((width: number) => {
+    const clamped = clampWidth(width)
+    onCommitWidthRef.current(clamped)
     const el = shellRef.current
-    if (el) writeShellWidth(el, clampedDefault)
-    onLiveWidthChangeRef.current?.(clampedDefault)
-  }, [clampWidth, defaultWidth, shellRef, writeShellWidth])
+    if (el) writeShellWidth(el, clamped)
+    onLiveWidthChangeRef.current?.(clamped)
+  }, [clampWidth, shellRef, writeShellWidth])
+
+  const onResizeDoubleClick = useCallback(() => {
+    onResizeToWidth(defaultWidth)
+  }, [defaultWidth, onResizeToWidth])
 
   useEffect(() => {
     if (!dragging) return
@@ -255,6 +261,7 @@ export function useSplitPaneResize({
   return {
     dragging,
     onResizeMouseDown,
-    onResizeDoubleClick
+    onResizeDoubleClick,
+    onResizeToWidth
   }
 }

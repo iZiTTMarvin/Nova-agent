@@ -4,6 +4,7 @@
  */
 import React from 'react'
 import type { SubagentToolOption } from '../../../shared/settings/types'
+import { CheckIcon } from '../../components/Icons'
 import './SubagentToolGroups.css'
 
 const EFFECT_LABELS: Record<string, string> = {
@@ -96,7 +97,7 @@ export const SubagentToolGroups: React.FC<SubagentToolGroupsProps> = ({ tools, s
                     className={`subagent-tool subagent-tool--toggle glass-chip${isSelected ? ' glass-chip--accent' : ''}`}
                     onClick={() => onToggle(tool.name, !isSelected)}
                   >
-                    <span className="subagent-tool__mark" aria-hidden="true">{isSelected ? '✓' : ''}</span>
+                    <span className="subagent-tool__mark" aria-hidden="true">{isSelected && <CheckIcon size={10} />}</span>
                     <code>{tool.name}</code>
                   </button>
                 )

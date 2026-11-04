@@ -125,7 +125,7 @@ export const StorageSettingsPanel: React.FC = () => {
         <SettingsPage>
           <SettingsCard
             title="空间管理"
-            description="清理过期的会话快照与磁盘缓存数据。"
+            description="清理过期的会话快照与磁盘缓存。"
             aside={
               report ? (
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
@@ -158,12 +158,12 @@ export const StorageSettingsPanel: React.FC = () => {
               </Button>
             </div>
             {lastResult && lastResult.freedBytes > 0 && (
-              <div className="storage-result" style={{ fontSize: "0.82rem", color: "var(--accent-primary)" }}>
+              <div className="storage-result">
                 已释放 {formatBytes(lastResult.freedBytes)}，涉及 {lastResult.affectedSessions} 个会话
               </div>
             )}
             {lastResult && lastResult.freedBytes === 0 && (
-              <div className="storage-result storage-result--empty" style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+              <div className="storage-result storage-result--empty">
                 暂无过期内容需要清理
               </div>
             )}

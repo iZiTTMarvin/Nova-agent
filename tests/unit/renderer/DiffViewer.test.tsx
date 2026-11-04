@@ -269,7 +269,8 @@ describe('DiffViewer', () => {
 
     const header = renderer.container.querySelector('.diff-file__header')
     expect(header).not.toBeNull()
-    expect(header?.getAttribute('role')).toBe('button')
+    const toggle = header?.querySelector('button.diff-file__toggle')
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false')
 
     const reviewBtn = Array.from(renderer.container.querySelectorAll('button'))
       .find(b => b.textContent === '审查')
@@ -280,6 +281,7 @@ describe('DiffViewer', () => {
       header?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     })
     expect(renderer.container.querySelector('.diff-file__body')).not.toBeNull()
+    expect(toggle?.getAttribute('aria-expanded')).toBe('true')
 
     expect(useLayoutStore.getState().reviewTarget).toBeNull()
     renderer.unmount()

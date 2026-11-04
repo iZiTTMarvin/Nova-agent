@@ -14,19 +14,15 @@ import { PERMISSION_GRANT_SESSION_PATH, PERMISSION_GRANT_SESSION_SCOPE, PERMISSI
 import './InlinePermissionBar.css'
 
 /**
- * InlinePermissionBar — 内联放行条
+ * InlinePermissionBar — 内联放行条，渲染在消息流中对应工具卡片附近。
  *
- * 取代原先 composer 上方的全屏式权限卡片：直接渲染在消息流中对应命令卡片
- * （ToolBox）的底部，跟随消息一起滚动，对标 Windsurf「按钮长在命令卡片上」的形态。
- *
- * 职责：
- * - 展示风险说明（命令文本由所在卡片头部已呈现，这里不重复）
- * - 主操作：允许 / 拒绝；批量时主按钮为「全部允许（N 条）」
- * - 下拉粒度：仅本次 / 本会话 / 本项目永久 / 全局永久 / 始终拒绝
- *
- * 命令文本由卡片负责展示，本组件只承载「决策」。所有授权粒度逻辑与原
- * PermissionPrompt 一致，仅形态从模态卡片改为内联条。
+ * 自身展示本次要授权的命令与工作区外路径：所在卡片的命令可能处于折叠区，
+ * 用户必须在按钮旁看到「到底在批准什么」。
+ * 下拉粒度：仅本次 / 本会话 / 本项目永久 / 全局永久 / 始终拒绝。
  */
+
+/** 超过该条数时折叠其余项，避免批量请求撑高消息流 */
+const COLLAPSED_ITEM_LIMIT = 3
 
 /**
  * 从权限请求中提取用于规则匹配的命令前缀。
@@ -44,6 +40,52 @@ function extractCommandPrefix(toolName: string, args: Record<string, unknown>): 
   return firstToken || undefined
 }
 
+/** 本次待授权的完整命令：批量取 commands，单条取 bash command / shell_session 输入 */
+function resolveRequestCommands(request: PendingPermissionRequest): string[] {
+  if (request.commands && request.commands.length > 0) return request.commands
+  const raw = request.toolName === 'bash'
+    ? request.args.command
+    : request.toolName === 'shell_session' && request.args.action === 'write'
+      ? request.args.input
+      : undefined
+  return typeof raw === 'string' && raw.trim() ? [raw] : []
+}
+
+interface CollapsibleListProps {
+  items: readonly string[]
+  label: string
+  className: string
+  renderItem: (item: string) => React.ReactNode
+}
+
+/** 超过 COLLAPSED_ITEM_LIMIT 条时只显示前几条，其余由按钮展开 */
+const CollapsibleList: React.FC<CollapsibleListProps> = ({ items, label, className, renderItem }) => {
+  const [expanded, setExpanded] = useState(false)
+  const hiddenCount = items.length - COLLAPSED_ITEM_LIMIT
+  const visible = expanded || hiddenCount <= 0 ? items : items.slice(0, COLLAPSED_ITEM_LIMIT)
+  return (
+    <div className={className}>
+      <ul className="inline-perm__list" aria-label={label}>
+        {visible.map((item, index) => (
+          <li key={`${index}:${item}`} className="inline-perm__list-item">
+            {renderItem(item)}
+          </li>
+        ))}
+      </ul>
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          className="inline-perm__expand"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(value => !value)}
+        >
+          {expanded ? '收起' : `展开其余 ${hiddenCount} 条`}
+        </button>
+      )}
+    </div>
+  )
+}
+
 export interface InlinePermissionBarProps {
   request: PendingPermissionRequest
 }
@@ -59,7 +101,11 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
 
   const isPathRequest = !!request.externalPaths && request.externalPaths.length > 0
   const pathAccessLabel = request.pathAccess === 'write' ? '写入' : '读取'
-  const displayedPath = request.externalPaths?.[0]
+  const externalPaths = request.externalPaths ?? []
+  const pathGrantLabel = externalPaths.length > 1
+    ? `本会话允许这些目录（${externalPaths.length} 个）`
+    : '本会话允许此目录'
+  const requestCommands = resolveRequestCommands(request)
   const isBatch = !!request.commands && request.commands.length > 1
   const allowLabel = isBatch ? `全部允许（${request.commands!.length} 条）` : '允许'
 
@@ -132,15 +178,21 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
     setShowDropdown(false)
   }
 
+  /**
+   * 目录授权覆盖请求里的全部路径：主进程按 requestId 校验每条路径都属于该请求，
+   * 只授权首条会让其余路径在放行后继续被拦截或被误以为已授权。
+   */
   const rememberPathDirectoryAndRespond = async () => {
-    if (!grantSessionId || !displayedPath) return
+    if (!grantSessionId || externalPaths.length === 0) return
     try {
-      await window.api.invoke(PERMISSION_GRANT_SESSION_PATH, {
-        sessionId: grantSessionId,
-        requestId: request.requestId,
-        canonicalPath: displayedPath,
-        access: request.pathAccess ?? 'read'
-      })
+      for (const canonicalPath of externalPaths) {
+        await window.api.invoke(PERMISSION_GRANT_SESSION_PATH, {
+          sessionId: grantSessionId,
+          requestId: request.requestId,
+          canonicalPath,
+          access: request.pathAccess ?? 'read'
+        })
+      }
     } catch (err) {
       failRuleWrite('写入本会话目录授权', err)
       return
@@ -155,14 +207,29 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
           {isPathRequest ? '需要访问工作区外文件' : request.reason}
         </div>
       )}
-      {isPathRequest && displayedPath && (
-        <div className="inline-perm__path">
-          <code>{displayedPath}</code>
-          <span className="inline-perm__path-access">{pathAccessLabel}</span>
-        </div>
+      {requestCommands.length > 0 && (
+        <CollapsibleList
+          items={requestCommands}
+          label="本次授权命令"
+          className="inline-perm__commands"
+          renderItem={command => <code className="inline-perm__command">{command}</code>}
+        />
+      )}
+      {isPathRequest && (
+        <CollapsibleList
+          items={externalPaths}
+          label={`需要${pathAccessLabel}的工作区外路径`}
+          className="inline-perm__paths"
+          renderItem={path => (
+            <span className="inline-perm__path">
+              <code title={path}>{path}</code>
+              <span className="inline-perm__path-access">{pathAccessLabel}</span>
+            </span>
+          )}
+        />
       )}
 
-      {permissionError && <div className="inline-perm__error">{permissionError}</div>}
+      {permissionError && <div className="inline-perm__error" role="alert">{permissionError}</div>}
       {/* 拒绝后果是决策信息，但只作一行安静提示，不与风险原因形成两块同款色块 */}
       <p className="inline-perm__hint">拒绝后任务会暂停，等待你的下一步指令</p>
 
@@ -189,14 +256,14 @@ export const InlinePermissionBar: React.FC<InlinePermissionBarProps> = ({ reques
             {isSubmitting ? '提交中...' : '允许一次'}
           </Button>
           <Button
-            label="本会话允许此目录"
+            label={pathGrantLabel}
             variant="secondary"
             size="sm"
             className="inline-perm__btn"
             onClick={() => void rememberPathDirectoryAndRespond()}
             isDisabled={isSubmitting || !grantSessionId}
           >
-            本会话允许此目录
+            {pathGrantLabel}
           </Button>
         </div>
       ) : (

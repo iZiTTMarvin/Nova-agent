@@ -188,7 +188,27 @@ describe('cancel 由 RunCoordinator 确认终态', () => {
       await useAgentStore.getState().cancelExecution()
       expect(mockInvoke).not.toHaveBeenCalledWith('cancel-execution', expect.anything())
       expect(useRunStore.getState().cancelling).toBe(false)
-      expect(error).toHaveBeenCalledWith('取消执行失败:', expect.objectContaining({ message: '无法取消：当前会话没有可识别的运行' }))
+      expect(error).toHaveBeenCalledWith('取消执行失败:', expect.objectContaining({ message: '当前会话没有可识别的运行' }))
+      expect(useRunStore.getState().cancelError?.message).toBe('无法停止：当前会话没有可识别的运行')
+    } finally { error.mockRestore() }
+  })
+
+  it('停止请求未送达时撤回「正在停止」并保留失败原因，用户可以再次停止', async () => {
+    const { useAgentStore } = await import('../../../src/renderer/stores/useAgentStore')
+    const { useRunStore } = await import('../../../src/renderer/stores/useRunStore')
+    const sessionId = 's1'
+    publishRunSnapshot(makeRunSnapshot({ sessionId }))
+    useRunStore.getState().selectSession(sessionId)
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'cancel-execution') throw new Error('IPC 已断开')
+      return undefined
+    })
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await useAgentStore.getState().cancelExecution()
+      expect(useRunStore.getState().cancelling).toBe(false)
+      expect(useRunStore.getState().cancelError).toEqual({ sessionId, message: '停止失败：IPC 已断开' })
+      expect(selectSessionIsRunning(useRunStore.getState(), sessionId)).toBe(true)
     } finally { error.mockRestore() }
   })
 

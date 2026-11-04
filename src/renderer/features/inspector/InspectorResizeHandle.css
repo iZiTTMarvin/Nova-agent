@@ -49,6 +49,17 @@
 }
 
 .inspector-panel__resize:hover::after,
-.inspector-panel__resize--active::after {
+.inspector-panel__resize--active::after,
+.inspector-panel__resize:focus-visible::after {
   opacity: 1;
+}
+
+/* 键盘聚焦：结构线加粗换成焦点色，同时亮起光效 */
+.inspector-panel__resize:focus-visible {
+  outline: none;
+}
+
+.inspector-panel__resize:focus-visible::before {
+  width: 2px;
+  background: var(--color-focus);
 }

@@ -76,20 +76,25 @@ export const useAgentStore = create<AgentState>((set, get) => ({
   askQuestionError: null,
 
   cancelExecution: async targetRunId => {
+    const { useRunStore, selectSessionSnapshot } = await import('./useRunStore')
+    let requested = false
     try {
-      const { useRunStore, selectSessionSnapshot } = await import('./useRunStore')
       const sessionId = useRunStore.getState().selectedSessionId
       let runId = targetRunId ?? selectSessionSnapshot(useRunStore.getState(), sessionId)?.runId
       if (!runId && sessionId) {
         await useRunStore.getState().pullSnapshot(sessionId)
         runId = selectSessionSnapshot(useRunStore.getState(), sessionId)?.runId
       }
-      if (!runId) throw new Error('无法取消：当前会话没有可识别的运行')
+      if (!runId) throw new Error('当前会话没有可识别的运行')
       useRunStore.getState().beginLocalCancel(runId)
+      requested = true
       await window.api.invoke('cancel-execution', { runId })
       // 卡片和运行态只在权威快照确认后清除。
     } catch (err) {
       console.error('取消执行失败:', err)
+      // 请求没送达时运行仍在继续：撤回「正在停止」并把原因交给界面，让用户可以重试
+      const reason = err instanceof Error ? err.message : String(err)
+      useRunStore.getState().failLocalCancel(requested ? `停止失败：${reason}` : `无法停止：${reason}`)
     }
   },
 

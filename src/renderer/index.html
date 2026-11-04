@@ -36,9 +36,10 @@
         opacity: 1;
       }
 
+      /* 遮罩底色必须与 global.css 的 --surface-canvas 一致，淡出时才不跳色 */
       :root {
         color-scheme: light dark;
-        --startup-bg: light-dark(#f7f4ed, #141517);
+        --startup-bg: light-dark(#ffffff, #18181b);
         --startup-card-bg: light-dark(
           linear-gradient(180deg, #ffffff 0%, #f9f8f4 100%),
           linear-gradient(180deg, #222327 0%, #161719 100%)
@@ -52,7 +53,7 @@
 
       :root[data-theme="dark"] {
         color-scheme: dark;
-        --startup-bg: #141517;
+        --startup-bg: #18181b;
         --startup-card-bg: linear-gradient(180deg, #222327 0%, #161719 100%);
         --startup-card-border: rgba(255, 255, 255, 0.08);
         --startup-card-shadow: 0 20px 40px -8px rgba(0, 0, 0, 0.65), 0 8px 16px -4px rgba(0, 0, 0, 0.45);
@@ -61,7 +62,7 @@
       :root[data-theme="light"],
       :root[data-theme="parchment"] {
         color-scheme: light;
-        --startup-bg: #f7f4ed;
+        --startup-bg: #ffffff;
         --startup-card-bg: linear-gradient(180deg, #ffffff 0%, #f9f8f4 100%);
         --startup-card-border: rgba(60, 48, 30, 0.09);
         --startup-card-shadow: 0 20px 36px -8px rgba(60, 48, 30, 0.12), 0 6px 14px -3px rgba(60, 48, 30, 0.06);

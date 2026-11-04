@@ -173,7 +173,12 @@ export function LearningOutlinePane({ sessionId }: { sessionId: string }): React
         <DropdownMenu
           button={{ label: LEARNING_OUTLINE_MENU_LABEL, tooltip: LEARNING_OUTLINE_MENU_LABEL, isIconOnly: true, variant: 'ghost', size: 'sm', icon: <MoreIcon size={14} /> }}
           menuWidth={180}
-          items={[{ label: LEARNING_OUTLINE_REGENERATE, onClick: requestBuild }]}
+          items={[{
+            label: LEARNING_OUTLINE_REGENERATE,
+            onClick: requestBuild,
+            // 生成进行中再次触发只会重复排队，等当前任务结束或取消
+            isDisabled: build.status === 'queued' || build.status === 'running' || build.status === 'paused'
+          }]}
         />
       </div>
       {build.status === 'failed' && (

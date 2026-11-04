@@ -5,9 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AssistantPendingIndicator,
   NOVA_WORKING_MESSAGES,
+  describeRunPhase,
   pickNonRepeatingWorkingMessage
 } from '../../../src/renderer/features/chat/AssistantPendingIndicator'
 import { NOVA_WORKING_ORB_DOT_COUNT } from '../../../src/renderer/features/chat/NovaWorkingOrb'
+import { makeRunSnapshot } from './runSnapshotFixture'
 import { act, renderDom } from './renderDom'
 
 describe('AssistantPendingIndicator', () => {
@@ -34,10 +36,9 @@ describe('AssistantPendingIndicator', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0)
 
     const first = renderDom(React.createElement(AssistantPendingIndicator))
+    const second = renderDom(React.createElement(AssistantPendingIndicator))
     expect(first.container.querySelector('.nova-working-indicator__copy')?.textContent)
       .toBe(NOVA_WORKING_MESSAGES[0])
-
-    const second = renderDom(React.createElement(AssistantPendingIndicator))
     expect(second.container.querySelector('.nova-working-indicator__copy')?.textContent)
       .toBe(NOVA_WORKING_MESSAGES[0])
 
@@ -45,24 +46,45 @@ describe('AssistantPendingIndicator', () => {
     first.unmount()
   })
 
-  it('渲染 Nova N/O/V/A 点阵工作态和随机文案', () => {
-    const renderer = renderDom(React.createElement(AssistantPendingIndicator))
+  it('阶段文案来自运行快照：执行中的工具优先于思考，新一轮未建立运行时为发送中', () => {
+    const running = makeRunSnapshot({ sessionId: 's1' })
+    expect(describeRunPhase(running)).toBe('正在思考')
+    expect(describeRunPhase({
+      ...running,
+      toolCommits: [{ toolCallId: 't1', toolName: 'bash', phase: 'executing', idempotent: false, updatedAt: 1 }]
+    })).toBe('正在执行 bash')
+    expect(describeRunPhase({
+      ...running,
+      toolCommits: [
+        { toolCallId: 't1', toolName: 'read', phase: 'executing', idempotent: true, updatedAt: 1 },
+        { toolCallId: 't2', toolName: 'grep', phase: 'executing', idempotent: true, updatedAt: 1 },
+        { toolCallId: 't0', toolName: 'ls', phase: 'committed', idempotent: true, updatedAt: 1 }
+      ]
+    })).toBe('正在执行 2 个工具')
+    expect(describeRunPhase({ ...running, status: 'retrying' })).toBe('正在重试')
+    expect(describeRunPhase({ ...running, status: 'completed' })).toBe('正在发送')
+    expect(describeRunPhase(null)).toBe('正在发送')
+  })
+
+  it('视觉层轮播工作文案，读屏只播报阶段文案', () => {
+    const renderer = renderDom(React.createElement(AssistantPendingIndicator, { label: '正在执行 bash' }))
     const pending = renderer.container.querySelector('.assistant-pending')
     const orb = renderer.container.querySelector('.nova-working-orb')
-    const copy = renderer.container.querySelector('.nova-working-indicator__copy')
+    const label = pending?.querySelector('.assistant-pending__label')
+    const copy = () => renderer.container.querySelector('.nova-working-indicator__copy')
 
-    expect(pending).not.toBeNull()
     expect(orb?.getAttribute('data-shape')).toBe('N')
     expect(orb?.querySelectorAll('.nova-working-orb__dot')).toHaveLength(NOVA_WORKING_ORB_DOT_COUNT)
-    expect(NOVA_WORKING_MESSAGES).toContain(copy?.textContent)
-    expect(pending?.querySelector('.assistant-pending__label')?.textContent).toBe('正在思考')
+    expect(label?.textContent).toBe('正在执行 bash')
+    expect(label?.getAttribute('role')).toBe('status')
+    expect(pending?.getAttribute('aria-live')).toBeNull()
+    expect(copy()?.getAttribute('aria-hidden')).toBe('true')
 
-    act(() => vi.advanceTimersByTime(1500))
-    expect(orb?.getAttribute('data-shape')).toBe('O')
-    act(() => vi.advanceTimersByTime(1500))
-    expect(orb?.getAttribute('data-shape')).toBe('V')
-    act(() => vi.advanceTimersByTime(1500))
-    expect(orb?.getAttribute('data-shape')).toBe('A')
+    const firstCopy = copy()?.textContent
+    expect(NOVA_WORKING_MESSAGES).toContain(firstCopy)
+    act(() => vi.advanceTimersByTime(4600))
+    expect(copy()?.textContent).not.toBe(firstCopy)
+    expect(orb?.getAttribute('data-shape')).not.toBe('N')
 
     renderer.unmount()
   })
@@ -86,8 +108,7 @@ describe('AssistantPendingIndicator', () => {
       React.createElement(AssistantPendingIndicator, { turnStartedAt: now - 5_000 })
     )
 
-    const clock = renderer.container.querySelector('.nova-working-indicator__clock')
-    expect(clock).toBeNull()
+    expect(renderer.container.querySelector('.nova-working-indicator__clock')).toBeNull()
 
     renderer.unmount()
   })

@@ -119,6 +119,28 @@ dialog.llm-picker {
   gap: 8px;
 }
 
+/* 标题按钮：撑满左侧剩余宽度，保留整行观感 */
+.llm-row__title {
+  flex: 1;
+  padding: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.llm-row__title:disabled {
+  cursor: default;
+}
+
+.llm-row__title:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 4px;
+}
+
 .llm-row__name {
   overflow: hidden;
   color: var(--text-primary);
@@ -172,7 +194,7 @@ dialog.llm-picker {
 .llm-tag--current {
   border-color: color-mix(in srgb, var(--color-success) 38%, transparent);
   background-color: color-mix(in srgb, var(--color-success) 14%, transparent);
-  color: light-dark(#15803d, var(--color-success));
+  color: light-dark(color-mix(in srgb, var(--color-success) 65%, var(--text-primary)), var(--color-success));
 }
 
 /* 保存成功反馈 */
@@ -319,7 +341,7 @@ dialog.llm-picker {
 
 .llm-readonly__value {
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: 6px;
   background-color: light-dark(rgba(0, 0, 0, 0.04), rgba(255, 255, 255, 0.05));
   color: var(--text-secondary);
   font-family: var(--font-mono);
@@ -462,7 +484,8 @@ dialog.llm-picker {
 
 .llm-model-row {
   border: 0.5px solid var(--glass-edge);
-  border-radius: 10px;
+  /* 外层编辑卡圆角 10px、内边距 16px，同心公式已为 0；取明显小于外层的 6px，避免内外等圆角 */
+  border-radius: 6px;
   background-color: light-dark(rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.04));
   transition: background-color 0.16s var(--llm-ease);
 }
@@ -493,7 +516,7 @@ dialog.llm-picker {
   min-height: 40px;
   padding: 10px 6px 10px 12px;
   border: none;
-  border-radius: 10px;
+  border-radius: 6px;
   background: transparent;
   color: inherit;
   font: inherit;

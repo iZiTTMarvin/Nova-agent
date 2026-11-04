@@ -5,7 +5,7 @@
  * 历史消息与 RunCoordinator 草稿合并展示；流式更新复用 run 快照投影。
  * 面板只读，不跳转子会话。
  */
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Message, MessageBlock } from '../../../shared/session'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import type { RunSnapshot } from '../../../shared/run/types'
@@ -213,6 +213,31 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = (prop
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [anchor, onClose])
 
+  // 模态弹层：打开时焦点进入关闭按钮，Tab 在面板内循环
+  const panelRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const isModal = anchor !== null
+  useEffect(() => {
+    if (isModal) closeButtonRef.current?.focus()
+  }, [isModal])
+
+  const trapFocus = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!isModal || event.key !== 'Tab' || !panelRef.current) return
+    const focusable = Array.from(panelRef.current.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    ))
+    if (focusable.length === 0) return
+    const first = focusable[0]!
+    const last = focusable[focusable.length - 1]!
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
+
   const toolRows = useMemo(
     () => collectToolRows(displayedMessages),
     [displayedMessages]
@@ -233,11 +258,14 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = (prop
     <>
       {anchor && <div className="subagent-detail-popover__backdrop" onClick={onClose} />}
       <div
+        ref={panelRef}
         className={`subagent-detail-popover${anchor ? '' : ' subagent-detail-popover--inspector'}`}
         role={anchor ? 'dialog' : 'region'}
+        aria-modal={isModal ? true : undefined}
         aria-label={`${projection.profile.name} 工作流详情`}
         style={panel.style}
         onClick={(event) => event.stopPropagation()}
+        onKeyDown={trapFocus}
       >
         <header className="subagent-detail-popover__header">
           <div className="subagent-detail-popover__title">
@@ -274,6 +302,7 @@ export const SubagentDetailPopover: React.FC<SubagentDetailPopoverProps> = (prop
               进入会话 ↗
             </button>
             <button
+              ref={closeButtonRef}
               type="button"
               className="subagent-detail-popover__close"
               aria-label="关闭详情"

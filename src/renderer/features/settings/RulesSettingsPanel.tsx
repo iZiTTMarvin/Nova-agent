@@ -12,6 +12,7 @@ import { listWorkspaceProjects, workspaceLabel } from '../composer-context/works
 import { rulesI18n } from '../skills/i18n'
 import { confirmDialog } from '../confirm/confirmDialog'
 import { SettingsGlassPanel, SettingsSegmented, SettingsSelect } from './settingsKit'
+import { useSettingsUnsavedGuard } from './settingsUnsavedGuard'
 import type { RuleFileEntry, RuleScope } from '../../../shared/settings/types'
 import './RulesSettingsPanel.css'
 
@@ -67,6 +68,7 @@ export const RulesSettingsPanel: React.FC = () => {
   const visible = useMemo(() => rules.filter(rule => rule.scope === scope), [rules, scope])
   const selected = visible.find(rule => rule.id === selectedId) ?? null
   const dirty = selected !== null && content !== savedContent
+  useSettingsUnsavedGuard('rules', dirty)
 
   const loadRules = useCallback(async () => {
     setLoading(true)

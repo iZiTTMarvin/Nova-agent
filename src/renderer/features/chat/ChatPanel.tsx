@@ -11,6 +11,7 @@ import { useAgentStore } from '../../stores/useAgentStore'
 import {
   arePendingPlanReviewsEqual,
   selectPendingPlanReview,
+  selectSessionSnapshot,
   selectSessionIsRunning,
   getRunInterruptionNotice,
   useRunStore
@@ -22,7 +23,8 @@ import {
   SendIcon,
   StopIcon,
   NovaLogo,
-  ChevronIcon
+  ChevronIcon,
+  CloseIcon
 } from '../../components/Icons'
 import { VirtualMessageList } from './VirtualMessageList'
 import { preSendGate } from './sendOrchestration'
@@ -56,7 +58,7 @@ import { ComposerContextBar } from '../composer-context/ComposerContextBar'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { PlanApprovalCard } from './PlanApprovalCard'
-import { AssistantPendingIndicator } from './AssistantPendingIndicator'
+import { AssistantPendingIndicator, describeRunPhase } from './AssistantPendingIndicator'
 import { RecoveryBanner } from './RecoveryBanner'
 import { ComposerNoticeBanner, type ComposerNotice } from './ComposerNoticeBanner'
 import {
@@ -108,6 +110,9 @@ const ImagePreviewDialog = lazy(() =>
 
 /** 距列表顶部小于此像素时触发向更早方向补载历史 */
 const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
+
+/** 记住阅读位置的会话数上限 */
+const MAX_REMEMBERED_SCROLL_POSITIONS = 50
 
 export interface ChatPanelHandle {
   requestSupplement: () => void
@@ -166,8 +171,17 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const cancellingSessionId = useRunStore(state => state.cancellingSessionId)
   const cancelGraceExceeded = useRunStore(state => state.cancelGraceExceeded)
   const forceTerminate = useRunStore(state => state.forceTerminate)
+  const cancelError = useRunStore(state =>
+    state.cancelError && (state.cancelError.sessionId == null || state.cancelError.sessionId === currentSessionId)
+      ? state.cancelError.message
+      : null
+  )
+  const dismissCancelError = useRunStore(state => state.dismissCancelError)
   const interruptionNotice = useRunStore(state =>
     state.snapshot?.sessionId === currentSessionId ? getRunInterruptionNotice(state.snapshot) : null
+  )
+  const runPhaseLabel = useRunStore(state =>
+    describeRunPhase(selectSessionSnapshot(state, currentSessionId))
   )
   const pendingPlanReview = useRunStore(
     state => selectPendingPlanReview(state.snapshot),
@@ -319,6 +333,13 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }, [])
   /** 自动滚动模式：off=用户上滚远离底部；stream=流式跟随；user=用户点击回底 */
   const autoScrollModeRef = useRef<AutoScrollMode>('off')
+  /**
+   * 各会话的阅读位置：切走时记下，切回时恢复；离开时停在底部的会话回到底部继续跟随。
+   * 只在本组件生命周期内有效，上限防止长时间使用后无限增长。
+   */
+  const scrollPositionsRef = useRef(new Map<string, { top: number; atBottom: boolean }>())
+  const scrollSessionIdRef = useRef(currentSessionId)
+  scrollSessionIdRef.current = currentSessionId
   /** 程序滚动保护截止时间戳 */
   const programmaticScrollUntilRef = useRef(0)
   /** 用户主动滚轮/触摸输入后的 150ms 防抢夺冷却时间戳 */
@@ -433,6 +454,18 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     lastScrollTopRef.current = container.scrollTop
     // 显隐只看距底部距离，与 autoScrollMode 解耦
     setShowScrollToBottom(shouldShowScrollToBottom(metrics))
+    const sessionId = scrollSessionIdRef.current
+    if (sessionId) {
+      const positions = scrollPositionsRef.current
+      positions.delete(sessionId)
+      positions.set(sessionId, {
+        top: container.scrollTop,
+        atBottom: getDistanceFromBottom(metrics) <= AUTO_SCROLL_BOTTOM_THRESHOLD_PX
+      })
+      if (positions.size > MAX_REMEMBERED_SCROLL_POSITIONS) {
+        positions.delete(positions.keys().next().value!)
+      }
+    }
   }, [isGenerating])
 
   const handleScrollToBottomClick = useCallback(() => {
@@ -441,6 +474,28 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
     setShowScrollToBottom(false)
     scrollToBottomInstant('smooth')
   }, [scrollToBottomInstant])
+
+  // 会话就绪后恢复阅读位置；首次打开或离开时在底部的会话落到底部并继续跟随
+  useLayoutEffect(() => {
+    const container = scrollElement
+    if (!container || isSessionLoading || !currentSessionId) return
+    const saved = scrollPositionsRef.current.get(currentSessionId)
+    if (saved && !saved.atBottom) {
+      autoScrollModeRef.current = 'off'
+      const restore = (): void => {
+        markProgrammaticScroll(programmaticScrollUntilRef)
+        container.scrollTop = saved.top
+      }
+      restore()
+      // 虚拟列表首轮测量会改变总高度，下一帧再校正一次
+      const frame = requestAnimationFrame(restore)
+      return () => cancelAnimationFrame(frame)
+    }
+    autoScrollModeRef.current = 'user'
+    markProgrammaticScroll(programmaticScrollUntilRef)
+    container.scrollTop = container.scrollHeight
+    return undefined
+  }, [currentSessionId, isSessionLoading, scrollElement])
 
   const tryLoadOlderMessages = useCallback(() => {
     const container = scrollContainerRef.current
@@ -1004,7 +1059,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
         {/* 流尾状态指示器：在 Agent 运行时稳稳挂在消息流最底部（零抖动） */}
         {isGenerating && !isPausedForUserInput && !cancellingForCurrentSession && (
           <div className="chat-messages__tail-status">
-            <AssistantPendingIndicator turnStartedAt={currentGeneratingTurnStartedAt} />
+            <AssistantPendingIndicator turnStartedAt={currentGeneratingTurnStartedAt} label={runPhaseLabel} />
           </div>
         )}
 
@@ -1033,10 +1088,35 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
             </button>
           )}
 
+          {/* 停止请求本身失败：运行仍在继续，给出原因与重试入口 */}
+          {cancelError && !cancellingForCurrentSession && (
+            <div className="chat-cross-turn-notice" role="alert">
+              <span className="chat-cross-turn-notice__text">{cancelError}</span>
+              {isGenerating && (
+                <Button
+                  label="重试停止"
+                  variant="secondary"
+                  size="sm"
+                  className="chat-cross-turn-notice__stop"
+                  onClick={() => void cancelExecution()}
+                />
+              )}
+              <IconButton
+                label="关闭提示"
+                icon={<CloseIcon size={12} />}
+                variant="ghost"
+                size="sm"
+                onClick={dismissCancelError}
+              />
+            </div>
+          )}
+
           {/* 取消 grace 超时：部分任务未退出 + 强制终止 */}
           {graceExceededForCurrentSession && (
             <div className="chat-cross-turn-notice" role="alert">
-              <span className="chat-cross-turn-notice__text">部分任务未退出</span>
+              <span className="chat-cross-turn-notice__text">
+                {cancelError ?? '部分任务未退出'}
+              </span>
               <Button
                 label="强制终止"
                 variant="destructive"

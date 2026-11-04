@@ -159,3 +159,13 @@ dialog.rules-create-dialog {
   justify-content: flex-end;
   gap: 8px;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .rules-body {
+    animation: none;
+  }
+
+  .rules-file {
+    transition: none;
+  }
+}

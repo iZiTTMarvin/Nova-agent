@@ -253,4 +253,60 @@ describe('InlinePermissionBar', () => {
     )
     renderer.unmount()
   })
+
+  it('多路径请求逐条展示，并对全部路径写入本会话目录授权后才放行', async () => {
+    const paths = ['/tmp/a.txt', '/tmp/b.txt', '/opt/c.txt', '/opt/d.txt', '/var/e.txt']
+    const pathRequest: PendingPermissionRequest = {
+      ...request,
+      toolName: 'write',
+      args: { path: paths[0] },
+      externalPaths: paths,
+      pathAccess: 'write'
+    }
+    const renderer = renderDom(<InlinePermissionBar request={pathRequest} />)
+
+    // 折叠：先显示前 3 条，展开后全部可见
+    expect(renderer.container.textContent).not.toContain('/var/e.txt')
+    const expand = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('展开其余 2 条')
+    )
+    click(expand!)
+    for (const path of paths) expect(renderer.container.textContent).toContain(path)
+
+    const grantBtn = Array.from(renderer.container.querySelectorAll('button')).find(
+      el => (el.textContent ?? '').includes('本会话允许这些目录')
+    )
+    await act(async () => {
+      grantBtn!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      for (let i = 0; i < paths.length + 2; i += 1) await Promise.resolve()
+    })
+
+    const grantCalls = mockInvoke.mock.calls.filter(([c]) => c === PERMISSION_GRANT_SESSION_PATH)
+    expect(grantCalls.map(([, params]) => params)).toEqual(
+      paths.map(canonicalPath => ({
+        sessionId: 'sess_1',
+        requestId: 'req_1',
+        canonicalPath,
+        access: 'write'
+      }))
+    )
+    const channels = mockInvoke.mock.calls.map(([c]) => c)
+    const lastGrantIndex = channels.lastIndexOf(PERMISSION_GRANT_SESSION_PATH)
+    expect(channels.indexOf('respond-permission')).toBeGreaterThan(lastGrantIndex)
+    renderer.unmount()
+  })
+
+  it('授权条自身列出本次要批准的全部命令', () => {
+    const renderer = renderDom(
+      <InlinePermissionBar request={{
+        ...request,
+        args: {},
+        commands: ['npm install', 'git push origin main --force-with-lease']
+      }} />
+    )
+    const list = renderer.container.querySelector('[aria-label="本次授权命令"]')
+    const items = Array.from(list?.querySelectorAll('code') ?? []).map(el => el.textContent)
+    expect(items).toEqual(['npm install', 'git push origin main --force-with-lease'])
+    renderer.unmount()
+  })
 })

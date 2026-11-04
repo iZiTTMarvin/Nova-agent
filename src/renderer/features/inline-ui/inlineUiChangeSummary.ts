@@ -76,7 +76,7 @@ function collectControls(node: InlineUiNode, out: Map<string, ControlLabel>): vo
       if (node.current) {
         const steps = node.phases.flatMap(phase => phase.steps)
         put(node.current.variable, '当前步骤', value =>
-          typeof value === 'number' && steps[value] ? `第 ${value + 1} 步 · ${steps[value].title}` : inlineUiText(value))
+          typeof value === 'number' && steps[value] ? `第 ${value + 1} 步：${steps[value].title}` : inlineUiText(value))
       }
       break
     default:

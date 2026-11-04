@@ -110,11 +110,16 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
 
       <div
         className={`skill-import-bar__dropzone ${dragOver ? 'skill-import-bar__dropzone--active' : ''}`}
+        role="group"
+        aria-label={skillsI18n.importDropHint}
         onDragOver={e => {
           e.preventDefault()
           setDragOver(true)
         }}
-        onDragLeave={() => setDragOver(false)}
+        onDragLeave={e => {
+          // 移入子元素也会触发 dragleave，只有真正离开拖放区才取消高亮
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragOver(false)
+        }}
         onDrop={e => void handleDrop(e)}
       >
         <p className="skill-import-bar__hint">{skillsI18n.importDropHint}</p>
@@ -134,6 +139,7 @@ export const SkillImportBar: React.FC<SkillImportBarProps> = ({ hasProject, onIm
           type="url"
           className="skill-dialog__input"
           placeholder={skillsI18n.importUrlPlaceholder}
+          aria-label={skillsI18n.importFromUrl}
           value={url}
           onChange={e => setUrl(e.target.value)}
           disabled={busy}

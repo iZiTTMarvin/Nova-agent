@@ -5,6 +5,7 @@ import type { ActivePlanDocument } from '../../../shared/workspace/types'
 import type { Mode } from '../../../shared/session/types'
 import { COMPOSE_STAGE_LABELS, createInitialStageTable, getComposeStageCursor } from '../../../shared/composeLifecycle'
 import { CheckIcon, ChevronIcon, CodeIcon, PlanIcon } from '../../components/Icons'
+import { presentSubagentStatus, summarizeActiveSubagents } from '../subagents/statusPresentation'
 import { useChatStore } from '../../stores/useChatStore'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useRunStore, selectSessionIsRunning, selectSessionSnapshot } from '../../stores/useRunStore'
@@ -73,7 +74,9 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
   const tiny = surface !== 'inspector' && (!wide || inspectorOpen)
   const visible = surface === 'inspector' || hasContent || manualEmptyOpen
   const hasOtherSections = isCompose || !!plan || !!planError || !!selectedTurn || failedIds.length > 0 || background.length > 0
-  const isRunningSprite = ((running && !waiting) || background.length > 0) && documentVisible
+  const backgroundSummary = summarizeActiveSubagents(background.map(agent => agent.status))
+  // 后台只有等待授权或正在停止时不播运行动画，避免把「需要你处理」显示成「正在跑」
+  const isRunningSprite = ((running && !waiting) || backgroundSummary.working) && documentVisible
   const headline = total > 0
     ? '进程'
     : background.length > 0
@@ -440,7 +443,7 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
                   <section className="session-status__section" aria-label="后台任务">
                     <div className="session-status__section-title">
                       <span>后台</span>
-                      <span>{background.length} 个运行中</span>
+                      <span>{backgroundSummary.text}</span>
                     </div>
                     {background.map(agent => (
                       <button
@@ -448,9 +451,11 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
                         type="button"
                         className="session-status__link session-status__agent"
                         onClick={() => openSubagent({ parentSessionId: sessionId, childSessionId: agent.childSessionId })}
-                        aria-label={`查看${agent.profile.name}子会话`}
+                        aria-label={`查看${agent.profile.name}子会话，${presentSubagentStatus(agent.status).label}`}
                       >
-                        <span className="session-status__agent-dot" />
+                        <span
+                          className={`session-status__agent-dot session-status__agent-dot--${presentSubagentStatus(agent.status).tone}`}
+                        />
                         <span>
                           {agent.profile.name}
                           <small>{agent.taskLabel}</small>

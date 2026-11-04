@@ -151,25 +151,30 @@ export function useStreamingRenderPool(
     }
   }, [targetLength, isStreaming])
 
-  // 流式期间只在待放出的字符池非空时启动 rAF tick 循环
+  // 流式期间只在待放出的字符池非空时启动 rAF tick 循环。
+  // 循环在运行时只通过 ref 读取新的目标长度，不因每次增量重启，否则会打乱节拍。
+  const configRef = useRef(config)
+  configRef.current = config
   useEffect(() => {
     if (!isStreaming) return
+    if (rafRef.current !== null) return
     if (targetLengthRef.current <= renderedLengthRef.current) return
 
-    // 重新开始计时
+    // 从空闲重新启动：重新开始计时
     lastTickAtRef.current = 0
 
     const tick = (): void => {
+      const frameConfig = configRef.current
       const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
       const elapsedMs = lastTickAtRef.current > 0
         ? now - lastTickAtRef.current
-        : config.frameIntervalMs
+        : frameConfig.frameIntervalMs
 
-      if (elapsedMs >= config.frameIntervalMs) {
+      if (elapsedMs >= frameConfig.frameIntervalMs) {
         lastTickAtRef.current = now
         const pool = Math.max(0, targetLengthRef.current - renderedLengthRef.current)
         if (pool > 0) {
-          const step = getCatchupStep(pool, elapsedMs, config)
+          const step = getCatchupStep(pool, elapsedMs, frameConfig)
           const nextLength = Math.min(targetLengthRef.current, renderedLengthRef.current + step)
           renderedLengthRef.current = nextLength
           setRenderedLength(nextLength)
@@ -184,13 +189,18 @@ export function useStreamingRenderPool(
     }
 
     rafRef.current = requestFrame(tick)
+  }, [isStreaming, requestFrame, targetLength])
+
+  // 流式结束或卸载时才停掉循环
+  useEffect(() => {
+    if (!isStreaming) return
     return () => {
       if (rafRef.current !== null) {
         cancelFrame(rafRef.current)
         rafRef.current = null
       }
     }
-  }, [config, isStreaming, requestFrame, cancelFrame, targetLength])
+  }, [isStreaming, cancelFrame])
 
   const safeRenderedLength = Math.min(renderedLength, targetLength)
 

@@ -1,5 +1,5 @@
 import React, { useMemo, useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useChatStore } from '../../stores/useChatStore'
 import './RecoveryBanner.css'
 
@@ -56,6 +56,8 @@ const HOOK_EVENT_LABELS: Record<string, string> = {
  * 用户在 Agent 运行期间能一眼看到重试、上下文压缩或 Hook 警告，而不打断消息流阅读。
  */
 export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => {
+  // 减少动态效果时只保留淡入淡出，不做位移
+  const shiftY = useReducedMotion() === true ? 0 : 1
   const recoveryState = useChatStore(state =>
     messageId ? state.recoveryState[messageId] : undefined
   )
@@ -125,9 +127,9 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
           <motion.div
             key={`recovery-${recoveryBanner.variant}`}
             className={`recovery-banner recovery-banner--${recoveryBanner.variant}`}
-            initial={{ opacity: 0, y: 6 }}
+            initial={{ opacity: 0, y: 6 * shiftY }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
+            exit={{ opacity: 0, y: 4 * shiftY }}
             transition={{ duration: 0.18 }}
           >
             <span className="recovery-banner__icon">
@@ -150,9 +152,9 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
           <motion.div
             key={`hook-${item.hookEvent}-${index}`}
             className="recovery-banner recovery-banner--hook-error"
-            initial={{ opacity: 0, y: 6 }}
+            initial={{ opacity: 0, y: 6 * shiftY }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
+            exit={{ opacity: 0, y: 4 * shiftY }}
             transition={{ duration: 0.18, delay: index * 0.04 }}
           >
             <span className="recovery-banner__icon">
@@ -172,9 +174,9 @@ export const RecoveryBanner: React.FC<RecoveryBannerProps> = ({ messageId }) => 
           <motion.div
             key="model-switched"
             className="recovery-banner recovery-banner--model-switched"
-            initial={{ opacity: 0, y: 6 }}
+            initial={{ opacity: 0, y: 6 * shiftY }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 4 }}
+            exit={{ opacity: 0, y: 4 * shiftY }}
             transition={{ duration: 0.18 }}
           >
             <span className="recovery-banner__icon">

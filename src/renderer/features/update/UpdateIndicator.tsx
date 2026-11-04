@@ -95,6 +95,7 @@ export const UpdateIndicator: React.FC<UpdateIndicatorProps> = ({ snapshot }) =>
   const [popoverPosition, setPopoverPosition] = useState<React.CSSProperties>({})
   const triggerRef = useRef<HTMLButtonElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const wasOpenRef = useRef(false)
 
   const updatePopoverPosition = useCallback(() => {
@@ -224,8 +225,9 @@ export const UpdateIndicator: React.FC<UpdateIndicatorProps> = ({ snapshot }) =>
 
   useEffect(() => {
     if (isOpen && !wasOpenRef.current) {
+      // 下载中没有主操作，焦点落到关闭按钮，避免停在无可见焦点环的容器上
       const firstAction = popoverRef.current?.querySelector<HTMLElement>('[data-update-autofocus]')
-      ;(firstAction ?? popoverRef.current)?.focus()
+      ;(firstAction ?? closeButtonRef.current ?? popoverRef.current)?.focus()
     } else if (!isOpen && wasOpenRef.current) {
       triggerRef.current?.focus()
     }
@@ -268,6 +270,7 @@ export const UpdateIndicator: React.FC<UpdateIndicatorProps> = ({ snapshot }) =>
               )}
             </div>
             <button
+              ref={closeButtonRef}
               type="button"
               className="app-update-popover__close"
               aria-label="关闭更新详情"
@@ -365,6 +368,7 @@ export const UpdateIndicator: React.FC<UpdateIndicatorProps> = ({ snapshot }) =>
         type="button"
         className={`app-update-indicator__trigger app-update-indicator__trigger--${visibleSnapshot.status === 'error' ? 'error' : visibleSnapshot.status}`}
         aria-label={getTriggerLabel(visibleSnapshot)}
+        aria-haspopup="dialog"
         aria-expanded={isOpen}
         aria-controls={isOpen ? popoverId : undefined}
         title={getTriggerLabel(visibleSnapshot)}

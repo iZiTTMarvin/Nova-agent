@@ -16,13 +16,11 @@ export const CodeIndexStatusChip: React.FC = () => {
     const total = snapshot.progress?.total ?? snapshot.coverage.eligibleFiles
     const hasProgress = total > 0
     const ratio = total > 0 ? completed / total : 0
+    const text = hasProgress ? `建立代码索引 ${completed}/${total}` : '建立代码索引'
     return (
-      <span
-        className="code-index-status-chip"
-        aria-label={hasProgress ? `建立代码索引 ${completed}/${total}` : '建立代码索引'}
-      >
+      <span className="code-index-status-chip" title={text}>
         <CodeIndexRing ratio={ratio} />
-        <span>{hasProgress ? `建立代码索引 ${completed}/${total}` : '建立代码索引'}</span>
+        <span className="code-index-status-chip__label">{text}</span>
       </span>
     )
   }
@@ -33,10 +31,10 @@ export const CodeIndexStatusChip: React.FC = () => {
         type="button"
         className="code-index-status-chip code-index-status-chip--warning"
         onClick={openSettings}
-        title="打开代码索引设置"
+        title="代码索引不可用，打开代码索引设置"
       >
         <span className="code-index-status-chip__warning-dot" aria-hidden="true" />
-        <span>代码索引不可用</span>
+        <span className="code-index-status-chip__label">代码索引不可用</span>
       </button>
     )
   }

@@ -126,7 +126,7 @@ describe('InlineUiBlock', () => {
       view!.container.querySelector('.inline-ui__notice[role="status"]')?.textContent?.includes('请先回答当前问题') === true
     )
     expect(sent).toHaveLength(1)
-    expect(sent[0]).toContain('【可视化】瓶颈 · explore')
+    expect(sent[0]).toContain('【可视化】瓶颈：explore')
     expect(sent[0]).toContain('现在卡在哪？')
   })
 
@@ -171,13 +171,13 @@ describe('InlineUiBlock', () => {
     expect(view.container.querySelector('.inline-ui__walk-kicker')?.textContent).toBe('阶段 2 / 2')
     expect(view.container.querySelector('.inline-ui__walk-phase[data-state="done"]')).not.toBeNull()
     expect(claimInterfaceState('s7')?.report).toEqual({
-      widgets: [{ title: '交互组件', values: [{ label: '当前步骤', value: '第 3 步 · 请求模型' }] }]
+      widgets: [{ title: '交互组件', values: [{ label: '当前步骤', value: '第 3 步：请求模型' }] }]
     })
 
     const ask = Array.from(view.container.querySelectorAll('button')).find(b => b.textContent?.includes('深入讲讲这一步'))
     await act(async () => { ask!.dispatchEvent(new MouseEvent('click', { bubbles: true })) })
     expect(sent).toHaveLength(1)
-    expect(sent[0]).toContain('【可视化】请求模型 · explore')
+    expect(sent[0]).toContain('【可视化】请求模型：explore')
     expect(sent[0]).toContain('返回 tool_calls 时怎么继续？')
   })
 

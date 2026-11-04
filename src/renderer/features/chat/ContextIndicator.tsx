@@ -1,5 +1,5 @@
 import React, { useId, useMemo, useState, useRef, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import { UsageStats } from './UsageStats'
 
@@ -76,6 +76,7 @@ const ContextRingIcon: React.FC<{ color: string; ratio: number }> = ({ color, ra
 interface PopoverGeometry {
   placement: 'left' | 'right'
   maxWidth: number
+  minWidth: number
 }
 
 export const ContextIndicator: React.FC = () => {
@@ -97,7 +98,8 @@ export const ContextIndicator: React.FC = () => {
 
   /** hover 触发(短延迟避免误触),离开容器再关 */
   const [isOpen, setIsOpen] = useState(false)
-  const [geometry, setGeometry] = useState<PopoverGeometry>({ placement: 'right', maxWidth: 320 })
+  const [geometry, setGeometry] = useState<PopoverGeometry>({ placement: 'right', maxWidth: 320, minWidth: 180 })
+  const reduceMotion = useReducedMotion() === true
   const openTimer = useRef<number | null>(null)
   const closeTimer = useRef<number | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -118,20 +120,24 @@ export const ContextIndicator: React.FC = () => {
     const preferRight = iconCenterX >= composerCenterX
 
     const margin = 12
+    // 浮层与图标之间的水平间距，对应 .context-popover--left/right 的 8px margin
+    const gap = 8
     const minWidth = 180
     const maxPreferred = 320
-    const rightSpace = window.innerWidth - wrapRect.right - margin
-    const leftSpace = wrapRect.left - margin
+    const rightSpace = Math.max(0, window.innerWidth - wrapRect.right - gap - margin)
+    const leftSpace = Math.max(0, wrapRect.left - gap - margin)
     const rightFits = rightSpace >= minWidth
     const leftFits = leftSpace >= minWidth
 
     let placement: 'left' | 'right' = preferRight ? 'right' : 'left'
     if (placement === 'right' && !rightFits && leftFits) placement = 'left'
     if (placement === 'left' && !leftFits && rightFits) placement = 'right'
+    // 两侧都放不下最小宽度时取较宽一侧，宽度再钳到实际可用空间，保证不越出窗口
+    if (!rightFits && !leftFits) placement = rightSpace >= leftSpace ? 'right' : 'left'
 
     const space = placement === 'right' ? rightSpace : leftSpace
-    const maxWidth = Math.max(minWidth, Math.min(maxPreferred, space))
-    setGeometry({ placement, maxWidth })
+    const maxWidth = Math.min(maxPreferred, space)
+    setGeometry({ placement, maxWidth, minWidth: Math.min(minWidth, maxWidth) })
   }, [])
 
   const handleMouseEnter = useCallback(() => {
@@ -228,12 +234,12 @@ export const ContextIndicator: React.FC = () => {
             role="dialog"
             aria-label="上下文容量详情"
             tabIndex={-1}
-            initial={{ opacity: 0, y: 6, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 6, scale: 0.96 }}
+            initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.96 }}
+            animate={reduceMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+            exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 6, scale: 0.96 }}
             transition={{ duration: 0.14, ease: 'easeOut' }}
             className={`context-popover context-popover--${geometry.placement}`}
-            style={{ maxWidth: geometry.maxWidth }}
+            style={{ maxWidth: geometry.maxWidth, minWidth: geometry.minWidth }}
             onMouseEnter={handleMouseEnter}
             onMouseLeave={handleMouseLeave}
           >

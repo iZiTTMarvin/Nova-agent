@@ -1,7 +1,7 @@
 /**
  * ThirdPartySkillSources — 第三方技能来源开关：每个来源需用户确认后才读取，默认全部关闭
  */
-import React from 'react'
+import React, { useRef, useState } from 'react'
 import { Switch } from '@astryxdesign/core/Switch'
 import { confirmDialog } from '../confirm/confirmDialog'
 import type { ThirdPartySkillSourceStatus, ThirdPartySkillSources } from '../../../shared/skills/types'
@@ -16,8 +16,13 @@ interface ThirdPartySkillSourcesProps {
 
 export const ThirdPartySkillSourceList: React.FC<ThirdPartySkillSourcesProps> = ({ sources, onChange }) => {
   const current = Object.fromEntries(sources.map(s => [s.id, s.enabled])) as ThirdPartySkillSources
+  // 进行中的切换目标值；并发切换另一来源时一并带上，避免用旧快照覆盖尚未回流的修改
+  const [pending, setPending] = useState<Partial<ThirdPartySkillSources>>({})
+  const pendingRef = useRef(pending)
+  pendingRef.current = pending
 
   const toggle = async (source: ThirdPartySkillSourceStatus, enabled: boolean) => {
+    if (source.id in pendingRef.current) return
     if (enabled) {
       const total = source.locations.reduce((sum, location) => sum + location.count, 0)
       const choice = await confirmDialog({
@@ -30,7 +35,18 @@ export const ThirdPartySkillSourceList: React.FC<ThirdPartySkillSourcesProps> = 
       })
       if (choice !== 1) return
     }
-    await onChange({ ...current, [source.id]: enabled })
+    const next = { ...current, ...pendingRef.current, [source.id]: enabled }
+    setPending(prev => ({ ...prev, [source.id]: enabled }))
+    try {
+      await onChange(next)
+    } finally {
+      // 结束后开关回到权威来源数据，由主进程快照决定最终状态
+      setPending(prev => {
+        const rest = { ...prev }
+        delete rest[source.id]
+        return rest
+      })
+    }
   }
 
   return (
@@ -54,6 +70,7 @@ export const ThirdPartySkillSourceList: React.FC<ThirdPartySkillSourcesProps> = 
             label={`${skillsI18n.thirdPartyTitle} ${source.label}`}
             isLabelHidden
             value={source.enabled}
+            isDisabled={source.id in pending}
             onChange={enabled => void toggle(source, enabled)}
           />
         </li>

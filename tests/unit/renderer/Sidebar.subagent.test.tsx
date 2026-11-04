@@ -26,6 +26,7 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
   FilterIcon: () => null,
   PuzzleIcon: () => null,
   ChevronDownIcon: () => null,
+  ChevronIcon: () => null,
   TerminalIcon: () => null,
   CodeIcon: () => null,
   BookIcon: () => null

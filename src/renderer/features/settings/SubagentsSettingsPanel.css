@@ -360,3 +360,13 @@
 .subagent-tile:active {
   transform: translateY(0) scale(0.985);
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-page {
+    animation: none;
+  }
+
+  .subagent-back button {
+    transition: none;
+  }
+}

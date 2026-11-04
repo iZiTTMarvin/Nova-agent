@@ -249,10 +249,9 @@ export const GeneralSettingsPanel: React.FC = () => {
     <SettingsGlassPanel className="general-settings-panel">
       <div className="settings-panel__scroll">
         <SettingsPage>
-          <SettingsCard title="运行与权限" description="默认行为模式、权限等级与工作区目录。">
+          <SettingsCard title="运行与权限">
             <SettingsCardRow
               label="默认运行模式"
-              description="新建会话时使用的默认行为模式。"
               control={
                 <SettingsSelect
                   label="默认运行模式"
@@ -267,7 +266,6 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsCardRow
               label="默认权限模式"
-              description="新建会话的默认权限等级。"
               control={
                 <SettingsSelect
                   label="默认权限模式"
@@ -282,7 +280,7 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsCardRow
               label="默认工作区"
-              description="未指定项目时的默认目录，留空使用系统默认路径。"
+              description="未指定项目时使用，留空为系统默认路径。"
               control={
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span className="glass-chip" title={settings.defaultWorkspacePath ?? '~/.nova/workspace'}>
@@ -313,7 +311,7 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsCardRow
               label="单次任务工具轮数上限"
-              description="单次对话中工具连续调用的轮数限制，留空表示不设限制。"
+              description="留空表示不设限制。"
               control={
                 <NumberInput
                   label="单次任务工具轮数上限"
@@ -331,10 +329,9 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
           </SettingsCard>
 
-          <SettingsCard title="界面与交互" description="个性化视觉主题与打字机输出动效。">
+          <SettingsCard title="界面与交互">
             <SettingsCardRow
               label="主题外观"
-              description="选择应用的明暗视觉主题。"
               control={
                 <SettingsSegmented
                   label="主题外观"
@@ -350,7 +347,7 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsCardRow
               label="流式输出节奏"
-              description="平滑模式按打字机节奏均匀吐字，即时模式随网络分块即时渲染。"
+              description="平滑按打字机节奏均匀输出，即时随网络分块直接显示。"
               control={
                 <SettingsSegmented
                   label="流式输出节奏"
@@ -365,10 +362,9 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
           </SettingsCard>
 
-          <SettingsCard title="终端环境" description="执行 Shell 命令与工具进程的底层配置。">
+          <SettingsCard title="终端环境">
             <SettingsCardRow
               label="默认 Shell"
-              description="执行命令所用的终端解释器，留空使用系统默认。"
               control={
                 <TextInput
                   label="默认 Shell"
@@ -400,10 +396,10 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
           </SettingsCard>
 
-          <SettingsCard title="桌面通知" description="任务完成与需要人工确认时的系统通知策略。">
+          <SettingsCard title="桌面通知">
             <SettingsCardRow
               label="任务完成时通知我"
-              description="当任务执行完成或等待批准时推送系统通知。"
+              description="任务完成或等待你批准时推送系统通知。"
               control={
                 <Switch
                   label="任务完成时通知我"
@@ -416,7 +412,6 @@ export const GeneralSettingsPanel: React.FC = () => {
             />
             <SettingsCardRow
               label="仅在窗口失焦时通知"
-              description="当前处于应用窗口时不打扰，切至后台时才触发通知。"
               control={
                 <Switch
                   label="仅在窗口失焦时通知"

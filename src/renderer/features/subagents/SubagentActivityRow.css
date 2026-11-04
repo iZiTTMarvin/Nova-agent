@@ -154,10 +154,9 @@
 }
 
 .subagent-activity-row__chevron {
+  display: inline-flex;
   flex-shrink: 0;
   color: var(--text-muted);
-  font-size: 9px;
-  line-height: 16px;
   transition: transform 240ms ease;
 }
 

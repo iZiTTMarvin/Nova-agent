@@ -331,7 +331,7 @@ describe('SubagentActivityRow', () => {
     expect(renderer.container.querySelector('.diff-viewer')).not.toBeNull()
     // 会话级聚合视图逐文件路由消息各异，文件头仍可按自身 hunk 折叠，但不提供审查按钮
     const fileHeader = renderer.container.querySelector('.diff-file__header')
-    expect(fileHeader?.getAttribute('role')).toBe('button')
+    expect(fileHeader?.querySelector('button.diff-file__toggle')?.getAttribute('aria-expanded')).toBe('false')
     const reviewBtn = Array.from(renderer.container.querySelectorAll('button'))
       .find(b => b.textContent === '审查')
     expect(reviewBtn).toBeUndefined()

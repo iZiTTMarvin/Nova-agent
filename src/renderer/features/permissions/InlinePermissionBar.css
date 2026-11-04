@@ -83,6 +83,7 @@
 
 .inline-perm__actions {
   display: flex;
+  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
@@ -102,6 +103,65 @@
   background-color: var(--surface-danger) !important;
 }
 
+.inline-perm__commands,
+.inline-perm__paths {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.inline-perm__list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inline-perm__list-item {
+  min-width: 0;
+}
+
+/* 命令完整换行展示，超长时在块内滚动，不截断用户要批准的内容 */
+.inline-perm__command {
+  display: block;
+  max-height: 9.5em;
+  overflow: auto;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background-color: var(--code-block-bg, var(--bg-sidebar));
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.inline-perm__expand {
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.inline-perm__expand:hover {
+  color: var(--text-primary);
+  background-color: var(--surface-hover);
+}
+
+.inline-perm__expand:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 1px;
+}
+
 .inline-perm__path {
   display: flex;
   align-items: center;
@@ -118,6 +178,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-family: var(--font-mono);
   font-size: 0.78rem;
 }
 

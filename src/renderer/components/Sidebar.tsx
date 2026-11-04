@@ -991,8 +991,8 @@ const SidebarSessions = React.memo(function SidebarSessions({
             return (
               <div key={projectPath} className="sidebar-project-group mb-0.5">
                 {/* 项目标题行：加粗字体，hover 显示操作（三个点与新建会话按钮） */}
+                {/* 折叠由标题按钮承担键盘焦点；Alt+方向键重排从按钮冒泡到行上的拖拽处理 */}
                 <div
-                  tabIndex={isPinned ? 0 : undefined}
                   className={`sidebar-project-header flex items-center justify-between px-2 py-1 rounded cursor-pointer group transition-colors select-none ${
                     isMenuOpen ? 'sidebar-project-header--menu-open' : ''
                   } ${projectDragState?.isDragging ? 'sidebar-row--dragging' : ''}`}
@@ -1014,7 +1014,15 @@ const SidebarSessions = React.memo(function SidebarSessions({
                   {projectDragState?.dropPosition === 'after' && (
                     <div className="sidebar-drop-indicator--after" aria-hidden="true" />
                   )}
-                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                  <button
+                    type="button"
+                    className="sidebar-project-header__toggle flex items-center gap-1.5 min-w-0 flex-1"
+                    aria-expanded={isExpanded}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleProjectExpand(projectPath)
+                    }}
+                  >
                     <ProjectFolderIcon expanded={isExpanded} />
                     <span className="text-[13px] font-semibold text-text-primary truncate">
                       {getProjectName(projectPath)}
@@ -1024,7 +1032,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                         <PinIcon size={11} className="rotate-45" />
                       </span>
                     )}
-                  </div>
+                  </button>
 
                   {/* 悬停/菜单打开时展示操作按钮；默认展示代码索引状态（若有） */}
                   <div className="flex items-center gap-1 shrink-0">
@@ -1150,8 +1158,10 @@ const SidebarSessions = React.memo(function SidebarSessions({
                 projectSessions.some(filterSessionMatch)
               )) && (
             <div className="sidebar-archived-projects-section mt-2 pt-2 border-t border-border-subtle">
-              <div
-                className="flex items-center justify-between px-2 py-1 text-xs font-medium text-text-muted cursor-pointer hover:text-text-secondary select-none"
+              <button
+                type="button"
+                className="sidebar-archived-projects-toggle flex items-center justify-between w-full px-2 py-1 text-xs font-medium text-text-muted cursor-pointer hover:text-text-secondary select-none"
+                aria-expanded={Boolean(normalizedFilter) || isArchivedSectionExpanded}
                 onClick={() => setIsArchivedSectionExpanded(prev => !prev)}
               >
                 <div className="flex items-center gap-1.5">
@@ -1164,7 +1174,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                   </span>
                   <span>已归档项目 ({archivedProjectEntries.length})</span>
                 </div>
-              </div>
+              </button>
               {(Boolean(normalizedFilter) || isArchivedSectionExpanded) && (
                 <div className="mt-1">
                   {archivedProjectEntries.map(([projectPath, projectSessions]) => {
@@ -1181,12 +1191,20 @@ const SidebarSessions = React.memo(function SidebarSessions({
                           }`}
                           onClick={() => toggleProjectExpand(projectPath)}
                         >
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                          <button
+                            type="button"
+                            className="sidebar-project-header__toggle flex items-center gap-1.5 min-w-0 flex-1"
+                            aria-expanded={isExpanded}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              toggleProjectExpand(projectPath)
+                            }}
+                          >
                             <ProjectFolderIcon expanded={isExpanded} />
                             <span className="text-[13px] font-semibold text-text-muted truncate">
                               {getProjectName(projectPath)}
                             </span>
-                          </div>
+                          </button>
 
                           <div
                             className="sidebar-project-header__actions"
@@ -1374,7 +1392,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className="sidebar-shell__inner"
         style={{
           width: sidebarWidth,
-          transform: sidebarCollapsed ? 'translateX(-100%)' : 'translateX(0)'
+          transform: sidebarCollapsed ? 'translateX(-100%)' : 'none'
         }}
       >
         {/* 顶行：窗口拖拽区 + 品牌 Logo + 折叠按钮 */}

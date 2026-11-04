@@ -555,6 +555,14 @@ html[data-pane-dragging='true'] .chat-workspace {
   background: var(--color-success);
 }
 
+.session-status__agent-dot--attention {
+  background: var(--color-warning);
+}
+
+.session-status__agent-dot--muted {
+  background: var(--text-muted);
+}
+
 .session-status__agent small {
   display: block;
   font-size: 12px;

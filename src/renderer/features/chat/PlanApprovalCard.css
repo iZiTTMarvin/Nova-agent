@@ -92,7 +92,8 @@
   box-sizing: border-box;
   width: 100%;
   border: 1px solid var(--border-cream);
-  border-radius: 9px;
+  /* 与 12px 外框、约 10px 内边距同心 */
+  border-radius: 4px;
   background: color-mix(in srgb, var(--bg-card) 82%, var(--bg-sand));
   color: var(--text-primary);
 }

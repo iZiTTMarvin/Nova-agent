@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react'
+import { isTerminalRunStatus, type RunSnapshot } from '../../../shared/run/types'
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion'
 import { NovaWorkingOrb } from './NovaWorkingOrb'
 import { formatDurationMs } from './turnSummaryDisplay'
 import './AssistantPendingIndicator.css'
@@ -40,20 +42,40 @@ export function pickNonRepeatingWorkingMessage(
   return NOVA_WORKING_MESSAGES[candidateIndex]
 }
 
-function prefersReducedMotion(): boolean {
-  return typeof window !== 'undefined'
-    && typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+/**
+ * 由权威运行快照推出读屏用的阶段文案；视觉层展示轮播工作文案。
+ * 等待授权、提问与停止由各自的卡片表达，流尾不在这些阶段出现。
+ */
+export function describeRunPhase(snapshot: RunSnapshot | null | undefined): string {
+  // 新一轮尚未建立运行（只有上一轮的终态快照）时，界面处于发送阶段
+  if (!snapshot || isTerminalRunStatus(snapshot.status)) return '正在发送'
+  switch (snapshot.status) {
+    case 'queued':
+      return '排队中'
+    case 'retrying':
+      return '正在重试'
+    case 'resuming':
+      return '正在恢复'
+    default:
+      break
+  }
+  const executing = snapshot.toolCommits?.filter(record => record.phase === 'executing') ?? []
+  if (executing.length > 1) return `正在执行 ${executing.length} 个工具`
+  if (executing.length === 1) return `正在执行 ${executing[0]!.toolName}`
+  return '正在思考'
 }
 
 export interface AssistantPendingIndicatorProps {
   /** 轮次起始时间戳（毫秒）；用于平滑展示运行时钟 */
   turnStartedAt?: number
+  /** 读屏播报的阶段文案，缺省为「正在思考」 */
+  label?: string
 }
 
 /** 流尾状态指示器：在 Agent 运行时稳稳挂在整个消息流最下方。 */
 export const AssistantPendingIndicator: React.FC<AssistantPendingIndicatorProps> = ({
-  turnStartedAt
+  turnStartedAt,
+  label = '正在思考'
 }) => {
   const [mountedAt] = useState(() => Date.now())
   const anchor = turnStartedAt ?? mountedAt
@@ -61,6 +83,7 @@ export const AssistantPendingIndicator: React.FC<AssistantPendingIndicatorProps>
   const [workingMessage, setWorkingMessage] = useState<NovaWorkingMessage>(() =>
     pickNonRepeatingWorkingMessage(null)
   )
+  const reducedMotion = usePrefersReducedMotion()
 
   useEffect(() => {
     const tick = () => {
@@ -72,25 +95,22 @@ export const AssistantPendingIndicator: React.FC<AssistantPendingIndicatorProps>
   }, [anchor])
 
   useEffect(() => {
-    if (prefersReducedMotion()) return undefined
-
+    if (reducedMotion) return undefined
     const timer = window.setInterval(() => {
       setWorkingMessage(previous => pickNonRepeatingWorkingMessage(previous))
     }, MESSAGE_INTERVAL_MS)
-
     return () => window.clearInterval(timer)
-  }, [])
+  }, [reducedMotion])
 
   const showClock = elapsedMs >= 15_000
 
   return (
-    <div
-      className="assistant-pending nova-working-indicator"
-      role="status"
-      aria-live="polite"
-    >
+    <div className="assistant-pending nova-working-indicator">
       <NovaWorkingOrb size={26} />
-      <span className="assistant-pending__label">正在思考</span>
+      {/* 读屏只播报真实阶段；轮播文案与每秒走动的时钟不进 live region，避免反复打断 */}
+      <span className="assistant-pending__label" role="status" aria-live="polite">
+        {label}
+      </span>
       <span
         key={workingMessage}
         className="nova-working-indicator__copy"

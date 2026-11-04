@@ -13,6 +13,7 @@ import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
 import { InlinePermissionBar } from '../permissions/InlinePermissionBar'
 import { useAgentStore } from '../../stores/useAgentStore'
+import { ChevronIcon } from '../../components/Icons'
 import {
   selectSubagentByParentToolCallId,
   selectLatestSubagentByChildSessionId,
@@ -21,38 +22,9 @@ import {
 import { SubagentDetailPopover } from './SubagentDetailPopover'
 import { SubagentDiffCard } from './SubagentDiffCard'
 import { formatSubagentModelParts } from './modelLine'
+import { presentSubagentStatus } from './statusPresentation'
 import { requestSubagentResume } from './resumeSubagentExecution'
 import './SubagentActivityRow.css'
-
-interface StatusPresentation {
-  label: string
-  tone: 'running' | 'attention' | 'success' | 'error' | 'muted'
-}
-
-function presentStatus(status: SubagentActivityProjection['status']): StatusPresentation {
-  switch (status) {
-    case 'queued':
-      return { label: '等待开始', tone: 'running' }
-    case 'running':
-    case 'retrying':
-    case 'resuming':
-      return { label: status === 'retrying' ? '正在重试' : '正在工作', tone: 'running' }
-    case 'waiting_user':
-      return { label: '等待授权', tone: 'attention' }
-    case 'cancelling':
-      return { label: '正在停止', tone: 'running' }
-    case 'completed':
-      return { label: '已完成', tone: 'success' }
-    case 'failed':
-      return { label: '失败', tone: 'error' }
-    case 'cancelled':
-      return { label: '已取消', tone: 'muted' }
-    case 'interrupted':
-      return { label: '已中断', tone: 'attention' }
-    case 'record_missing':
-      return { label: '记录不可用', tone: 'muted' }
-  }
-}
 
 function isActive(status: SubagentActivityProjection['status']): boolean {
   return (
@@ -98,6 +70,46 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
   const [anchor, setAnchor] = useState<PopoverAnchor | null>(null)
   const [now, setNow] = useState(Date.now())
   const containerRef = React.useRef<HTMLElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+
+  const measureAnchor = useCallback((): PopoverAnchor | null => {
+    const el = containerRef.current
+    if (!el) return null
+    const rect = el.getBoundingClientRect()
+    return { top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width }
+  }, [])
+
+  const closePopover = useCallback(() => {
+    setOpen(false)
+    // 弹层卸载后焦点回到触发行，键盘用户不会落回页面顶部
+    requestAnimationFrame(() => triggerRef.current?.focus())
+  }, [])
+
+  // 打开期间跟随锚定行：任一祖先滚动或窗口缩放后按帧重新取几何；行完全滚出视口则收起
+  useEffect(() => {
+    if (!open) return
+    let frame = 0
+    const schedule = (): void => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        const next = measureAnchor()
+        if (!next) return
+        if (next.bottom < 0 || next.top > window.innerHeight) {
+          setOpen(false)
+          return
+        }
+        setAnchor(next)
+      })
+    }
+    window.addEventListener('scroll', schedule, true)
+    window.addEventListener('resize', schedule)
+    return () => {
+      if (frame) cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', schedule, true)
+      window.removeEventListener('resize', schedule)
+    }
+  }, [measureAnchor, open])
 
   const [resumeState, setResumeState] = useState<ResumeState>('idle')
   const [resumeRejection, setResumeRejection] = useState<string>('')
@@ -160,7 +172,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     return () => window.clearInterval(timer)
   }, [active, projection.startedAt])
 
-  const status = presentStatus(projection.status)
+  const status = presentSubagentStatus(projection.status)
   const elapsed = formatElapsed(
     projection.startedAt,
     active ? now : projection.completedAt ?? projection.startedAt ?? now
@@ -204,10 +216,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     : typeof permissionInput === 'string' ? [permissionInput] : []
 
   const toggleOpen = (): void => {
-    if (!open && containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect()
-      setAnchor({ top: rect.top, bottom: rect.bottom, left: rect.left, width: rect.width })
-    }
+    if (!open) setAnchor(measureAnchor())
     setOpen((value) => !value)
   }
 
@@ -218,6 +227,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
     >
       <div className="subagent-activity-row__main">
         <button
+          ref={triggerRef}
           type="button"
           className={`subagent-activity-row__trigger${open ? ' subagent-activity-row__trigger--open' : ''}`}
           onClick={toggleOpen}
@@ -244,7 +254,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
               {elapsed ? <span className="subagent-activity-row__elapsed">{elapsed}</span> : null}
             </span>
             <span className="subagent-activity-row__chevron" aria-hidden="true">
-              {open ? '▾' : '▸'}
+              <ChevronIcon size={12} direction="down" />
             </span>
           </span>
           <span
@@ -330,7 +340,7 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
         <SubagentDetailPopover
           projection={projection}
           anchor={anchor}
-          onClose={() => setOpen(false)}
+          onClose={closePopover}
         />,
         document.body
       )}

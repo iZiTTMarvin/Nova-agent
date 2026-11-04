@@ -18,3 +18,5 @@ export const motion = new Proxy({}, {
 })
 
 export const AnimatePresence = ({ children }: any) => React.createElement(React.Fragment, null, children)
+
+export const useReducedMotion = (): boolean | null => null

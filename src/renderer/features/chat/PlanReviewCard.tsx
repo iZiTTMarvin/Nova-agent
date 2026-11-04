@@ -49,6 +49,9 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
   const [loading, setLoading] = useState(status === 'success')
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle')
+  // 读取失败后的出口：重试读取文件，或在卡片内展开工具参数里的预览
+  const [reloadKey, setReloadKey] = useState(0)
+  const [previewExpanded, setPreviewExpanded] = useState(false)
 
   useEffect(() => {
     setDocument(null)
@@ -81,7 +84,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
     return () => {
       cancelled = true
     }
-  }, [expectedPath, sessionId, status, toolCallId])
+  }, [expectedPath, sessionId, status, toolCallId, reloadKey])
 
   useEffect(() => {
     if (
@@ -146,7 +149,7 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
         </div>
       </header>
 
-      <div className="plan-review-card__body">
+      <div className={`plan-review-card__body${previewExpanded ? ' plan-review-card__body--expanded' : ''}`}>
         <h2 className="plan-review-card__title">{title}</h2>
         {loading && !content ? (
           <div className="plan-review-card__state">
@@ -161,10 +164,28 @@ export const PlanReviewCard: React.FC<PlanReviewCardProps> = React.memo(function
         {(loadError || status === 'error') && (
           <div className="plan-review-card__error">{loadError ?? result ?? '计划生成失败'}</div>
         )}
-        {content && <div className="plan-review-card__fade" aria-hidden="true" />}
+        {content && !previewExpanded && <div className="plan-review-card__fade" aria-hidden="true" />}
       </div>
 
       <footer className="plan-review-card__footer">
+        {status === 'success' && document === null && !loading && (
+          <>
+            <Button
+              label="重新读取"
+              variant="ghost"
+              size="sm"
+              onClick={() => setReloadKey(key => key + 1)}
+            />
+            {content && (
+              <Button
+                label={previewExpanded ? '收起预览' : '展开预览'}
+                variant="ghost"
+                size="sm"
+                onClick={() => setPreviewExpanded(value => !value)}
+              />
+            )}
+          </>
+        )}
         <Button
           label="查看完整计划 →"
           variant="secondary"

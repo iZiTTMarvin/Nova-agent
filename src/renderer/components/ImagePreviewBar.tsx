@@ -1,5 +1,5 @@
 import React, { useRef } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
 import type { ImageAttachment } from '../lib/image-attachments'
 import { Thumbnail } from '@astryxdesign/core/Thumbnail'
 import './ImagePreviewBar.css'
@@ -16,6 +16,8 @@ export const ImagePreviewBar: React.FC<ImagePreviewBarProps> = ({
   onPreview
 }) => {
   const lastClickedElRef = useRef<HTMLElement | null>(null)
+  // 减少动态效果时只保留即时显隐，不做布局补间、缩放和位移
+  const reduceMotion = useReducedMotion() === true
   if (attachments.length === 0) return null
 
   return (
@@ -25,11 +27,13 @@ export const ImagePreviewBar: React.FC<ImagePreviewBarProps> = ({
           {attachments.map((img, idx) => (
             <motion.div
               key={img.id}
-              layout
-              initial={{ opacity: 0, scale: 0.85, y: 6 }}
+              layout={!reduceMotion}
+              initial={reduceMotion ? false : { opacity: 0, scale: 0.85, y: 6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
-              transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+              exit={reduceMotion
+                ? { opacity: 0, transition: { duration: 0 } }
+                : { opacity: 0, scale: 0.8, transition: { duration: 0.15 } }}
+              transition={reduceMotion ? { duration: 0 } : { type: 'spring', stiffness: 400, damping: 28 }}
               className="image-preview-bar__item"
               onClickCapture={(e) => {
                 lastClickedElRef.current =

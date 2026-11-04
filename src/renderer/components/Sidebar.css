@@ -24,10 +24,10 @@
   height: 100%;
   display: flex;
   flex-direction: column;
+  /* 不常驻 will-change：静止时留在主图层，文字才有 ClearType；开合动画期间浏览器会临时提层 */
   transition:
     transform var(--transition-normal),
     opacity 180ms var(--ease-out-expo);
-  will-change: transform;
 }
 
 .sidebar-shell--collapsed .sidebar-shell__inner {
@@ -222,7 +222,6 @@
     inset 0 1px 0 var(--glass-top-light),
     0 2px 6px light-dark(rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.4));
   pointer-events: none;
-  will-change: transform;
   transition:
     transform 0.45s var(--switch-ease),
     width 0.45s cubic-bezier(0.34, 1.15, 0.55, 1);
@@ -373,6 +372,33 @@
   border: none;
   cursor: pointer;
   padding: 0;
+}
+
+/* 标题行内的折叠按钮去掉原生按钮外观，视觉与原先的文字区一致 */
+.sidebar-project-header__toggle {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+/* 字号、颜色交给工具类，这里只去掉原生按钮的底色与边框 */
+.sidebar-archived-projects-toggle {
+  background: transparent;
+  border: none;
+  text-align: left;
+  border-radius: 4px;
+}
+
+.sidebar-project-header__toggle:focus-visible,
+.sidebar-archived-projects-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--ring-focus);
 }
 
 /* 项目树悬停详情小窗口（Hover 超过 1s 后在右侧分割线外部弹出） */

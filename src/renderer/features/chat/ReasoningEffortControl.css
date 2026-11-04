@@ -73,11 +73,16 @@
   border-radius: 50%;
   color: var(--text-muted);
   cursor: help;
-  outline: none;
 }
 
-.effort-panel__info:focus-visible {
-  box-shadow: var(--ring-focus);
+/* 说明文字只给读屏，视觉上由图标 title 承担 */
+.effort-panel__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .effort-slider {

@@ -2,7 +2,7 @@
  * 浏览器页签内容：标签条、地址栏、导航与加载失败态；由右侧面板承载宽度与开合。
  * 接管按钮把控制交还用户并撤销当前世代。
  */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import {
   ArrowLeftIcon,
@@ -71,14 +71,44 @@ export function BrowserPanel(): ReactNode {
   // 用户页生而为用户持有，不存在接管/交还
   const showControlButtons = page !== null && page.sessionId !== null
 
+  const tabRefs = useRef(new Map<string, HTMLElement>())
+  // 方向键 / Home / End 切换并聚焦标签；Delete 关闭当前标签，焦点先交给相邻标签
+  const onTabNavigateKey = (event: KeyboardEvent<HTMLElement>, index: number) => {
+    const last = pages.length - 1
+    if (event.key === 'Delete') {
+      event.preventDefault()
+      const neighbor = pages[index + 1] ?? pages[index - 1]
+      if (neighbor) tabRefs.current.get(neighbor.browserId)?.focus()
+      void useBrowserStore.getState().closePage(pages[index].browserId)
+      return
+    }
+    const nextIndex =
+      event.key === 'ArrowRight' ? (index === last ? 0 : index + 1)
+        : event.key === 'ArrowLeft' ? (index === 0 ? last : index - 1)
+          : event.key === 'Home' ? 0
+            : event.key === 'End' ? last
+              : null
+    if (nextIndex === null) return
+    event.preventDefault()
+    const next = pages[nextIndex]
+    useBrowserStore.getState().focusPage(next.browserId)
+    tabRefs.current.get(next.browserId)?.focus()
+  }
+
   return (
     <div className="browser-panel" data-testid="browser-panel" aria-label="内置浏览器">
       <div className="browser-panel__tabs" role="tablist" aria-label="打开的页面">
-        {pages.map((item) => (
+        {pages.map((item, index) => (
           <BrowserPageTab
             key={item.browserId}
             page={item}
             selected={item.browserId === page?.browserId}
+            focusable={item.browserId === (page?.browserId ?? pages[0]?.browserId)}
+            tabRef={(el) => {
+              if (el) tabRefs.current.set(item.browserId, el)
+              else tabRefs.current.delete(item.browserId)
+            }}
+            onNavigateKey={(event) => onTabNavigateKey(event, index)}
           />
         ))}
         <span data-testid="browser-new-tab">
@@ -260,41 +290,57 @@ export function BrowserPanel(): ReactNode {
 function BrowserPageTab(props: {
   page: BrowserPageProjection
   selected: boolean
+  /** roving tabindex：只有当前可聚焦的标签进入 Tab 序列 */
+  focusable: boolean
+  tabRef: (el: HTMLElement | null) => void
+  onNavigateKey: (event: KeyboardEvent<HTMLElement>) => void
 }): ReactNode {
-  const { page, selected } = props
+  const { page, selected, focusable, tabRef, onNavigateKey } = props
   const label = page.title.trim() || hostnameOf(page.url) || '未命名页面'
+  const close = () => void useBrowserStore.getState().closePage(page.browserId)
+  // tab 与关闭按钮是同级元素：tab 内不能嵌套可交互控件；外层只承担视觉与鼠标操作
   return (
     <div
-      role="tab"
-      tabIndex={0}
-      aria-selected={selected}
+      role="presentation"
       data-testid="browser-tab"
       data-browser-id={page.browserId}
       className={`browser-panel__tab${selected ? ' is-active' : ''}`}
       onClick={() => useBrowserStore.getState().focusPage(page.browserId)}
-      onKeyDown={(event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return
-        event.preventDefault()
-        useBrowserStore.getState().focusPage(page.browserId)
-      }}
       onAuxClick={(event) => {
         if (event.button !== 1) return
         event.preventDefault()
         event.stopPropagation()
-        void useBrowserStore.getState().closePage(page.browserId)
+        close()
       }}
     >
-      <BrowserTabFavicon faviconUrl={page.faviconUrl} />
-      <span className="browser-panel__tab-title">{label}</span>
+      <div
+        ref={tabRef}
+        role="tab"
+        tabIndex={focusable ? 0 : -1}
+        aria-selected={selected}
+        className="browser-panel__tab-main"
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault()
+            useBrowserStore.getState().focusPage(page.browserId)
+            return
+          }
+          onNavigateKey(event)
+        }}
+      >
+        <BrowserTabFavicon faviconUrl={page.faviconUrl} />
+        <span className="browser-panel__tab-title">{label}</span>
+      </div>
       <button
         type="button"
         className="browser-panel__tab-close"
         data-testid="browser-tab-close"
         aria-label={`关闭 ${label}`}
+        tabIndex={-1}
         onClick={(event) => {
           event.preventDefault()
           event.stopPropagation()
-          void useBrowserStore.getState().closePage(page.browserId)
+          close()
         }}
       >
         <CloseIcon size={12} />
@@ -313,7 +359,7 @@ function BrowserLoadError(props: {
   const cert = error.isCertificateError
   const openUrl = error.url || page.url
   return (
-    <div className="browser-panel__failed" data-testid="browser-load-error">
+    <div className="browser-panel__failed" data-testid="browser-load-error" role="alert">
       <LoadErrorIcon />
       <h3 className="browser-panel__failed-title">
         {cert ? '该站点的 HTTPS 证书不受信任' : '无法打开该页面'}
@@ -354,7 +400,7 @@ function BrowserProcessError(props: {
   const { page, onRetry, onClose } = props
   const crashed = page.lifecycle === 'crashed'
   return (
-    <div className="browser-panel__failed" data-testid="browser-page-error">
+    <div className="browser-panel__failed" data-testid="browser-page-error" role="alert">
       <LoadErrorIcon />
       <h3 className="browser-panel__failed-title">
         {crashed ? '页面进程已停止' : '这个页面没能打开'}

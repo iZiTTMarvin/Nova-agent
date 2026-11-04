@@ -6,7 +6,7 @@
  *
  * 选择写回会话级覆盖（选回模型默认档时清除覆盖）；覆盖不再适用于当前模型时自动清除。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { Popover } from '@astryxdesign/core/Popover'
 import { useSettingsStore } from '../../stores/useSettingsStore'
@@ -24,6 +24,8 @@ import { resolveReasoningSelection, getReasoningDefault, REASONING_LABELS } from
 
 /** 档位标签：统一首字母大写英文，跨模型可辨且不随界面语言漂移。 */
 const EFFORT_LABELS = REASONING_LABELS
+
+const EFFORT_INFO_TEXT = '思考强度越高，模型可能推理越充分，等待也越久；具体效果取决于模型。'
 
 type ConcreteEffort = ReasoningEffort
 
@@ -85,6 +87,7 @@ interface ReasoningEffortSliderProps {
 const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
   modelId, tiers, effectiveTier, defaultEffort, setReasoningEffortOverride
 }) => {
+  const infoId = useId()
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [dragging, setDragging] = useState(false)
   const [pendingIndex, setPendingIndex] = useState<number | null>(null)
@@ -196,12 +199,13 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
           </span>
         </div>
         <span
+          id={infoId}
           className="effort-panel__info"
-          tabIndex={0}
-          title="思考强度越高，模型可能推理越充分，等待也越久；具体效果取决于模型。"
-          aria-label="思考强度越高，模型可能推理越充分，等待也越久"
+          role="note"
+          title={EFFORT_INFO_TEXT}
         >
-          <InfoIcon size={13} />
+          <InfoIcon size={13} aria-hidden="true" />
+          <span className="effort-panel__sr">{EFFORT_INFO_TEXT}</span>
         </span>
       </div>
       <div
@@ -212,6 +216,7 @@ const ReasoningEffortSlider: React.FC<ReasoningEffortSliderProps> = ({
         tabIndex={tiers.length > 1 ? 0 : -1}
         aria-disabled={tiers.length === 1}
         aria-label="思考强度"
+        aria-describedby={infoId}
         aria-valuemin={0}
         aria-valuemax={tiers.length - 1}
         aria-valuenow={shownIndex}

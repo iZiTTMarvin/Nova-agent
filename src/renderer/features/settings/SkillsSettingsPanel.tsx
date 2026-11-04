@@ -15,6 +15,7 @@ import { SkillImportBar } from '../skills/SkillImportBar'
 import { skillsI18n } from '../skills/i18n'
 import { confirmDialog } from '../confirm/confirmDialog'
 import { SettingsGlassPanel, SettingsPage, SettingsSection, SettingsSegmented } from './settingsKit'
+import { useSettingsLeaveConfirm } from './settingsUnsavedGuard'
 import type {
   SkillCatalogDiagnostic,
   SkillSummary,
@@ -40,6 +41,8 @@ function matchesFilter(skill: SkillSummary, filter: SkillFilter): boolean {
 export const SkillsSettingsPanel: React.FC = () => {
   const currentProject = useSettingsStore(state => state.currentProject)
   const requestComposerPrefill = useSettingsStore(state => state.requestComposerPrefill)
+  // “使用技能”会关闭设置，须与壳层关闭入口一样先过未保存守卫
+  const confirmLeave = useSettingsLeaveConfirm()
   const skills = useSkillsStore(state => state.skills)
   const skillsLoading = useSkillsStore(state => state.loading)
   const skillsError = useSkillsStore(state => state.error)
@@ -106,7 +109,10 @@ export const SkillsSettingsPanel: React.FC = () => {
     }
   }
 
-  const handleUse = (name: string) => requestComposerPrefill(`/${name} `)
+  const handleUse = async (name: string) => {
+    if (!(await confirmLeave())) return
+    requestComposerPrefill(`/${name} `)
+  }
 
   const handleExport = async (name: string) => {
     try {
@@ -238,7 +244,7 @@ export const SkillsSettingsPanel: React.FC = () => {
                     key={`${skill.source}:${skill.name}`}
                     skill={skill}
                     onOpen={item => setDetailName(item.name)}
-                    onUse={handleUse}
+                    onUse={name => void handleUse(name)}
                     onExport={name => void handleExport(name)}
                     onDelete={name => void handleDelete(name)}
                   />
@@ -254,7 +260,7 @@ export const SkillsSettingsPanel: React.FC = () => {
           skill={detailSkill}
           diagnostics={diagnosticsBySkill.get(detailSkill.name)}
           onClose={() => setDetailName(null)}
-          onUse={handleUse}
+          onUse={name => void handleUse(name)}
         />
       )}
 

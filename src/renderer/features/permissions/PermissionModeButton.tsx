@@ -112,7 +112,7 @@ export const PermissionModeButton: React.FC<PermissionModeButtonProps> = ({
       }}
     >
       <div className="permission-mode__menu-title">权限模式</div>
-      {error ? <div className="permission-mode__error" role="status">{error}</div> : null}
+      {error ? <div className="permission-mode__error" role="alert">{error}</div> : null}
       {OPTIONS.map(option => (
         <DropdownMenuItem
           key={option.id}

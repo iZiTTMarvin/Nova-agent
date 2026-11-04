@@ -108,6 +108,29 @@
 .diff-file__header:hover {
   background-color: var(--bg-sand);
 }
+
+/* 折叠按钮去掉原生外观，撑满操作区左侧，视觉与整行一致 */
+.diff-file__toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-file__toggle:focus-visible,
+.diff-file__text-btn:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
 /* 无 Inspector 入口的静态表头（会话级聚合视图）：去掉交互暗示 */
 .diff-file__header--static {
   cursor: default;
@@ -162,10 +185,6 @@
   opacity: 0.6;
 }
 
-.diff-file--accepted {
-  border-left: 3px solid var(--color-success);
-}
-
 /* loading 占位文件项：禁用交互、淡化前景 */
 .diff-file--loading {
   opacity: 0.65;
@@ -194,7 +213,7 @@
 }
 
 .diff-file__review-badge--accepted {
-  background-color: rgba(120, 140, 93, 0.12);
+  background-color: var(--surface-success);
   color: var(--color-success);
 }
 
@@ -337,7 +356,7 @@
 }
 
 .diff-dir-group__name {
-  font-family: 'JetBrains Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-weight: 500;
 }
 
@@ -359,7 +378,7 @@
 /* ── 被跳过快照的文件提示 ── */
 .diff-viewer__skipped {
   padding: 10px 14px;
-  background-color: rgba(183, 110, 28, 0.06);
+  background-color: color-mix(in srgb, var(--color-warning) 6%, transparent);
   border-bottom: 1px solid var(--border-cream);
 }
 
@@ -443,4 +462,16 @@
 
 .diff-viewer--tier1-stale .diff-viewer__title {
   color: var(--text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .diff-file__loading-spinner,
+  .diff-file__body {
+    animation: none;
+  }
+
+  .diff-file__header,
+  .diff-file__text-btn {
+    transition: none;
+  }
 }

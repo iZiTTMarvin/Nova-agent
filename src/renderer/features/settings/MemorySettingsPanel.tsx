@@ -15,6 +15,7 @@ import { useSettingsStore } from '../../stores/useSettingsStore'
 import { confirmDialog } from '../confirm/confirmDialog'
 import { formatSettingsDateTime } from './formatDateTime'
 import { SettingsCard, SettingsCardRow, SettingsGlassPanel, SettingsPage } from './settingsKit'
+import { useSettingsUnsavedGuard } from './settingsUnsavedGuard'
 import { containsSensitiveMemoryText } from '../../../shared/memory/sensitiveText'
 import { getModelDisplayName, resolveBackgroundModelRef } from '../../../shared/config/llmRegistry'
 import type { NovaSettingsDto } from '../../../shared/settings/types'
@@ -88,6 +89,7 @@ export const MemorySettingsPanel: React.FC = () => {
   if (requestContext.current.key !== context) requestContext.current = { key: context, epoch: requestContext.current.epoch + 1 }
 
   const isDirty = selectedPath !== null && content !== baselineContent
+  useSettingsUnsavedGuard('memory', isDirty)
   const selectedFile = selectedPath
     ? files.find(file => file.relPath === selectedPath) ?? null
     : null
@@ -448,7 +450,7 @@ export const MemorySettingsPanel: React.FC = () => {
             <SettingsCard title="记忆行为">
               <SettingsCardRow
                 label="启用跨会话记忆"
-                description="开启后，新会话带上核心记忆，并可按需检索约定、偏好和经验。自动学习需另行开启；关闭记忆后停止采集、学习和检索。"
+                description="新会话带上核心记忆，并按需检索约定、偏好和经验。关闭后停止采集、学习和检索。"
                 control={
                   <Switch
                     label="启用跨会话记忆"

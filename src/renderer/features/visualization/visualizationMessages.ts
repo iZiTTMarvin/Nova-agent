@@ -44,9 +44,9 @@ export function isValidVisualizationEvent(name: string, data: unknown): boolean 
 export function formatVisualizationEventMessage(title: string, name: string, data: unknown): string {
   if (name === 'remark' && isValidVisualizationEvent(name, data)) {
     const remark = data as { blockId: string; text: string }
-    return `【可视化】${title} · 补充资料\n${remark.text.trim()}`
+    return `【可视化】${title}：补充资料\n${remark.text.trim()}`
   }
-  const header = `【可视化】${title} · ${name}`
+  const header = `【可视化】${title}：${name}`
   if (data === null || data === undefined) return header
   return `${header}\n${readableEventPayload(data) ?? JSON.stringify(data)}`
 }

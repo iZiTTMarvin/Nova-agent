@@ -41,7 +41,7 @@
   border-radius: 999px;
   background: var(--glass-well);
   color: var(--text-secondary);
-  font-size: 0.74rem;
+  font-size: 0.75rem;
   font-weight: 500;
   line-height: 1.4;
 }
@@ -58,7 +58,7 @@
 .subagent-tools__title--caution {
   border-color: color-mix(in srgb, var(--color-warning) 32%, var(--glass-edge));
   background: color-mix(in srgb, var(--color-warning) 8%, var(--glass-well));
-  color: light-dark(color-mix(in srgb, var(--color-warning) 80%, #78350f), var(--color-warning));
+  color: var(--color-warning-text);
 }
 
 .subagent-tools__title--caution::before {
@@ -111,7 +111,6 @@
   height: 14px;
   border: 0.5px solid var(--glass-edge);
   border-radius: 50%;
-  font-size: 0.62rem;
   line-height: 1;
 }
 
@@ -119,4 +118,11 @@
   border-color: var(--glass-accent-edge);
   background: var(--accent-primary);
   color: var(--color-on-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .subagent-tools__group,
+  .subagent-tool--toggle {
+    transition: none;
+  }
 }
