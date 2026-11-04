@@ -3,6 +3,12 @@ import { validateVisualizationHtml } from '../../../../src/runtime/visualization
 import { MAX_VISUALIZATION_HTML_BYTES } from '../../../../src/shared/visualization'
 
 describe('validateVisualizationHtml', () => {
+  it('data 属性中的标签和追问只是文字，导航与资源中的 HTML 仍拒绝', async () => {
+    expect(await validateVisualizationHtml('<button data-label="data:text/html,example" data-prompt="data:text/html,example">文字</button>')).toEqual([])
+    for (const html of ['<img src="data:text/html,example">', '<a href="data:text/html,example">打开</a>']) {
+      expect(await validateVisualizationHtml(html)).not.toEqual([])
+    }
+  })
   it('完全内联的页面通过：data URL、页内引用、外部导航链接与内联脚本均可用', async () => {
     const html = `<!doctype html>
 <html><head><style>body { background: url("data:image/png;base64,AAAA") } .dot { fill: var(--viz-accent) }</style></head>

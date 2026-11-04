@@ -1,25 +1,21 @@
 /**
- * 流式预览数据源：从 argumentsRaw 增量解出 html 字段，节流后交给预览帧。
- *
- * html 字段闭合即视为参数收齐：立即补最后一次解码并冻结，之后画面保持不变，
- * 直到正式帧就绪接手。store 提前删除 argumentsRaw（取消、旧路径）时同样用最后登记的值收尾。
+ * 流式预览从 draft 参数派生，与正式发布共用 shared 编译器。
+ * 草稿字段闭合后立即收尾并冻结；取消时保留最后一份完整面板预览。
  */
 import { useEffect, useRef, useState } from 'react'
+import { compileVisualizationDraft } from '../../../shared/visualization/draft'
 import { createPartialStringReader } from '../../lib/partialJsonArgs'
 
-/** 预览 HTML 的解码上限：超出后保持最后一次结果，巨型页面不再逐段重解码重推送 */
-export const MAX_PREVIEW_HTML_CHARS = 512 * 1024
+/** 解码上限与语言容量分开：超出后保持最后画面，不再逐段重编译 */
+export const MAX_PREVIEW_DRAFT_CHARS = 512 * 1024
 
 const THROTTLE_MS = 250
-const BODY_START = /<body[\s>]/i
-/** 参数对象可能已闭合：跳过节流立即解码，收尾不必再等一个节流窗口 */
 const MAYBE_COMPLETE = /\}\s*$/
 
-/** 返回值在出现 <body 之后才非空；参数收齐后冻结为完整页面 */
 export function useStreamingVisualizationHtml(argumentsRaw: string | undefined): string | null {
   const [preview, setPreview] = useState<string | null>(null)
   const readerRef = useRef<ReturnType<typeof createPartialStringReader> | null>(null)
-  if (readerRef.current === null) readerRef.current = createPartialStringReader('html')
+  if (readerRef.current === null) readerRef.current = createPartialStringReader('draft')
   const reader = readerRef.current
   const latestRawRef = useRef<string | undefined>(undefined)
   const lastDecodeAtRef = useRef(0)
@@ -39,15 +35,21 @@ export function useStreamingVisualizationHtml(argumentsRaw: string | undefined):
       if (raw === undefined || cappedRef.current) return
       const value = reader.read(raw)
       if (value === undefined) return
-      if (value.length > MAX_PREVIEW_HTML_CHARS) {
+      if (value.length > MAX_PREVIEW_DRAFT_CHARS) {
         cappedRef.current = true
+        clearTimer()
         return
       }
-      if (reader.isClosed()) {
+      const closed = reader.isClosed()
+      const compiled = compileVisualizationDraft(value, { mode: closed ? 'final' : 'preview' })
+      if (compiled.status === 'ok') setPreview(compiled.html)
+      else if (compiled.status === 'preview' && (compiled.html !== null || compiled.diagnostics.length === 0)) {
+        setPreview(compiled.html)
+      }
+      if (closed) {
         frozenRef.current = true
         clearTimer()
       }
-      if (BODY_START.test(value)) setPreview(value)
     }
 
     if (frozenRef.current) return
@@ -58,7 +60,6 @@ export function useStreamingVisualizationHtml(argumentsRaw: string | undefined):
       frozenRef.current = true
       return
     }
-
     const firstArrival = latestRawRef.current === undefined
     latestRawRef.current = argumentsRaw
     if (firstArrival || MAYBE_COMPLETE.test(argumentsRaw)) {
@@ -70,7 +71,6 @@ export function useStreamingVisualizationHtml(argumentsRaw: string | undefined):
     if (elapsed >= THROTTLE_MS) {
       decode()
     } else if (timerRef.current === null) {
-      // 尾随定时器读 latestRawRef，保证最新值最终会被解码
       timerRef.current = setTimeout(() => {
         timerRef.current = null
         decode()

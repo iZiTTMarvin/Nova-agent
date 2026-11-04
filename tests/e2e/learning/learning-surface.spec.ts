@@ -44,20 +44,12 @@ async function settledFrame(card: Locator): Promise<Locator> {
   return card.getByTestId('visualization-frame')
 }
 
-const LEARN_VIZ_HTML = `<!doctype html>
-<html lang="zh">
-<head><meta charset="utf-8"></head>
-<body>
-  <div class="viz-card">
-    <button id="explore" class="viz-btn" type="button">深入讲讲</button>
-  </div>
-  <script>
-    document.getElementById('explore').addEventListener('click', function () {
-      nova.emit('explore', { label: 'E2E 模块', prompt: '深入讲讲' });
-    });
-  </script>
-</body>
-</html>`
+const LEARN_VIZ_DRAFT = `## 学习架构图
+
+\`\`\`ask id=explore-module
+想继续看哪个模块？
+深入讲讲 | 深入讲讲 E2E 模块
+\`\`\``
 
 test.describe('学习表面主路径', () => {
   test('探索后思考与正文在回合结束前持续显示，完成后不重复', async ({ nova }) => {
@@ -528,35 +520,26 @@ test.describe('学习表面主路径', () => {
     test.setTimeout(120_000)
     await nova.page.setViewportSize({ width: 1280, height: 860 })
     const sessionId = await createLearnSession(nova)
-    const html = `<!doctype html>
-<html lang="zh">
-<head><meta charset="utf-8"></head>
-<body>
-  <div class="viz-workbench">
-    <div class="viz-toolbar">
-      <span class="viz-title">请求处理状态</span>
-      <span class="viz-badge" data-tone="success">已完成</span>
-    </div>
-    <div class="viz-card">
-      <p class="viz-note">主进程已经确认写入，界面可以展示最终结果。</p>
-      <div class="viz-controls">
-        <label><input id="completion" type="checkbox"> 我已理解这一步</label>
-        <button id="explore" class="viz-btn viz-btn-primary" type="button">深入讲讲</button>
-      </div>
-    </div>
-  </div>
-  <script>
-    document.getElementById('explore').addEventListener('click', function () {
-      nova.emit('explore', { label: '请求处理', prompt: '深入讲讲' });
-    });
-  </script>
-</body>
-</html>`
+    const draft = `## 请求处理状态
+
+\`\`\`callout tone=success title=已完成
+主进程已经确认写入，界面可以展示最终结果。
+\`\`\`
+
+\`\`\`flow selected=Main
+Renderer -> Main: 类型化调用
+Main -> SessionStore: 校验并写入
+\`\`\`
+
+\`\`\`ask id=readability-followup
+需要继续看写入细节吗？
+深入讲讲 | 深入讲讲请求处理
+\`\`\``
     nova.provider.enqueue(
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: '学习状态与操作', html },
+        arguments: { title: '学习状态与操作', draft },
         callId: 'call_readability_viz'
       },
       { kind: 'text', text: 'READABILITY_VIZ_SHOWN' }
@@ -585,36 +568,31 @@ test.describe('学习表面主路径', () => {
           return Number.parseFloat(getComputedStyle(element).fontSize)
         }
         const button = document.querySelector('.viz-btn')!.getBoundingClientRect()
-        const checkbox = document.querySelector('input[type="checkbox"]')!.getBoundingClientRect()
         return {
           body: Number.parseFloat(getComputedStyle(document.body).fontSize),
-          note: fontSize('.viz-note'),
-          badge: fontSize('.viz-badge'),
+          note: fontSize('.viz-draft-callout'),
+          auxiliary: fontSize('.viz-draft-flow__edges'),
           buttonFont: fontSize('.viz-btn'),
-          buttonHeight: button.height,
-          checkboxWidth: checkbox.width,
-          checkboxHeight: checkbox.height
+          buttonHeight: button.height
         }
       })
       expect(metrics.body).toBeGreaterThanOrEqual(14)
       expect(metrics.note).toBeGreaterThanOrEqual(14)
-      expect(metrics.badge).toBeGreaterThanOrEqual(12)
+      expect(metrics.auxiliary).toBeGreaterThanOrEqual(12)
       expect(metrics.buttonFont).toBeGreaterThanOrEqual(14)
       expect(metrics.buttonHeight).toBeGreaterThanOrEqual(36)
-      expect(metrics.checkboxWidth).toBeGreaterThanOrEqual(18)
-      expect(metrics.checkboxHeight).toBeGreaterThanOrEqual(18)
     }
 
     await capture('inline-before')
     await expectReadable(inlineFrame)
-    await inlineFrame.getByLabel('我已理解这一步').check()
-    await expect(inlineFrame.locator('#completion')).toBeChecked()
+    await inlineFrame.locator('[data-viz-select="SessionStore"]').click()
+    await expect(inlineFrame.locator('[data-viz-select="SessionStore"]')).toHaveAttribute('data-active', 'true')
 
     await card.getByRole('button', { name: '展开' }).click()
     const dialog = nova.page.getByRole('dialog', { name: '学习状态与操作' })
     await expect(dialog).toBeVisible()
     const modalFrame = await contentFrameOf(dialog.getByTestId('visualization-frame'))
-    await expect(modalFrame.locator('.viz-title')).toHaveText('请求处理状态')
+    await expect(modalFrame.locator('.viz-draft-panel__title')).toHaveText('请求处理状态')
     await expectReadable(modalFrame)
     await capture('expanded-after')
     expect(nova.pageErrors).toEqual([])
@@ -628,7 +606,7 @@ test.describe('学习表面主路径', () => {
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: '学习架构图', html: LEARN_VIZ_HTML },
+        arguments: { title: '学习架构图', draft: LEARN_VIZ_DRAFT },
         callId: 'call_learn_viz'
       },
       { kind: 'text', text: 'LEARN_VIZ_SHOWN' }
@@ -643,10 +621,10 @@ test.describe('学习表面主路径', () => {
 
     await nova.page.waitForTimeout(1_100)
     nova.provider.enqueue({ kind: 'text', text: 'LEARN_VIZ_EVENT_ACK' })
-    await frame.locator('#explore').click()
+    await frame.locator('[data-viz-ask]').click()
 
     await expect(learningMain(nova).getByRole('article', { name: 'Message from user' }).last()).toContainText(
-      'E2E 模块：深入讲讲'
+      '深入讲讲：深入讲讲 E2E 模块'
     )
     await expect(nova.page.getByText('LEARN_VIZ_EVENT_ACK', { exact: false })).toBeVisible()
     await waitLearnTurnSettled(nova, sessionId)
@@ -666,7 +644,7 @@ test.describe('学习表面主路径', () => {
 
     const requestCountBefore = nova.provider.requests.length
     await nova.page.waitForTimeout(1_100)
-    await frame.locator('#explore').click()
+    await frame.locator('[data-viz-ask]').click()
 
     await expect(card.locator('.visualization-card__notice')).toContainText('先回答当前问题')
     expect(nova.provider.requests).toHaveLength(requestCountBefore)
@@ -929,218 +907,57 @@ test.describe('学习表面主路径', () => {
     await expect(main.getByRole('button', { name: /上下文容量/ })).toBeVisible()
     await expect(main.getByRole('button', { name: /工作区：/ })).toBeVisible()
 
-    // 构造 16 步反模式 HTML（单排塞 16 个胶囊按钮）：验证发布闸门直接拦截并给出分阶段泳道引导
-    const crammed16Html = `<!doctype html><body><div class="bar">${Array.from(
-      { length: 16 },
-      (_, i) => `<button type="button">${i + 1}. 步骤</button>`
-    ).join('')}</div><div class="viz-card">纯文字卡片</div></body>`
+    // 无效草稿先在编译入口失败，模型收到草稿行号后再发布完整流程
+    const crammed16Draft = '## 拥挤的16步胶囊条\n\n```flow\n没有合法边\n```'
+    const phased16WorkbenchDraft = `## miniagent-ts 数据流转：从一句话到最终答案
 
-    // 构造合规的 4 阶段 × 16 步「阶段泳道 + SVG 流向 + 联动详情检视器」工作台（故意带 body min-height: 100vh 验证弹窗不留黑底空白）
-    const phased16WorkbenchHtml = `<!doctype html>
-<html lang="zh">
-<head>
-<meta charset="utf-8">
-<style>
-  body { min-height: 100vh; }
-  .flow-svg { width: 100%; height: 96px; display: block; margin-bottom: 10px; }
-  .inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .step-desc { font-size: .86rem; color: var(--viz-fg); margin: 0; }
-</style>
-</head>
-<body>
-<div class="viz-workbench">
-  <div class="viz-toolbar">
-    <div>
-      <span class="viz-title">miniagent-ts 数据流转：从一句话到最终答案</span>
-      <span class="viz-note" id="progressText"> · 4 个宏观阶段 / 16 个关键节点</span>
-    </div>
-    <div class="viz-row">
-      <input id="stepSearch" class="viz-search" type="search" placeholder="筛选步骤或文件…" aria-label="筛选步骤">
-      <button id="prevBtn" class="viz-btn" type="button">上一步</button>
-      <button id="nextBtn" class="viz-btn" type="button">下一步</button>
-    </div>
-  </div>
 
-  <div class="viz-phases" id="phaseBar"></div>
+4 个阶段、16 个关键节点；选择节点只在图内更新，不发新回合。
 
-  <div class="viz-split">
-    <div class="viz-canvas">
-      <svg class="flow-svg" viewBox="0 0 620 88" aria-label="阶段拓扑流向图">
-        <defs>
-          <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 1 L 9 5 L 0 9 z" fill="var(--viz-accent)"/>
-          </marker>
-        </defs>
-        <rect x="8" y="18" width="132" height="52" rx="8" fill="var(--viz-surface)" stroke="var(--viz-accent)" stroke-width="1.5"/>
-        <text x="74" y="40" text-anchor="middle" fill="var(--viz-fg)" font-size="12" font-weight="600">1. 输入与接纳</text>
-        <text x="74" y="57" text-anchor="middle" fill="var(--viz-muted)" font-size="10">Steps 1–4 · CLI / Session</text>
-        <line x1="140" y1="44" x2="164" y2="44" stroke="var(--viz-accent)" stroke-width="1.6" marker-end="url(#arr)"/>
+\`\`\`flow selected=入口命令
+@group 输入与接纳
+入口命令
+命令路由
+消息入栈
+回合锁获取
+@group 装配与推理
+系统提示词装配
+历史窗口裁剪
+发起流式请求
+增量块解码
+@group 工具与沙箱
+工具参数校验
+权限与副作用门禁
+沙箱执行工具
+工具结果写回
+@group 落盘与呈现
+生成最终回答
+消息事务落盘
+释放回合锁
+最终输出呈现
+入口命令 -> 命令路由: 分发
+命令路由 -> 消息入栈: 用户消息
+消息入栈 -> 回合锁获取: 启动回合
+回合锁获取 -> 系统提示词装配: 上下文
+系统提示词装配 -> 历史窗口裁剪: 预算
+历史窗口裁剪 -> 发起流式请求: messages
+发起流式请求 -> 增量块解码: SSE
+增量块解码 -> 工具参数校验: tool_call
+工具参数校验 -> 权限与副作用门禁: 校验结果
+权限与副作用门禁 -> 沙箱执行工具: 授权
+沙箱执行工具 -> 工具结果写回: ToolResult
+工具结果写回 -> 生成最终回答: 下一轮
+生成最终回答 -> 消息事务落盘: 完整回复
+消息事务落盘 -> 释放回合锁: 已提交
+释放回合锁 -> 最终输出呈现: completed
+\`\`\`
 
-        <rect x="166" y="18" width="132" height="52" rx="8" fill="var(--viz-surface)" stroke="var(--viz-border)" stroke-width="1.5"/>
-        <text x="232" y="40" text-anchor="middle" fill="var(--viz-fg)" font-size="12" font-weight="600">2. 装配与推理</text>
-        <text x="232" y="57" text-anchor="middle" fill="var(--viz-muted)" font-size="10">Steps 5–8 · Prompt / SSE</text>
-        <line x1="298" y1="44" x2="322" y2="44" stroke="var(--viz-accent)" stroke-width="1.6" marker-end="url(#arr)"/>
+\`\`\`ask id=deep-dive-step
+想深入看当前关键步骤吗？
+深入讲讲这一步 | 请结合源码深入讲讲沙箱执行工具的异常边界
+\`\`\`
 
-        <rect x="324" y="18" width="132" height="52" rx="8" fill="var(--viz-surface)" stroke="var(--viz-border)" stroke-width="1.5"/>
-        <text x="390" y="40" text-anchor="middle" fill="var(--viz-fg)" font-size="12" font-weight="600">3. 工具与沙箱</text>
-        <text x="390" y="57" text-anchor="middle" fill="var(--viz-muted)" font-size="10">Steps 9–12 · Tool / Loop</text>
-        <line x1="456" y1="44" x2="480" y2="44" stroke="var(--viz-accent)" stroke-width="1.6" marker-end="url(#arr)"/>
-
-        <rect x="482" y="18" width="130" height="52" rx="8" fill="var(--viz-surface)" stroke="var(--viz-border)" stroke-width="1.5"/>
-        <text x="547" y="40" text-anchor="middle" fill="var(--viz-fg)" font-size="12" font-weight="600">4. 落盘与呈现</text>
-        <text x="547" y="57" text-anchor="middle" fill="var(--viz-muted)" font-size="10">Steps 13–16 · Store / UI</text>
-      </svg>
-
-      <div class="viz-lanes" id="lanesContainer"></div>
-    </div>
-
-    <div class="viz-inspector" id="inspectorPanel">
-      <div class="inspector-head">
-        <span class="viz-badge" id="detailPhaseBadge">阶段 1</span>
-        <span class="viz-file-ref" id="detailFileRef">src/cli.ts:42</span>
-      </div>
-      <div class="viz-title" id="detailTitle">1. 入口命令解析</div>
-      <p class="step-desc" id="detailDesc"></p>
-      <dl class="viz-kv">
-        <dt>输入载荷</dt><dd id="detailIn"></dd>
-        <dt>输出产物</dt><dd id="detailOut"></dd>
-        <dt>所属分层</dt><dd id="detailLane"></dd>
-      </dl>
-      <pre class="viz-code" id="detailCode"></pre>
-      <div class="viz-row">
-        <button id="askDeepBtn" class="viz-btn viz-btn-primary" type="button">深入讲讲这一步</button>
-      </div>
-    </div>
-  </div>
-</div>
-<script>
-  var PHASES = [
-    { id: 1, kicker: '阶段一 · Steps 1–4', title: '输入接纳与会话初始化' },
-    { id: 2, kicker: '阶段二 · Steps 5–8', title: '上下文装配与流式推理' },
-    { id: 3, kicker: '阶段三 · Steps 9–12', title: '工具调度与沙箱执行' },
-    { id: 4, kicker: '阶段四 · Steps 13–16', title: '结果回填、落盘与渲染' }
-  ];
-  var STEPS = [
-    { id: 1, phase: 1, lane: '交互入口层', title: '入口命令', file: 'src/cli.ts:28', desc: '接收用户输入的原始问题文本，完成非空校验与命令分发。', input: 'rawPrompt: string', output: 'TurnRequest', code: 'const req = parseUserInput(line);\\nawait agent.runTurn(req);' },
-    { id: 2, phase: 1, lane: '交互入口层', title: '命令路由', file: 'src/router.ts:54', desc: '区分斜杠命令与普通对话提问，绑定当前会话 ID。', input: 'TurnRequest', output: 'RoutedPrompt', code: 'if (req.isSlash) return runSlash(req);' },
-    { id: 3, phase: 1, lane: '会话状态层', title: '消息入栈', file: 'src/session/SessionStore.ts:89', desc: '将用户消息写入会话历史并生成唯一 messageId。', input: 'RoutedPrompt', output: 'UserMessageRecord', code: 'store.appendUserMessage(sessionId, text);' },
-    { id: 4, phase: 1, lane: '编排内核层', title: '回合锁获取', file: 'src/runtime/RunCoordinator.ts:63', desc: '登记运行态快照，防止同一会话并发重入。', input: 'sessionId', output: 'RunLease(thinking)', code: 'coordinator.acquire(sessionId, "thinking");' },
-    { id: 5, phase: 2, lane: '编排内核层', title: '系统提示词装配', file: 'src/runtime/promptBuilder.ts:41', desc: '拼接角色约束、工作区摘要与可用工具 Schema。', input: 'SessionContext', output: 'SystemPrompt', code: 'const sys = buildSystemPrompt(workspace, tools);' },
-    { id: 6, phase: 2, lane: '会话状态层', title: '历史窗口裁剪', file: 'src/runtime/contextWindow.ts:112', desc: '按上下文预算保留最近消息与前缀缓存断点。', input: 'Message[]', output: 'WindowedMessages[]', code: 'const msgs = fitContextBudget(history, 204800);' },
-    { id: 7, phase: 2, lane: '模型协议层', title: '发起流式请求', file: 'src/runtime/modelClient.ts:77', desc: '向 OpenAI/Anthropic 兼容端点发送 SSE 流式请求。', input: 'ChatCompletionPayload', output: 'ReadableStream<SSE>', code: 'const stream = await client.streamChat(payload);' },
-    { id: 8, phase: 2, lane: '模型协议层', title: '增量块解码', file: 'src/runtime/streamParser.ts:49', desc: '将 SSE 分片解析为思考流、正文流与工具调用参数流。', input: 'SSE Chunk', output: 'StreamDelta', code: 'yield parseDeltaChunk(rawEvent);' },
-    { id: 9, phase: 3, lane: '工具沙箱层', title: '工具参数校验', file: 'src/runtime/toolDispatcher.ts:68', desc: '校验模型产出的 JSON 参数与并发安全标记。', input: 'ToolCallSpec', output: 'ValidatedToolCall', code: 'validateSchema(tool.parameters, call.args);' },
-    { id: 10, phase: 3, lane: '工具沙箱层', title: '权限与副作用门禁', file: 'src/runtime/permissionGate.ts:35', desc: '只读工具直接放行，写操作或高风险命令检查授权。', input: 'ValidatedToolCall', output: 'PermissionGrant', code: 'await assertToolAllowed(call, context);' },
-    { id: 11, phase: 3, lane: '工具沙箱层', title: '沙箱执行工具', file: 'src/runtime/tools/index.ts:94', desc: '在受控目录与超时边界内执行文件读取或搜索。', input: 'PermissionGrant', output: 'ToolResult', code: 'const res = await executor.execute(args, ctx);' },
-    { id: 12, phase: 3, lane: '编排内核层', title: '工具结果写回', file: 'src/runtime/AgentLoop.ts:210', desc: '将工具输出追加为 tool 消息并触发下一轮模型推理。', input: 'ToolResult', output: 'NextIterationState', code: 'messages.push(toToolMessage(call.id, res));' },
-    { id: 13, phase: 4, lane: '模型协议层', title: '生成最终回答', file: 'src/runtime/AgentLoop.ts:248', desc: '模型基于工具证据流式输出最终解答并收到 stop 信号。', input: 'NextIterationState', output: 'AssistantFinalText', code: 'if (finishReason === "stop") break;' },
-    { id: 14, phase: 4, lane: '会话状态层', title: '消息事务落盘', file: 'src/session/SessionStore.ts:144', desc: '将完整回复、工具块与 token 统计持久化到 SQLite。', input: 'AssistantFinalText', output: 'PersistedTurn', code: 'db.transaction(() => saveTurn(turn))();' },
-    { id: 15, phase: 4, lane: '编排内核层', title: '释放回合锁', file: 'src/runtime/RunCoordinator.ts:118', desc: '广播 completed 终态快照并推进排队消息。', input: 'PersistedTurn', output: 'RunSnapshot(completed)', code: 'coordinator.complete(sessionId);' },
-    { id: 16, phase: 4, lane: '交互入口层', title: '最终输出呈现', file: 'src/renderer/ChatPanel.tsx:162', desc: '将流式活跃块折叠进消息列表，完成代码高亮与可视化挂载。', input: 'RunSnapshot(completed)', output: 'RenderedAnswerView', code: 'foldLiveTurnIntoMessages(messageId);' }
-  ];
-
-  var activePhase = 1;
-  var activeStepId = 1;
-  var filterQuery = '';
-
-  function selectStep(stepId) {
-    var step = STEPS.find(function (s) { return s.id === stepId; }) || STEPS[0];
-    activeStepId = step.id;
-    activePhase = step.phase;
-    render();
-  }
-
-  function render() {
-    var phaseBar = document.getElementById('phaseBar');
-    phaseBar.innerHTML = '';
-    PHASES.forEach(function (p) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'viz-phase';
-      btn.setAttribute('data-active', String(p.id === activePhase && !filterQuery));
-      btn.setAttribute('data-phase-id', String(p.id));
-      btn.innerHTML = '<span class="viz-phase-kicker">' + p.kicker + '</span><span class="viz-phase-title">' + p.title + '</span>';
-      btn.addEventListener('click', function () {
-        filterQuery = '';
-        document.getElementById('stepSearch').value = '';
-        var firstInPhase = STEPS.find(function (s) { return s.phase === p.id; });
-        if (firstInPhase) selectStep(firstInPhase.id);
-      });
-      phaseBar.appendChild(btn);
-    });
-
-    var visibleSteps = STEPS.filter(function (s) {
-      if (filterQuery) {
-        var q = filterQuery.toLowerCase();
-        return s.title.toLowerCase().indexOf(q) >= 0 || s.file.toLowerCase().indexOf(q) >= 0 || s.desc.toLowerCase().indexOf(q) >= 0;
-      }
-      return s.phase === activePhase;
-    });
-
-    var lanes = ['交互入口层', '编排内核层', '模型协议层', '工具沙箱层', '会话状态层'];
-    var lanesContainer = document.getElementById('lanesContainer');
-    lanesContainer.innerHTML = '';
-    lanes.forEach(function (laneName) {
-      var laneSteps = visibleSteps.filter(function (s) { return s.lane === laneName; });
-      if (laneSteps.length === 0) return;
-      var laneEl = document.createElement('div');
-      laneEl.className = 'viz-lane';
-      var labelEl = document.createElement('div');
-      labelEl.className = 'viz-lane-label';
-      labelEl.textContent = laneName;
-      var nodesEl = document.createElement('div');
-      nodesEl.className = 'viz-lane-nodes';
-      laneSteps.forEach(function (s, idx) {
-        if (idx > 0) {
-          var arr = document.createElement('span');
-          arr.className = 'viz-arrow';
-          arr.textContent = '→';
-          nodesEl.appendChild(arr);
-        }
-        var node = document.createElement('button');
-        node.type = 'button';
-        node.className = 'viz-node';
-        node.setAttribute('data-step-id', String(s.id));
-        node.setAttribute('data-active', String(s.id === activeStepId));
-        node.innerHTML = '<span class="viz-node-step">' + s.id + '</span><span>' + s.title + '</span>';
-        node.addEventListener('click', function () { selectStep(s.id); });
-        nodesEl.appendChild(node);
-      });
-      laneEl.appendChild(labelEl);
-      laneEl.appendChild(nodesEl);
-      lanesContainer.appendChild(laneEl);
-    });
-
-    var current = STEPS.find(function (s) { return s.id === activeStepId; }) || STEPS[0];
-    document.getElementById('detailPhaseBadge').textContent = '阶段 ' + current.phase + ' · 第 ' + current.id + ' / 16 步';
-    document.getElementById('detailFileRef').textContent = current.file;
-    document.getElementById('detailTitle').textContent = current.id + '. ' + current.title;
-    document.getElementById('detailDesc').textContent = current.desc;
-    document.getElementById('detailIn').textContent = current.input;
-    document.getElementById('detailOut').textContent = current.output;
-    document.getElementById('detailLane').textContent = current.lane;
-    document.getElementById('detailCode').textContent = current.code;
-  }
-
-  document.getElementById('prevBtn').addEventListener('click', function () {
-    selectStep(activeStepId > 1 ? activeStepId - 1 : 16);
-  });
-  document.getElementById('nextBtn').addEventListener('click', function () {
-    selectStep(activeStepId < 16 ? activeStepId + 1 : 1);
-  });
-  document.getElementById('stepSearch').addEventListener('input', function (e) {
-    filterQuery = e.target.value.trim();
-    render();
-  });
-  document.getElementById('askDeepBtn').addEventListener('click', function () {
-    var current = STEPS.find(function (s) { return s.id === activeStepId; }) || STEPS[0];
-    nova.emit('explore', { label: current.title, prompt: '请结合源码深入讲讲第 ' + current.id + ' 步（' + current.file + '）的异常边界' });
-  });
-
-  render();
-</script>
-</body>
-</html>`
+`
 
     // 先挂起首个流式回合，验证用户提问发送后：输入框立即清空、用户消息气泡立即出现（不等回合结束）
     nova.provider.enqueue(
@@ -1160,21 +977,21 @@ test.describe('学习表面主路径', () => {
     nova.provider.release('hold-user-bubble-check')
     await waitLearnTurnSettled(nova, sessionId)
 
-    // 第二轮：模型先尝试发布 16 个平铺胶囊按钮（被 validateVisualizationHtml 拦截），再自愈发布分阶段泳道工作台
+    // 第二轮：无效 flow 被草稿诊断打回，再发布分阶段的 16 节点流程
     nova.provider.enqueue(
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: '拥挤的16步胶囊条', html: crammed16Html },
+        arguments: { title: '拥挤的16步胶囊条', draft: crammed16Draft },
         callId: 'call_crammed_16'
       },
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: 'miniagent-ts 数据流转：从一句话到最终答案', html: phased16WorkbenchHtml },
+        arguments: { title: 'miniagent-ts 数据流转：从一句话到最终答案', draft: phased16WorkbenchDraft },
         callId: 'call_phased_16'
       },
-      { kind: 'text', text: '上面是按 4 个阶段拆解的 16 步完整数据流转沙盘，点击任一阶段或节点可在右侧查看载荷变化与源码位置。' }
+      { kind: 'text', text: '上面是按 4 个阶段拆解的 16 步完整数据流转沙盘，点击节点可查看当前选择。' }
     )
 
     await sendLearningPrompt(nova, '把这个 16 步流程画成可交互的数据流转图')
@@ -1191,25 +1008,18 @@ test.describe('学习表面主路径', () => {
 
     const inlineFrameEl = await settledFrame(card)
     const inlineFrame = await contentFrameOf(inlineFrameEl)
-    await expect(inlineFrame.locator('#detailTitle')).toHaveText('1. 入口命令')
-    // 阶段名再长也只在格内折行：阶段条在内联宽度下不出现横向滚动
+    await expect(inlineFrame.locator('[data-viz-select="入口命令"]')).toHaveAttribute('data-active', 'true')
     const phaseRailOverflow = await inlineFrame.evaluate(() => {
-      const rail = document.querySelector('.viz-phases')
+      const rail = document.querySelector('.viz-lanes')
       return rail ? rail.scrollWidth - rail.clientWidth : null
     })
     expect(phaseRailOverflow).toBe(0)
 
-    // 验证本地交互（切换阶段、点击泳道节点、搜索过滤）立即刷新右侧详情面板，且不触发 nova.emit 新回合
     const requestsBeforeLocalInteract = nova.provider.requests.length
-    await inlineFrame.locator('[data-phase-id="3"]').click()
-    await expect(inlineFrame.locator('#detailTitle')).toHaveText('9. 工具参数校验')
-    await expect(inlineFrame.locator('#detailFileRef')).toHaveText('src/runtime/toolDispatcher.ts:68')
-
-    await inlineFrame.locator('[data-step-id="11"]').click()
-    await expect(inlineFrame.locator('#detailTitle')).toHaveText('11. 沙箱执行工具')
+    await inlineFrame.locator('[data-viz-select="沙箱执行工具"]').click()
+    await expect(inlineFrame.locator('[data-viz-select="沙箱执行工具"]')).toHaveAttribute('data-active', 'true')
     expect(nova.provider.requests).toHaveLength(requestsBeforeLocalInteract)
 
-    // 留存内联视图截图（包含底部对齐开发模式的 Composer、MiniMax-M3.1-Flash 思考强度、上下文指示器与 16 步阶段泳道沙盘）
     const inlineShotPath = path.join(screenshotDir, 'intelligent-ui-1-learning-composer-and-inline-16step.png')
     await nova.page.screenshot({ path: inlineShotPath, animations: 'disabled' })
     await testInfo.attach('intelligent-ui-1-learning-composer-and-inline-16step.png', {
@@ -1217,31 +1027,27 @@ test.describe('学习表面主路径', () => {
       contentType: 'image/png'
     })
 
-    // 点击「展开」打开模态大视图，验证 100vh 解除绑定后弹窗高度贴合内容，无底部大片黑底空白
-    await card.getByRole('button', { name: '展开' }).click()
+    await card.getByRole('button', { name: '展开', exact: true }).click()
     const dialog = nova.page.getByRole('dialog', { name: 'miniagent-ts 数据流转：从一句话到最终答案' })
     await expect(dialog).toBeVisible()
     const modalFrameEl = dialog.getByTestId('visualization-frame')
     const modalFrame = await contentFrameOf(modalFrameEl)
-    await expect(modalFrame.locator('#detailTitle')).toHaveText('1. 入口命令')
+    await expect(modalFrame.locator('[data-viz-select="入口命令"]')).toHaveAttribute('data-active', 'true')
 
-    // 在弹窗内切换到阶段四并选中第 14 步「消息事务落盘」
-    await modalFrame.locator('[data-phase-id="4"]').click()
-    await modalFrame.locator('[data-step-id="14"]').click()
-    await expect(modalFrame.locator('#detailTitle')).toHaveText('14. 消息事务落盘')
+    await modalFrame.locator('[data-viz-select="消息事务落盘"]').click()
+    await expect(modalFrame.locator('[data-viz-select="消息事务落盘"]')).toHaveAttribute('data-active', 'true')
 
-    // 验证弹窗内 iframe 高度与内部工作台实际高度紧凑贴合（差值小于 64px，彻底消除旧版几百像素的空白黑洞）
     await expect
       .poll(async () => {
         const frameBox = await modalFrameEl.boundingBox()
         const contentHeight = await modalFrame.evaluate(() => {
-          const wb = document.querySelector('.viz-workbench')
-          return wb ? Math.ceil(wb.getBoundingClientRect().height + 32) : 0
+          const draft = document.querySelector('.viz-draft')
+          return draft ? Math.ceil(draft.getBoundingClientRect().height + 32) : 0
         })
         if (!frameBox || !contentHeight) return 999
-        return Math.abs(frameBox.height - contentHeight)
+        return frameBox.height - contentHeight
       })
-      .toBeLessThan(64)
+      .toBeLessThanOrEqual(1)
 
     const modalShotPath = path.join(screenshotDir, 'intelligent-ui-2-modal-16step-phased-workbench.png')
     await nova.page.screenshot({ path: modalShotPath, animations: 'disabled' })
@@ -1250,7 +1056,6 @@ test.describe('学习表面主路径', () => {
       contentType: 'image/png'
     })
 
-    // 切换到深色主题截取展开态模态框，与原始问题二截图（深色下 16 个拥挤胶囊 + 底部黑洞空白）形成同主题直观对比
     await nova.page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))
     await expect(nova.page.locator('html')).toHaveAttribute('data-theme', 'dark')
     await nova.page.waitForTimeout(150)
@@ -1262,76 +1067,42 @@ test.describe('学习表面主路径', () => {
     })
     await nova.page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'))
 
-    // 关闭弹窗，验证点击详情面板内专门的「深入讲讲这一步」按钮会触发 nova.emit 发起追问回合
     await dialog.getByRole('button', { name: '关闭' }).click()
     await expect(dialog).toHaveCount(0)
 
     await nova.page.waitForTimeout(1_100)
     nova.provider.enqueue({ kind: 'text', text: 'STEP_11_DEEP_DIVE_ACK' })
-    await inlineFrame.locator('#askDeepBtn').click()
+    await inlineFrame.locator('[data-viz-ask]').click()
     await expect(learningMain(nova).getByRole('article', { name: 'Message from user' }).last()).toContainText(
       '沙箱执行工具'
     )
     await expect(nova.page.getByText('STEP_11_DEEP_DIVE_ACK', { exact: false })).toBeVisible()
     await waitLearnTurnSettled(nova, sessionId)
 
-    // 第三轮：软件架构与方案对比矩阵工作台（切换场景动态高亮胜出方案与指标条）
-    const compareWorkbenchHtml = `<!doctype html>
-<html lang="zh">
-<head><meta charset="utf-8"></head>
-<body>
-<div class="viz-workbench">
-  <div class="viz-toolbar">
-    <span class="viz-title">状态同步方案取舍：受信任投递 vs 渲染端直写</span>
-    <div class="viz-row" id="scenarioBtns">
-      <button class="viz-btn viz-btn-primary" data-scenario="consistency" type="button">优先顺序与一致性</button>
-      <button class="viz-btn" data-scenario="latency" type="button">优先首屏即时反馈</button>
-    </div>
-  </div>
-  <div class="viz-split">
-    <div class="viz-canvas">
-      <table class="viz-table">
-        <thead>
-          <tr><th>评估维度</th><th>方案 A：主进程受信任投递 + 回合起点对账（当前采用）</th><th>方案 B：渲染端多 Store 各自直写</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>状态唯一 Owner</td><td>SessionStore 单一写入源，崩溃恢复零分叉</td><td>多处乐观写入，重试或中断易产生幽灵消息</td></tr>
-          <tr><td>首帧提问气泡延迟</td><td>message_start 即时触发对账（&lt; 15ms）</td><td>本地直推（0ms），但被拒时需回滚列表</td></tr>
-          <tr><td>跨会话/重载恢复</td><td>SQLite 事务保证一致，任意时刻重载不丢</td><td>未落盘状态在重载后丢失</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <div class="viz-inspector">
-      <div class="viz-badge" id="winnerBadge">当前推荐：方案 A（受信任投递 + 即时对账）</div>
-      <div class="viz-title" id="scenarioTitle">高可靠一致性场景</div>
-      <p class="viz-note" id="scenarioDesc">由 LearningHost 落盘后立即通知表面刷新，并在流式回合起点同步会话消息，兼顾单一写入源与即时上屏。</p>
-      <div class="viz-stat">
-        <span class="viz-stat-label">一致性与可恢复得分</span>
-        <div class="viz-meter"><span id="scoreBar" style="width: 96%"></span></div>
-      </div>
-      <span class="viz-file-ref">src/main/learning/LearningHost.ts:96</span>
-    </div>
-  </div>
-</div>
-<script>
-  var btns = document.querySelectorAll('[data-scenario]');
-  btns.forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var sc = btn.getAttribute('data-scenario');
-      btns.forEach(function (b) { b.className = b === btn ? 'viz-btn viz-btn-primary' : 'viz-btn'; });
-      document.getElementById('scenarioTitle').textContent = sc === 'latency' ? '首屏即时反馈场景' : '高可靠一致性场景';
-      document.getElementById('scoreBar').style.width = sc === 'latency' ? '92%' : '96%';
-    });
-  });
-</script>
-</body>
-</html>`
+    // 第三轮：同一份比较内容用固定 Before/After/Changes 视图切换
+    const compareWorkbenchDraft = `## 状态同步方案取舍
+
+\`\`\`comparison views=Before,After,Changes
+维度 | 高可靠一致性场景
+状态 Owner | SessionStore 单一写入源，崩溃恢复零分叉
+首帧反馈 | message_start 即时触发对账
+恢复 | SQLite 事务保证一致
+---
+维度 | 首屏即时反馈场景
+状态 Owner | 本地直推，但被拒时需回滚列表
+首帧反馈 | 本地直推，立即上屏
+恢复 | 未落盘状态在重载后丢失
+---
+维度 | 关键变化
+推荐 | 受信任投递 + 即时对账
+原因 | 同时保留单一写入源与即时反馈
+\`\`\``
 
     nova.provider.enqueue(
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: '状态同步架构方案对比', html: compareWorkbenchHtml },
+        arguments: { title: '状态同步架构方案对比', draft: compareWorkbenchDraft },
         callId: 'call_compare_viz'
       },
       { kind: 'text', text: '上面对比了两种状态同步架构在一致性与首屏反馈上的取舍。' }
@@ -1345,8 +1116,9 @@ test.describe('学习表面主路径', () => {
     const compareCard = nova.page.getByTestId('visualization-card').nth(1)
     await expect(compareCard).toHaveAttribute('data-state', 'ok')
     const compareFrame = await contentFrameOf(await settledFrame(compareCard))
-    await compareFrame.locator('[data-scenario="latency"]').click()
-    await expect(compareFrame.locator('#scenarioTitle')).toHaveText('首屏即时反馈场景')
+    await compareFrame.locator('[data-viz-view="1"]').click()
+    await expect(compareFrame.locator('[data-viz-view-panel="1"]')).toContainText('首屏即时反馈场景')
+    await expect(compareFrame.locator('[data-viz-view-panel="0"]')).toBeHidden()
 
     const compareShotPath = path.join(screenshotDir, 'intelligent-ui-3-architecture-comparison-matrix.png')
     await nova.page.screenshot({ path: compareShotPath, animations: 'disabled' })
@@ -1355,115 +1127,41 @@ test.describe('学习表面主路径', () => {
       contentType: 'image/png'
     })
 
-    // 第四轮：验证「技术栈与依赖沙盘」——拦截 2fr 1fr 非对称双栏反模式，放行「顶部三指标 + 两列紧凑依赖卡网格 + 底部单栏详情」
-    const imbalancedSplitHtml = `<!doctype html>
-<html lang="zh"><head><meta charset="utf-8"><style>.bad-split { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }</style></head>
-<body><div class="bad-split"><div>左侧挤扁表格</div><div>右侧长篇安全说明</div></div></body></html>`
+    // 第四轮：无效比较被诊断打回，再发布确定性依赖盘点与图表
+    const imbalancedSplitDraft = '## 失衡双栏反例\n\n```comparison\n只有一列\n```'
+    const techStackSandboxDraft = `## miniagent-ts · 项目分析
 
-    const techStackSandboxHtml = `<!doctype html>
-<html lang="zh">
-<head>
-<meta charset="utf-8">
-<style>
-  .dep-card { cursor: pointer; text-align: left; font: inherit; color: inherit; width: 100%; }
-  .dep-ver { font-family: var(--viz-font-mono); font-size: .78rem; color: var(--viz-muted); }
-  .inspector-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-</style>
-</head>
-<body>
-<div class="viz-workbench">
-  <div class="viz-phases" role="tablist">
-    <button class="viz-phase is-active" role="tab" aria-selected="true" type="button"><span class="viz-phase-title">依赖分析</span></button>
-    <button class="viz-phase" role="tab" aria-selected="false" type="button"><span class="viz-phase-title">安全检查</span></button>
-    <button class="viz-phase" role="tab" aria-selected="false" type="button"><span class="viz-phase-title">关键取舍</span></button>
-  </div>
+\`\`\`chart type=bar unit=个
+依赖状态 | 数量
+声明依赖 | 6
+实际使用 | 3
+疑似冗余 | 3
+\`\`\`
 
-  <div class="viz-kpis">
-    <div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">6</span><span class="viz-stat-label">声明依赖</span></div></div>
-    <div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">3</span><span class="viz-stat-label">实际使用</span></div></div>
-    <div class="viz-card"><div class="viz-stat"><span class="viz-stat-value">3</span><span class="viz-stat-label">疑似冗余</span></div></div>
-  </div>
+\`\`\`kv
+openai | ^4.55.0 · 大模型 API 调用 · 在用
+chalk | ^5.3.0 · 终端彩色日志 · 在用
+dotenv | ^16.4.5 · 读取环境变量 · 在用
+node-fetch | ^3.3.2 · HTTP 请求 · 未接线
+systeminformation | ^5.21.20 · 系统信息读取 · 未接线
+tiktoken | ^1.0.20 · Token 数量估算 · 未接线
+\`\`\`
 
-  <div class="viz-split">
-    <div class="viz-canvas">
-      <div class="viz-grid" id="depGrid">
-        <button class="viz-card dep-card" data-dep="openai" type="button">
-          <div class="viz-card-head"><span class="viz-title">openai</span><span class="viz-badge" data-tone="success">在用</span></div>
-          <p class="viz-note">大模型 API 调用</p>
-          <span class="dep-ver">^4.55.0</span>
-        </button>
-        <button class="viz-card dep-card" data-dep="chalk" type="button">
-          <div class="viz-card-head"><span class="viz-title">chalk</span><span class="viz-badge" data-tone="success">在用</span></div>
-          <p class="viz-note">终端彩色日志</p>
-          <span class="dep-ver">^5.3.0</span>
-        </button>
-        <button class="viz-card dep-card" data-dep="dotenv" type="button">
-          <div class="viz-card-head"><span class="viz-title">dotenv</span><span class="viz-badge" data-tone="success">在用</span></div>
-          <p class="viz-note">读取环境变量</p>
-          <span class="dep-ver">^16.4.5</span>
-        </button>
-        <button class="viz-card dep-card" data-dep="node-fetch" type="button">
-          <div class="viz-card-head"><span class="viz-title">node-fetch</span><span class="viz-badge" data-tone="warning">未接线</span></div>
-          <p class="viz-note">HTTP 请求</p>
-          <span class="dep-ver">^3.3.2</span>
-        </button>
-        <button class="viz-card dep-card" data-dep="systeminformation" type="button">
-          <div class="viz-card-head"><span class="viz-title">systeminformation</span><span class="viz-badge" data-tone="warning">未接线</span></div>
-          <p class="viz-note">系统信息读取</p>
-          <span class="dep-ver">^5.21.20</span>
-        </button>
-        <button class="viz-card dep-card is-active" data-dep="tiktoken" type="button">
-          <div class="viz-card-head"><span class="viz-title">tiktoken</span><span class="viz-badge" data-tone="warning">未接线</span></div>
-          <p class="viz-note">Token 数量估算</p>
-          <span class="dep-ver">^1.0.20</span>
-        </button>
-      </div>
-    </div>
-
-    <aside class="viz-inspector" id="depInspector">
-      <div class="inspector-bar">
-        <span class="viz-title" id="depDetailTitle">tiktoken</span>
-        <span class="viz-file-ref" id="depDetailFile">src/agent.ts:118</span>
-      </div>
-      <p class="viz-note" id="depDetailDesc">当前项目使用简单的字符数与消息条数估算上下文容量，未实际引入 tiktoken 分词器。</p>
-    </aside>
-  </div>
-</div>
-<script>
-  var DETAILS = {
-    openai: { file: 'src/llm.ts:14', desc: '唯一的 LLM 通信通道：负责发送 messages 与接收流式文本或 tool_calls。' },
-    chalk: { file: 'src/logger.ts:8', desc: '用于 CLI 终端输出着色，区分日志级别标签与工具执行成功/失败图标。' },
-    dotenv: { file: 'src/config.ts:5', desc: '启动时读取 .env 注入 process.env，由配置层统一读取 API Key。' },
-    'node-fetch': { file: 'package.json:18', desc: '名义上给 HTTP 工具准备，实际运行直接使用 Node 18 全局 fetch。' },
-    systeminformation: { file: 'package.json:19', desc: '名义上用于系统信息采集，实际环境探针由 node:os 直接手写完成。' },
-    tiktoken: { file: 'src/agent.ts:118', desc: '当前项目使用简单的字符数与消息条数估算上下文容量，未实际引入 tiktoken 分词器。' }
-  };
-  document.querySelectorAll('[data-dep]').forEach(function (card) {
-    card.addEventListener('click', function () {
-      var key = card.getAttribute('data-dep');
-      var info = DETAILS[key];
-      if (!info) return;
-      document.querySelectorAll('[data-dep]').forEach(function (c) { c.classList.toggle('is-active', c === card); });
-      document.getElementById('depDetailTitle').textContent = key;
-      document.getElementById('depDetailFile').textContent = info.file;
-      document.getElementById('depDetailDesc').textContent = info.desc;
-    });
-  });
-</script>
-</body>
-</html>`
+\`\`\`callout tone=warning title=关键取舍
+当前项目使用字符与消息预算估算上下文容量，未实际引入 tiktoken；不要仅凭声明依赖判断真实接线。
+\`\`\``
 
     nova.provider.enqueue(
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: '失衡双栏反例', html: imbalancedSplitHtml },
+        arguments: { title: '失衡双栏反例', draft: imbalancedSplitDraft },
         callId: 'call_bad_split'
       },
       {
         kind: 'tool',
         name: 'present_visualization',
-        arguments: { title: 'miniagent-ts · 项目分析', html: techStackSandboxHtml },
+        arguments: { title: 'miniagent-ts · 项目分析', draft: techStackSandboxDraft },
         callId: 'call_tech_stack_sandbox'
       },
       { kind: 'text', text: '上面展示了 miniagent-ts 的声明依赖、实际接线情况与取舍说明。' }
@@ -1474,24 +1172,20 @@ test.describe('学习表面主路径', () => {
     ).toBeVisible({ timeout: 30_000 })
     await waitLearnTurnSettled(nova, sessionId)
 
-    // 只有第 3 张合规卡片被挂载（bad_split 被闸门拦截自愈）
     await expect(nova.page.getByTestId('visualization-card')).toHaveCount(3)
     const techCard = nova.page.getByTestId('visualization-card').nth(2)
     await expect(techCard).toHaveAttribute('data-state', 'ok')
     const techFrame = await contentFrameOf(await settledFrame(techCard))
+    await expect(techFrame.locator('.viz-draft-kv')).toContainText('tiktoken')
+    await expect(techFrame.locator('.viz-draft-chart')).toBeVisible()
 
-    // 验证在内联聊天列宽度下，.viz-split 为上下单列堆叠（inspector 位于 canvas 正下方，不抢左右宽度）
-    const splitLayout = await techFrame.evaluate(() => {
-      const canvas = document.querySelector('.viz-canvas')!.getBoundingClientRect()
-      const inspector = document.querySelector('.viz-inspector')!.getBoundingClientRect()
-      return {
-        canvasWidth: Math.round(canvas.width),
-        inspectorWidth: Math.round(inspector.width),
-        stackedVertically: inspector.top >= canvas.bottom - 2
-      }
+    const layout = await techFrame.evaluate(() => {
+      const root = document.querySelector('.viz-draft')!
+      const panel = document.querySelector('.viz-draft-panel')!.getBoundingClientRect()
+      return { overflow: root.scrollWidth - root.clientWidth, panelWidth: Math.round(panel.width), rootWidth: Math.round(root.getBoundingClientRect().width) }
     })
-    expect(splitLayout.stackedVertically).toBe(true)
-    expect(splitLayout.canvasWidth).toBe(splitLayout.inspectorWidth)
+    expect(layout.overflow).toBeLessThanOrEqual(0)
+    expect(layout.panelWidth).toBe(layout.rootWidth)
 
     // 切换到深色主题截取与用户参考图 2 对齐的「技术栈与依赖沙盘」内联卡片截图
     await nova.page.evaluate(() => document.documentElement.setAttribute('data-theme', 'dark'))

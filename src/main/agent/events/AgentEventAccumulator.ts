@@ -9,6 +9,7 @@ import { getSessionStore } from '../../services/SessionStoreHost'
 import { getRunCoordinator } from '../../services/RunCoordinatorHost'
 import { settleSubagentToolCall } from '../../../runtime/subagents/toolSettlement'
 import type { MessageContext, StreamAccumulator } from './types'
+import { sanitizeToolInput } from '../../../shared/tool-input-sanitizer'
 
 /** 当前正在累积的流式消息映射：messageId → 累积器（按 turn identity fencing） */
 export const activeStreams = new Map<string, StreamAccumulator>()
@@ -312,6 +313,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
           stream.blocks[blockIdx] = {
             ...baseBlock,
             status: isError ? 'error' : 'success',
+            ...(!isError ? { arguments: sanitizeToolInput(block.toolName, block.arguments, 'success') } : {}),
             result: event.result,
             ...(event.processOutcome ? { processOutcome: { ...event.processOutcome } } : {}),
             ...(event.resultImages?.length ? { resultImages: event.resultImages.map(image => ({ ...image })) } : {}),

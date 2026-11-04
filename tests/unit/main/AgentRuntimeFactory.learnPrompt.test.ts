@@ -145,7 +145,13 @@ describe('AgentRuntimeFactory learn prompt assembly', () => {
       await prepared.agentLoop.sendMessage('学习这个项目', agentRoute())
       const body = wireBody
       if (!body) throw new Error('模型请求未发生')
-      return structuredClone(body)
+      const first = structuredClone(body)
+      await prepared.agentLoop.sendMessage('继续讲当前问题', agentRoute())
+      if (!wireBody) throw new Error('后续模型请求未发生')
+      expect(systemContent(wireBody)).toBe(systemContent(first))
+      expect(JSON.stringify(wireBody.tools)).toBe(JSON.stringify(first.tools))
+      expect(wireBody.prompt_cache_key).toEqual(first.prompt_cache_key)
+      return first
     } finally {
       prepared.agentLoop.dispose()
     }

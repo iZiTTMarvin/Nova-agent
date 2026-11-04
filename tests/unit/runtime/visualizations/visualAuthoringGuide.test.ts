@@ -3,7 +3,7 @@ import {
   PRESENT_VISUALIZATION_DESCRIPTION,
   renderLearnVisualGuide
 } from '../../../../src/runtime/visualizations/visualAuthoringGuide'
-import { VISUALIZATION_BASE_STYLE } from '../../../../src/runtime/visualizations/visualizationStyles'
+import { compileVisualizationDraft } from '../../../../src/shared/visualization/draft'
 import { getLearnCoachRoleMaterial } from '../../../../src/runtime/learning/teaching/coachRoleMaterial'
 import {
   INLINE_UI_ACTIONS,
@@ -37,7 +37,7 @@ describe('visualAuthoringGuide', () => {
     expect([...functions].sort()).toEqual([...INLINE_UI_FUNCTIONS, ...INLINE_UI_ACTIONS].sort())
   })
 
-  it('每个示例都能被解析器完整渲染，没有落空的引用', () => {
+  it('每个 openui 示例都能被解析器完整渲染，没有落空的引用', () => {
     const examples = openUiBlocks(renderLearnVisualGuide())
     expect(examples.length).toBeGreaterThanOrEqual(4)
     for (const code of examples) {
@@ -49,12 +49,22 @@ describe('visualAuthoringGuide', () => {
     }
   })
 
-  it('HTML 写法里提到的内置类都在帧的共享样式里，模型照写不会落到无样式', () => {
-    const html = section(renderLearnVisualGuide(), '## Full visual', '\u0000')
-    const mentioned = new Set([...html.matchAll(/\.(viz-[a-z0-9-]+)/g)].map(m => m[1]))
-    expect(mentioned.size).toBeGreaterThan(20)
-    const missing = [...mentioned].filter(name => !VISUALIZATION_BASE_STYLE.includes(`.${name}`))
-    expect(missing).toEqual([])
+  it('整页示例通过 shared 编译器，说明不再教学原始 HTML', () => {
+    const guide = renderLearnVisualGuide()
+    const examples = [...guide.matchAll(/~~~draft\n([\s\S]*?)\n~~~/g)].map(match => match[1])
+    expect(examples.length).toBeGreaterThan(0)
+    for (const draft of examples) {
+      const result = compileVisualizationDraft(draft, { mode: 'final' })
+      expect(result.status, JSON.stringify(result)).toBe('ok')
+      if (result.status === 'ok') {
+        expect(result.html).toContain('viz-draft-flow')
+        expect(result.html).toContain('viz-draft-ask')
+      }
+    }
+    const fullVisual = section(guide, '## Full visual', '\u0000')
+    expect(fullVisual).toContain('not HTML')
+    expect(fullVisual).not.toContain('<style>')
+    expect(fullVisual).not.toContain('.viz-split')
   })
 
   it('工具说明指向学习系统提示里真实存在的段落', () => {

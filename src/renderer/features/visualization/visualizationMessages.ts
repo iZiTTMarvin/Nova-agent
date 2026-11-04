@@ -29,7 +29,23 @@ function readableEventPayload(data: unknown): string | null {
   return subject ? `${subject}：${question}` : question
 }
 
+export function isValidVisualizationEvent(name: string, data: unknown): boolean {
+  if (name !== 'ask' && name !== 'remark') return true
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return false
+  const record = data as Record<string, unknown>
+  if (name === 'ask') {
+    return typeof record.label === 'string' && Boolean(record.label.trim()) && record.label.length <= 240 &&
+      typeof record.prompt === 'string' && Boolean(record.prompt.trim()) && record.prompt.length <= 1000
+  }
+  return typeof record.blockId === 'string' && /^[A-Za-z][\w-]{0,63}$/.test(record.blockId) &&
+    typeof record.text === 'string' && Boolean(record.text.trim()) && record.text.length <= 1000
+}
+
 export function formatVisualizationEventMessage(title: string, name: string, data: unknown): string {
+  if (name === 'remark' && isValidVisualizationEvent(name, data)) {
+    const remark = data as { blockId: string; text: string }
+    return `【可视化】${title} · 补充资料\n${remark.text.trim()}`
+  }
   const header = `【可视化】${title} · ${name}`
   if (data === null || data === undefined) return header
   return `${header}\n${readableEventPayload(data) ?? JSON.stringify(data)}`

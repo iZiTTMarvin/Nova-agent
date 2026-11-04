@@ -1,0 +1,21 @@
+export const DRAFT_LIMITS = {
+  sourceChars: 64_000,
+  panels: 24,
+  panelTitleChars: 120,
+  textChars: 2_000,
+  componentLines: 400,
+  issues: 50,
+  nodes: 80,
+  flatFlowNodes: 8,
+  edges: 120,
+  treeDepth: 8,
+  tableRows: 30,
+  tableColumns: 4,
+  codeLines: 120,
+  chartSeries: 6,
+  chartPoints: 40,
+  chartLabelChars: 40,
+  askOptions: 6,
+  idChars: 64,
+  attributeChars: 240
+} as const

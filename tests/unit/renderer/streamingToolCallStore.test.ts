@@ -113,11 +113,11 @@ describe('流式工具调用 store 行为', () => {
 
   it('可视化的最终事件保留收齐的参数原文供预览交接，迟到片段不再追加', () => {
     const msgId = 'msg_viz_handoff'
-    const raw = '{"title":"图","html":"<body>完整</body>"}'
+    const raw = '{"title":"图","draft":"## 完整\\n\\n正文"}'
     useChatStore.getState().handleMessageStart(msgId)
     useChatStore.getState().handleToolCallStart(msgId, 'tc_viz', 'present_visualization')
     useChatStore.getState().applyStreamDeltas([{ kind: 'toolCall', messageId: msgId, toolCallId: 'tc_viz', delta: raw }])
-    useChatStore.getState().handleToolCall(msgId, 'tc_viz', 'present_visualization', { title: '图', html: '<body>完整</body>' })
+    useChatStore.getState().handleToolCall(msgId, 'tc_viz', 'present_visualization', { title: '图', draft: '## 完整\n\n正文' })
 
     const block = () => useChatStore.getState().messages[0].blocks![0]
     expect(block()).toMatchObject({ type: 'tool', status: 'running', argumentsRaw: raw })

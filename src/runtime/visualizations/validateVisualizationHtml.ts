@@ -157,7 +157,7 @@ function inspectElement(element: Element, report: (message: string) => boolean):
       if (report(`<${tag} ${name}="${snippet(value)}">：外部资源不可用，需改为 data: URL`)) return true
       continue
     }
-    if (/^data:text\/html/i.test(value) && report(`<${tag} ${name}>：不允许嵌套 HTML 文档`)) return true
+    if (!name.startsWith('data-') && /^data:text\/html/i.test(value) && report(`<${tag} ${name}>：不允许嵌套 HTML 文档`)) return true
   }
   return false
 }

@@ -65,7 +65,7 @@ export function projectToolCallsFromBlocks(
     fromBlocks.push({
       id: b.toolCallId,
       name: b.toolName,
-      arguments: serializeToolArguments(b.arguments ?? {}),
+      arguments: serializeToolArguments(b.arguments ?? {}, b.toolName),
       ...(b.result !== undefined ? { result: b.result } : {}),
       ...((b.artifactId ?? prev?.artifactId) ? { artifactId: b.artifactId ?? prev?.artifactId } : {}),
       ...((b.truncationMeta ?? prev?.truncationMeta) ? { truncationMeta: b.truncationMeta ?? prev?.truncationMeta } : {})

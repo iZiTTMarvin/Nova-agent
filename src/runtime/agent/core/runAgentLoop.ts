@@ -36,6 +36,7 @@ import { repairEmptyArgsFromContent } from '../stream/nativeArgsRepair'
 import { stripTextToolCalls } from '../../../shared/tool-call-text-fallback'
 import type { RequestBudgetMeasurement } from '../../model/requestBudget'
 import type { UsageSource } from '../../../shared/model/types'
+import { sanitizeToolInput } from '../../../shared/tool-input-sanitizer'
 
 /** 将 toolCall.arguments 字符串解析为对象，供空参护栏统计 */
 function parseToolCallArgsRecord(argumentsValue: string): Record<string, unknown> {
@@ -438,6 +439,11 @@ export async function runAgentLoop(p: RunAgentLoopParams): Promise<LoopEndResult
       if (!batchResult.aborted && !p.signal() && !p.abortSignal()?.aborted) {
         for (const outcome of batchResult.outcomes) {
           if (outcome.skippedByAbort) continue
+          if (!outcome.failed) {
+            const historyInput = sanitizeToolInput(outcome.toolCall.name, outcome.args, 'success')
+            const call = toolCalls.find(item => item.id === outcome.toolCall.id)
+            if (call && historyInput !== outcome.args) call.arguments = serializeToolArguments(historyInput, outcome.toolCall.name)
+          }
           const content = toToolContent(outcome.resultText, outcome.resultImages)
           const toolMessage: ChatMessage = {
             role: 'tool',

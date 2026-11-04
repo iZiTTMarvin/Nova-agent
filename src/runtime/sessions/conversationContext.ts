@@ -239,7 +239,7 @@ export function projectAssistantWithReasoningReplay(
     assistant.toolCalls = pendingTools.map(({ block, tc }) => ({
       id: block.toolCallId,
       name: block.toolName,
-      arguments: serializeToolArguments(block.arguments ?? {})
+      arguments: serializeToolArguments(block.arguments ?? {}, block.toolName)
     }))
     out.push(assistant)
 

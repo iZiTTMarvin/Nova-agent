@@ -22,7 +22,8 @@ import { useStreamingVisualizationHtml } from './useStreamingVisualizationHtml'
 import { useVisualizationMessageSubmitter } from './VisualizationMessageContext'
 import {
   formatVisualizationEventMessage,
-  formatVisualizationRepairMessage
+  formatVisualizationRepairMessage,
+  isValidVisualizationEvent
 } from './visualizationMessages'
 import { useVisualizationTheme } from './visualizationTheme'
 import './VisualizationCard.css'
@@ -38,7 +39,7 @@ export interface VisualizationCardProps {
   status: 'running' | 'success' | 'error'
   title: string
   result?: string
-  /** 流式参数原文：预览的 HTML 从这里派生 */
+  /** 流式参数原文：预览由其中的 draft 编译 */
   argumentsRaw?: string
 }
 
@@ -98,6 +99,10 @@ export const VisualizationCard: React.FC<VisualizationCardProps> = React.memo(fu
   const submit = useVisualizationMessageSubmitter()
   const sendEvent = useCallback(
     (name: string, data: unknown) => {
+      if (!isValidVisualizationEvent(name, data)) {
+        setNotice('可视化事件数据无效')
+        return
+      }
       void submit(formatVisualizationEventMessage(displayTitle, name, data), 'event').then(outcome => {
         if (outcome.status === 'blocked') setNotice(outcome.notice)
       })

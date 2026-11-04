@@ -32,6 +32,10 @@ import {
 } from '../../../../src/runtime/request-projection'
 import { createSpawnIdentity } from '../../../../src/runtime/subagents/identity'
 import { SubagentDeliveryCoordinator } from '../../../../src/runtime/subagents'
+import { createPresentVisualizationTool } from '../../../../src/runtime/tools/present_visualization'
+import { VisualizationStore } from '../../../../src/runtime/visualizations/VisualizationStore'
+import { parseVisualizationResult } from '../../../../src/shared/visualization'
+import { isContentSummary } from '../../../../src/shared/tool-input-sanitizer'
 
 let sessionStore: SessionStore
 let coordinator: RunCoordinator
@@ -77,6 +81,57 @@ function setup() {
 }
 
 describe('消息事实提交往返', () => {
+  it('可视化在结果提交前取消时，恢复草稿仍保留修复所需输入', () => {
+    const { feed, session, ctx } = setup()
+    const draft = '## 尚未发布\n\n等待生成完成。'
+    feed({ type: 'message_start', messageId: 'a' })
+    feed({ type: 'tool_call', messageId: 'a', toolCallId: 'viz', toolName: 'present_visualization', args: { title: '图', draft } })
+    markActiveStreamsCancelled(ctx.runId)
+    feed({ type: 'message_end', messageId: 'a', interrupted: true })
+    const blocks = sessionStore.load(session.id)!.messages.flatMap(message => message.blocks ?? [])
+    expect(blocks.find(block => block.type === 'tool')).toMatchObject({ arguments: { draft } })
+  })
+  it('可视化成功后仅摘要一次，失败原文、正式快照与恢复请求前缀均保留', async () => {
+    const { root, session, bus, ctx } = setup()
+    bus.on(event => accumulateStreamEvent(session.id, event, ctx))
+    const draft = `## 调用方向\n\n${'有效讲解内容。'.repeat(70)}\n\n\`\`\`flow\n入口 -> 结果\n\`\`\``
+    const invalid = '## 错误\n\n```\n'
+    const client = new MockModelClient()
+    for (const [id, source] of [['invalid', invalid], ['published', draft]]) client.addResponse({ events: [
+      { type: 'tool_call', toolCall: { id, name: 'present_visualization', arguments: JSON.stringify({ title: '调用方向', draft: source }) } },
+      { type: 'message_end', finishReason: 'tool_calls' }
+    ] })
+    client.addResponse({ events: [{ type: 'text_delta', delta: '已展示' }, { type: 'message_end', finishReason: 'stop' }] })
+    client.addResponse({ events: [{ type: 'text_delta', delta: '继续' }, { type: 'message_end', finishReason: 'stop' }] })
+    const snapshots = new VisualizationStore(join(root, 'sessions'))
+    const registry = new ToolRegistry()
+    registry.register(createPresentVisualizationTool({ getStore: () => snapshots }))
+    const loop = new AgentLoop(client, bus, { permissionManager: new PermissionManager(), permissionMode: 'full_access' })
+    loop.setToolRegistry(registry)
+    loop.setSessionId(session.id)
+    try {
+      await loop.sendMessage('展示调用方向', agentRoute())
+      const loaded = sessionStore.load(session.id)!
+      const blocks = loaded.messages.flatMap(message => message.blocks ?? []).filter(block => block.type === 'tool')
+      expect(blocks[0].arguments.draft).toBe(invalid)
+      expect(isContentSummary(blocks[1].arguments.draft)).toBe(true)
+      const presentation = parseVisualizationResult(blocks[1].result)
+      expect(presentation).not.toBeNull()
+      expect(await snapshots.read(presentation!.address)).toMatchObject({ status: 'ok', html: expect.stringContaining('有效讲解内容') })
+      const sent = client.getCalls()[2].messages.filter(message => message.toolCalls).flatMap(message => message.toolCalls!)
+      const restored = buildConversationContext(loaded, 'default').filter(message => message.toolCalls).flatMap(message => message.toolCalls!)
+      expect(restored).toEqual(sent)
+      expect(JSON.parse(sent[0].arguments).draft).toBe(invalid)
+      const historyDraft = JSON.parse(sent[1].arguments).draft
+      expect(typeof historyDraft).toBe('string')
+      expect(JSON.parse(historyDraft)).toEqual(blocks[1].arguments.draft)
+      const prefix = JSON.stringify(loop.getContext())
+      await loop.sendMessage('继续', agentRoute())
+      expect(JSON.stringify(client.getCalls()[3].messages.slice(0, JSON.parse(prefix).length))).toBe(prefix)
+    } finally {
+      loop.dispose()
+    }
+  })
   it('真实存储中的后台终态在首次请求前提交为 runtime_input 再交给受控模型', async () => {
     const { root, session, run, bus, ctx } = setup()
     sessionStore.appendMessageFast(session.id, {

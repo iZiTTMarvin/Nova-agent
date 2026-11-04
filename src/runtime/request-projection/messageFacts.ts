@@ -2,6 +2,7 @@ import type { UserDeliveryFacts } from '../../shared/session/types'
 import type { ChatMessage } from '../model/types'
 import type { ImageContent } from '../../shared/tools/types'
 import { stripLeakedToolMarkup } from '../../shared/tool-call-text-fallback'
+import { isContentSummary } from '../../shared/tool-input-sanitizer'
 
 /** 首发与恢复只使用当时记录的注入，不重算过去的环境。 */
 export function projectUserContent(content: ChatMessage['content'], facts?: UserDeliveryFacts): ChatMessage['content'] {
@@ -36,8 +37,10 @@ export function projectAssistantContent(content: ChatMessage['content']): ChatMe
     block.type === 'text' ? { ...block, text: stripLeakedToolMarkup(block.text) } : block)
 }
 
-export function serializeToolArguments(args: Record<string, unknown>): string {
-  return JSON.stringify(args)
+export function serializeToolArguments(args: Record<string, unknown>, toolName?: string): string {
+  return JSON.stringify(toolName === 'present_visualization' && isContentSummary(args.draft)
+    ? { ...args, draft: JSON.stringify(args.draft) }
+    : args)
 }
 
 export function toToolContent(resultText: string, resultImages?: ImageContent[]): ChatMessage['content'] {

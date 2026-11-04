@@ -163,6 +163,16 @@ src/runtime/tools/
 
 ---
 
+## 9. 学习整页可视化：声明式草稿与快照边界
+
+源码路径：`src/shared/visualization/draft/`、`src/runtime/tools/present_visualization/`、`src/runtime/visualizations/`
+
+* **模型只写内容草稿**：`present_visualization` 只接收 `title` 与 `draft`，不接纳原始 HTML、CSS、SVG 或脚本。共享编译器负责确定性排版、图形坐标、转义和有界诊断；正式发布与 Renderer 流式预览调用同一入口，预览只显示已经闭合的面板。
+* **生成 HTML 不回灌模型上下文**：编译产物经防御性校验后，仍由 `VisualizationStore` 按内容寻址发布为不可变快照。工具结果只包含标题、快照 URI 和体积；成功发布后的草稿参数在工具结果提交边界一次性摘要，失败时保留修复所需原文。摘要复用既有格式，模型历史中的 `draft` 仍保持字符串类型；历史 HTML 快照保持读取、展开和导出兼容。
+* **宿主与交互边界不变**：整页继续使用现有沙箱 iframe、主题 token、CSP、展开和导出链路。固定模板脚本只负责帧内选择和视图切换；追问与批注通过既有 `nova.emit` 桥和真实用户意图门禁进入学习会话，不增加第二套页面服务或跨会话状态真源。参数模拟仍由 `openui` 负责。
+
+---
+
 ## 总结：防御性工程带来的确定性
 
 | 指标维度 | 普通通用 Agent 实现 | Nova Agent 生产级工具链 |

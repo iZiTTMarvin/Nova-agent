@@ -16,6 +16,7 @@ import {
   VISUALIZATION_PREVIEW_URI,
   VISUALIZATION_SLOW_MOTION_SCALE
 } from '../../../../src/shared/visualization'
+import { compileVisualizationDraft } from '../../../../src/shared/visualization/draft'
 import { act, renderDom, waitFor, type DomRenderResult } from '../../../unit/renderer/renderDom'
 
 const mocks = vi.hoisted(() => ({
@@ -124,9 +125,21 @@ afterEach(() => {
   Reflect.deleteProperty(navigator, 'userActivation')
 })
 
+const STREAMING_DRAFT = '## 已完成\n\n你好。\n\n## 待写\n\n'
+
+function streamingDraftArgs(draft = STREAMING_DRAFT): string {
+  return `{"title":"预览","draft":${JSON.stringify(draft).slice(0, -1)}`
+}
+
+function compiledDraft(draft: string, mode: 'final' | 'preview'): string {
+  const result = compileVisualizationDraft(draft, { mode })
+  if ((result.status === 'ok' || result.status === 'preview') && result.html) return result.html
+  throw new Error(JSON.stringify(result))
+}
+
 describe('VisualizationCard', () => {
   it('生成中只显示骨架、不报字符数；展示后挂载只允许脚本的沙箱帧，并随 src 下发首帧状态', () => {
-    const argumentsRaw = '{"title":"请求链路","html":"' + 'x'.repeat(2300)
+    const argumentsRaw = '{"title":"请求链路","draft":"' + 'x'.repeat(2300)
     const container = mount(<VisualizationCard status="running" title="请求链路" argumentsRaw={argumentsRaw} />)
     const card = container.querySelector('[data-testid="visualization-card"]')!
     expect(card.getAttribute('data-state')).toBe('generating')
@@ -150,8 +163,8 @@ describe('VisualizationCard', () => {
     expect(button(container, '展开')).toBeNull()
   })
 
-  it('参数中出现 <body 后挂载预览帧，握手后向其推送已到内容', () => {
-    const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+  it('草稿出现完整面板后挂载预览帧，握手后推送共享编译结果', () => {
+    const argumentsRaw = streamingDraftArgs()
     const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
     const frame = frameIn(container)
     expect(frame.src.startsWith(`${VISUALIZATION_PREVIEW_URI}?`)).toBe(true)
@@ -161,13 +174,13 @@ describe('VisualizationCard', () => {
     send(frame.contentWindow, 'ready', { status: 'ok', initialHeight: 40 })
     expect(posted).toHaveBeenCalledWith(expect.objectContaining({ kind: 'ack' }), '*')
     expect(posted).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'preview-html', payload: { html: '<!doctype html><body><p>你好' } }),
+      expect.objectContaining({ kind: 'preview-html', payload: { html: compiledDraft(STREAMING_DRAFT, 'preview') } }),
       '*'
     )
   })
 
   it('参数收齐（argumentsRaw 消失）后预览保留', () => {
-    const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+    const argumentsRaw = streamingDraftArgs()
     const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
     const frame = frameIn(container)
 
@@ -176,22 +189,41 @@ describe('VisualizationCard', () => {
     expect(frameIn(container)).toBe(frame)
   })
 
-  it('参数原文闭合即把完整页面推给预览帧', () => {
-    const html = '<!doctype html><body><p>完整</p></body>'
-    const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={'{"title":"预览","html":"<!doctype html><body><p>完'} />)
+  it('后续完整面板展开超限时保留最后有效预览，参数收尾也不清空它', () => {
+    vi.useFakeTimers()
+    try {
+      const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={streamingDraftArgs()} />)
+      const frame = frameIn(container)
+      const oversized = `${STREAMING_DRAFT}${'```chart\n项目 | 数值\n样本 | 1\n```\n\n'.repeat(1800)}## 尾部\n\n`
+      view!.render(<VisualizationCard status="running" title="预览" argumentsRaw={streamingDraftArgs(oversized)} />)
+      act(() => { vi.advanceTimersByTime(300) })
+      expect(frameIn(container)).toBe(frame)
+      view!.render(<VisualizationCard status="running" title="预览" />)
+      expect(frameIn(container)).toBe(frame)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('draft 字段闭合即把完整草稿的编译结果推给预览帧', () => {
+    const draft = `${STREAMING_DRAFT}完整收尾。`
+    const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={streamingDraftArgs()} />)
     const frame = frameIn(container)
     send(frame.contentWindow, 'ready', { status: 'ok', initialHeight: 40 })
     const posted = vi.spyOn(frame.contentWindow!, 'postMessage')
 
-    view!.render(<VisualizationCard status="running" title="预览" argumentsRaw={JSON.stringify({ title: '预览', html })} />)
+    view!.render(<VisualizationCard status="running" title="预览" argumentsRaw={JSON.stringify({ title: '预览', draft })} />)
 
-    expect(posted).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'preview-html', payload: { html } }), '*')
+    expect(posted).toHaveBeenLastCalledWith(
+      expect.objectContaining({ kind: 'preview-html', payload: { html: compiledDraft(draft, 'final') } }),
+      '*'
+    )
   })
 
   it('交接期预览帧不重建、垫在正式帧上方；正式帧握手后淡出并卸载', () => {
     vi.useFakeTimers()
     try {
-      const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+      const argumentsRaw = streamingDraftArgs()
       const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
       const preview = frameIn(container)
 
@@ -217,7 +249,7 @@ describe('VisualizationCard', () => {
   })
 
   it('成功后正式帧沿用预览最后上报的高度', () => {
-    const argumentsRaw = '{"title":"预览","html":"<!doctype html><body><p>你好'
+    const argumentsRaw = streamingDraftArgs()
     const container = mount(<VisualizationCard status="running" title="预览" argumentsRaw={argumentsRaw} />)
     const preview = frameIn(container)
     send(preview.contentWindow, 'ready', { status: 'ok', initialHeight: 40 })
@@ -301,6 +333,25 @@ describe('VisualizationCard', () => {
       nowSpy.mockRestore()
     }
     expect(mocks.submit).toHaveBeenLastCalledWith('【可视化】漏斗 · explore\nJWT：讲讲', 'event')
+  })
+
+  it('Remark 只投递用户补充文本，恶意或超长 Ask/Remark 结构不进入对话', () => {
+    const { container, frame } = mountPresented('学习图')
+    ready(frame)
+    setUserActivation(true)
+    act(() => frame.focus())
+    send(frame.contentWindow, 'event', { name: 'remark', data: { blockId: 'owner-1', text: '  我想补充一个失败场景。  ' } })
+    expect(mocks.submit).toHaveBeenCalledWith('【可视化】学习图 · 补充资料\n我想补充一个失败场景。', 'event')
+
+    const nowSpy = vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 2_000)
+    try {
+      send(frame.contentWindow, 'event', { name: 'remark', data: { blockId: '../escape', text: '不应发送' } })
+      send(frame.contentWindow, 'event', { name: 'ask', data: { label: 'x', prompt: '' } })
+    } finally {
+      nowSpy.mockRestore()
+    }
+    expect(mocks.submit).toHaveBeenCalledTimes(1)
+    expect(container.querySelector('.visualization-card__notice')?.textContent).toBe('可视化事件数据无效')
   })
 
   it('运行错误去重汇总到卡片底部，请求修复只提交一次', () => {
