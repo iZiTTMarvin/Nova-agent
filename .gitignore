@@ -72,3 +72,7 @@ cursor-helper/**/review/reports/files/
 # Electron E2E 诊断产物
 test-results/
 playwright-report/
+
+# Agent 工具本地工作目录
+.workbuddy/
+.playwright-mcp/
