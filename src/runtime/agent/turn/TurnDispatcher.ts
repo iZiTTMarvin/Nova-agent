@@ -7,7 +7,7 @@
  * session prefix / mode instruction / context 写入 / skill root 登记 / 终态收尾
  * 全部由 AgentLoop 根据返回值统一执行。
  *
- * slash_rejected 由发送边界过滤，dispatcher 收到即 fail closed。
+ * slash_rejected 与 plan 由发送边界处理，dispatcher 收到即 fail closed。
  */
 import { extractTextFromContent, type ContentBlock } from '../../model/types'
 import type { SkillManifest } from '../../skills/types'
@@ -32,6 +32,7 @@ export interface TurnExecutors {
   skillForkRunner?: (
     request: SkillForkExecutionRequest
   ) => Promise<SkillForkResult>
+  compactRunner?: (abortSignal?: AbortSignal) => Promise<{ summary: string }>
 }
 
 /** 分派时由 AgentLoop 提供的本轮执行环境（dispatcher 不持有这些状态） */
@@ -75,6 +76,13 @@ export class TurnDispatcher {
           throw new Error('route 为 skill_fork 但未注入 skillForkRunner')
         }
         break
+      case 'compact':
+        if (!this.executors.compactRunner) {
+          throw new Error('route 为 compact 但未注入 compactRunner')
+        }
+        break
+      case 'plan':
+        throw new Error('route 为 plan，发送边界必须先在本地执行')
       case 'slash_rejected':
         throw new Error('route 为 slash_rejected，发送边界必须先过滤')
       case 'agent':
@@ -111,6 +119,16 @@ export class TurnDispatcher {
         throw new Error('route 为 slash_rejected，发送边界必须先过滤')
       }
 
+      case 'plan': {
+        throw new Error('route 为 plan，发送边界必须先在本地执行')
+      }
+
+      case 'compact': {
+        this.assertRouteExecutable(route)
+        const result = await this.executors.compactRunner!(ctx.abortSignal)
+        return { kind: 'handled', assistantSummary: result.summary, outcome: { status: 'completed' } }
+      }
+
       case 'agent': {
         const dispatch = route.dispatch
         if (dispatch.kind === 'inject') {
@@ -120,6 +138,13 @@ export class TurnDispatcher {
             userText: dispatch.userContent,
             assistantPrelude: dispatch.assistantContent,
             ...(dispatch.skillDirectory ? { grantedSkillRoot: dispatch.skillDirectory } : {})
+          }
+        }
+        if (dispatch.kind === 'command') {
+          return {
+            kind: 'continue',
+            userContent: dispatch.userContent,
+            userText: dispatch.userContent
           }
         }
         // passthrough：原始输入直接进入 Agent kernel

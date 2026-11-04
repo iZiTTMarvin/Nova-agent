@@ -7,9 +7,18 @@ import type { ContentBlock } from '../../model/types'
 import type { Mode } from '../../../shared/session/types'
 import type { RunKind } from '../../../shared/run/types'
 import type { SkillSlashRejection } from '../../../shared/skills/types'
+import {
+  parseNativeCommand,
+  validateNativeCommand,
+  type NativeCommandRejection
+} from '../../../shared/commands'
 import type { SkillRegistry } from '../../skills/SkillRegistry'
 import type { SkillDispatchResult, SkillManifest } from '../../skills/types'
 import { invokeSkill } from '../../skills/invokeSkill'
+import {
+  resolveNativeCommandDispatch,
+  type NativeCommandAgentDispatch
+} from '../../commands'
 
 /**
  * agent 路径允许的 dispatch 子类型。
@@ -18,24 +27,28 @@ import { invokeSkill } from '../../skills/invokeSkill'
 export type AgentDispatch = Extract<
   SkillDispatchResult,
   { kind: 'passthrough' | 'inject' }
->
+> | NativeCommandAgentDispatch
 
 /** 已解析的 Turn 路由（不可变事实，只负责分类） */
 export type AgentTurnRoute =
   | { kind: 'agent'; dispatch: AgentDispatch }
   | { kind: 'skill_fork'; skill: SkillManifest; args: string }
-  | { kind: 'slash_rejected'; rejection: SkillSlashRejection }
+  | { kind: 'compact' }
+  | { kind: 'plan' }
+  | { kind: 'slash_rejected'; rejection: SkillSlashRejection | NativeCommandRejection }
 
 export interface ResolveTurnRouteInput {
   content: string | ContentBlock[]
   mode: Mode
   skillRegistry: SkillRegistry | null
   workspacePath?: string
+  regenerate?: boolean
+  hasImages?: boolean
 }
 
 /**
  * 解析本轮的实际执行路由。
- * 复用 invokeSkill 做 slash 解析。
+ * 原生命令先于 skill 解析；其余 slash 复用 invokeSkill。
  * 执行能力（runner 是否装配）由 AgentLoop 在副作用前校验，不在此处镜像。
  */
 export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRoute {
@@ -43,12 +56,23 @@ export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRo
     content,
     mode,
     skillRegistry,
-    workspacePath
+    workspacePath,
+    regenerate,
+    hasImages
   } = input
 
   // ContentBlock[]（含图片）始终走 agent
   if (typeof content !== 'string') {
     return { kind: 'agent', dispatch: { kind: 'passthrough' } }
+  }
+
+  const nativeCommand = parseNativeCommand(content)
+  if (nativeCommand) {
+    const rejection = validateNativeCommand(nativeCommand, { mode, regenerate, hasImages })
+    if (rejection) return { kind: 'slash_rejected', rejection }
+    const dispatch = resolveNativeCommandDispatch(nativeCommand)
+    if (dispatch.kind === 'compact' || dispatch.kind === 'plan') return dispatch
+    return { kind: 'agent', dispatch }
   }
 
   if (!skillRegistry) {

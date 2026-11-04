@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { WORKSPACE_SELECT_PROJECT } from '../../../src/shared/ipc/channels'
+import { SAVE_MODEL_CONFIG, WORKSPACE_SELECT_PROJECT } from '../../../src/shared/ipc/channels'
 import { expect, test, type NovaHarness } from '../fixtures/nova'
 import type { Locator } from '@playwright/test'
 
@@ -26,12 +26,6 @@ async function expectSkillChip(input: Locator, name: string): Promise<void> {
   await expect(chip).toHaveCount(1)
   await expect(chip).toHaveAttribute('data-astryx-token-value', `/${name}`)
   await expect(chip).toContainText(`/${name}`)
-}
-
-async function openSkills(nova: NovaHarness): Promise<void> {
-  await nova.page.getByRole('button', { name: '设置' }).click()
-  await nova.page.getByRole('tab', { name: '技能' }).click()
-  await expect(nova.page.getByRole('button', { name: '刷新列表' })).toBeVisible()
 }
 
 test('/ 触发显示项目技能，点击或键盘选中后插入技能芯片；无匹配显示空态', async ({ nova }) => {
@@ -65,6 +59,114 @@ test('+ 菜单展示技能与命令入口，空草稿写入 / 打开同一份目
   expect(nova.pageErrors).toEqual([])
 })
 
+test('原生命令与技能同列，/plan 切换模式并刷新持久化回执', async ({ nova }) => {
+  const input = nova.page.getByLabel('消息输入')
+  await input.fill('/')
+
+  const commandGroup = nova.page.locator('[role="group"][aria-label="命令"]')
+  const commandItems = commandGroup.locator('.composer-skill-trigger__item')
+  await expect(commandItems).toHaveCount(3)
+  for (const name of ['compact', 'init', 'plan']) {
+    await expect(commandItems.filter({ hasText: `/${name}` })).toBeVisible()
+  }
+
+  await nova.sendPrompt('/plan')
+  await expect(nova.page.getByText('已切换到规划模式。接下来将只读分析工作区并保存计划。', { exact: true })).toBeVisible()
+  await expect.poll(async () => (await nova.getWorkspace()).currentMode).toBe('plan')
+  await expect.poll(async () => {
+    const workspace = await nova.getWorkspace()
+    return workspace.availableSessions.some(session => session.id === workspace.currentSessionId)
+  }).toBe(true)
+  expect(await nova.getRunSnapshot()).toBeNull()
+  await expect(input).toBeEditable()
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('/compact 在空会话完成真实 durable run，且不调用模型', async ({ nova }) => {
+  await nova.sendPrompt('/compact')
+
+  await expect(nova.page.getByText('当前没有可压缩的上下文。', { exact: true })).toBeVisible()
+  await nova.waitUntilIdle()
+  expect((await nova.getRunSnapshot())?.status).toBe('completed')
+  expect(nova.provider.requests).toHaveLength(0)
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('/compact 提交真实压缩账本，后续模型请求使用摘要而非被折叠原文', async ({ nova }) => {
+  test.setTimeout(90_000)
+  await nova.invoke(SAVE_MODEL_CONFIG, {
+    baseUrl: nova.provider.baseUrl,
+    apiKey: 'nova-e2e-key',
+    modelId: 'nova-e2e-model',
+    cacheProfile: 'generic',
+    toolDialect: 'native',
+    contextWindow: 65_536
+  })
+  await reloadRenderer(nova)
+
+  for (let index = 0; index < 10; index++) {
+    const marker = `OLD_HISTORY_${index}`
+    nova.provider.enqueue({ kind: 'text', text: `${marker} ${'x'.repeat(5_000)}` })
+    await nova.sendPrompt(`历史记录 ${index}`)
+    await expect(nova.page.getByText(marker, { exact: false })).toBeVisible()
+    await nova.waitUntilIdle()
+  }
+  expect(nova.provider.requests).toHaveLength(10)
+
+  nova.provider.enqueue(
+    { kind: 'text', text: '历史摘要：十轮旧对话已折叠。\nanchor-old' },
+    {
+      kind: 'text',
+      text: JSON.stringify({
+        schemaVersion: 1,
+        goal: '压缩后的工作状态',
+        nextActions: '继续任务',
+        keyContext: '(none)',
+        progress: '(none)',
+        decisions: '(none)',
+        facts: []
+      })
+    },
+    { kind: 'text', text: 'NOVA_E2E_AFTER_COMPACT' }
+  )
+
+  await nova.sendPrompt('/compact')
+  await expect(nova.page.getByText('当前会话上下文已压缩。', { exact: true })).toBeVisible()
+  await nova.waitUntilIdle()
+  expect((await nova.getRunSnapshot())?.status).toBe('completed')
+  expect(nova.provider.requests).toHaveLength(12)
+
+  await nova.sendPrompt('继续')
+  await expect(nova.page.getByText('NOVA_E2E_AFTER_COMPACT', { exact: true })).toBeVisible()
+  await nova.waitUntilIdle()
+  const resumedRequest = JSON.stringify(nova.provider.requests.at(-1)?.body ?? {})
+  expect(resumedRequest).toContain('历史摘要：十轮旧对话已折叠。')
+  expect(resumedRequest).toContain('压缩后的工作状态')
+  expect(resumedRequest).not.toContain('OLD_HISTORY_0')
+  expect(nova.pageErrors).toEqual([])
+})
+
+test('/init 将展开指令送入真实 Agent，并只生成工作区根 AGENTS.md', async ({ nova }) => {
+  const rules = '# 项目协作约定\n\n- 保留现有测试说明。\n- 使用真实工作区命令验证。\n'
+  nova.provider.enqueue(
+    { kind: 'tool', name: 'ls', arguments: { path: '.' }, callId: 'call_init_ls' },
+    { kind: 'tool', name: 'write', arguments: { path: 'AGENTS.md', content: rules }, callId: 'call_init_write' },
+    { kind: 'text', text: 'NOVA_E2E_INIT_OK' }
+  )
+
+  await nova.sendPrompt('/init 保留现有测试说明')
+  await nova.provider.waitForRequestCount(3)
+  await expect(nova.page.getByText('NOVA_E2E_INIT_OK', { exact: true })).toBeVisible()
+  await nova.waitUntilIdle()
+
+  const firstRequest = JSON.stringify(nova.provider.requests[0]?.body ?? {})
+  expect(firstRequest).toContain('只能创建或更新工作区根目录的 AGENTS.md')
+  expect(firstRequest).toContain('保留现有测试说明')
+  expect(await readFile(path.join(nova.workspacePath, 'AGENTS.md'), 'utf8')).toBe(rules)
+  expect((await nova.getRunSnapshot())?.status).toBe('completed')
+  expect(nova.pageErrors).toEqual([])
+})
+
 test('无效 slash 在发送边界本地拒绝：保留草稿并展示原因', async ({ nova }) => {
   const input = nova.page.getByLabel('消息输入')
   await input.fill('/e2e-typo-xyz')
@@ -73,37 +175,6 @@ test('无效 slash 在发送边界本地拒绝：保留草稿并展示原因', a
   await expect(nova.page.getByText(/未找到技能 \/e2e-typo-xyz/)).toBeVisible()
   await expect(input).toContainText('/e2e-typo-xyz')
   await expect(nova.page.getByLabel('消息输入')).toBeEditable()
-  expect(nova.pageErrors).toEqual([])
-})
-
-test('设置页可启停、删除项目技能，非 https 导入给出明确错误', async ({ nova }) => {
-  await writeProjectSkill(nova.workspacePath, 'e2e-toggle', 'E2E 启停技能')
-  await openSkills(nova)
-  await nova.page.getByRole('button', { name: '刷新列表' }).click()
-
-  const card = nova.page.locator('.skill-card', { hasText: 'e2e-toggle' })
-  await expect(card).toBeVisible()
-
-  const toggle = card.locator('input[type="checkbox"]')
-  await expect(toggle).toBeChecked()
-  await toggle.click()
-  await expect.poll(async () => {
-    const snapshot = await nova.invoke('skill:list')
-    return snapshot.skills.find(s => s.name === 'e2e-toggle')?.enabled
-  }).toBe(false)
-
-  nova.page.once('dialog', dialog => void dialog.accept())
-  await card.getByRole('button', { name: '删除' }).click()
-  await expect(nova.page.getByText('已删除技能「e2e-toggle」')).toBeVisible()
-  await expect.poll(async () => {
-    const snapshot = await nova.invoke('skill:list')
-    return snapshot.skills.some(s => s.name === 'e2e-toggle')
-  }).toBe(false)
-
-  await nova.page.getByRole('button', { name: '导入' }).click()
-  await nova.page.getByPlaceholder('https://example.com/skill.zip').fill('http://127.0.0.1:9/nope.zip')
-  await nova.page.getByRole('button', { name: '从 URL 导入' }).click()
-  await expect(nova.page.locator('.settings-panel__status--error')).toContainText('仅支持 https')
   expect(nova.pageErrors).toEqual([])
 })
 

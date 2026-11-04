@@ -1,9 +1,11 @@
 /**
  * slash 本地拒绝的展示文案。原因码由主进程判定，这里只做文本映射。
  */
+import type { NativeCommandRejection } from '../../shared/commands'
 import type { SkillSlashRejection } from '../../shared/skills/types'
 
-export function slashRejectionText(rejection: SkillSlashRejection): string {
+export function slashRejectionText(rejection: SkillSlashRejection | NativeCommandRejection): string {
+  if (!('skillName' in rejection)) return rejection.message
   const name = `/${rejection.skillName}`
   const reason =
     rejection.reason === 'not_found'

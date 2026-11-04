@@ -52,6 +52,19 @@ import {
 
 type OverflowMode = 'standard' | 'aggressive'
 
+export type ManualCompactionStatus = 'compacted' | 'nothing_to_compact' | 'no_reduction'
+
+export interface ManualCompactionResult {
+  status: ManualCompactionStatus
+  summary: string
+}
+
+interface CompactionRunResult {
+  adopted: boolean
+  reason?: 'cancelled' | 'nothing-to-compact' | 'no-reduction'
+  failure?: ContextRecoveryFailedError | ContextBudgetExceededError
+}
+
 export interface CompactionServiceOptions {
   context: AgentContext
   modelClient: Pick<ModelClient, 'chat'>
@@ -144,6 +157,7 @@ export class CompactionService {
   private compressingForOverflow = false
   private idleAbortController: AbortController | null = null
   private idleCompactionInProgress = false
+  private idleCompactionTask: Promise<void> | null = null
   private idleReschedulePending = false
   private idleGeneration = 0
   private disposed = false
@@ -167,7 +181,15 @@ export class CompactionService {
     this.collectTouchedFiles = options.collectTouchedFiles
     this.getRealityAnchors = options.getRealityAnchors
     this.idleTimer = new IdleCompressionTimer(() => {
-      void this.runScheduledIdleCompaction()
+      if (this.idleCompactionInProgress) {
+        this.idleReschedulePending = true
+        return
+      }
+      const task = this.runScheduledIdleCompaction()
+      this.idleCompactionTask = task
+      void task.then(() => {
+        if (this.idleCompactionTask === task) this.idleCompactionTask = null
+      })
     })
   }
 
@@ -289,6 +311,65 @@ export class CompactionService {
     return (await this.runCompaction('threshold', projection, abortSignal)).adopted
   }
 
+  /** 用户显式压缩绕过阈值，但复用同一切分、摘要、持久化和写回 fence。 */
+  async runManualCompaction(
+    projection: SummaryProjection,
+    abortSignal?: AbortSignal
+  ): Promise<ManualCompactionResult> {
+    const assertActive = (): void => {
+      if (abortSignal?.aborted || !this.canWrite()) {
+        throw new ContextRecoveryFailedError('authority-expired')
+      }
+    }
+
+    assertActive()
+    const idleTask = this.idleCompactionTask
+    this.cancelIdle()
+    if (idleTask) await this.waitForIdleCompaction(idleTask, abortSignal)
+    assertActive()
+
+    const result = await this.runCompaction('manual', projection, abortSignal, this.canWrite)
+    assertActive()
+    if (result.failure) throw result.failure
+    if (result.adopted) {
+      return { status: 'compacted', summary: '当前会话上下文已压缩。' }
+    }
+    if (result.reason === 'nothing-to-compact') {
+      return { status: 'nothing_to_compact', summary: '当前没有可压缩的上下文。' }
+    }
+    if (result.reason === 'no-reduction') {
+      return { status: 'no_reduction', summary: '压缩结果未能减少上下文，已保留原始内容。' }
+    }
+    if (result.reason === 'cancelled') throw new ContextRecoveryFailedError('authority-expired')
+    throw new ContextRecoveryFailedError('commit-rejected')
+  }
+
+  private async waitForIdleCompaction(task: Promise<void>, abortSignal?: AbortSignal): Promise<void> {
+    if (!abortSignal) {
+      await task
+      return
+    }
+    if (abortSignal.aborted) throw new ContextRecoveryFailedError('authority-expired')
+    // 目标为 ES2022；事件等待让取消不必受无视 abort 的旧 idle 请求牵制。
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = (): void => {
+        abortSignal.removeEventListener('abort', onAbort)
+        reject(new ContextRecoveryFailedError('authority-expired'))
+      }
+      abortSignal.addEventListener('abort', onAbort, { once: true })
+      void task.then(
+        () => {
+          abortSignal.removeEventListener('abort', onAbort)
+          resolve()
+        },
+        error => {
+          abortSignal.removeEventListener('abort', onAbort)
+          reject(error)
+        }
+      )
+    })
+  }
+
   /**
    * 工具结果写回后、下一次模型请求前：估算 → 超高水位则压缩。
    * 返回 true 表示已压缩；skip / fail-open 均返回 false，调用方继续原投影。
@@ -399,21 +480,24 @@ export class CompactionService {
   }
 
   private async runCompaction(
-    trigger: Extract<LedgerTrigger, 'threshold' | 'idle'>,
+    trigger: Extract<LedgerTrigger, 'threshold' | 'idle' | 'manual'>,
     projection: SummaryProjection,
     abortSignal?: AbortSignal,
     canApply: () => boolean = () => true
-  ): Promise<{ adopted: boolean; failure?: ContextRecoveryFailedError | ContextBudgetExceededError }> {
-    if (abortSignal?.aborted) return { adopted: false }
+  ): Promise<CompactionRunResult> {
+    if (abortSignal?.aborted) return { adopted: false, reason: 'cancelled' }
 
     const parts = this.splitThresholdContext()
-    if (parts.oldMessages.length === 0) return { adopted: false }
+    if (parts.oldMessages.length === 0) return { adopted: false, reason: 'nothing-to-compact' }
 
     const usageSources: UsageSource[] = []
     let adopted = false
     try {
       const outputs = await this.requestCompactionOutputs(parts, projection, abortSignal, usageSources)
-      if (!outputs || abortSignal?.aborted || !canApply()) return { adopted: false }
+      if (!outputs || abortSignal?.aborted) return { adopted: false, reason: 'cancelled' }
+      if (!canApply()) {
+        return { adopted: false, failure: new ContextRecoveryFailedError('stale-context') }
+      }
 
       const application = await this.applyCompactionResult(
         parts,
@@ -424,13 +508,14 @@ export class CompactionService {
       )
       adopted = application.adopted
       if (!application.adopted) return application.reason === 'no-reduction'
-        ? { adopted: false }
+        ? { adopted: false, reason: 'no-reduction' }
         : { adopted: false, failure: new ContextRecoveryFailedError(application.reason) }
       this.notifyCompaction(trigger)
       return { adopted: true }
     } catch (error) {
       recordMetric('compaction.rejected', {}, { tags: { reason: 'candidate-or-persistence-failed', error: error instanceof Error ? error.message : String(error) } })
       if (adopted) return { adopted: true }
+      if (abortSignal?.aborted) return { adopted: false, reason: 'cancelled' }
       const failure = error instanceof ContextRecoveryFailedError || error instanceof ContextBudgetExceededError
         ? error : new ContextRecoveryFailedError('commit-rejected')
       return { adopted: false, failure }

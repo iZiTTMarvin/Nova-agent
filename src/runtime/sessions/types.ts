@@ -417,7 +417,7 @@ export const SESSION_CONTEXT_SNAPSHOT_FILE = 'context-snapshot.json'
 /** 当前账本结构版本；不符则丢弃并全量重建 */
 export const CONTEXT_SNAPSHOT_VERSION = 4
 
-export type LedgerTrigger = 'threshold' | 'mid-turn' | 'overflow' | 'idle'
+export type LedgerTrigger = 'threshold' | 'mid-turn' | 'overflow' | 'idle' | 'manual'
 export interface TouchedFilesSnapshot {
   paths: string[]
   omittedCount: number

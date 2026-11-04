@@ -133,6 +133,39 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     }
   })
 
+  it('原生命令不依赖 skillRegistry，compact 与 plan 使用独立 route', () => {
+    expect(resolveAgentTurnRoute(baseInput({ content: '/compact' }))).toEqual({ kind: 'compact' })
+    expect(resolveAgentTurnRoute(baseInput({ content: '/plan' }))).toEqual({ kind: 'plan' })
+  })
+
+  it('init 展开真实工作区指令与用户参数，不伪装成 skill inject', () => {
+    const route = resolveAgentTurnRoute(baseInput({ content: '/init 保留现有示例' }))
+    expect(route.kind).toBe('agent')
+    if (route.kind === 'agent') {
+      expect(route.dispatch.kind).toBe('command')
+      if (route.dispatch.kind === 'command') {
+        expect(route.dispatch.userContent).toContain('真实检查当前工作区')
+        expect(route.dispatch.userContent).toContain('只能创建或更新工作区根目录的 AGENTS.md')
+        expect(route.dispatch.userContent).toContain('保留仍然准确有效的内容')
+        expect(route.dispatch.userContent).toContain('保留现有示例')
+      }
+      expect(route.dispatch).not.toHaveProperty('assistantContent')
+    }
+  })
+
+  it.each([
+    [{ content: '/compact extra' }, 'invalid_arguments'],
+    [{ content: '/compact', regenerate: true }, 'unsupported_action'],
+    [{ content: '/compact', hasImages: true }, 'invalid_arguments'],
+    [{ content: '/init', mode: 'plan' as const }, 'mode_not_allowed']
+  ] as const)('原生命令共享校验进入 slash_rejected %#', (overrides, reason) => {
+    const route = resolveAgentTurnRoute(baseInput(overrides))
+    expect(route.kind).toBe('slash_rejected')
+    if (route.kind === 'slash_rejected') {
+      expect(route.rejection).toMatchObject({ type: 'command', reason })
+    }
+  })
+
   it('普通文本 + default 模式 → agent passthrough', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
@@ -151,6 +184,8 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
 describe('routeRunKind 映射', () => {
   it('所有公开 route 都进入普通 Agent run', () => {
     expect(routeRunKind({ kind: 'skill_fork', skill: {} as never, args: '' })).toBe('agent')
+    expect(routeRunKind({ kind: 'compact' })).toBe('agent')
+    expect(routeRunKind({ kind: 'plan' })).toBe('agent')
     expect(routeRunKind(agentRoute())).toBe('agent')
   })
 })

@@ -198,3 +198,36 @@
   color: var(--text-primary);
   background-color: var(--surface-hover);
 }
+
+/* trigger 菜单层（/ 与 @ 共用）：钉在 composer 盒上沿并与盒等宽。
+ * 官方以光标 span 为锚、内联 position-area/try-fallbacks；这里接管几何，
+ * 消除视口翻转抖动和随光标左右跳动。变量由 useTriggerMenuGeometry 写到盒上。 */
+[popover]:has(.astryx-trigger-menu) {
+  position: fixed !important;
+  inset: auto auto var(--trigger-menu-bottom, 0px) var(--trigger-menu-left, 0px) !important;
+  width: var(--trigger-menu-width, auto) !important;
+  margin: 0 !important;
+  position-area: none !important;
+  position-try-fallbacks: none !important;
+}
+
+/* 菜单内容跟随层宽；滚动条收敛为细手柄，与活动组滚动框同款 */
+.astryx-trigger-menu {
+  width: 100%;
+  max-width: calc(100vw - 2rem);
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
+}
+
+.astryx-trigger-menu::-webkit-scrollbar {
+  width: 5px;
+}
+
+.astryx-trigger-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.astryx-trigger-menu::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  border-radius: 3px;
+}

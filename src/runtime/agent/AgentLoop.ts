@@ -642,9 +642,21 @@ export class AgentLoop {
     this.onSkillRootAdded = cb
   }
 
-  /** 装配产品分派器（当前仅由宿主提供 skill fork 执行器） */
+  /** 装配产品分派器（执行器由宿主注入） */
   setTurnDispatcher(dispatcher: TurnDispatcher): void {
     this.turnDispatcher = dispatcher
+  }
+
+  async compactNow(abortSignal?: AbortSignal) {
+    const result = await this.compactionService.runManualCompaction(
+      createSummaryProjection({
+        context: this.ctx,
+        policy: () => this.currentRequestProjectionPolicy()
+      }),
+      abortSignal ?? this.abortController?.signal
+    )
+    if (result.status === 'compacted') this.emitContextBreakdown('', 0)
+    return result
   }
 
   /**
@@ -848,6 +860,27 @@ export class AgentLoop {
     const sessionPrefix = this.getSessionContextPrefix()
     await this.hookManager.trigger({ event: 'onMessageStart', messageId, text: userText })
 
+    const deliverUser = (deliveredText: string, assistantPrelude?: string): void => {
+      const facts: UserDeliveryFacts = {
+        userMessageId: userMessageId ?? '', sessionPrefix, modeInstruction,
+        ...(assistantPrelude !== undefined ? {
+          skillInput: { assistantPrelude, userContent: deliveredText }
+        } : {}),
+        // 恢复时重放本轮实际输入，而不是重新解析落盘的 slash 原文。
+        ...(recordDeliveredInput && typeof content === 'string' ? { deliveredInput: deliveredText } : {})
+      }
+      if (userMessageId) {
+        this.eventBus.emit({ type: 'user_delivery', messageId, facts })
+      }
+      this.ctx.messages.push(...projectUserMessages(content, userMessageId, facts))
+    }
+
+    // 手动压缩必须把已持久化的当前叶子纳入同一份运行时上下文。
+    if (route.kind === 'compact') {
+      deliverUser(userText)
+      this.compactionService.updateTokenEstimate()
+    }
+
     // 产品分派下沉到 TurnDispatcher（路由在 startRun 前由 resolveAgentTurnRoute 确定）。
     // dispatcher 只返回数据；上下文写入、事件与终态仍由本类持有。
     const dispatched = await this.turnDispatcher.dispatch(content, route, {
@@ -874,18 +907,7 @@ export class AgentLoop {
       this.addSkillRoot(dispatched.grantedSkillRoot)
     }
     userText = dispatched.userText
-    const facts: UserDeliveryFacts = {
-      userMessageId: userMessageId ?? '', sessionPrefix, modeInstruction,
-      ...(dispatched.assistantPrelude !== undefined ? {
-        skillInput: { assistantPrelude: dispatched.assistantPrelude, userContent: dispatched.userText }
-      } : {}),
-      // 调用方声明任务文本不同于落盘原文时，把本轮实际输入记入事实，重建时逐字复现
-      ...(recordDeliveredInput && typeof content === 'string' ? { deliveredInput: content } : {})
-    }
-    if (userMessageId) {
-      this.eventBus.emit({ type: 'user_delivery', messageId, facts })
-    }
-    this.ctx.messages.push(...projectUserMessages(content, userMessageId, facts))
+    deliverUser(userText, dispatched.assistantPrelude)
 
     // 此处只估算，不抛硬预算：阈值压缩在 runAgentLoop 内先于模型调用执行。
     // 硬上限在压缩之后、发模型之前套用（见 runAgentLoop），避免大历史无法进入压缩。

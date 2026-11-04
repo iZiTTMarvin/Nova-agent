@@ -6,6 +6,7 @@ import { act, renderDom } from './renderDom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatPanel } from '../../../src/renderer/features/chat/ChatPanel'
 import { useChatStore, resetChatStoreForTests } from '../../../src/renderer/stores/useChatStore'
+import { useSkillsStore } from '../../../src/renderer/features/skills/store'
 import {
   resetSettingsStoreForTests,
   useSettingsStore
@@ -38,7 +39,11 @@ vi.mock('../../../src/renderer/features/chat/MessageItem', () => ({
   }
 }))
 
-vi.mock('../../../src/renderer/features/mode-switch/ModeSwitch', () => ({ ModeSwitch: () => null }))
+vi.mock('../../../src/renderer/features/mode-switch/ModeSwitch', () => ({
+  ModeSwitch: (props: { onSelectSkills?: () => void }) => (
+    <button type="button" aria-label="打开技能与命令" onClick={props.onSelectSkills} />
+  )
+}))
 vi.mock('../../../src/renderer/features/chat/ModelSelector', () => ({ ModelSelector: () => null }))
 vi.mock('../../../src/renderer/features/chat/ContextIndicator', () => ({ ContextIndicator: () => null }))
 vi.mock('../../../src/renderer/features/composer-context/ComposerContextBar', () => ({ ComposerContextBar: () => null }))
@@ -578,6 +583,7 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
+    useSkillsStore.setState({ skills: [], loading: false, error: null, diagnostics: [] })
     useRunStore.getState().resetForTests()
     mockInvoke.mockImplementation(async (channel: string) =>
       channel === 'send-message' ? { accepted: true } : undefined
@@ -602,6 +608,32 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
       useChatStore.setState({currentSessionId: 'sess_1',
 sendInFlight: false})
     })
+  })
+
+  it('技能目录为空且加载失败时，+ 命令入口仍插入 /', async () => {
+    window.nova.skill.list = vi.fn().mockRejectedValue(new Error('目录不可用'))
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callback(0)
+      return 1
+    })
+    const renderer = renderDom(React.createElement(ChatPanel))
+    try {
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(useSkillsStore.getState().skills).toEqual([])
+      expect(useSkillsStore.getState().error).toBe('目录不可用')
+
+      const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
+      act(() => {
+        renderer.container.querySelector<HTMLButtonElement>('[aria-label="打开技能与命令"]')!.click()
+      })
+      expect(editable.textContent).toBe('/')
+    } finally {
+      renderer.unmount()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('分叉准备窗口内发送被拒：草稿不被清空，未发 IPC', async () => {
@@ -655,6 +687,48 @@ sendInFlight: false})
     })
     await act(async () => { finish() })
     expect(editable.textContent).toContain('尚未发送的补充')
+    renderer.unmount()
+  })
+
+  it('本地命令 completion 释放发送与 Agent 归属状态，后续普通发送不受影响', async () => {
+    mockInvoke.mockImplementation(async (channel: string, params?: { content?: string }) => {
+      if (channel !== 'send-message') return undefined
+      return params?.content === '/plan'
+        ? { accepted: true, completion: { commandName: 'plan' } }
+        : { accepted: true }
+    })
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
+    const sendBtn = renderer.container.querySelector<HTMLElement>('[aria-label="发送"]')!
+    const submit = async (text: string) => {
+      act(() => {
+        editable.textContent = text
+        editable.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => {
+        sendBtn.click()
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    }
+
+    await submit('/plan')
+    let state = useChatStore.getState()
+    expect(state.sendInFlight).toBe(false)
+    expect(state.sendRequestId).toBeNull()
+    expect(state.activeAgentSessionId).toBeNull()
+    expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(false)
+
+    await submit('后续普通消息')
+    state = useChatStore.getState()
+    expect(state.messages.some(message => message.content === '后续普通消息')).toBe(true)
+    expect(state.sendInFlight).toBe(false)
+    expect(state.activeAgentSessionId).toBe('sess_1')
+    expect(mockInvoke).toHaveBeenCalledWith(
+      'send-message',
+      expect.objectContaining({ content: '后续普通消息' })
+    )
     renderer.unmount()
   })
 
@@ -747,6 +821,45 @@ sendInFlight: false})
     expect(errors[0].content).toContain('/todo')
     expect(selectSessionIsRunning(useRunStore.getState(), state.currentSessionId)).toBe(false)
     expect(state.sendInFlight).toBe(false)
+    renderer.unmount()
+  })
+
+  it('原生命令拒绝直接展示共享 message，并恢复草稿与发送状态', async () => {
+    const message = '命令 /compact 不接受参数'
+    mockInvoke.mockImplementation(async (channel: string) =>
+      channel === 'send-message'
+        ? {
+            accepted: false,
+            rejection: {
+              type: 'command',
+              commandName: 'compact',
+              reason: 'invalid_arguments',
+              message
+            }
+          }
+        : undefined
+    )
+    const renderer = renderDom(React.createElement(ChatPanel))
+    const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
+    act(() => {
+      editable.textContent = '/compact 多余参数'
+      editable.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await act(async () => {
+      renderer.container.querySelector<HTMLElement>('[aria-label="发送"]')!.click()
+      await Promise.resolve()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    const state = useChatStore.getState()
+    expect(editable.textContent).toContain('/compact 多余参数')
+    expect(state.messages.filter(item => item.role === 'user')).toHaveLength(0)
+    const errors = state.messages.filter(item => item.isError)
+    expect(errors).toHaveLength(1)
+    expect(errors[0].content).toBe(message)
+    expect(state.sendInFlight).toBe(false)
+    expect(state.activeAgentSessionId).toBeNull()
     renderer.unmount()
   })
 })

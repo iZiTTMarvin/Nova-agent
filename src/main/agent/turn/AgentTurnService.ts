@@ -32,6 +32,11 @@ import type {
 import type { SkillRegistry } from '../../../runtime/skills/SkillRegistry'
 import type { IpcCommands } from '../../../shared/ipc/types'
 import type { SkillSlashRejection } from '../../../shared/skills/types'
+import {
+  parseNativeCommand,
+  type NativeCommandRejection
+} from '../../../shared/commands'
+import { executePlanCommand } from '../commands/executePlanCommand'
 import type { MessageBlock, Mode, PermissionMode } from '../../../shared/session/types'
 import { extractTextFromSerializableContent, generateSessionTitleFromText } from '../../../runtime/sessions/types'
 import { isTerminalRunStatus, type SubagentRelayTrigger } from '../../../shared/run/types'
@@ -241,6 +246,9 @@ export async function sendAgentMessage(
   const trustedDelivery =
     'trustedLearningDelivery' in params ? params.trustedLearningDelivery : undefined
   const hasPublicContent = 'content' in params && typeof params.content === 'string'
+  const nativeCommand = isPublicUserMessageParams(params)
+    ? parseNativeCommand(params.content)
+    : null
   if (
     session.mode === 'learn' &&
     params.internalRelay === undefined &&
@@ -304,6 +312,14 @@ export async function sendAgentMessage(
   // 接力不是用户应答：不动挂起的提问，否则接力 turn 会替用户把问题丢掉。
   if (params.internalRelay === undefined) {
     dismissPendingAskQuestionsForSession(params.sessionId)
+  }
+
+  if (nativeCommand?.command.execution === 'local' && isPublicUserMessageParams(params)) {
+    return executePlanCommand({
+      sessionId: params.sessionId,
+      content: params.content,
+      ...(params.userMessageId !== undefined ? { userMessageId: params.userMessageId } : {})
+    })
   }
 
   // 会话有效模型：会话覆盖优先，否则跟随全局最近选择；注册表不可解析时回退全局 client
@@ -606,7 +622,9 @@ export async function sendAgentMessage(
     content: sendContent,
     mode: session.mode,
     skillRegistry: prepared.skillRegistry,
-    workspacePath: projectPath
+    workspacePath: projectPath,
+    regenerate: isRegenerate,
+    hasImages: (params.images?.length ?? 0) > 0
   })
   // 新发送已在入口锁前 preflight；此处兜底重发（regenerate 取叶子文本）的拒绝。
   // 拒绝不落盘、不建 run、不进执行器。
@@ -756,8 +774,9 @@ export async function sendAgentMessage(
       // 再由 markRunning 完成「先持久再执行」的 queued → running。
       ...(relayRunId ? { runId: relayRunId } : {}),
       userMessageId: turnUserMessageId,
-      // 学习投递的任务文本不同于落盘短句：记入事实，重建时与首发逐字一致
-      ...(trustedDelivery && trustedDelivery.modelInput !== trustedDelivery.displayText
+      // 学习投递与原生命令的任务文本不同于落盘原文：记录实际输入，恢复时逐字复现。
+      ...((trustedDelivery && trustedDelivery.modelInput !== trustedDelivery.displayText) ||
+        (turnRoute.kind === 'agent' && turnRoute.dispatch.kind === 'command')
         ? { recordDeliveredInput: true }
         : {}),
       onStarted: (context) => {
@@ -816,7 +835,7 @@ function preflightSlashRejection(
   params: SendAgentMessageUserParams,
   session: SessionData,
   skillRegistry: SkillRegistry
-): SkillSlashRejection | null {
+): SkillSlashRejection | NativeCommandRejection | null {
   let text: string
   if (params.regenerate === true) {
     if (params.images && params.images.length > 0) return null
@@ -825,14 +844,16 @@ function preflightSlashRejection(
     if (!leafUser || leafUser.role !== 'user') return null
     text = extractTextFromSerializableContent(leafUser.content)
   } else {
-    if (params.images && params.images.length > 0) return null
+    if (params.images && params.images.length > 0 && !parseNativeCommand(params.content)) return null
     text = params.content
   }
   const route = resolveAgentTurnRoute({
     content: text,
     mode: session.mode,
     skillRegistry,
-    workspacePath: session.workspaceRoot
+    workspacePath: session.workspaceRoot,
+    regenerate: params.regenerate === true,
+    hasImages: (params.images?.length ?? 0) > 0
   })
   return route.kind === 'slash_rejected' ? route.rejection : null
 }

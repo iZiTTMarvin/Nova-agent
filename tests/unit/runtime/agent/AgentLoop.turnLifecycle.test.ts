@@ -18,8 +18,9 @@ import type { HookEvent, HookEventResultMap, HookPayload } from '../../../../src
 import type { CheckpointManager } from '../../../../src/runtime/checkpoints/CheckpointManager'
 import type { AgentEvent } from '../../../../src/runtime/agent/types'
 import type { SkillManifest } from '../../../../src/runtime/skills/types'
-import { agentRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
+import { agentRoute, resolveAgentTurnRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
+import { projectUserContent } from '../../../../src/runtime/request-projection'
 
 const loops: AgentLoop[] = []
 
@@ -209,6 +210,123 @@ describe('终态协议：直接技能委托', () => {
     expect(loop.getState()).not.toBe('running')
     expect(client.getCalls()).toHaveLength(0)
     expect(idleStart).toHaveBeenCalledTimes(status === 'completed' || status === 'incomplete' ? 1 : 0)
+  })
+})
+
+describe('终态协议：原生命令', () => {
+  it('compact 在执行器前投递当前用户，handled 结果仍走统一终态且不进入主模型', async () => {
+    const client = new MockModelClient()
+    const { loop, events } = createLoop(client)
+    const cp = attachCheckpoint(loop)
+    let contextAtRunner = ''
+    let eventsAtRunner: string[] = []
+    loop.setTurnDispatcher(new TurnDispatcher({
+      compactRunner: async () => {
+        const current = loop.getContext().find(message => message.origin?.messageId === 'u-compact')
+        contextAtRunner = String(current?.content)
+        eventsAtRunner = events.map(event => event.type)
+        return { summary: '当前会话上下文已压缩。' }
+      }
+    }))
+
+    const outcome = await loop.sendMessage(
+      '/compact',
+      { kind: 'compact' },
+      { userMessageId: 'u-compact' }
+    )
+
+    expect(outcome).toEqual({ status: 'completed' })
+    expect(contextAtRunner).toContain('/compact')
+    expect(eventsAtRunner).toEqual(['message_start', 'user_delivery'])
+    expect(loop.getContext().at(-1)).toMatchObject({ role: 'assistant', content: '当前会话上下文已压缩。' })
+    expect(client.getCalls()).toHaveLength(0)
+    expectExactlyOneTerminal(events, 'message_end')
+    expect(cp.beginMessage).toHaveBeenCalledTimes(1)
+    expect(cp.endMessage).toHaveBeenCalledTimes(1)
+    const delivery = events.find(event => event.type === 'user_delivery')
+    if (delivery?.type === 'user_delivery') {
+      expect(delivery.facts.deliveredInput).toBeUndefined()
+      expect(delivery.facts.skillInput).toBeUndefined()
+    }
+  })
+
+  it('compact 取消经当前 abortSignal 中断执行器并收敛为 cancelled', async () => {
+    const client = new MockModelClient()
+    const { loop, events } = createLoop(client)
+    const cp = attachCheckpoint(loop)
+    const started = Promise.withResolvers<void>()
+    const aborted = Promise.withResolvers<void>()
+    loop.setTurnDispatcher(new TurnDispatcher({
+      compactRunner: async abortSignal => {
+        started.resolve()
+        if (abortSignal?.aborted) aborted.resolve()
+        abortSignal?.addEventListener('abort', () => aborted.resolve(), { once: true })
+        await aborted.promise
+        throw new Error('compact aborted')
+      }
+    }))
+
+    const pending = loop.sendMessage('/compact', { kind: 'compact' })
+    await started.promise
+    loop.cancel()
+
+    await expect(pending).resolves.toEqual({ status: 'cancelled' })
+    expectExactlyOneTerminal(events, 'message_end')
+    const end = events.find(event => event.type === 'message_end')
+    expect(end?.type === 'message_end' ? end.interrupted : undefined).toBe(true)
+    expect(cp.endMessage).toHaveBeenCalledTimes(1)
+    expect(client.getCalls()).toHaveLength(0)
+  })
+
+  it.each([
+    [{ kind: 'compact' as const }, /compactRunner/],
+    [{ kind: 'plan' as const }, /本地执行/]
+  ])('不可执行 route 在任何轮次副作用前 fail closed %#', async (route, pattern) => {
+    const client = new MockModelClient()
+    const { loop, events } = createLoop(client)
+    const cp = attachCheckpoint(loop)
+
+    await expect(loop.sendMessage('/command', route)).rejects.toThrow(pattern)
+
+    expect(events).toEqual([])
+    expect(cp.beginMessage).not.toHaveBeenCalled()
+    expect(cp.endMessage).not.toHaveBeenCalled()
+    expect(client.getCalls()).toHaveLength(0)
+    expect(loop.getState()).toBe('idle')
+  })
+
+  it('init 以实际展开提示记录 deliveredInput，恢复时不伪装成 skill 输入', async () => {
+    const client = new MockModelClient()
+    textReply(client)
+    const { loop, events } = createLoop(client)
+    const route = resolveAgentTurnRoute({
+      content: '/init 保留现有约束',
+      mode: 'default',
+      skillRegistry: null
+    })
+    if (route.kind !== 'agent' || route.dispatch.kind !== 'command') {
+      throw new Error('预期 init command route')
+    }
+    const instruction = route.dispatch.userContent
+
+    const outcome = await loop.sendMessage('/init 保留现有约束', route, {
+      userMessageId: 'u-init',
+      recordDeliveredInput: true
+    })
+
+    expect(outcome).toEqual({ status: 'completed' })
+    const current = loop.getContext().find(message => message.origin?.messageId === 'u-init')
+    expect(String(current?.content)).toContain(instruction)
+    expect(loop.getContext().some(message => message.inputPrelude)).toBe(false)
+    const delivery = events.find(event => event.type === 'user_delivery')
+    if (delivery?.type === 'user_delivery') {
+      expect(delivery.facts.deliveredInput).toBe(instruction)
+      expect(delivery.facts.skillInput).toBeUndefined()
+      expect(projectUserContent('/init 保留现有约束', delivery.facts)).toBe(current?.content)
+    } else {
+      throw new Error('缺少 init user_delivery')
+    }
+    expect(client.getCalls()).toHaveLength(1)
   })
 })
 

@@ -145,6 +145,7 @@ import {
   INSTALL_APP_UPDATE
 } from './channels'
 import type { SubagentActivityProjection } from '../subagents'
+import type { NativeCommandCompletion, NativeCommandRejection } from '../commands'
 
 /**
  * 渲染端恢复状态（runtime RecoveryState 的 UI 子集）。
@@ -229,7 +230,9 @@ export interface IpcCommands {
      * accepted 为 false 时输入未落盘、未建 run、未调模型；
      * renderer 回滚乐观消息、恢复草稿并展示 rejection。
      */
-    result: { accepted: true } | { accepted: false; rejection: SkillSlashRejection }
+    result:
+      | { accepted: true; completion?: NativeCommandCompletion }
+      | { accepted: false; rejection: SkillSlashRejection | NativeCommandRejection }
   }
   'cancel-execution': {
     /** 精确取消指定 run tree；缺少身份时拒绝，不推断当前执行。 */

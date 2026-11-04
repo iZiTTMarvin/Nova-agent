@@ -1,7 +1,5 @@
-/**
- * Slash 补全候选项 — 技能与命令同源排序。命令候选位已预留，
- * 待原生命令 Owner（如压缩、goal）落地后接入，当前仅有技能候选。
- */
+/** Slash 补全候选项 — 技能与原生命令同源排序。 */
+import { NATIVE_COMMANDS } from '../../../shared/commands'
 import type { SkillSummary } from '../../../shared/skills/types'
 
 export interface SlashCandidate {
@@ -20,6 +18,14 @@ export function skillsToCandidates(skills: SkillSummary[]): SlashCandidate[] {
       kind: 'skill' as const,
       source: s.source
     }))
+}
+
+export function nativeCommandsToCandidates(): SlashCandidate[] {
+  return NATIVE_COMMANDS.map(command => ({
+    name: command.name,
+    description: command.description,
+    kind: 'command' as const
+  }))
 }
 
 /** 评分：前缀匹配 100，子串 80，字符重叠 60；同分时 skill 优先 */
@@ -45,7 +51,7 @@ export function filterAndRankCandidates(
   const token = query.replace(/^\//, '').toLowerCase()
   if (!token) {
     return [...candidates].sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'skill' ? -1 : 1
+      if (a.kind !== b.kind) return a.kind === 'command' ? -1 : 1
       return a.name.localeCompare(b.name)
     })
   }

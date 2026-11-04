@@ -132,7 +132,7 @@ function deriveInitialChildMessageId(childSessionId: string): string {
   return `msg_sub_user_${digest.slice(0, 32)}`
 }
 
-const LEDGER_TRIGGERS = ['threshold', 'mid-turn', 'overflow', 'idle'] as const
+const LEDGER_TRIGGERS = ['threshold', 'mid-turn', 'overflow', 'idle', 'manual'] as const
 
 function parseMessageOrigin(value: unknown): MessageOrigin | null {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return null

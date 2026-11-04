@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   filterAndRankCandidates,
+  nativeCommandsToCandidates,
   scoreCandidate,
   skillsToCandidates,
   type SlashCandidate
@@ -17,10 +18,18 @@ const candidates: SlashCandidate[] = [
 ]
 
 describe('slashCandidates', () => {
-  it('输入 / 时返回全部候选项，skill 排在 command 前（同默认排序）', () => {
+  it('输入 / 时命令排在技能前，同组按名称确定性排序', () => {
     const result = filterAndRankCandidates('', candidates)
-    expect(result.length).toBe(3)
-    expect(result[0].kind).toBe('skill')
+    expect(result.map(candidate => candidate.name)).toEqual(['commit', 'code-review', 'onboard'])
+  })
+
+  it('没有技能候选时仍映射并返回三个原生命令', () => {
+    const result = filterAndRankCandidates('', nativeCommandsToCandidates())
+    expect(result.map(candidate => ({ name: candidate.name, kind: candidate.kind }))).toEqual([
+      { name: 'compact', kind: 'command' },
+      { name: 'init', kind: 'command' },
+      { name: 'plan', kind: 'command' }
+    ])
   })
 
   it('前缀匹配得分高于子串匹配', () => {

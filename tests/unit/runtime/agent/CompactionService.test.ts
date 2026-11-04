@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { CacheDiagnostics } from '../../../../src/runtime/model/cacheDiagnostics'
 import type { ChatEvent, ChatMessage } from '../../../../src/runtime/model/types'
 import { extractTextFromContent } from '../../../../src/runtime/model/types'
@@ -16,6 +19,15 @@ import { makeCompactionLedger, handoffJson } from '../../../../src/test-support/
 import { OpenAICompatibleModelClient } from '../../../../src/runtime/model/OpenAICompatibleModelClient'
 import { measureRequestBudget } from '../../../../src/runtime/model/requestBudget'
 import { getMetricBuffer, registerMetricSink, resetMetricsForTests } from '../../../../src/shared/diagnostics/metrics'
+import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
+import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
+
+const persistenceRoots: string[] = []
+
+afterEach(() => {
+  resetSessionIndexHostForTests()
+  for (const root of persistenceRoots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
 
 /** 恒等投影：单测里摘要输入与权威消息逐条一致，便于断言服务侧行为 */
 
@@ -295,6 +307,111 @@ describe('CompactionService', () => {
       expect(summaryCall.options?.promptCacheKey).toBe('routing-key-1')
       expect(summaryCall.messages.some(message => message.reasoningContent !== undefined)).toBe(true)
     }
+  })
+
+  it('manual 未达阈值也执行压缩，并将 manual trigger 持久化到真实账本', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-manual-compaction-'))
+    persistenceRoots.push(root)
+    const store = new SessionStore(root)
+    const session = store.create(root, 'default')
+    const messages: ChatMessage[] = [{ role: 'system', content: 'system prompt' }]
+    for (let index = 0; index < 24; index++) {
+      const user = { id: `u-${index}`, role: 'user' as const, content: `继续工作 ${index}`, timestamp: index * 2 }
+      const assistant = { id: `a-${index}`, role: 'assistant' as const, content: 'x'.repeat(1000), timestamp: index * 2 + 1 }
+      store.appendMessage(session.id, user)
+      store.appendMessage(session.id, assistant)
+      messages.push(
+        { role: 'user', content: user.content, origin: { messageId: user.id, step: 0 } },
+        { role: 'assistant', content: assistant.content, origin: { messageId: assistant.id, step: 0 } }
+      )
+    }
+    const context = createAgentContext({
+      readState: createReadState(),
+      messages,
+      systemPrompt: 'system prompt',
+      sessionStore: store,
+      sessionId: session.id
+    })
+    const current = { id: 'u-compact', role: 'user' as const, content: '/compact', timestamp: 100 }
+    store.appendMessage(session.id, current)
+    context.messages.push({ role: 'user', content: current.content, origin: { messageId: current.id, step: 0 } })
+    const client = new MockModelClient().addHandoffPair({ events: [
+      { type: 'text_delta', delta: '手动压缩摘要' },
+      { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const onCompaction = vi.fn()
+    const { service } = createService({ context, client, contextWindow: 20_000, onCompaction })
+
+    await expect(service.runManualCompaction(identitySummaryProjection)).resolves.toMatchObject({
+      status: 'compacted',
+      summary: expect.stringContaining('已压缩')
+    })
+
+    const persisted = store.loadContextSnapshot(session.id)
+    expect(persisted?.entries[0]?.trigger).toBe('manual')
+    expect(persisted).toEqual(context.compactionState)
+    expect(store.load(session.id)?.currentLeafId).toBe(current.id)
+    expect(context.messages.at(-1)?.origin).toEqual({ messageId: current.id, step: 0 })
+    expect(onCompaction).toHaveBeenCalledWith(context.messages, expect.objectContaining({ trigger: 'manual' }))
+    service.dispose()
+  })
+
+  it('manual 没有可折叠前缀时返回 nothing_to_compact，不调用摘要模型', async () => {
+    const context = createContext([
+      { role: 'system', content: 'system prompt' },
+      { role: 'user', content: 'short message' }
+    ])
+    const original = context.messages
+    const { service, client } = createService({ context, contextWindow: 200_000 })
+
+    await expect(service.runManualCompaction(identitySummaryProjection)).resolves.toEqual({
+      status: 'nothing_to_compact',
+      summary: '当前没有可压缩的上下文。'
+    })
+    expect(client.getCalls()).toHaveLength(0)
+    expect(context.messages).toBe(original)
+    service.dispose()
+  })
+
+  it('manual 摘要没有缩减上下文时返回 no_reduction 并保留原文', async () => {
+    const context = createContext()
+    const original = context.messages
+    const client = new MockModelClient().addHandoffPair({ events: [
+      { type: 'text_delta', delta: '继续任务' },
+      { type: 'message_end', finishReason: 'stop' }
+    ] })
+    const { service } = createService({ context, client })
+    let projectionCalls = 0
+    const projection = {
+      project: async (messages: ChatMessage[]): Promise<ChatMessage[]> => {
+        projectionCalls++
+        return projectionCalls === 3 ? original : messages
+      }
+    }
+
+    await expect(service.runManualCompaction(projection)).resolves.toEqual({
+      status: 'no_reduction',
+      summary: '压缩结果未能减少上下文，已保留原始内容。'
+    })
+    expect(context.messages).toBe(original)
+    expect(context.compactionState).toBeNull()
+    service.dispose()
+  })
+
+  it('manual 摘要失败不像阈值优化那样 fail-open', async () => {
+    const context = createContext()
+    const original = context.messages
+    const client = new MockModelClient()
+      .addResponse({ events: [{ type: 'text_delta', delta: 'stub' }] })
+      .addResponse({ events: [{ type: 'error', error: 'provider unavailable' }] })
+    const { service } = createService({ context, client })
+
+    await expect(service.runManualCompaction(identitySummaryProjection)).rejects.toMatchObject({
+      reason: 'request-failed'
+    })
+    expect(context.messages).toBe(original)
+    expect(context.compactionState).toBeNull()
+    service.dispose()
   })
 
   it('standard overflow 成功时保留最近消息与 pulled-back 消息的原始顺序', async () => {

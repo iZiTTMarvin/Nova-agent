@@ -389,6 +389,42 @@ describe('CompactionService idle ownership', () => {
     )).toBe(false)
   })
 
+  it('manual 等待正在退出的 idle 完成后才签发新摘要，避免并发写回', async () => {
+    const firstStarted = Promise.withResolvers<void>()
+    const firstRelease = Promise.withResolvers<void>()
+    let callCount = 0
+    const client: Pick<ModelClient, 'chat'> = {
+      async *chat() {
+        callCount++
+        if (callCount <= 2) {
+          firstStarted.resolve()
+          await firstRelease.promise
+          yield { type: 'text_delta', delta: 'stale idle summary' }
+          yield { type: 'message_end', finishReason: 'stop' }
+          return
+        }
+        yield { type: 'text_delta', delta: handoffJson('fresh manual summary') }
+        yield { type: 'message_end', finishReason: 'stop' }
+      }
+    }
+    const { service, context } = createIdleService(client)
+
+    service.scheduleIdle()
+    await vi.advanceTimersByTimeAsync(IdleCompressionTimer.IDLE_DELAY_MS)
+    await firstStarted.promise
+    const manual = service.runManualCompaction(identitySummaryProjection)
+    await flush()
+    expect(callCount).toBe(2)
+
+    firstRelease.resolve()
+    await expect(manual).resolves.toMatchObject({ status: 'compacted' })
+
+    expect(callCount).toBe(4)
+    expect(String(context.messages[0]?.content)).toContain('fresh manual summary')
+    expect(String(context.messages[0]?.content)).not.toContain('stale idle summary')
+    service.dispose()
+  })
+
   it('dispose during summary 会阻止晚到摘要写回', async () => {
     let releaseSummary!: () => void
     const summaryRelease = new Promise<void>(resolve => {

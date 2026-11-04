@@ -14,16 +14,18 @@ import type { SearchSource } from '@astryxdesign/core/Typeahead'
 import type { SkillCatalogDiagnostic, SkillSummary } from '../../../shared/skills/types'
 import {
   filterAndRankCandidates,
+  nativeCommandsToCandidates,
   skillsToCandidates,
   type SlashCandidate
 } from './slashCandidates'
 import './composerSkillTrigger.css'
 
 export type ComposerSkillItem = ChatComposerTriggerItem & {
-  auxiliaryData: SlashCandidate
+  // 官方 useTriggerMenu 按 auxiliaryData.group 分组并渲染组标题
+  auxiliaryData: SlashCandidate & { group: string }
 }
 
-/** 技能芯片：羊皮纸 yellow badge，序列化为 `/${name}` */
+/** Slash 芯片：羊皮纸 yellow badge，序列化为 `/${name}` */
 export function skillComposerToken(name: string): ChatComposerToken {
   return {
     value: `/${name}`,
@@ -32,20 +34,29 @@ export function skillComposerToken(name: string): ChatComposerToken {
   }
 }
 
+const GROUP_LABEL: Record<SlashCandidate['kind'], string> = {
+  command: '命令',
+  skill: '技能'
+}
+
 function toSearchable(candidate: SlashCandidate): ComposerSkillItem {
   return {
     id: `${candidate.kind}:${candidate.name}`,
     label: candidate.name,
-    auxiliaryData: candidate
+    auxiliaryData: { ...candidate, group: GROUP_LABEL[candidate.kind] }
   }
 }
 
 function rankQuery(query: string, skills: SkillSummary[]): ComposerSkillItem[] {
-  return filterAndRankCandidates(query, skillsToCandidates(skills)).map(toSearchable)
+  const candidates = [...nativeCommandsToCandidates(), ...skillsToCandidates(skills)]
+  const ranked = filterAndRankCandidates(query, candidates)
+  // 组标题按首个 item 的出现顺序渲染，命令必须整体排在技能前，不能被高分技能穿插
+  const commands = ranked.filter(c => c.kind === 'command')
+  return [...commands, ...ranked.filter(c => c.kind !== 'command')].map(toSearchable)
 }
 
 export interface ComposerSkillTriggerOptions {
-  /** 无结果时的空态文案；调用方按目录可用性传入，无可用与无匹配用不同文案 */
+  /** 无结果时的空态文案 */
   emptySearchResultsText?: string
   /** 目录诊断；模式受限类在候选项上给出发送前提示 */
   getDiagnostics?: () => SkillCatalogDiagnostic[]
@@ -69,11 +80,10 @@ export function createComposerSkillTrigger(
     character: '/',
     searchSource,
     menuLabel: '技能与命令',
-    emptySearchResultsText: opts?.emptySearchResultsText ?? '没有匹配的技能',
+    emptySearchResultsText: opts?.emptySearchResultsText ?? '没有匹配的技能或命令',
     loadingText: '搜索中…',
     renderItem: (item): ReactNode => {
       const candidate = (item as ComposerSkillItem).auxiliaryData
-      const kindLabel = candidate.kind === 'skill' ? 'skill' : 'command'
       const profileNote =
         candidate.kind === 'skill'
           ? getDiagnostics().find(
@@ -85,7 +95,6 @@ export function createComposerSkillTrigger(
           <span className="composer-skill-trigger__title">
             <span className="composer-skill-trigger__slash">/</span>
             {candidate.name}
-            <span className="composer-skill-trigger__kind"> ({kindLabel})</span>
           </span>
           {candidate.description ? (
             <span className="composer-skill-trigger__desc">

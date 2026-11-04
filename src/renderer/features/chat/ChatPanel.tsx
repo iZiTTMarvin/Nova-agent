@@ -68,9 +68,10 @@ import {
 } from '../../lib/image-attachments'
 import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
 import { createComposerFileTrigger } from './composerFileTrigger'
+import { useTriggerMenuGeometry } from './useTriggerMenuGeometry'
 import { revealCaretInScroller } from './composerCaret'
 import { useImeEnterGuard } from './imeEnterGuard'
-import { toUserInvocableSkills, useSkillsStore } from '../skills/store'
+import { useSkillsStore } from '../skills/store'
 import { WelcomeHero } from './WelcomeHero'
 import { ChatContentWidthHandle } from './ChatContentWidthHandle'
 import './composerShell.css'
@@ -227,8 +228,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
-  const skillsLoading = useSkillsStore(state => state.loading)
-  const skillsError = useSkillsStore(state => state.error)
   const skillsDiagnostics = useSkillsStore(state => state.diagnostics)
   const refreshSkills = useSkillsStore(state => state.refresh)
   const setSnapshot = useSkillsStore(state => state.setSnapshot)
@@ -257,26 +256,16 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   const skillsDiagnosticsRef = useRef(skillsDiagnostics)
   skillsDiagnosticsRef.current = skillsDiagnostics
 
-  // 空态文案按可用性区分：加载失败、无可用技能、有技能但无匹配是三种状态。
-  // trigger 只在文案类别翻转时重建，日常 skills 变更不重建，避免打断已打开的 `/` 菜单。
-  const hasUsableSkill = toUserInvocableSkills(slashSkills).length > 0
-  const skillEmptyText = skillsError
-    ? '技能目录加载失败'
-    : hasUsableSkill ? '没有匹配的技能' : '暂无可用技能'
-  // `+` 菜单项与受控 `/` 插入共用同一门控：刷新中、失败或无可用时禁用并给出原因。
-  const skillsEntryState = skillsLoading
-    ? { disabled: true, reason: '技能目录刷新中…' }
-    : skillsError
-      ? { disabled: true, reason: '技能目录加载失败' }
-      : !hasUsableSkill
-        ? { disabled: true, reason: '暂无可用技能' }
-        : { disabled: false, reason: undefined }
+  // `/`、`@` 菜单钉在 composer 盒上沿并等宽，几何由盒上 CSS 变量驱动
+  useTriggerMenuGeometry(composerBoxRef)
+
+  // 命令不依赖技能目录；trigger 保持稳定，打开菜单时读取最新技能。
   const skillTrigger = useMemo(
     () => createComposerSkillTrigger(() => slashSkillsRef.current, {
-      emptySearchResultsText: skillEmptyText,
+      emptySearchResultsText: '没有匹配的技能或命令',
       getDiagnostics: () => skillsDiagnosticsRef.current
     }),
-    [skillEmptyText]
+    []
   )
   const fileTrigger = useMemo(
     () => createComposerFileTrigger(() => currentProject),
@@ -718,7 +707,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   }
 
   const handleSlashButton = () => {
-    if (skillsEntryState.disabled) return
     requestAnimationFrame(() => {
       const handle = composerInputHandleRef.current
       const editable = composerBoxRef.current?.querySelector<HTMLElement>('[contenteditable="true"]')
@@ -1191,8 +1179,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                     supportsVision={supportsVision}
                     onSelectImage={() => fileInputRef.current?.click()}
                     onSelectSkills={handleSlashButton}
-                    skillsDisabled={skillsEntryState.disabled}
-                    skillsDisabledReason={skillsEntryState.reason}
                   />
                   {currentSession && (
                     <PermissionModeButton

@@ -42,7 +42,8 @@ export async function requestSubagentResume(opts: {
     })
     if (result.accepted === false) {
       const r = result.rejection
-      return { ok: false, rejection: `父会话拒绝接收（${r.reason}: ${r.skillName}）` }
+      const detail = 'skillName' in r ? `${r.reason}: ${r.skillName}` : r.message
+      return { ok: false, rejection: `父会话拒绝接收（${detail}）` }
     }
     return { ok: true }
   } catch (err) {

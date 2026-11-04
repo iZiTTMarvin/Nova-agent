@@ -53,12 +53,15 @@ describe('Composer：ChatComposerInput 权威', () => {
   })
 })
 
-describe('Composer：/ trigger 菜单宽度封顶', () => {
-  it('astryx-trigger-menu 有 max-width，避免长描述撑破边界', () => {
-    const triggerCss = readFileSync(
-      new URL('../../../src/renderer/features/skills/composerSkillTrigger.css', import.meta.url),
-      'utf8'
+describe('Composer：trigger 菜单钉在 composer 盒上沿', () => {
+  it('菜单层接管官方锚点定位，宽度跟随盒上几何变量', () => {
+    expect(composerShellCss).toMatch(
+      /\[popover\]:has\(\.astryx-trigger-menu\)[\s\S]*?position-area:\s*none/
     )
-    expect(triggerCss).toMatch(/\.astryx-trigger-menu\s*\{[^}]*max-width:/)
+    expect(composerShellCss).toMatch(/width:\s*var\(--trigger-menu-width/)
+  })
+
+  it('astryx-trigger-menu 有 max-width，避免长描述撑破边界', () => {
+    expect(composerShellCss).toMatch(/\.astryx-trigger-menu\s*\{[^}]*max-width:/)
   })
 })

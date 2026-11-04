@@ -27,9 +27,6 @@ interface ModeSwitchProps {
   supportsVision?: boolean
   onSelectImage?: () => void
   onSelectSkills?: () => void
-  /** 技能目录不可用时禁用「技能与命令」项，原因由调用方按快照给出 */
-  skillsDisabled?: boolean
-  skillsDisabledReason?: string
 }
 
 interface ModeMenuItemProps {
@@ -73,9 +70,7 @@ const ModeMenuItem: React.FC<ModeMenuItemProps> = ({
 export const ModeSwitch: React.FC<ModeSwitchProps> = ({
   supportsVision = false,
   onSelectImage,
-  onSelectSkills,
-  skillsDisabled = false,
-  skillsDisabledReason
+  onSelectSkills
 }) => {
   const currentMode = useSettingsStore(state => state.currentMode)
   const setMode = useSettingsStore(state => state.setMode)
@@ -193,8 +188,6 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
               <ModeMenuItem
                 icon={<SparklesIcon size={14} />}
                 label="技能与命令"
-                description={skillsDisabled ? skillsDisabledReason : undefined}
-                isDisabled={skillsDisabled}
                 onClick={() => {
                   setIsOpen(false)
                   onSelectSkills()

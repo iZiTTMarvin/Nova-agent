@@ -51,6 +51,25 @@ describe('TurnDispatcher 产品路径（handled）', () => {
     })
   })
 
+  it('compact route → 传递 abortSignal，并以真实执行结果完成 handled 轮次', async () => {
+    const controller = new AbortController()
+    const runner = vi.fn(async (_abortSignal?: AbortSignal) => ({ summary: '上下文已压缩' }))
+    const dispatcher = new TurnDispatcher({ compactRunner: runner })
+
+    const outcome = await dispatcher.dispatch(
+      '/compact',
+      { kind: 'compact' },
+      dispatchCtx({ abortSignal: controller.signal })
+    )
+
+    expect(runner).toHaveBeenCalledWith(controller.signal)
+    expect(outcome).toEqual({
+      kind: 'handled',
+      assistantSummary: '上下文已压缩',
+      outcome: { status: 'completed' }
+    })
+  })
+
   it('fork 失败保留结构化终态，不再把摘要当成成功', async () => {
     const dispatcher = new TurnDispatcher({
       skillForkRunner: async () => ({ status: 'failed', success: false, summary: '子代理执行出错' })
@@ -76,7 +95,9 @@ describe('TurnDispatcher 产品路径（handled）', () => {
 describe('TurnDispatcher 执行器抛错原样传播', () => {
   it.each([
     ['skill_fork', new TurnDispatcher({ skillForkRunner: async () => { throw new Error('fork boom') } }),
-      { kind: 'skill_fork' as const, skill: forkSkill, args: '' }, 'fork boom']
+      { kind: 'skill_fork' as const, skill: forkSkill, args: '' }, 'fork boom'],
+    ['compact', new TurnDispatcher({ compactRunner: async () => { throw new Error('compact boom') } }),
+      { kind: 'compact' as const }, 'compact boom']
   ])('%s 执行器抛错 → dispatch 原样 reject，不吞错', async (_name, dispatcher, route, message) => {
     await expect(dispatcher.dispatch('x', route, dispatchCtx())).rejects.toThrow(message)
   })
@@ -84,8 +105,10 @@ describe('TurnDispatcher 执行器抛错原样传播', () => {
 
 describe('TurnDispatcher 能力断言（fail closed）', () => {
   it.each([
-    [{ kind: 'skill_fork' as const, skill: forkSkill, args: '' }, /skillForkRunner/]
-  ])('缺少执行器时 assertRouteExecutable 与 dispatch 都抛错', async (route, pattern) => {
+    [{ kind: 'skill_fork' as const, skill: forkSkill, args: '' }, /skillForkRunner/],
+    [{ kind: 'compact' as const }, /compactRunner/],
+    [{ kind: 'plan' as const }, /本地执行/]
+  ])('缺少执行能力时 assertRouteExecutable 与 dispatch 都抛错', async (route, pattern) => {
     const dispatcher = new TurnDispatcher({})
     expect(() => dispatcher.assertRouteExecutable(route)).toThrow(pattern)
     await expect(dispatcher.dispatch('x', route, dispatchCtx())).rejects.toThrow(pattern)
@@ -166,6 +189,20 @@ describe('TurnDispatcher agent 路径规范化（continue）', () => {
     if (outcome.kind === 'continue') {
       expect('grantedSkillRoot' in outcome).toBe(false)
     }
+  })
+
+  it('command：展开提示进入 agent，但不生成 skill assistantPrelude', async () => {
+    const dispatcher = new TurnDispatcher({})
+    const outcome = await dispatcher.dispatch(
+      '/init 附加要求',
+      { kind: 'agent', dispatch: { kind: 'command', userContent: '检查工作区\n附加要求' } },
+      dispatchCtx()
+    )
+    expect(outcome).toEqual({
+      kind: 'continue',
+      userContent: '检查工作区\n附加要求',
+      userText: '检查工作区\n附加要求'
+    })
   })
 
   it('slash_rejected：发送边界必须先过滤，执行器收到即 fail closed', async () => {

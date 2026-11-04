@@ -6,6 +6,14 @@
 
 压缩仍只要求待折叠的持久化前缀一致。执行中的技能输入、assistant 和 tool 尾部不必先归档；它们留在尾部，不阻塞旧前缀的提交。
 
+## 原生命令
+
+`src/shared/commands/index.ts` 是内置命令目录、参数校验与命令名称的唯一来源；Renderer 候选和主进程路由不得各自维护同名清单。当前 `/init` 进入普通 Agent 回合，用户消息保存原始 `/init` 文本，展开后的工作区初始化指令记录在 `userDelivery.deliveredInput`，不得写入 `skillInput` 或按当前文件重算历史。
+
+`/compact` 通过普通 durable run 调用压缩 Owner，复用同一会话的互斥、取消、执行 fence 与终态提交。当前命令原文先进入运行时上下文，再提交 `manual` 类型的压缩账本，避免持久化叶子与压缩前沿错位。无可折叠内容或不减少上下文时返回真实回执，不伪造压缩结果。
+
+`/plan` 直接请求 WorkspaceService 切换模式，不创建模型回合。用户命令与模式切换回执由 SessionStore 持久化，再通过 `messagesRevision` 驱动 Renderer 重新水合；本地完成结果不等待 run snapshot。
+
 ## 兼容与回退
 
 新写入的消息使用 `messageSchemaVersion: 5`。读取器继续接受无版本和版本 1–4 的历史消息。没有 `skillInput` 的记录保持原有回放行为，不猜测历史技能正文；该兼容行为只有在不再支持这些存量记录时才能删除。旧格式读取、完整事实往返和中断草稿恢复由 session 与 message facts 测试保护。

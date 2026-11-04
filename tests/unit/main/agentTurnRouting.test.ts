@@ -83,6 +83,7 @@ const codeGraphHost = vi.hoisted(() => ({
 const workspaceServiceMock = vi.hoisted(() => ({
   refreshAvailableSessions: vi.fn(),
   setMode: vi.fn(),
+  bumpMessagesRevision: vi.fn(),
   getState: vi.fn(() => ({
     currentSessionId: 'sess-1',
     currentProjectPath: '/tmp/ws'
@@ -274,6 +275,7 @@ function makeSession(
 const sessionStore = {
   isDraft: () => false,
   load: vi.fn(() => makeSession()),
+  loadMetadata: vi.fn(() => makeSession()),
   save: vi.fn(),
   getSessionsDir: vi.fn(() => '/tmp/sessions'),
   ensureCacheRoutingKey: vi.fn(() => null),
@@ -311,6 +313,7 @@ beforeEach(() => {
   deliveryCoordinator.reconcileDeliveryOnStartup.mockReturnValue([])
   deliveryCoordinator.listSessionsAwaitingRelay.mockReturnValue([])
   sessionStore.load.mockReturnValue(makeSession())
+  sessionStore.loadMetadata.mockReturnValue(makeSession())
 })
 
 describe('sendAgentMessage 路由行为级集成', () => {
@@ -407,6 +410,42 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(coordinator.startRun).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'agent' })
     )
+  })
+
+  it('/plan 复用模式 Owner，持久化回执且不启动模型回合', async () => {
+    registryHolder.current = createRegistry([])
+
+    const result = await sendAgentMessage({
+      sessionId: 'sess-1',
+      content: '/plan',
+      userMessageId: 'msg-plan-user'
+    }, deps)
+
+    expect(result).toEqual({ accepted: true, completion: { commandName: 'plan' } })
+    expect(workspaceServiceMock.setMode).toHaveBeenCalledWith({
+      sessionId: 'sess-1', mode: 'plan', source: 'user'
+    })
+    expect(sessionStore.appendMessageFast.mock.calls.map(([, message]) => message)).toEqual([
+      expect.objectContaining({ id: 'msg-plan-user', role: 'user', content: '/plan' }),
+      expect.objectContaining({ id: 'msg-plan-user_assistant', role: 'assistant', content: expect.stringContaining('规划模式') })
+    ])
+    expect(workspaceServiceMock.bumpMessagesRevision).toHaveBeenCalledOnce()
+    expect(preparedRuntimeInputs).toHaveLength(0)
+    expect(coordinator.startRun).not.toHaveBeenCalled()
+  })
+
+  it('原生命令参数错误在落盘和模型装配前拒绝', async () => {
+    registryHolder.current = createRegistry([])
+
+    const result = await sendAgentMessage({ sessionId: 'sess-1', content: '/compact 只保留代码' }, deps)
+
+    expect(result).toEqual({
+      accepted: false,
+      rejection: expect.objectContaining({ type: 'command', commandName: 'compact', reason: 'invalid_arguments' })
+    })
+    expect(sessionStore.appendMessageFast).not.toHaveBeenCalled()
+    expect(preparedRuntimeInputs).toHaveLength(0)
+    expect(coordinator.startRun).not.toHaveBeenCalled()
   })
 
   it('compose 图片消息 → 创建 agent run', async () => {

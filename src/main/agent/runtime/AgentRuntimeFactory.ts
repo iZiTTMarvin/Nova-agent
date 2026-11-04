@@ -610,6 +610,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
 
   // fork skill 与 task 共用 durable child 执行基座。
   agentLoop.setTurnDispatcher(new TurnDispatcher({
+    compactRunner: signal => agentLoop.compactNow(signal),
     skillForkRunner: (request) =>
       runSkillFork(
         {

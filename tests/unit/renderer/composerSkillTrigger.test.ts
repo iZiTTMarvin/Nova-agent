@@ -35,19 +35,46 @@ describe('createComposerSkillTrigger', () => {
     expect(selected).toEqual(skillComposerToken('frontend-design'))
   })
 
-  it('空查询返回可调用技能列表（bootstrap / search）', async () => {
+  it('空查询在 bootstrap 与 search 中均将命令排在技能前', async () => {
     const trigger = createComposerSkillTrigger(() => [FRONTEND_SKILL])
     const boot = await trigger.searchSource.bootstrap()
     const all = await trigger.searchSource.search('')
-    expect(boot).toHaveLength(1)
-    expect(all).toHaveLength(1)
-    expect(all[0]?.label).toBe('frontend-design')
+    const expected = ['compact', 'init', 'plan', 'frontend-design']
+    expect(boot.map(item => item.label)).toEqual(expected)
+    expect(all.map(item => item.label)).toEqual(expected)
   })
 
-  it('无匹配时返回空列表', async () => {
+  it('候选写入官方菜单分组字段，搜索时命令组仍整体排在技能组前', async () => {
+    // planner 前缀分高于 plan 命令（skill 同名加权），分组后顺序仍以命令组为先
+    const trigger = createComposerSkillTrigger(() => [
+      { ...FRONTEND_SKILL, name: 'planner' }
+    ])
+    const results = (await trigger.searchSource.search('plan')) as ComposerSkillItem[]
+    expect(results.map(item => item.label)).toEqual(['plan', 'planner'])
+    expect(results.map(item => item.auxiliaryData.group)).toEqual(['命令', '技能'])
+  })
+
+  it('无技能时仍返回三个命令，选中 /init 只序列化命令本身', async () => {
+    const trigger = createComposerSkillTrigger(() => [])
+    const boot = await trigger.searchSource.bootstrap()
+    const all = await trigger.searchSource.search('')
+    expect(boot.map(item => item.label)).toEqual(['compact', 'init', 'plan'])
+    expect(all.map(item => item.label)).toEqual(['compact', 'init', 'plan'])
+
+    const init = all.find(item => item.label === 'init') as ComposerSkillItem
+    expect(init.auxiliaryData.kind).toBe('command')
+    expect(trigger.onSelect(init)).toEqual({
+      value: '/init',
+      label: '/init',
+      variant: 'yellow'
+    })
+  })
+
+  it('无匹配时返回空列表，空态同时涵盖技能与命令', async () => {
     const trigger = createComposerSkillTrigger(() => [FRONTEND_SKILL])
     const results = await trigger.searchSource.search('zzz-no-match')
     expect(results).toEqual([])
+    expect(trigger.emptySearchResultsText).toBe('没有匹配的技能或命令')
   })
 
   it('character 为 /，菜单文案为技能与命令', () => {

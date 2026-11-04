@@ -85,7 +85,7 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
 
     options?.onAccepted?.()
     try {
-      // 2. 异步发起 IPC 消息发送给主进程，主进程开始 Agent 循环并通过事件反馈
+      // 2. 异步发起 IPC：普通消息进入 Agent 循环，本地命令由主进程直接完成
       const result = await window.api.invoke('send-message', {
         sessionId: activeSessionId,
         content,
@@ -114,6 +114,11 @@ export const createSendSlice: ChatSliceCreator<SendSliceState> = (set, get) => (
           return true
         }
         throw new Error(slashRejectionText(result.rejection))
+      }
+      if (result.completion) {
+        // 本地命令已完成，持久化消息由 messagesRevision 广播刷新，不等待 Agent 轮次。
+        set({ sendInFlight: false, activeAgentSessionId: null })
+        return true
       }
       // IPC 在轮次结束或入队后才返回 accepted，发送锁不能再依赖快照到达。
       if (isCurrentRequest()) set({ sendInFlight: false })

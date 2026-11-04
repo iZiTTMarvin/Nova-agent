@@ -16,7 +16,7 @@ import type { RepairKind as NativeArgsRepairKind } from './stream/nativeArgsRepa
 import type { ShapeRepairKind } from './execution/toolShapeValidation'
 import type { ToolProcessHandle } from '../tools/types'
 import type { PermissionManager } from '../permissions/PermissionManager'
-import type { CompactionLedger, TouchedFilesSnapshot } from '../sessions'
+import type { CompactionLedger, LedgerTrigger, TouchedFilesSnapshot } from '../sessions'
 import type { UserDeliveryFacts } from '../../shared/session/types'
 
 /**
@@ -250,7 +250,7 @@ export interface CompactionMeta {
   /** 压缩层级，等于账本 entries.length */
   compactionLevel: number
   /** 触发来源，仅诊断用 */
-  trigger: 'threshold' | 'overflow' | 'idle' | 'mid-turn'
+  trigger: LedgerTrigger
   /** 提交后的账本，供持久化；不含消息正文 */
   ledger: CompactionLedger
 }
