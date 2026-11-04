@@ -5,19 +5,6 @@ const DRAFT_INTERACTION_RUNTIME = String.raw`function () {
     var target = event.target;
     if (!target || typeof target.closest !== 'function') return;
 
-    var selected = target.closest('[data-viz-select]');
-    if (selected) {
-      var flow = selected.closest('.viz-draft-flow');
-      if (!flow) return;
-      var value = selected.getAttribute('data-viz-select') || '';
-      flow.querySelectorAll('[data-viz-select]').forEach(function (node) {
-        var active = node.getAttribute('data-viz-select') === value;
-        node.setAttribute('data-active', String(active));
-        node.setAttribute('aria-pressed', String(active));
-      });
-      return;
-    }
-
     var view = target.closest('[data-viz-view]');
     if (view) {
       var views = view.closest('.viz-draft-views');

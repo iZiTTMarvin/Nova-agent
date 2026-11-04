@@ -571,22 +571,22 @@ Main -> SessionStore: 校验并写入
         return {
           body: Number.parseFloat(getComputedStyle(document.body).fontSize),
           note: fontSize('.viz-draft-callout'),
-          auxiliary: fontSize('.viz-draft-flow__edges'),
+          auxiliary: fontSize('.viz-draft-flow__edge-label, .viz-draft-flow__edges'),
           buttonFont: fontSize('.viz-btn'),
           buttonHeight: button.height
         }
       })
       expect(metrics.body).toBeGreaterThanOrEqual(14)
       expect(metrics.note).toBeGreaterThanOrEqual(14)
-      expect(metrics.auxiliary).toBeGreaterThanOrEqual(12)
+      expect(metrics.auxiliary).toBeGreaterThanOrEqual(14)
       expect(metrics.buttonFont).toBeGreaterThanOrEqual(14)
       expect(metrics.buttonHeight).toBeGreaterThanOrEqual(36)
     }
 
     await capture('inline-before')
     await expectReadable(inlineFrame)
-    await inlineFrame.locator('[data-viz-select="SessionStore"]').click()
-    await expect(inlineFrame.locator('[data-viz-select="SessionStore"]')).toHaveAttribute('data-active', 'true')
+    await expect(inlineFrame.locator('.viz-draft-flow button')).toHaveCount(0)
+    await expect(inlineFrame.locator('[data-viz-node="Main"]')).toHaveAttribute('data-active', 'true')
 
     await card.getByRole('button', { name: '展开' }).click()
     const dialog = nova.page.getByRole('dialog', { name: '学习状态与操作' })
@@ -1008,7 +1008,8 @@ Main -> SessionStore: 校验并写入
 
     const inlineFrameEl = await settledFrame(card)
     const inlineFrame = await contentFrameOf(inlineFrameEl)
-    await expect(inlineFrame.locator('[data-viz-select="入口命令"]')).toHaveAttribute('data-active', 'true')
+    await expect(inlineFrame.locator('[data-viz-node="入口命令"]')).toHaveAttribute('data-active', 'true')
+    await expect(inlineFrame.locator('.viz-draft-flow button')).toHaveCount(0)
     const phaseRailOverflow = await inlineFrame.evaluate(() => {
       const rail = document.querySelector('.viz-lanes')
       return rail ? rail.scrollWidth - rail.clientWidth : null
@@ -1016,8 +1017,7 @@ Main -> SessionStore: 校验并写入
     expect(phaseRailOverflow).toBe(0)
 
     const requestsBeforeLocalInteract = nova.provider.requests.length
-    await inlineFrame.locator('[data-viz-select="沙箱执行工具"]').click()
-    await expect(inlineFrame.locator('[data-viz-select="沙箱执行工具"]')).toHaveAttribute('data-active', 'true')
+    await inlineFrame.locator('[data-viz-node="沙箱执行工具"]').click()
     expect(nova.provider.requests).toHaveLength(requestsBeforeLocalInteract)
 
     const inlineShotPath = path.join(screenshotDir, 'intelligent-ui-1-learning-composer-and-inline-16step.png')
@@ -1032,10 +1032,8 @@ Main -> SessionStore: 校验并写入
     await expect(dialog).toBeVisible()
     const modalFrameEl = dialog.getByTestId('visualization-frame')
     const modalFrame = await contentFrameOf(modalFrameEl)
-    await expect(modalFrame.locator('[data-viz-select="入口命令"]')).toHaveAttribute('data-active', 'true')
-
-    await modalFrame.locator('[data-viz-select="消息事务落盘"]').click()
-    await expect(modalFrame.locator('[data-viz-select="消息事务落盘"]')).toHaveAttribute('data-active', 'true')
+    await expect(modalFrame.locator('[data-viz-node="入口命令"]')).toHaveAttribute('data-active', 'true')
+    await expect(modalFrame.locator('.viz-draft-flow button')).toHaveCount(0)
 
     await expect
       .poll(async () => {

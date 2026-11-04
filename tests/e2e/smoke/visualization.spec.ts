@@ -156,7 +156,14 @@ const LEGACY_GRID_HTML = '<!doctype html><div class="viz-grid"><div class="viz-c
 
 const WIDTHS_DRAFT = `## 一条消息的流转
 
-先看真实节点，再看各方案的成本与延迟。
+先看单链路从提问到落盘的顺序，再看各层模块分工与方案取舍。
+
+\`\`\`flow direction=col selected=草稿编译
+调用参数 -> 标题归一化: 折叠空白、80 字符截断
+标题归一化 -> 草稿编译: title 或 draft 为空直接失败
+草稿编译 -> HTML 安全校验: 编译诊断为空才继续
+HTML 安全校验 -> 发布快照: sha256 就是地址
+\`\`\`
 
 \`\`\`flow selected=cli.ts
 @group 入口层
@@ -278,8 +285,9 @@ test('草稿在沙箱帧内按内容定高并随设置切换主题；局部选�
   await expect.poll(async () => (await readFrameTheme()).scheme).toBe('light')
   expect((await readFrameTheme()).bg).not.toBe(dark.bg)
 
-  await frame.locator('[data-viz-select="Preload"]').click()
-  await expect(frame.locator('[data-viz-select="Preload"]')).toHaveAttribute('data-active', 'true')
+  await expect(frame.locator('.viz-draft-flow button')).toHaveCount(0)
+  await expect(frame.locator('[data-viz-node="CLI"]')).toHaveAttribute('data-active', 'true')
+  await frame.locator('[data-viz-node="Preload"]').click()
   await frame.locator('[data-viz-ask]').first().evaluate((button: HTMLButtonElement) => button.click())
   expect(nova.provider.requests).toHaveLength(requestsAfterTurn)
 
@@ -698,7 +706,31 @@ test('五档帧宽与深浅主题下，阶段条、步骤、分层模块、详�
   await expect(nova.page.getByText('NOVA_E2E_VIZ_WIDTHS_DONE', { exact: false })).toBeVisible()
   await learn.settle()
 
-  const expectLaneGeometry = async (target: Frame): Promise<void> => {
+  const expectFlowAndLaneGeometry = async (target: Frame): Promise<void> => {
+    const chainMetrics = await target.locator('.viz-draft-flow[data-flow-layout="chain"]').evaluate(flow => {
+      const flowRect = flow.getBoundingClientRect()
+      const nodes = [...flow.querySelectorAll('.viz-draft-flow__steps .viz-draft-flow__node')]
+      const rects = nodes.map(node => node.getBoundingClientRect())
+      const widths = rects.map(rect => rect.width)
+      const centerDeltas = rects.map(rect => Math.abs((rect.left + rect.right - flowRect.left - flowRect.right) / 2))
+      const strictlyVertical = rects.slice(1).every((rect, index) => rect.top >= rects[index].bottom - 1)
+      const edgeFontSizes = [...flow.querySelectorAll('.viz-draft-flow__edge-label')].map(el =>
+        Number.parseFloat(getComputedStyle(el).fontSize)
+      )
+      return {
+        buttonCount: flow.querySelectorAll('button').length,
+        widthDelta: Math.max(...widths) - Math.min(...widths),
+        centerDeltas,
+        strictlyVertical,
+        minEdgeFontSize: Math.min(...edgeFontSizes)
+      }
+    })
+    expect(chainMetrics.buttonCount).toBe(0)
+    expect(chainMetrics.strictlyVertical).toBe(true)
+    expect(chainMetrics.widthDelta).toBeLessThanOrEqual(1)
+    expect(chainMetrics.minEdgeFontSize).toBeGreaterThanOrEqual(14)
+    for (const delta of chainMetrics.centerDeltas) expect(delta).toBeLessThanOrEqual(1)
+
     const metrics = await target.locator('.viz-lanes').evaluate(root => {
       const nodes = [...root.querySelectorAll('.viz-lane-nodes > .viz-node')]
       const widths = nodes.map(node => node.getBoundingClientRect().width)
@@ -747,7 +779,7 @@ test('五档帧宽与深浅主题下，阶段条、步骤、分层模块、详�
       }, width)
       await expect.poll(() => frame.evaluate(() => window.innerWidth)).toBe(width)
       expect(await horizontalOverflow(frame)).toEqual([])
-      await expectLaneGeometry(frame)
+      await expectFlowAndLaneGeometry(frame)
       if (width === 380) await expect(frame.locator('.viz-table thead')).toBeHidden()
       const name = `${theme}-${width}`
       const file = path.join(shotDir, `${name}.png`)

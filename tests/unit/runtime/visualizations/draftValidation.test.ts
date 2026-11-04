@@ -20,7 +20,9 @@ describe('草稿与快照发布校验的契约', () => {
       seed = (seed * 1664525 + 1013904223) >>> 0
       const value = texts[seed % texts.length]
       const blocks = [
-        `flow\n${value} -> 终点: 说明`,
+        `flow direction=col selected=终点\n${value} -> 中间节点: 第一步说明\n中间节点 -> 终点: 第二步说明`,
+        `flow direction=row\n${value} -> 分支甲: 条件一\n${value} -> 分支乙: 条件二\n分支甲 -> 汇合: 路径一\n分支乙 -> 汇合: 路径二`,
+        `flow\n@group 第一阶段\n${value}\n中间节点\n@group 第二阶段\n终点\n${value} -> 中间节点: 分组内\n中间节点 -> 终点: 跨阶段`,
         `sequence\n${value} -> 终点: 返回`,
         `tree\n${value}\n  子节点`,
         `timeline\n开始 | ${value} | 说明`,

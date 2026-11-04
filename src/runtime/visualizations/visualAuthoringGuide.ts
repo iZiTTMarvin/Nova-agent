@@ -8,11 +8,11 @@ const DRAFT_GUIDE = `## Full visual (present_visualization)
 Write one declarative draft, not HTML. Use it for a multi-panel explanation; use openui for small widgets and parameter simulations. Nova owns layout, theme, safe interactions and snapshots.
 
 Draft shape
-- \`## Panel title\` starts a panel. Plain lines are paragraphs; \`- item\` or \`1. item\` are lists. One teaching idea per panel.
+- \`## Panel title\` starts a panel. Plain lines are paragraphs; \`- item\` or \`1. item\` are lists. One teaching idea per panel; open each panel with 1–2 plain lines that explain the idea before its diagram or table.
 - Fence components as shown below, with optional \`name=value\` attributes (quote multiword values). No enclosing draft fence or extra closing fences. No HTML, SVG, CSS, URLs, colors, JavaScript, expressions or layout instructions.
 
 Components
-- \`flow direction=col|row selected=Node\`: one \`A -> B: edge note\` per line. Keep an ungrouped flow to at most 8 nodes; split longer chains into separate flows or use \`@group Group name\` followed by node names to declare lanes.
+- \`flow direction=col|row selected=Node\`: one \`A -> B: edge note\` per line (default \`direction=col\` stacks steps top-to-bottom). Keep an ungrouped flow to at most 8 nodes; split longer chains into separate flows or use \`@group Group name\` followed by node names to declare lanes.
 - \`sequence\`: \`A -> B: sync\`, \`A ->> B: async\`, \`A --> B: return\`.
 - \`tree\`: two spaces per depth level. \`timeline current=Stage\`: \`Stage | Event | optional detail\`.
 - \`comparison\`: a pipe table with 2–4 columns, a header and data rows; outer pipes and Markdown separator rows are allowed. A standard Markdown table directly inside a panel also becomes a comparison. For fixed views use \`views=Before,After,Changes\` and separate tables with \`---\`.
@@ -25,6 +25,8 @@ Components
 Example:
 ~~~draft
 ## 请求如何到达主进程
+
+界面不直接访问主进程资源，每次提问都按下面两步跨过进程边界：
 
 \`\`\`flow direction=col
 Renderer -> Preload: 用户提问

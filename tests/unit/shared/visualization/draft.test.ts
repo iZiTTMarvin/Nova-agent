@@ -94,13 +94,47 @@ describe('compileVisualizationDraft', () => {
     expect(first.html).toContain('data-label="直读数据库"')
   })
 
-  it('flow 分组按声明归属节点，边不会把节点复制到最后一组', () => {
+  it('flow 单链路渲染为静态纵向节点与相邻连线说明，不生成无用途按钮或重复边列表', () => {
+    const html = ok(`## 正常路径：从 title/draft 到快照 URI\n\n\`\`\`flow direction=col selected=草稿编译\n调用参数 -> 标题归一化: 折叠空白、80 字符截断\n标题归一化 -> 草稿编译: title 或 draft 为空直接失败\n草稿编译 -> HTML 安全校验: 编译诊断为空才继续\nHTML 安全校验 -> 副作用 fencing: 外链与联网全部拦下\n副作用 fencing -> 发布快照: 已取消或代际失效则抛错\n发布快照 -> 原子写盘: sha256 就是地址\n原子写盘 -> 返回 JSON 结果: presented / title / uri / bytes\n\`\`\``)
+    expect(html).toContain('data-direction="col"')
+    expect(html).toContain('data-flow-layout="chain"')
+    expect(html).toContain('viz-draft-flow__steps')
+    expect(html).not.toContain('viz-draft-flow__edges')
+    expect(html).not.toContain('data-viz-select')
+    expect(html).not.toContain('<button')
+    expect(html).not.toContain('<script>')
+    expect(html.match(/class="viz-node viz-draft-flow__node"/g)).toHaveLength(8)
+    expect(html.match(/class="viz-draft-flow__connector"/g)).toHaveLength(7)
+    expect(html).toContain('data-viz-node="草稿编译" data-active="true"')
+    expect(html.indexOf('调用参数')).toBeLessThan(html.indexOf('折叠空白、80 字符截断'))
+    expect(html.indexOf('折叠空白、80 字符截断')).toBeLessThan(html.indexOf('标题归一化'))
+  })
+
+  it('flow 分支、汇合与环保留真实有向关系，不伪造单链且不遗漏或重复节点与边', () => {
+    const branchMerge = ok(`## 分支汇合\n\n\`\`\`flow direction=col\n请求入口 -> 命中缓存: 已缓存\n请求入口 -> 查询数据库: 未命中\n命中缓存 -> 返回响应: 4 ms\n查询数据库 -> 返回响应: 38 ms\n\`\`\``)
+    expect(branchMerge).toContain('data-flow-layout="graph"')
+    expect(branchMerge).not.toContain('viz-draft-flow__steps')
+    expect(branchMerge).not.toContain('<button')
+    expect(branchMerge.match(/data-viz-node=/g)).toHaveLength(4)
+    expect(branchMerge.match(/class="viz-draft-flow__edge-item"/g)).toHaveLength(4)
+    expect(branchMerge).toContain('已缓存')
+    expect(branchMerge).toContain('38 ms')
+
+    const cycle = ok(`## 重试环\n\n\`\`\`flow direction=row\n草稿编译 -> 安全校验: 产物 HTML\n安全校验 -> 草稿编译: 违规打回\n安全校验 -> 快照发布: 通过\n\`\`\``)
+    expect(cycle).toContain('data-direction="row"')
+    expect(cycle).toContain('data-flow-layout="graph"')
+    expect(cycle.match(/data-viz-node=/g)).toHaveLength(3)
+    expect(cycle.match(/class="viz-draft-flow__edge-item"/g)).toHaveLength(3)
+  })
+
+  it('flow 分组按声明归属静态节点，边不会把节点复制到最后一组', () => {
     const html = ok(`## 分层\n\n\`\`\`flow selected=Main\n@group 入口层\nCLI\nPreload\n@group 主进程\nMain\nSessionStore\nCLI -> Preload: 提问\nPreload -> Main: invoke\nMain -> SessionStore: 写入\n\`\`\``)
     const lanes = html.match(/<div class="viz-lane">/g) ?? []
     expect(lanes).toHaveLength(2)
     expect(html.indexOf('入口层')).toBeLessThan(html.indexOf('主进程'))
-    expect(html.match(/data-viz-select="Main"/g)).toHaveLength(1)
-    expect(html).toContain('data-viz-select="Main" data-active="true"')
+    expect(html).not.toContain('<button')
+    expect(html.match(/data-viz-node="Main"/g)).toHaveLength(1)
+    expect(html).toContain('data-viz-node="Main" data-active="true"')
   })
 
   it('未分组长流程在草稿行给出拆分建议，分组流程不受平铺上限影响', () => {

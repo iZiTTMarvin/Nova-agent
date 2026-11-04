@@ -20,7 +20,7 @@ export function renderVisualizationPanels(panels: readonly DraftPanel[]): Render
   const html = panels.map((panel, panelIndex) => {
     const blocks = panel.blocks.map((block, blockIndex) => {
       const rendered = renderBlock(block, `p${panelIndex + 1}b${blockIndex + 1}`, issues)
-      if (block.type === 'component' && ['flow', 'ask', 'remark', 'comparison'].includes(block.kind)) interactive = true
+      if (block.type === 'component' && ['ask', 'remark', 'comparison'].includes(block.kind)) interactive = true
       return rendered
     }).join('')
     return `<section class="viz-draft-panel" data-source-line="${panel.line}"><h2 class="viz-draft-panel__title">${text(panel.title)}</h2>${blocks}</section>`
@@ -130,18 +130,102 @@ function renderFlow(block: Extract<DraftBlock, { type: 'component' }>, context: 
   if (edges.length > DRAFT_LIMITS.edges) context.issues.push(issue(block.bodyLine, null, 'too-many-edges', `最多 ${DRAFT_LIMITS.edges} 条边。`, null))
   if (selected && !nodeSet.has(selected)) context.issues.push(issue(block.line, null, 'unknown-selected-node', 'selected 必须是一个已声明节点。', null))
 
-  const nodeHtml = (node: string): string => {
-    const index = nodes.indexOf(node)
-    return `<button type="button" class="viz-node viz-draft-flow__node" data-viz-select="${attr(node)}" data-active="${node === selected ? 'true' : 'false'}" aria-pressed="${node === selected ? 'true' : 'false'}"><span class="viz-node-step">${index + 1}</span><span>${text(node)}</span></button>`
+  const nodeHtml = (node: string, stepIndex = nodes.indexOf(node)): string => {
+    const active = node === selected ? 'true' : 'false'
+    return `<div class="viz-node viz-draft-flow__node" data-viz-node="${attr(node)}" data-active="${active}"><span class="viz-node-step">${stepIndex + 1}</span><span class="viz-draft-flow__node-title">${text(node)}</span></div>`
   }
-  const groupedNodes = groups.map(group => `<div class="viz-lane"><span class="viz-lane-label">${text(group.name)}</span><div class="viz-lane-nodes">${group.nodes.map(nodeHtml).join('')}</div></div>`).join('')
+  const chain = !groups.length ? resolveSingleChain(nodes, edges) : null
+  if (chain) {
+    const arrow = direction === 'row' ? '→' : '↓'
+    const stepsHtml = chain.nodes.map((node, index) => {
+      const edge = chain.edges[index]
+      const connector = edge
+        ? `<div class="viz-draft-flow__connector" data-source-line="${edge.line}"><span class="viz-draft-arrow" aria-hidden="true">${arrow}</span>${edge.label ? `<span class="viz-draft-flow__edge-label">${text(edge.label)}</span>` : ''}</div>`
+        : ''
+      return `<li class="viz-draft-flow__step">${nodeHtml(node, index)}${connector}</li>`
+    }).join('')
+    return `<div class="viz-draft-flow" data-direction="${direction}" data-flow-layout="chain" data-source-line="${block.line}"><ol class="viz-draft-flow__steps">${stepsHtml}</ol></div>`
+  }
+
+  const groupedNodes = groups.map(group => `<div class="viz-lane"><span class="viz-lane-label">${text(group.name)}</span><div class="viz-lane-nodes">${group.nodes.map(node => nodeHtml(node)).join('')}</div></div>`).join('')
   const groupedSet = new Set(groups.flatMap(group => group.nodes))
   const ungrouped = nodes.filter(node => !groupedSet.has(node))
+  const ranks = buildFlowRanks(nodes, edges)
+  const rankArrow = direction === 'row' ? '→' : '↓'
+  const ranksHtml = ranks.map((rank, index) => {
+    const row = `<div class="viz-draft-flow__rank">${rank.map(node => nodeHtml(node)).join('')}</div>`
+    const divider = index < ranks.length - 1 ? `<div class="viz-draft-flow__rank-arrow" aria-hidden="true">${rankArrow}</div>` : ''
+    return `${row}${divider}`
+  }).join('')
   const nodeSection = groups.length
-    ? `<div class="viz-lanes">${groupedNodes}${ungrouped.length ? `<div class="viz-lane"><span class="viz-lane-label">其他节点</span><div class="viz-lane-nodes">${ungrouped.map(nodeHtml).join('')}</div></div>` : ''}</div>`
-    : `<div class="viz-draft-flow__nodes">${nodes.map(nodeHtml).join('')}</div>`
-  const edgeHtml = edges.map(edge => `<li data-source-line="${edge.line}"><span>${text(edge.from)}</span><span class="viz-draft-arrow" aria-hidden="true">→</span><span>${text(edge.to)}</span>${edge.label ? `<small>${text(edge.label)}</small>` : ''}</li>`).join('')
-  return `<div class="viz-draft-flow" data-direction="${direction}" data-source-line="${block.line}">${nodeSection}<ol class="viz-draft-flow__edges">${edgeHtml}</ol></div>`
+    ? `<div class="viz-lanes">${groupedNodes}${ungrouped.length ? `<div class="viz-lane"><span class="viz-lane-label">其他节点</span><div class="viz-lane-nodes">${ungrouped.map(node => nodeHtml(node)).join('')}</div></div>` : ''}</div>`
+    : `<div class="viz-draft-flow__nodes">${ranksHtml}</div>`
+  const edgeHtml = edges.map(edge => `<li class="viz-draft-flow__edge-item" data-source-line="${edge.line}"><span class="viz-draft-flow__edge-route"><strong class="viz-draft-flow__edge-from">${text(edge.from)}</strong><span class="viz-draft-arrow" aria-hidden="true">→</span><strong class="viz-draft-flow__edge-to">${text(edge.to)}</strong></span>${edge.label ? `<span class="viz-draft-flow__edge-label">${text(edge.label)}</span>` : ''}</li>`).join('')
+  const layout = groups.length ? 'lanes' : 'graph'
+  return `<div class="viz-draft-flow" data-direction="${direction}" data-flow-layout="${layout}" data-source-line="${block.line}">${nodeSection}<ol class="viz-draft-flow__edges">${edgeHtml}</ol></div>`
+}
+
+interface FlowEdge {
+  readonly from: string
+  readonly to: string
+  readonly label: string
+  readonly line: number
+}
+
+/** 仅当所有节点与有向边恰好构成一条无分支、无汇合、无环的单链时，才按节点与箭头串联渲染 */
+function resolveSingleChain(nodes: readonly string[], edges: readonly FlowEdge[]): { nodes: readonly string[]; edges: readonly FlowEdge[] } | null {
+  if (nodes.length < 2 || edges.length !== nodes.length - 1) return null
+  const outgoing = new Map<string, FlowEdge>()
+  const inDegree = new Map<string, number>()
+  for (const edge of edges) {
+    if (edge.from === edge.to || outgoing.has(edge.from)) return null
+    const nextIn = (inDegree.get(edge.to) ?? 0) + 1
+    if (nextIn > 1) return null
+    outgoing.set(edge.from, edge)
+    inDegree.set(edge.to, nextIn)
+  }
+  const starts = nodes.filter(node => (inDegree.get(node) ?? 0) === 0)
+  if (starts.length !== 1) return null
+  const orderedNodes: string[] = [starts[0]]
+  const orderedEdges: FlowEdge[] = []
+  const visited = new Set<string>([starts[0]])
+  let current = starts[0]
+  while (outgoing.has(current)) {
+    const edge = outgoing.get(current)!
+    if (visited.has(edge.to)) return null
+    visited.add(edge.to)
+    orderedEdges.push(edge)
+    orderedNodes.push(edge.to)
+    current = edge.to
+  }
+  if (orderedNodes.length !== nodes.length || orderedEdges.length !== edges.length) return null
+  return { nodes: orderedNodes, edges: orderedEdges }
+}
+
+/** 按首次出现顺序的前向有向边计算稳定分层，分支节点同层并排，回边不产生死循环 */
+function buildFlowRanks(nodes: readonly string[], edges: readonly FlowEdge[]): string[][] {
+  const indexByNode = new Map(nodes.map((node, index) => [node, index]))
+  const rankByNode = new Map(nodes.map(node => [node, 0]))
+  for (let pass = 0; pass < nodes.length - 1; pass += 1) {
+    let changed = false
+    for (const edge of edges) {
+      if ((indexByNode.get(edge.from) ?? 0) >= (indexByNode.get(edge.to) ?? 0)) continue
+      const nextRank = (rankByNode.get(edge.from) ?? 0) + 1
+      if (nextRank > (rankByNode.get(edge.to) ?? 0)) {
+        rankByNode.set(edge.to, nextRank)
+        changed = true
+      }
+    }
+    if (!changed) break
+  }
+  const buckets = new Map<number, string[]>()
+  for (const node of nodes) {
+    const rank = rankByNode.get(node) ?? 0
+    const bucket = buckets.get(rank) ?? []
+    bucket.push(node)
+    buckets.set(rank, bucket)
+  }
+  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([, bucket]) => bucket)
 }
 
 function renderSequence(block: Extract<DraftBlock, { type: 'component' }>, context: ComponentContext): string {
