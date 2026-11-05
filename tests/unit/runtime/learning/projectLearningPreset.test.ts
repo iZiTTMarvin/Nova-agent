@@ -19,10 +19,11 @@ describe('projectLearningPreset', () => {
     expect(projectLearningPreset.roleMaterial).toContain('```' + LEARNING_SUGGESTIONS_FENCE)
   })
 
-  it('讲解先说用途再讲运行顺序，例子不出知识点的场景', () => {
+  it('讲解直接回应当前问题，再讲用途与运行顺序，例子不出知识点的场景', () => {
     const material = projectLearningPreset.roleMaterial
-    // 教学主线：用途先行、按运行顺序铺开、直觉建立后才给术语名
-    expect(material).toContain('先说它是干什么的')
+    // 教学主线：直接回应、说清用途、按运行顺序铺开，术语不能代替机制解释
+    expect(material).toContain('先直接回应用户当前的问题')
+    expect(material).toContain('说清它是干什么的')
     expect(material).toContain('一步一步发生了什么')
     expect(material).toContain('不默认有背景知识')
     // 例子必须取自机制自身的真实场景，拒绝无关类比
@@ -52,5 +53,15 @@ describe('projectLearningPreset', () => {
     expect(rules).not.toContain('Delegate')
     expect(rules).not.toContain('bash')
     expect(rules).not.toContain('run the relevant tests')
+  })
+
+  it('默认讲清机制与设计，代码位置和出处只在需要时展开', () => {
+    const material = projectLearningPreset.roleMaterial
+    expect(material).toContain('不出现代码块、文件行号或实现函数串')
+    expect(material).toContain('用户明确问「在哪里实现」')
+    expect(material).toContain('默认只用于核对事实与后续定位')
+    expect(material).toContain('每段代码都要说明它负责什么、输入输出和关键判断')
+    expect(material).not.toContain('1–3 个关键代码位置')
+    expect(material).not.toContain('没有大纲时直接写 path:line')
   })
 })

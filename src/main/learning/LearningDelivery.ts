@@ -46,7 +46,7 @@ async function describeAction(
       const title = (await ports.loadTopicTitle(action.nodeId).catch(() => null))?.trim()
       return {
         displayText: title ? `开始学习「${title}」` : FALLBACK_TOPIC_DISPLAY,
-        modelInput: `[学习选点] 用户想学${title ? `「${title}」` : '一个新主题'}。先读 learning_context 拿到这个主题的内容，再开讲；主题有流程、分层或取舍时按【可视化讲解】把它画出来。本轮不要主动出题。`
+        modelInput: `[学习选点] 用户想学${title ? `「${title}」` : '一个新主题'}。先读 learning_context 拿到这个主题的内容，再按【讲解节奏】开讲；默认不展示代码位置，是否配图按【可视化讲解】判断。本轮不要主动出题。`
       }
     }
     case 'hint':
@@ -57,7 +57,7 @@ async function describeAction(
     case 'explain':
       return {
         displayText: '直接讲讲吧',
-        modelInput: '[学习讲解] 用户想直接听讲解。读 learning_context 里的当前问题，把答案和原因讲清楚并给出代码位置；机制涉及多步流转或可调参数时按【可视化讲解】配图；这次不算用户自己答出来的，讲完不要再出新题。'
+        modelInput: '[学习讲解] 用户想直接听讲解。读 learning_context 里的当前问题，把答案、运行过程和原因讲清楚；默认不展示代码位置，用户明确要求看实现时再展开；是否配图按【可视化讲解】判断；这次不算用户自己答出来的，讲完不要再出新题。'
       }
     case 'skip':
       return {
@@ -77,7 +77,7 @@ async function describeAction(
         displayText: title ? `帮我搞懂「${title}」里的这次改动` : '帮我搞懂这次改动',
         modelInput: [
           '[学习改动] 用户想搞懂开发会话里这次改动背后的机制和设计考虑。',
-          '先说它解决了什么实际问题，再讲数据和控制怎么流转、为什么这样取舍；不要复述测试或验证过程。先读当前代码核对，再给出关键代码位置。',
+          '先说它解决了什么实际问题，再讲数据和控制怎么流转、为什么这样取舍；不要复述测试或验证过程。先读当前代码核对，默认不展示代码位置；用户追问实现或证据时再给最少必要的位置。',
           change.files.length > 0 ? `改动文件:\n${change.files.map(file => `- ${file}`).join('\n')}` : '改动文件: 无',
           '开发回复摘录（只用于定位，可能已过时）:',
           change.excerpt || '（无）'

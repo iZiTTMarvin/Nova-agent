@@ -49,6 +49,15 @@ describe('visualAuthoringGuide', () => {
     }
   })
 
+  it('概念示例不默认嵌入源码，实现字段仍按需保留', () => {
+    const guide = renderLearnVisualGuide()
+    for (const example of openUiBlocks(guide)) {
+      expect(example).not.toContain('code:')
+      expect(example).not.toContain('file:')
+    }
+    expect(guide).toContain('code and file only for implementation/source requests')
+  })
+
   it('整页示例通过 shared 编译器，说明不再教学原始 HTML', () => {
     const guide = renderLearnVisualGuide()
     const examples = [...guide.matchAll(/~~~draft\n([\s\S]*?)\n~~~/g)].map(match => match[1])
