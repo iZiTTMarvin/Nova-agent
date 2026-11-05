@@ -45,7 +45,7 @@
   }
 }
 
-/* 顶行：窗口拖拽区 + 品牌 Logo + 检索 + 折叠按钮。不做底部分隔线，靠表面色差分层。 */
+/* 顶行占位条：给常驻 chrome 让位并承担侧栏范围内的窗口拖拽，无可见内容。 */
 .sidebar-topbar {
   display: flex;
   align-items: center;
@@ -53,6 +53,26 @@
   height: 38px;
   padding: 0 10px 0 14px;
   flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+/*
+ * 常驻 chrome（品牌 + 侧栏开合按钮）：钉在视口左上角，不参与侧栏收放。
+ * 组件挂在 AppShell 之外（#root 直属），fixed 锚定视口——DOM 与定位都越过
+ * 栏位插槽的 overflow:clip 与 0 宽裁切，折叠态下拖拽区豁免（no-drag）不会被裁成空；
+ * 侧栏展开时浮在壳顶行占位条之上，折叠时浮在内容区顶栏拖拽带之上，
+ * 两者底色同为 --surface-sidebar，视觉无缝。
+ */
+.sidebar-chrome {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 10px 0 14px;
   -webkit-app-region: drag;
   user-select: none;
 }

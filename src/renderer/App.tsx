@@ -8,7 +8,7 @@ import { useChatStore } from './stores/useChatStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
-import { Sidebar } from './components/Sidebar'
+import { Sidebar, SidebarChrome } from './components/Sidebar'
 import { type ChatPanelHandle } from './features/chat/ChatPanel'
 import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
 import { BrowserWorkspaceBody } from './features/browser/BrowserWorkspaceBody'
@@ -374,6 +374,12 @@ function App(): React.ReactNode {
         {/* 确认框按需打开，原生 top layer 中后开的叠在设置模态之上 */}
         <ConfirmDialogHost />
       </AppShell>
+      {/*
+        常驻窗口 chrome：挂在 AppShell 之外（#root 直属、fixed 钉左上），
+        DOM 上不被任何栏位插槽裁切——留在侧栏插槽内时，折叠态插槽 0 宽会把
+        按钮的 app-region 豁免区裁成空，导致看得见却点不到。
+      */}
+      <SidebarChrome />
     </Theme>
   )
 }

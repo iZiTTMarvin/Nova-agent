@@ -19,7 +19,6 @@ import { BrowserPanel } from '../browser/BrowserPanel'
 import { InspectorLauncher, InspectorOpenMenu } from './InspectorLauncher'
 import { InspectorResizeHandle } from './InspectorResizeHandle'
 import { InspectorTabStrip, inspectorTabId, inspectorTabPanelId } from './InspectorTabStrip'
-import { InspectorToggleButton } from './InspectorToggleButton'
 import { useInspectorResize } from './useInspectorResize'
 import { useInspectorSlide } from './useInspectorSlide'
 import { useInspectorTabs } from './useInspectorTabs'
@@ -181,7 +180,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
                   <InspectorTabStrip tabs={tabs} activeTab={activeTab} onActivate={activate} onClose={close} />
                   <div className="inspector-panel__actions">
                     <InspectorOpenMenu />
-                    <InspectorToggleButton className="inspector-icon-btn inspector-icon-btn--active" />
                   </div>
                 </header>
                 {tabs.length === 0 ? (

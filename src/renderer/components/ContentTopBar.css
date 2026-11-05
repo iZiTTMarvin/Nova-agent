@@ -25,17 +25,6 @@
   z-index: 0;
 }
 
-.content-topbar__left {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding-left: 12px;
-  position: relative;
-  z-index: 1;
-  -webkit-app-region: no-drag;
-  min-width: 0;
-}
-
 .content-topbar__right {
   display: flex;
   align-items: center;
@@ -43,6 +32,8 @@
   z-index: 1;
   -webkit-app-region: no-drag;
   height: 100%;
+  /* 本行左半是空拖拽区，右块靠 auto margin 钉在右缘，不靠 space-between */
+  margin-left: auto;
 }
 
 .content-topbar__btn {
@@ -72,11 +63,6 @@
 
 .content-topbar__btn:active {
   opacity: 0.8;
-}
-
-/* 侧栏展开入口（仅折叠时出现）：不用窗口按钮的 46px 宽，贴近面包屑 */
-.content-topbar__btn--sidebar {
-  width: 32px;
 }
 
 .content-topbar__menu-ellipsis {
@@ -110,20 +96,19 @@
   min-width: 0;
 }
 
+/* 常驻面板开合按钮压在玻璃体右上角：本行内容须停在它的左侧 */
+.glass-header__right {
+  padding-right: 34px;
+}
+
 .glass-header__status-slot {
   display: flex;
   align-items: center;
 }
 
-.glass-header__left .content-topbar__btn,
-.glass-header__right .glass-header__panel-btn {
+.glass-header__left .content-topbar__btn {
   width: 28px;
   height: 28px;
   border-radius: 6px;
   flex-shrink: 0;
-}
-
-.glass-header__right .glass-header__panel-btn.content-topbar__btn--active {
-  background-color: var(--surface-muted);
-  color: var(--text-primary);
 }

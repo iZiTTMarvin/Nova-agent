@@ -3,18 +3,16 @@ import {
   MinimizeIcon,
   MaximizeIcon,
   RestoreIcon,
-  CloseIcon,
-  PanelLeftIcon
+  CloseIcon
 } from './Icons'
 import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
-import { selectInspectorOpenForSurface, useLayoutStore } from '../stores/useLayoutStore'
+import { useLayoutStore } from '../stores/useLayoutStore'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useChatStore } from '../stores/useChatStore'
 import { SessionBreadcrumb } from '../features/chat/SessionBreadcrumb'
 import { exportSession } from '../features/chat/exportSession'
 import { confirmDialog } from '../features/confirm/confirmDialog'
-import { InspectorToggleButton } from '../features/inspector/InspectorToggleButton'
 import './ContentTopBar.css'
 
 /** 窗口控制按钮组：最小化 / 最大化或还原 / 关闭（Windows 风格，固定在内容区顶行右侧） */
@@ -143,12 +141,10 @@ const SessionMoreMenu: React.FC = () => {
 
 /**
  * 内容区壳顶栏（包裹带）：
- * 仅承担窗口拖拽、侧栏折叠时的展开入口与窗口控制；会话头见 GlassSessionHeader。
+ * 仅承担窗口拖拽与窗口控制；会话头见 GlassSessionHeader。
  * 左右两栏各自通顶、中间由 AppShell 分界，不再有贯穿整个窗口的顶栏。
  */
 export const ContentTopBar: React.FC = () => {
-  const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (!(event.metaKey || event.ctrlKey) || !event.altKey || event.shiftKey) return
@@ -165,20 +161,6 @@ export const ContentTopBar: React.FC = () => {
   return (
     <div className="content-topbar">
       <div className="content-topbar__drag-area" />
-      <div className="content-topbar__left">
-        {/* 侧栏折叠时其顶行随侧栏一起隐藏，这里补一个展开入口 */}
-        {sidebarCollapsed && (
-          <IconButton
-            label="展开会话导航"
-            icon={<PanelLeftIcon size={16} />}
-            variant="ghost"
-            size="sm"
-            className="content-topbar__btn content-topbar__btn--sidebar"
-            onClick={() => useLayoutStore.getState().toggleSidebar()}
-            tooltip="展开会话导航"
-          />
-        )}
-      </div>
       <div className="content-topbar__right">
         <WindowControls />
       </div>
@@ -188,12 +170,9 @@ export const ContentTopBar: React.FC = () => {
 
 /**
  * 玻璃顶行会话头：会话路径面包屑 + 当前会话 ⋯ 菜单，只覆盖聊天主区。
- * 面板收起时在此提供展开入口；展开后开合按钮移到面板自己的顶栏。
+ * 面板开合按钮是常驻钉在右上角的独立实例，不随面板开合进出本行。
  */
 export const GlassSessionHeader: React.FC = () => {
-  const isLearnSurface = useWorkspaceStore(state => state.currentMode === 'learn' && state.currentSessionId !== null)
-  const inspectorOpen = useLayoutStore(state => selectInspectorOpenForSurface(state, isLearnSurface))
-
   return (
     <div className="glass-header">
       <div className="glass-header__left">
@@ -202,9 +181,6 @@ export const GlassSessionHeader: React.FC = () => {
       </div>
       <div className="glass-header__right">
         <div className="glass-header__status-slot" />
-        {!inspectorOpen && (
-          <InspectorToggleButton className="content-topbar__btn glass-header__panel-btn" />
-        )}
       </div>
     </div>
   )

@@ -296,7 +296,7 @@
   z-index: auto;
 }
 
-.subagent-detail-popover--inspector .subagent-detail-popover__header { padding: 14px; align-items: flex-start; flex-wrap: wrap; }
+.subagent-detail-popover--inspector .subagent-detail-popover__header { padding: 14px 44px 14px 14px; align-items: flex-start; flex-wrap: wrap; }
 .subagent-detail-popover--inspector .subagent-detail-popover__body { padding: 16px; gap: 22px; min-height: 0; }
 .subagent-detail-popover--inspector .subagent-detail-popover__name { font-size: 14px; }
 .subagent-detail-popover--inspector .subagent-detail-popover__section-title,

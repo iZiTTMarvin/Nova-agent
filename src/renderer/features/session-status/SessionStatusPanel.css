@@ -70,6 +70,11 @@ html[data-pane-dragging='true'] .chat-workspace {
   width: 100%;
 }
 
+/* 常驻开合按钮压在面板右上角：详情头部右缘为它让位 */
+.session-status-rail--inspector .session-status__header {
+  padding-right: 44px;
+}
+
 /* 零文档流占位锚点：纯悬浮于聊天区右上角，不挤压主容器本身 */
 .session-status-rail {
   --status-wide: 0;

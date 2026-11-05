@@ -3,6 +3,7 @@
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ContentTopBar, GlassSessionHeader } from '../../../src/renderer/components/ContentTopBar'
+import { InspectorToggleButton } from '../../../src/renderer/features/inspector/InspectorToggleButton'
 import {
   resetLayoutStoreForTests,
   useLayoutStore
@@ -47,18 +48,27 @@ describe('ContentTopBar 布局开关', () => {
     })
   })
 
-  it('会话头在面板收起时提供展开按钮，展开后按钮让位给面板自己的顶栏', () => {
-    const renderer = renderDom(<GlassSessionHeader />)
-    const selector = '[aria-label="审阅、文件与浏览面板"]'
+  it('面板开合按钮是常驻单实例：点击开合、自身始终在场且 aria-expanded 同步', () => {
+    const renderer = renderDom(<InspectorToggleButton />)
+    const selector = 'button[aria-label="审阅、文件与浏览面板"]'
     const btn = renderer.container.querySelector<HTMLButtonElement>(selector)
     expect(btn).not.toBeNull()
+    expect(btn?.getAttribute('aria-expanded')).toBe('false')
 
     act(() => {
       btn?.click()
     })
-
     expect(useLayoutStore.getState().inspectorOpen).toBe(true)
-    expect(renderer.container.querySelector(selector)).toBeNull()
+    // 同一元素不换实例：不存在“收起态一个、展开态另一个”的互斥渲染
+    const openBtn = renderer.container.querySelector<HTMLButtonElement>(selector)
+    expect(openBtn).toBe(btn)
+    expect(openBtn?.getAttribute('aria-expanded')).toBe('true')
+
+    act(() => {
+      openBtn?.click()
+    })
+    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    expect(renderer.container.querySelector(selector)).toBe(btn)
     renderer.unmount()
   })
 
@@ -84,29 +94,21 @@ describe('ContentTopBar 布局开关', () => {
     renderer.unmount()
   })
 
-  it('侧栏展开时不渲染侧栏开关（开关在侧栏自己的顶行里）', () => {
+  it('内容区顶栏不渲染侧栏开关：开关是窗口左上角常驻实例，开合两态均不在此行', () => {
     const renderer = renderDom(<ContentTopBar />)
     expect(
       renderer.container.querySelector('[aria-label="展开会话导航"]')
     ).toBeNull()
-    renderer.unmount()
-  })
+    expect(
+      renderer.container.querySelector('[aria-label="折叠会话导航"]')
+    ).toBeNull()
 
-  it('侧栏折叠后顶行出现展开入口，点击调 toggleSidebar', () => {
     act(() => {
       useLayoutStore.getState().toggleSidebar()
     })
-    const renderer = renderDom(<ContentTopBar />)
-    const btn = renderer.container.querySelector<HTMLButtonElement>(
-      '[aria-label="展开会话导航"]'
-    )
-    expect(btn).not.toBeNull()
-
-    act(() => {
-      btn?.click()
-    })
-
-    expect(useLayoutStore.getState().sidebarCollapsed).toBe(false)
+    expect(
+      renderer.container.querySelector('[aria-label="展开会话导航"]')
+    ).toBeNull()
     renderer.unmount()
   })
 })

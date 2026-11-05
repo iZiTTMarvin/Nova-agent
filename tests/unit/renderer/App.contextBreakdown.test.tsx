@@ -28,7 +28,8 @@ vi.mock('@astryxdesign/core/theme', async importOriginal => {
 })
 
 vi.mock('../../../src/renderer/components/Sidebar', () => ({
-  Sidebar: () => null
+  Sidebar: () => null,
+  SidebarChrome: () => null
 }))
 
 vi.mock('../../../src/renderer/features/chat/ChatPanel', () => ({
@@ -50,7 +51,8 @@ vi.mock('../../../src/renderer/features/inspector/InspectorPanel', () => ({
 
 vi.mock('../../../src/renderer/components/Icons', () => ({
   NovaLogo: () => null,
-  SettingsIcon: () => null
+  SettingsIcon: () => null,
+  PanelRightIcon: () => null
 }))
 
 vi.mock('../../../src/renderer/lib/streamDeltaBuffer', () => ({

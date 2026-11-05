@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode, type RefObject } from 'react'
 import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
 import { InspectorPanel } from '../inspector/InspectorPanel'
+import { InspectorToggleButton } from '../inspector/InspectorToggleButton'
 import { GlassSessionHeader } from '../../components/ContentTopBar'
 import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { useChatStore } from '../../stores/useChatStore'
@@ -51,6 +52,8 @@ export function BrowserWorkspaceBody(props: {
       <InspectorPanel
         onRequestSupplement={() => chatPanelRef.current?.requestSupplement()}
       />
+      {/* 开合按钮常驻右上角、盖在面板之上：面板从它下方滑出，开合两态同坐标 */}
+      <InspectorToggleButton className="inspector-pinned-toggle" />
     </div>
   )
 }

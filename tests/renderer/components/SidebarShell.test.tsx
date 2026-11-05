@@ -2,7 +2,7 @@
 
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { Sidebar } from '../../../src/renderer/components/Sidebar'
+import { Sidebar, SidebarChrome } from '../../../src/renderer/components/Sidebar'
 import {
   resetLayoutStoreForTests,
   useLayoutStore
@@ -34,7 +34,10 @@ vi.mock('@astryxdesign/core/Button', () => ({
 }))
 
 vi.mock('@astryxdesign/core/IconButton', () => ({
-  IconButton: () => null
+  // 保留 aria-label / onClick / className 的最小按钮：开合按钮的可点性是本文件断言语义的一部分
+  IconButton: ({ label, className, onClick }: { label: string; className?: string; onClick?: () => void }) => (
+    <button type="button" aria-label={label} className={className} onClick={onClick} />
+  )
 }))
 
 vi.mock('@astryxdesign/core/TextInput', () => ({
@@ -75,6 +78,33 @@ describe('Sidebar 折叠壳', () => {
     expect(shell?.getAttribute('aria-hidden')).toBe('true')
     expect(shell?.className).toContain('sidebar-shell--collapsed')
     expect(shell?.querySelector('.sidebar-shell__resize-handle')).toBeNull()
+    renderer.unmount()
+  })
+
+  it('开合按钮钉在壳外常驻层：折叠后同一实例仍在原位可再展开', () => {
+    // 与 App 装配一致：chrome 是 Sidebar 之外的兄弟层，DOM 上不受壳与插槽裁切影响
+    const renderer = renderDom(<><Sidebar /><SidebarChrome /></>)
+    const shell = renderer.container.querySelector<HTMLElement>('.sidebar-shell')!
+    const chrome = renderer.container.querySelector<HTMLElement>('.sidebar-chrome')
+    expect(chrome).not.toBeNull()
+    // 按钮不在壳内：壳宽归零 + aria-hidden 都不影响它
+    expect(shell.contains(chrome)).toBe(false)
+
+    const toggle = chrome!.querySelector<HTMLButtonElement>('[aria-label="折叠会话导航"]')
+    expect(toggle).not.toBeNull()
+    act(() => {
+      toggle!.click()
+    })
+    expect(useLayoutStore.getState().sidebarCollapsed).toBe(true)
+
+    // 折叠后常驻层不换实例；同一按钮换 label 继续提供展开入口
+    expect(renderer.container.querySelector('.sidebar-chrome')).toBe(chrome)
+    const expand = chrome!.querySelector<HTMLButtonElement>('[aria-label="展开会话导航"]')
+    expect(expand).toBe(toggle)
+    act(() => {
+      expand!.click()
+    })
+    expect(useLayoutStore.getState().sidebarCollapsed).toBe(false)
     renderer.unmount()
   })
 

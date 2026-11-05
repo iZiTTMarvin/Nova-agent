@@ -166,11 +166,20 @@
   flex-shrink: 0;
 }
 
+/* 开合按钮常驻右上角、盖在面板之上；各表面顶栏右缘为它留出同一位置 */
+.inspector-pinned-toggle {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 20;
+}
+
 .inspector-panel__actions {
   display: flex;
   align-items: center;
   flex-shrink: 0;
   gap: 2px;
+  margin-right: 34px;
 }
 
 /* 面板首页：启动器在可用空间内垂直居中，内容过高时退回顶对齐滚动 */
@@ -271,7 +280,7 @@
   align-items: center;
   gap: 8px;
   min-height: 52px;
-  padding: 7px 9px 7px 14px;
+  padding: 7px 44px 7px 14px;
   border-bottom: 1px solid var(--border-cream);
   background: var(--bg-card);
 }

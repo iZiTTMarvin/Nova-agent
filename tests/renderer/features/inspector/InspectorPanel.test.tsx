@@ -216,17 +216,14 @@ describe('InspectorPanel', () => {
     renderer.unmount()
   })
 
-  it('展开态顶栏的开合按钮可收起面板', () => {
+  it('面板顶栏不内嵌开合按钮：开合由钉在玻璃体右上角的常驻实例承担', () => {
     const renderer = renderDom(<InspectorPanel />)
     act(() => {
       useLayoutStore.getState().toggleInspector()
     })
-    act(() => {
-      renderer.container
-        .querySelector<HTMLButtonElement>('[aria-label="审阅、文件与浏览面板"]')
-        ?.click()
-    })
-    expect(useLayoutStore.getState().inspectorOpen).toBe(false)
+    const aside = renderer.container.querySelector<HTMLElement>('.inspector-panel')!
+    // 常驻按钮在壳层渲染，面板内不得再出现第二实例
+    expect(aside.querySelector('[aria-label="审阅、文件与浏览面板"]')).toBeNull()
     renderer.unmount()
   })
 

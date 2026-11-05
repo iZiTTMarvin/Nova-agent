@@ -1395,23 +1395,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           transform: sidebarCollapsed ? 'translateX(-100%)' : 'none'
         }}
       >
-        {/* 顶行：窗口拖拽区 + 品牌 Logo + 折叠按钮 */}
-        <div className="sidebar-topbar">
-          <div className="sidebar-topbar__brand">
-            <NovaLogo size={24} />
-          </div>
-          <div className="sidebar-topbar__actions flex items-center gap-1">
-            <IconButton
-              label="折叠会话导航"
-              icon={<PanelLeftIcon size={16} />}
-              variant="ghost"
-              size="sm"
-              className="sidebar-topbar__toggle"
-              tooltip="折叠会话导航"
-              onClick={() => useLayoutStore.getState().toggleSidebar()}
-            />
-          </div>
-        </div>
+        {/* 顶行占位：给常驻 chrome 让位并承担侧栏范围内的窗口拖拽 */}
+        <div className="sidebar-topbar" />
 
         {/* 导航区域 */}
         <div className="sidebar-shell__nav">
@@ -1430,6 +1415,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
           aria-label="调整会话导航宽度（双击恢复默认宽度，拖拽中按 Escape 还原）"
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * 常驻窗口 chrome：品牌与侧栏开合按钮钉在窗口左上角，不参与侧栏收放。
+ * 由 App 挂在 AppShell 之外（#root 直属）：DOM 上不被任何栏位插槽裁切——
+ * Electron 的 app-region 命中按 DOM 祖先计算，留在侧栏插槽内时折叠后
+ * no-drag 豁免区随 0 宽裁切成空，按钮看得见却点不到。
+ */
+export const SidebarChrome: React.FC = () => {
+  const sidebarCollapsed = useLayoutStore(state => state.sidebarCollapsed)
+
+  return (
+    <div className="sidebar-chrome">
+      <div className="sidebar-topbar__brand">
+        <NovaLogo size={24} />
+      </div>
+      <div className="sidebar-topbar__actions">
+        <IconButton
+          label={sidebarCollapsed ? '展开会话导航' : '折叠会话导航'}
+          icon={<PanelLeftIcon size={16} />}
+          variant="ghost"
+          size="sm"
+          className="sidebar-topbar__toggle"
+          tooltip={sidebarCollapsed ? '展开会话导航' : '折叠会话导航'}
+          onClick={() => useLayoutStore.getState().toggleSidebar()}
+        />
+      </div>
     </div>
   )
 }

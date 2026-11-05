@@ -23,6 +23,8 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
+  /* 常驻面板开合按钮的定位锚点 */
+  position: relative;
   /* 玻璃面：浮于包裹壳一阶，右/下仅露一线壳色窄边使四角圆成立；边界由色阶与圆角承担 */
   margin: 0 4px 4px 0;
   background-color: var(--surface-glass);
