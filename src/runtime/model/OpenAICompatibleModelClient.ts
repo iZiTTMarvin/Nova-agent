@@ -243,7 +243,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
 
   measureRequest(messages: ChatMessage[], tools?: ToolDefinition[], options?: ChatOptions): RequestBudgetMeasurement {
     const route = resolveRouteIdentity({ ...this.config, reasoningEffort: this.effectiveReasoningEffort(options), cacheProfile: this.cacheProfile.id })
-    return measureRequestBudget(this.buildRequestBody(messages, tools, options), route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow))
+    return measureRequestBudget(this.buildRequestBody(messages, tools, options), route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow), undefined, this.cacheProfile)
   }
 
   async *chat(
@@ -723,7 +723,7 @@ export class OpenAICompatibleModelClient implements ModelClient {
     if (rawUsage) {
       const usage = normalizeUsage(rawUsage)
       if (usage) {
-        yield { type: 'usage', usage, requestBudget: measureRequestBudget(body, route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow), serializationMemo), source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
+        yield { type: 'usage', usage, requestBudget: measureRequestBudget(body, route.routeId, resolveContextWindow(this.config.modelId, this.config.contextWindow), serializationMemo, this.cacheProfile), source: { logicalRequestId, physicalAttemptId, routeId: route.routeId, purpose } }
       }
     }
 

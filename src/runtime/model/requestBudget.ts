@@ -3,6 +3,7 @@ import type { UsageSource } from '../../shared/model/types'
 import { estimateTextTokens } from '../../shared/model/tokenEstimate'
 import { estimateImageBlockBudgetTokens } from './imageTokens'
 import type { RequestSerializationMemo } from './requestFingerprint'
+import { canonicalizeForCacheComparison } from './cacheCanonicalize'
 
 export const REQUEST_ESTIMATOR_VERSION = 5
 
@@ -55,12 +56,17 @@ export function measureRequestBudget(
   body: Record<string, unknown>,
   routeId: string,
   contextWindow: number,
-  memo?: RequestSerializationMemo
+  memo?: RequestSerializationMemo,
+  cacheProfile?: Parameters<typeof canonicalizeForCacheComparison>[1]
 ): RequestBudgetMeasurement {
   if (!Array.isArray(body.messages)) throw new Error('Request messages must be an array')
-  const messageJsons = memo?.messageJsons
+  const prefixBody = cacheProfile === undefined
+    ? body
+    : canonicalizeForCacheComparison(body, cacheProfile)
+  if (!Array.isArray(prefixBody.messages)) throw new Error('Request messages must be an array')
+  const messageJsons = prefixBody === body ? memo?.messageJsons : undefined
   let prefix = ''
-  const prefixHashes = body.messages.map((message: unknown, index: number) => {
+  const prefixHashes = prefixBody.messages.map((message: unknown, index: number) => {
     const messageJson = messageJsons?.[index] ?? JSON.stringify(message)
     if (messageJsons !== undefined) messageJsons[index] = messageJson
     prefix = hash(prefix + messageJson)

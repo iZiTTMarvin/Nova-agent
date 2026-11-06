@@ -91,7 +91,7 @@ export function resetRequestSerializationMemo(memo: RequestSerializationMemo): v
  * 在最终请求体上计算 WireSnapshot。
  *
  * semantic 侧经 canonicalizeForCacheComparison 规范化：
- * - Anthropic 档案剥离滚动 cache_control marker（避免假前缀 diff），
+ * - Anthropic 档案剥离滚动 cache_control marker 并还原单文本块形状（避免假前缀 diff），
  *   走深拷贝路径，不使用 memo（拷贝消息与原消息非同一引用）
  * - 其余档案 canonical 即原 body，可用 memo 复用 wire 字符串与逐消息 JSON
  *

@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { canonicalizeForCacheComparison } from '../../../../src/runtime/model/cacheCanonicalize'
+import { applyCacheMarkers } from '../../../../src/runtime/model/messageFormat'
 
 /** 构造 Anthropic 风格的请求体：system + 2 条消息带 cache_control + tools 末尾带 cache_control */
 function buildAnthropicBody(opts?: { extraMessage?: boolean }): Record<string, unknown> {
@@ -65,6 +66,30 @@ describe('canonicalizeForCacheComparison', () => {
 
     expect(JSON.stringify(canonN.tools)).toBe(JSON.stringify(canonN1.tools))
     expect(JSON.stringify(canonN.tools)).toContain('cache_control')
+  })
+
+  it('真实滚动标记移走后，单条文本消息仍保持规范化前缀', () => {
+    const base: Record<string, unknown>[] = [
+      { role: 'system', content: '稳定系统提示' },
+      { role: 'user', content: '第一轮问题' },
+      { role: 'assistant', content: '第一轮回答' }
+    ]
+    const previous = applyCacheMarkers(base, 'cache_control')
+    const next = applyCacheMarkers(
+      [...base, { role: 'user', content: '第二轮问题' }],
+      'cache_control'
+    )
+
+    const previousMessages = canonicalizeForCacheComparison(
+      { model: 'claude-sonnet-4', messages: previous },
+      'anthropic'
+    ).messages as unknown[]
+    const nextMessages = canonicalizeForCacheComparison(
+      { model: 'claude-sonnet-4', messages: next },
+      'anthropic'
+    ).messages as unknown[]
+
+    expect(nextMessages.slice(0, previousMessages.length)).toEqual(previousMessages)
   })
 
   it('Anthropic 档案：消息 cache_control 被剥离，工具锚点保留', () => {

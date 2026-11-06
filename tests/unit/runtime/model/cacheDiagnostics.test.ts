@@ -61,6 +61,25 @@ describe('CacheDiagnostics wire 级 first-diff', () => {
     expect(result.firstDiffIndex).toBeNull()
   })
 
+  it('首轮没有复用基线时不误报，后续纯追加仍检查实际命中', () => {
+    const diag = new CacheDiagnostics()
+    const first = makeSnapshot({ messages: [seg('first', { bytes: 4000 })] })
+    diag.recordWireSnapshot(first)
+
+    const firstUsage = diag.correlateUsage(0)
+    expect(firstUsage.cacheBreakDetected).toBe(false)
+    expect(firstUsage.expectedReuseTokens).toBe(1000)
+
+    diag.recordWireSnapshot(makeSnapshot({
+      messages: [seg('first', { bytes: 4000 }), seg('second', { bytes: 4000 })],
+      exactBodyHash: 'exact-2'
+    }))
+    const nextUsage = diag.correlateUsage(0)
+    expect(nextUsage.cacheBreakDetected).toBe(true)
+    expect(nextUsage.reason).toBe('expected_reuse_mismatch')
+    expect(nextUsage.expectedReuseTokens).toBe(1000)
+  })
+
   it('纯追加（前一次 messages 是后一次的前缀）不告警', () => {
     const diag = new CacheDiagnostics()
     diag.recordWireSnapshot(makeSnapshot({ messageKeys: ['h1', 'h2'] }))

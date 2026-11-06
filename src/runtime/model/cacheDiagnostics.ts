@@ -293,6 +293,7 @@ export class CacheDiagnostics {
     const ratio = expected > 0 ? delta / expected : 0
 
     if (
+      prefixDiff.previousMessageCount > 0 &&
       expected >= REUSE_MISMATCH_MIN_TOKENS &&
       delta > REUSE_MISMATCH_MIN_TOKENS &&
       ratio > REUSE_MISMATCH_RATIO

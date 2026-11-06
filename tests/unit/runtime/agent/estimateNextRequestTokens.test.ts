@@ -113,6 +113,29 @@ describe('同路由最终投影预算', () => {
     expect(result.estimatedTokens).toBe(390_000 + next.budgetUnits! - request.budgetUnits! + result.marginTokens)
     expect(restored.assessNextRequest(request).estimatedTokens).toBe(390_000)
   })
+  it('Anthropic 滚动缓存标记不改变预算前缀锚点', () => {
+    const anthropicConfig = {
+      ...config,
+      baseUrl: 'https://api.anthropic.com/v1',
+      modelId: 'claude-sonnet-4',
+      cacheProfile: 'anthropic' as const
+    }
+    const { service, pool } = setup(anthropicConfig)
+    const initial: ChatMessage[] = [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: 'first question' },
+      { role: 'assistant', content: 'first answer' }
+    ]
+    const before = pool.measureRequest(initial)
+    expect(service.observeMainRequest(1_000, before, source(before))).toBe(true)
+
+    const next = pool.measureRequest([...initial, { role: 'user', content: 'next question' }])
+    expect(next.prefixHashes.slice(0, before.prefixHashes.length)).toEqual(before.prefixHashes)
+    expect(service.assessNextRequest(next)).toMatchObject({
+      source: 'anchored-estimate',
+      reason: 'compatible-main-anchor'
+    })
+  })
   it('旧 route、旧 generation、摘要和旧 revision 不能覆盖 main 锚点', () => {
     const { service, pool, store, session, context, invalidate } = setup(), request = pool.measureRequest(messages)
     expect(service.observeMainRequest(390_000, request, source(request))).toBe(true)
