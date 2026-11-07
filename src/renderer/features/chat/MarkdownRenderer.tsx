@@ -9,19 +9,24 @@
  * 2. 块级渐进：sealed 块与终态用 complete 组件集（代码高亮、mermaid 图表、
  *    KaTeX 公式立即生效）；active tail 用 streaming 组件集（无高亮、图表占位）。
  *    公式在 tail 也渲染——KaTeX 便宜且有缓存，未闭合的数学定界符保持原文。
- * 3. 数学语法走转译路线（mathSyntax）：Astryx 段落文本吃反斜杠，LaTeX 源码
+ * 3. 代码块分层渲染：
+ *    - 无语言/纯文本围栏（plaintext/text/txt 等）隐藏冗余顶栏，改用右上角悬浮复制按钮，
+ *      且跳过语法分词，避免把普通文本中的数字、括号、斜杠误染色。
+ *    - 含 Unicode 制表符/框线图的代码块启用等宽网格校准（汉字锁定 2ch、框线与箭头锁定 1ch、
+ *      纵向框线脊柱自动对齐并收紧行高），消除中西文混排导致的框线断裂与错位。
+ * 4. 数学语法走转译路线（mathSyntax）：Astryx 段落文本吃反斜杠，LaTeX 源码
  *    必须转成 ```math 围栏 / `$...$` 行内代码才能保真到达渲染层。
- * 4. 链接保留 isSafeMarkdownHref 安全语义（unsafe → 纯文本）；
+ * 5. 链接保留 isSafeMarkdownHref 安全语义（unsafe → 纯文本）；
  *    autolink="gfm" 对齐原 remark-gfm 的裸 URL 自动链接行为。
  */
-import React, { useCallback, useRef } from 'react'
+import React, { useCallback, useMemo, useRef } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { Markdown } from '@astryxdesign/core/Markdown'
 import type { MarkdownComponents } from '@astryxdesign/core/Markdown'
 import { CopyIcon, CheckIcon } from '../../components/Icons'
 import { useCopyFeedback } from '../../hooks/useCopyFeedback'
 import { highlightLineCached } from '../../lib/highlightCache'
-import { highlightLine } from '../diff/syntaxHighlight'
+import { highlightLine, detectLanguage } from '../diff/syntaxHighlight'
 import { MarkdownLink } from './MarkdownLink'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
 import { advanceIncrementalMarkdownBoundary } from './incrementalMarkdown'
@@ -33,27 +38,324 @@ import { useInlineUiScope } from '../inline-ui/InlineUiScope'
 import { LEARNING_SUGGESTIONS_FENCE } from '../../../shared/learning/suggestions'
 import './MarkdownRenderer.css'
 
-const LANG_EXT_MAP: Record<string, string> = {
-  typescript: 'ts',
-  ts: 'ts',
-  javascript: 'js',
-  js: 'js',
-  tsx: 'tsx',
-  jsx: 'jsx',
-  bash: 'sh',
-  shell: 'sh',
-  sh: 'sh',
-  json: 'json',
-  md: 'md',
-  markdown: 'md',
-  css: 'css',
-  html: 'html'
+const PLAIN_FENCE_LANGUAGES = new Set([
+  '',
+  'plain',
+  'plaintext',
+  'text',
+  'txt',
+  'ascii',
+  'tree',
+  'log',
+  'output',
+  'raw'
+])
+
+/** 包含 Unicode 制表符（U+2500..U+257F）时启用框线图等宽网格模式 */
+const BOX_DRAWING_PATTERN = /[\u2500-\u257f]/
+
+/** CJK 表意文字与全角标点（终端/等宽网格中占 2ch） */
+const CJK_CHAR_RE = /[\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufe30-\ufe4f\uff01-\uff60\uffe0-\uffe6]/
+
+/** 框线图内需要锁宽度的三类片段：CJK 全角串（2ch/字）、制表符串（1ch/字）、单列箭头与几何符号（1ch） */
+const DIAGRAM_SEGMENT_RE = /([\u2e80-\u2eff\u2f00-\u2fdf\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\ufe30-\ufe4f\uff01-\uff60\uffe0-\uffe6]+|[\u2500-\u257f]+|[\u2190-\u21ff\u25a0-\u25ff])/g
+
+const CONNECTS_DOWN = new Set([
+  '│', '┃', '║', '┌', '┍', '┎', '┏', '┐', '┑', '┒', '┓',
+  '├', '┝', '┞', '┟', '┠', '┡', '┢', '┣', '┤', '┥', '┦', '┧', '┨', '┩', '┪', '┫',
+  '┬', '┭', '┮', '┯', '┰', '┱', '┲', '┳', '┼', '┽', '┾', '┿', '╀', '╁', '╂', '╃', '╄', '╅', '╆', '╇', '╈', '╉', '╊', '╋'
+])
+
+const CONNECTS_UP = new Set([
+  '│', '┃', '║', '└', '┕', '┖', '┗', '┘', '┙', '┚', '┛',
+  '├', '┝', '┞', '┟', '┠', '┡', '┢', '┣', '┤', '┥', '┦', '┧', '┨', '┩', '┪', '┫',
+  '┴', '┵', '┶', '┷', '┸', '┹', '┺', '┻', '┼', '┽', '┾', '┿', '╀', '╁', '╂', '╃', '╄', '╅', '╆', '╇', '╈', '╉', '╊', '╋'
+])
+
+const HORIZONTAL_BOX_CHARS = new Set(['─', '━', '═'])
+
+export function isPlainCodeLanguage(language: string | undefined): boolean {
+  const normalized = (language ?? '').trim().toLowerCase()
+  return PLAIN_FENCE_LANGUAGES.has(normalized)
 }
 
-function langToFakePath(language: string): string {
-  if (!language) return ''
-  const ext = LANG_EXT_MAP[language.toLowerCase()]
-  return ext ? `code.${ext}` : ''
+interface PadAdjustment {
+  start: number
+  end: number
+  widthCh: number
+}
+
+interface SpineCandidate {
+  lineIdx: number
+  charEndIdx: number
+  col: number
+  connectsUp: boolean
+  connectsDown: boolean
+  spaceStart: number
+  spaceEnd: number
+  spaceCols: number
+  postSpaceStart: number
+  postSpaceEnd: number
+  postSpaceCols: number
+  hasLeftText: boolean
+}
+
+/**
+ * 扫描多行框线图中的纵向连接符（┌/┐/┬ → │/├/┤/┼ → └/┘/┴），
+ * 当模型在中英混排时因列宽漏算导致同一条竖线出现 ±1..6 列抖动时，
+ * 通过调整连接符前方空白段的 CSS 宽度（不改动 textContent 字符）将竖线拉直。
+ */
+function computeDiagramSpineAdjustments(lines: string[]): Map<number, PadAdjustment[]> {
+  const result = new Map<number, PadAdjustment[]>()
+  if (lines.length < 2 || lines.length > 100) return result
+
+  const lineCandidates: SpineCandidate[][] = lines.map((line, lineIdx) => {
+    const candidates: SpineCandidate[] = []
+    let col = 0
+    let idx = 0
+
+    while (idx < line.length) {
+      const codePoint = line.codePointAt(idx)!
+      const ch = String.fromCodePoint(codePoint)
+      const charLen = ch.length
+      const width = CJK_CHAR_RE.test(ch) ? 2 : 1
+
+      if (CONNECTS_DOWN.has(ch) || CONNECTS_UP.has(ch)) {
+        let barStart = idx
+        while (barStart > 0 && HORIZONTAL_BOX_CHARS.has(line[barStart - 1])) {
+          barStart--
+        }
+        let spaceStart = barStart
+        while (spaceStart > 0 && line[spaceStart - 1] === ' ') {
+          spaceStart--
+        }
+
+        if (barStart > spaceStart) {
+          const leftSlice = line.slice(0, spaceStart)
+          const hasLeftText = /[^\s\u2500-\u257f]/.test(leftSlice)
+
+          // 记录连接符（及其右侧箭头如 ├──►）之后的连续空格，供右移时补偿缩减
+          let postBarEnd = idx + charLen
+          while (
+            postBarEnd < line.length &&
+            (HORIZONTAL_BOX_CHARS.has(line[postBarEnd]) || /[\u2190-\u21ff\u25a0-\u25ff]/.test(line[postBarEnd]))
+          ) {
+            postBarEnd++
+          }
+          let postSpaceEnd = postBarEnd
+          while (postSpaceEnd < line.length && line[postSpaceEnd] === ' ') {
+            postSpaceEnd++
+          }
+
+          candidates.push({
+            lineIdx,
+            charEndIdx: idx + charLen,
+            col,
+            connectsUp: CONNECTS_UP.has(ch),
+            connectsDown: CONNECTS_DOWN.has(ch),
+            spaceStart,
+            spaceEnd: barStart,
+            spaceCols: barStart - spaceStart,
+            postSpaceStart: postBarEnd,
+            postSpaceEnd,
+            postSpaceCols: postSpaceEnd - postBarEnd,
+            hasLeftText
+          })
+        }
+      }
+
+      col += width
+      idx += charLen
+    }
+
+    return candidates
+  })
+
+  const nextLink = new Map<SpineCandidate, SpineCandidate>()
+  const prevLink = new Map<SpineCandidate, SpineCandidate>()
+
+  for (let i = 0; i < lineCandidates.length - 1; i++) {
+    const downs = lineCandidates[i].filter(c => c.connectsDown)
+    const ups = lineCandidates[i + 1].filter(c => c.connectsUp)
+
+    for (const d of downs) {
+      let bestU: SpineCandidate | null = null
+      let bestDist = 7
+      for (const u of ups) {
+        const dist = Math.abs(d.col - u.col)
+        if (dist < bestDist) {
+          bestDist = dist
+          bestU = u
+        }
+      }
+      if (!bestU) continue
+
+      // 互为最近邻验证，防止目录树缩进阶梯误连
+      let reverseBestD: SpineCandidate | null = null
+      let reverseDist = 7
+      for (const d2 of downs) {
+        const dist = Math.abs(d2.col - bestU.col)
+        if (dist < reverseDist) {
+          reverseDist = dist
+          reverseBestD = d2
+        }
+      }
+
+      if (reverseBestD === d) {
+        nextLink.set(d, bestU)
+        prevLink.set(bestU, d)
+      }
+    }
+  }
+
+  const chains: SpineCandidate[][] = []
+  for (const row of lineCandidates) {
+    for (const cand of row) {
+      if (prevLink.has(cand) || !nextLink.has(cand)) continue
+      const chain: SpineCandidate[] = [cand]
+      let curr: SpineCandidate | undefined = nextLink.get(cand)
+      while (curr) {
+        chain.push(curr)
+        curr = nextLink.get(curr)
+      }
+      if (chain.length >= 2) {
+        chains.push(chain)
+      }
+    }
+  }
+
+  chains.sort(
+    (a, b) => Math.min(...a.map(c => c.col)) - Math.min(...b.map(c => c.col))
+  )
+
+  const lineShift = new Array<number>(lines.length).fill(0)
+
+  for (const chain of chains) {
+    if (!chain.some(c => c.hasLeftText)) continue
+    const effectiveCols = chain.map(c => c.col + lineShift[c.lineIdx])
+    const minCol = Math.min(...effectiveCols)
+    const maxCol = Math.max(...effectiveCols)
+    if (maxCol <= minCol || maxCol - minCol > 6) continue
+
+    for (const cand of chain) {
+      const currentCol = cand.col + lineShift[cand.lineIdx]
+      const delta = maxCol - currentCol
+      if (delta <= 0) continue
+
+      const list = result.get(cand.lineIdx) ?? []
+      list.push({
+        start: cand.spaceStart,
+        end: cand.spaceEnd,
+        widthCh: cand.spaceCols + delta
+      })
+
+      // 若连接符右侧还有跟进文本且空格充裕，缩减右侧空格以保持右侧文字列位置稳定
+      if (cand.postSpaceCols >= delta + 2 && cand.postSpaceEnd < lines[cand.lineIdx].length) {
+        list.push({
+          start: cand.postSpaceStart,
+          end: cand.postSpaceEnd,
+          widthCh: cand.postSpaceCols - delta
+        })
+      } else {
+        lineShift[cand.lineIdx] += delta
+      }
+
+      result.set(cand.lineIdx, list)
+    }
+  }
+
+  return result
+}
+
+function renderDiagramSlice(text: string, keyPrefix: string): React.ReactNode {
+  if (!text) return null
+  const nodes: React.ReactNode[] = []
+  let lastIndex = 0
+  let partIdx = 0
+
+  for (const match of text.matchAll(DIAGRAM_SEGMENT_RE)) {
+    const seg = match[0]
+    const index = match.index ?? 0
+    if (index > lastIndex) {
+      nodes.push(text.slice(lastIndex, index))
+    }
+
+    const firstChar = seg[0]
+    const codePoint = seg.codePointAt(0) ?? 0
+    const charCount = Array.from(seg).length
+
+    if (CJK_CHAR_RE.test(firstChar)) {
+      nodes.push(
+        <span
+          key={`${keyPrefix}-cjk-${partIdx++}`}
+          className="md-diagram-cjk"
+          style={{ width: `${charCount * 2}ch` }}
+        >
+          {seg}
+        </span>
+      )
+    } else if (codePoint >= 0x2500 && codePoint <= 0x257f) {
+      nodes.push(
+        <span
+          key={`${keyPrefix}-box-${partIdx++}`}
+          className="md-diagram-box"
+          style={{ width: `${charCount}ch` }}
+        >
+          {seg}
+        </span>
+      )
+    } else {
+      nodes.push(
+        <span key={`${keyPrefix}-sym-${partIdx++}`} className="md-diagram-sym">
+          {seg}
+        </span>
+      )
+    }
+
+    lastIndex = index + seg.length
+  }
+
+  if (lastIndex === 0) return text
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex))
+  }
+  return nodes
+}
+
+function renderDiagramLine(
+  line: string,
+  lineIdx: number,
+  pads: PadAdjustment[] | undefined
+): React.ReactNode {
+  if (!pads || pads.length === 0) {
+    return renderDiagramSlice(line, `L${lineIdx}`)
+  }
+
+  const sorted = [...pads].sort((a, b) => a.start - b.start)
+  const parts: React.ReactNode[] = []
+  let cursor = 0
+
+  for (let i = 0; i < sorted.length; i++) {
+    const pad = sorted[i]
+    if (pad.start > cursor) {
+      parts.push(renderDiagramSlice(line.slice(cursor, pad.start), `L${lineIdx}-s${i}`))
+    }
+    parts.push(
+      <span
+        key={`L${lineIdx}-pad-${i}`}
+        className="md-diagram-pad"
+        style={{ width: `${pad.widthCh}ch` }}
+      >
+        {line.slice(pad.start, pad.end)}
+      </span>
+    )
+    cursor = pad.end
+  }
+
+  if (cursor < line.length) {
+    parts.push(renderDiagramSlice(line.slice(cursor), `L${lineIdx}-tail`))
+  }
+  return parts
 }
 
 interface CodeBlockProps {
@@ -69,41 +371,60 @@ const CodeBlock: React.FC<CodeBlockProps> = ({ language, code, isStreaming = fal
     copy(code)
   }, [code, copy])
 
-  const fakePath = langToFakePath(language)
-  const lines = code.split('\n')
+  const normalizedLang = (language ?? '').trim().toLowerCase()
+  const isPlain = isPlainCodeLanguage(normalizedLang)
+  const canHighlight = !isPlain && detectLanguage(normalizedLang) !== 'plain'
+  const isDiagram = useMemo(() => BOX_DRAWING_PATTERN.test(code), [code])
+  const lines = useMemo(() => code.split('\n'), [code])
+  const spinePads = useMemo(
+    () => (isDiagram && !isStreaming ? computeDiagramSpineAdjustments(lines) : undefined),
+    [isDiagram, isStreaming, lines]
+  )
+
+  const copyButton = (
+    <Button
+      label={copied ? '已复制' : '复制'}
+      variant="ghost"
+      size="sm"
+      icon={
+        copied ? (
+          <span className={isDecaying ? 'copy-feedback-icon copy-feedback-icon--decaying' : 'copy-feedback-icon'}>
+            <CheckIcon size={12} />
+          </span>
+        ) : (
+          <CopyIcon size={12} />
+        )
+      }
+      className={isPlain ? 'md-code-block__copy md-code-block__copy--floating' : 'md-code-block__copy'}
+      onClick={handleCopy}
+      tooltip="复制代码"
+    />
+  )
 
   return (
-    <div className="md-code-block">
-      <div className="md-code-block__header">
-        <span className="md-code-block__lang">{language || 'text'}</span>
-        <Button
-          label={copied ? '已复制' : '复制'}
-          variant="ghost"
-          size="sm"
-          icon={
-            copied ? (
-              <span className={isDecaying ? 'copy-feedback-icon copy-feedback-icon--decaying' : 'copy-feedback-icon'}>
-                <CheckIcon size={12} />
-              </span>
-            ) : (
-              <CopyIcon size={12} />
-            )
-          }
-          className="md-code-block__copy"
-          onClick={handleCopy}
-          tooltip="复制代码"
-        />
-      </div>
-      <pre className="md-code-block__pre">
+    <div className={isPlain ? 'md-code-block md-code-block--plain' : 'md-code-block'}>
+      {isPlain ? (
+        copyButton
+      ) : (
+        <div className="md-code-block__header">
+          <span className="md-code-block__lang">{normalizedLang}</span>
+          {copyButton}
+        </div>
+      )}
+      <pre className={isDiagram ? 'md-code-block__pre md-code-block__pre--diagram' : 'md-code-block__pre'}>
         <code>
           {lines.map((line, idx) => (
             <React.Fragment key={idx}>
               {idx > 0 && '\n'}
-              {isStreaming ? line : highlightLineCached(line, fakePath, highlightLine).map((token, tIdx) => (
-                <span key={tIdx} className={`diff-token diff-token--${token.type}`}>
-                  {token.text}
-                </span>
-              ))}
+              {isStreaming || !canHighlight
+                ? isDiagram
+                  ? renderDiagramLine(line, idx, spinePads?.get(idx))
+                  : line
+                : highlightLineCached(line, normalizedLang, highlightLine).map((token, tIdx) => (
+                    <span key={tIdx} className={`diff-token diff-token--${token.type}`}>
+                      {isDiagram ? renderDiagramSlice(token.text, `L${idx}-T${tIdx}`) : token.text}
+                    </span>
+                  ))}
             </React.Fragment>
           ))}
         </code>

@@ -100,6 +100,7 @@
 
 /* ── 围栏代码块（羊皮纸暖底；字号/行高走 token）─────────────── */
 .md-code-block {
+  position: relative;
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-md);
@@ -151,6 +152,25 @@
   transform: scale(0.96);
 }
 
+/* 纯文本/无语言围栏省略顶栏，复制按钮改为右上角悬浮 */
+.md-code-block__copy--floating {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  background-color: color-mix(in srgb, var(--code-block-header-bg) 82%, transparent);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity var(--transition-fast), background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.md-code-block--plain:hover .md-code-block__copy--floating,
+.md-code-block--plain:focus-within .md-code-block__copy--floating,
+.md-code-block__copy--floating:focus-visible {
+  opacity: 1;
+}
+
+/* 阻断 .markdown-body 的 letter-spacing / kerning / 连字向下泄漏，确保等宽字符网格稳定 */
 .md-code-block__pre {
   margin: 0;
   padding: 12px 14px;
@@ -158,12 +178,54 @@
   font-family: var(--font-mono);
   font-size: var(--text-code-size);
   line-height: var(--text-code-leading);
+  letter-spacing: 0;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+  tab-size: 2;
   color: var(--code-block-text);
   white-space: pre;
 }
 
 .md-code-block__pre code {
   font-family: inherit;
+}
+
+/* 含盒绘符的框图收紧行高，使跨行竖线/树状分支连续不断裂 */
+.md-code-block__pre--diagram {
+  line-height: 1.22;
+}
+
+/* 锁定中文字串为严格 2ch/字，消除中日韩回退字体 (1em != 2ch) 的累积列宽漂移 */
+.md-diagram-cjk {
+  display: inline-block;
+  letter-spacing: calc(2ch - 1em);
+  text-align: start;
+  vertical-align: baseline;
+  white-space: pre;
+}
+
+/* 盒绘符与单宽几何箭头强制走纯西文等宽字体并锁定 1ch/字，防止 HarfBuzz 合并进中文 script run */
+.md-diagram-box {
+  display: inline-block;
+  letter-spacing: 0;
+  vertical-align: baseline;
+  white-space: pre;
+  font-family: "JetBrains Mono", "Geist Mono", "Cascadia Mono", "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.md-diagram-sym {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+  vertical-align: baseline;
+  font-family: "JetBrains Mono", "Geist Mono", "Cascadia Mono", "Cascadia Code", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+
+.md-diagram-pad {
+  display: inline-block;
+  vertical-align: baseline;
+  white-space: pre;
 }
 
 .md-code-block .diff-token--plain { color: var(--code-token-plain); }
@@ -272,5 +334,3 @@
   height: 10px !important;
   stroke: var(--color-on-accent) !important;
 }
-
-

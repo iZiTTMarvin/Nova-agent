@@ -210,38 +210,38 @@
   word-break: break-word;
 }
 
-/* 复用 DiffViewer 的 token 高亮色 */
+/* 统一使用全局代码高亮 token，保持深浅色主题一致 */
 .diff-token--plain {
-  color: inherit;
+  color: var(--code-token-plain);
 }
 
 .diff-token--comment {
-  color: #667a63;
+  color: var(--code-token-comment);
   font-style: italic;
 }
 
 .diff-token--string {
-  color: #8f4e1f;
+  color: var(--code-token-string);
 }
 
 .diff-token--number {
-  color: #1f5d75;
+  color: var(--code-token-number);
 }
 
 .diff-token--keyword {
-  color: #7a2f54;
+  color: var(--code-token-keyword);
   font-weight: 600;
 }
 
 .diff-token--operator {
-  color: #6f5c4b;
+  color: var(--code-token-operator);
 }
 
 .diff-token--property {
-  color: #2f5f7a;
+  color: var(--code-token-property);
 }
 
-/* T03：截断提示行 */
+/* 截断提示行 */
 .streaming-card__truncation-hint {
   padding: 8px 14px;
   min-height: 0;

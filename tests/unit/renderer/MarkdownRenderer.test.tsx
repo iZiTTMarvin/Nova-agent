@@ -80,6 +80,69 @@ describe('MarkdownRenderer isStreaming 传递（C2 修复）', () => {
   })
 })
 
+describe('MarkdownRenderer 纯文本围栏与盒绘框图对齐', () => {
+  it('无语言围栏与 plaintext 围栏隐藏顶栏 PLAINTEXT 标签，且不对数字或符号做语法染色', () => {
+    const doc = [
+      '```',
+      'planner(温度0.3) → workers (Node ≥18, 6 个运行时依赖)',
+      '```',
+      '',
+      '```plaintext',
+      'plain line 42',
+      '```'
+    ].join('\n')
+
+    const tree = renderDom(<MarkdownRenderer content={doc} isStreaming={false} />)
+    const blocks = tree.container.querySelectorAll('.md-code-block')
+    expect(blocks.length).toBe(2)
+    expect(tree.container.querySelector('.md-code-block__header')).toBeNull()
+    expect(tree.container.querySelector('.md-code-block__lang')).toBeNull()
+    expect(tree.container.querySelectorAll('.md-code-block--plain').length).toBe(2)
+    expect(tree.container.querySelectorAll('.md-code-block__copy--floating').length).toBe(2)
+    expect(countDiffTokens(tree.container)).toBe(0)
+    tree.unmount()
+  })
+
+  it('含盒绘符的中英混排框图锁定中文 2ch 与盒绘 1ch 网格，并自动补偿右侧竖向脊线错位', () => {
+    const diagram = [
+      '```',
+      'CLI (cli.ts)  ──┬──► MiniAgent (agent.ts)   ┐',
+      '  readline      │     think→tool→observe 循环  │',
+      '  /orchestrate  │     文本模式 / 原生 FC 双模式 ├──► Tools · Skills',
+      '                └──► Orchestrator            │     Config · Logger',
+      '                      planner(温度0.3) → workers ┘',
+      '```'
+    ].join('\n')
+
+    const tree = renderDom(<MarkdownRenderer content={diagram} isStreaming={false} />)
+    const pre = tree.container.querySelector('.md-code-block__pre--diagram')
+    expect(pre).not.toBeNull()
+
+    const cjkNodes = Array.from(tree.container.querySelectorAll<HTMLElement>('.md-diagram-cjk'))
+    expect(cjkNodes.length).toBeGreaterThan(0)
+    const loopNode = cjkNodes.find(node => node.textContent === '循环')
+    expect(loopNode?.style.width).toBe('4ch')
+
+    const boxNodes = Array.from(tree.container.querySelectorAll<HTMLElement>('.md-diagram-box'))
+    expect(boxNodes.length).toBeGreaterThan(0)
+    const branchNode = boxNodes.find(node => node.textContent === '├──')
+    expect(branchNode?.style.width).toBe('3ch')
+
+    const symNodes = Array.from(tree.container.querySelectorAll<HTMLElement>('.md-diagram-sym'))
+    expect(symNodes.some(node => node.textContent === '►')).toBe(true)
+    expect(symNodes.some(node => node.textContent === '→')).toBe(true)
+
+    // 第 2、3 行因中文与单宽箭头导致右侧竖线多出列偏移，应生成 .md-diagram-pad 自动收敛到同一列
+    const padNodes = Array.from(tree.container.querySelectorAll<HTMLElement>('.md-diagram-pad'))
+    expect(padNodes.length).toBeGreaterThanOrEqual(2)
+
+    // 复制文本与原文完全一致，不增删任何空格字符
+    expect(pre?.textContent).toContain('think→tool→observe 循环  │')
+    expect(pre?.textContent).toContain('文本模式 / 原生 FC 双模式 ├──► Tools · Skills')
+    tree.unmount()
+  })
+})
+
 describe('MarkdownRenderer 增量 reparseChars 探针', () => {
   it('流式多空行块：reparseChars ≈ activeTail，不随全文线性增长', () => {
     __takeMarkdownReparseChars()
