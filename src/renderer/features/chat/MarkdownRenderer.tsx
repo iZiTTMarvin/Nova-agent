@@ -24,7 +24,7 @@ import { highlightLineCached } from '../../lib/highlightCache'
 import { highlightLine } from '../diff/syntaxHighlight'
 import { MarkdownLink } from './MarkdownLink'
 import { isSafeMarkdownHref } from './safeMarkdownLink'
-import { splitIncrementalMarkdown } from './incrementalMarkdown'
+import { advanceIncrementalMarkdownBoundary } from './incrementalMarkdown'
 import { findOpenDisplayMathStart, transformMathSyntax } from './mathSyntax'
 import { protectTableCodePipes, restoreTableCodePipes } from './tableCodePipes'
 import { MathFence, MathInlineCode, MATH_FENCE_LANGUAGES } from './MathBlock'
@@ -285,7 +285,7 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
   const cache = sealedCacheRef.current
   if (
     cache.sealedEnd > 0 &&
-    !content.startsWith(cache.contentPrefix.slice(0, Math.min(cache.sealedEnd, cache.contentPrefix.length)))
+    (content.length < cache.sealedEnd || !content.startsWith(cache.contentPrefix))
   ) {
     // 内容被替换（attempt 重试等）：整段重来
     sealedCacheRef.current = EMPTY_SEALED_CACHE
@@ -293,7 +293,7 @@ export const MarkdownRenderer = React.memo<MarkdownRendererProps>(function Markd
 
   const prev = sealedCacheRef.current
   const prevEnd = prev.sealedEnd
-  const split = splitIncrementalMarkdown(
+  const split = advanceIncrementalMarkdownBoundary(
     content,
     false,
     prevEnd,

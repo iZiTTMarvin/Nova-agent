@@ -7,7 +7,7 @@
  *
  * 点击整块在视口锚定的悬浮详情（SubagentDetailPopover）展开，不再跳转子会话。
  */
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { SubagentActivityProjection } from '../../../shared/subagents'
 import { ToolTraceRow, type ToolTraceRowProps } from '../chat/ToolTraceRow'
@@ -19,7 +19,7 @@ import {
   selectLatestSubagentByChildSessionId,
   useSubagentProjectionStore
 } from './projection'
-import { SubagentDetailPopover } from './SubagentDetailPopover'
+const SubagentDetailPopover = lazy(() => import('./SubagentDetailPopover').then((module) => ({ default: module.SubagentDetailPopover })))
 import { SubagentDiffCard } from './SubagentDiffCard'
 import { formatSubagentModelParts } from './modelLine'
 import { presentSubagentStatus } from './statusPresentation'
@@ -337,11 +337,11 @@ export const SubagentActivityRow: React.FC<SubagentActivityRowProps> = ({
       )}
 
       {open && anchor && createPortal(
-        <SubagentDetailPopover
+        <Suspense fallback={null}><SubagentDetailPopover
           projection={projection}
           anchor={anchor}
           onClose={closePopover}
-        />,
+        /></Suspense>,
         document.body
       )}
     </section>

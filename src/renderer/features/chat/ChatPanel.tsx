@@ -78,7 +78,7 @@ import { WelcomeHero } from './WelcomeHero'
 import { ChatContentWidthHandle } from './ChatContentWidthHandle'
 import './composerShell.css'
 import './ChatPanel.css'
-import { SubagentSessionHeader } from '../subagents/SubagentSessionHeader'
+const SubagentSessionHeader = lazy(() => import('../subagents/SubagentSessionHeader').then(m => ({ default: m.SubagentSessionHeader })))
 import { retainDevComposerDrafts, useDevComposerDraft, useDevComposerAttachments } from './devComposerDraft'
 import { useLearningStore } from '../learning/useLearningStore'
 import { switchToLearningSurface } from '../learning/learningSurfaceSwitch'
@@ -973,7 +973,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       onDrop={handleDrop}
     >
       {currentSession?.kind === 'subagent' ? (
-        <SubagentSessionHeader originalTask={currentSubagentTask} />
+        <Suspense fallback={null}><SubagentSessionHeader originalTask={currentSubagentTask} /></Suspense>
       ) : null}
       {/* 拖拽高亮遮罩 */}
       {isDragOver && (

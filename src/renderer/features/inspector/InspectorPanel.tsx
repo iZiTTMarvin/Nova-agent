@@ -10,7 +10,7 @@ import {
   BROWSER_PANE_WIDTH_MIN,
   type InspectorViewKey
 } from '../../stores/useLayoutStore'
-import { ReviewTab } from './ReviewTab'
+const ReviewTab = lazy(() => import('./ReviewTab').then(m => ({ default: m.ReviewTab })))
 import { FilesTab } from './FilesTab'
 import { PlanInspectorView } from './PlanInspectorView'
 import { SubagentInspectorView } from './SubagentInspectorView'
@@ -127,7 +127,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
   const renderPane = (key: InspectorViewKey): React.ReactNode => {
     switch (key) {
       case 'review':
-        return <ReviewTab />
+        return <Suspense fallback={null}><ReviewTab /></Suspense>
       case 'files':
         return <FilesTab />
       case 'browser':

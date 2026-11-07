@@ -490,7 +490,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
   })
   agentLoop.setActivePlanPath(session.activePlan?.path)
   agentLoop.setSwitchModeHandler(async (targetMode, _reason) => {
-    const currentSession = sessionStore.load(sessionId)
+    const currentSession = sessionStore.loadMetadata(sessionId)
     if (!currentSession) {
       throw new Error('当前会话不存在')
     }

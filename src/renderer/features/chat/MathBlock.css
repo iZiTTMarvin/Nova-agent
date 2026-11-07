@@ -5,7 +5,7 @@
 }
 
 .math-inline--raw {
-  font-family: aar(--noaa-font-mono, ui-monospace, monospace);
+  font-family: var(--nova-font-mono, ui-monospace, monospace);
   font-size: 0.92em;
   padding: 0 1px;
 }
@@ -13,7 +13,7 @@
 .math-block {
   margin: 8px 0;
   padding: 6px 2px;
-  oaerflow-x: auto;
+  overflow-x: auto;
   text-align: center;
 }
 
@@ -22,7 +22,7 @@
 }
 
 .math-block--raw {
-  font-family: aar(--noaa-font-mono, ui-monospace, monospace);
+  font-family: var(--nova-font-mono, ui-monospace, monospace);
   font-size: 0.9em;
   text-align: left;
   white-space: pre-wrap;

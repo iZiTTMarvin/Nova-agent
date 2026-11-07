@@ -9,6 +9,12 @@ import { resetAgentStoreForTests } from '../../../src/renderer/stores/useAgentSt
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { resetSettingsStoreForTests, useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
 import { resetCodeIndexStoreForTests, useCodeIndexStore } from '../../../src/renderer/stores/useCodeIndexStore'
+import {
+  areRunningSessionsEqual,
+  selectBackgroundRunningSessions,
+  useRunStore
+} from '../../../src/renderer/stores/useRunStore'
+import { makeRunSnapshot } from './runSnapshotFixture'
 import type { Session } from '../../../src/shared/session/types'
 import type { SubagentActivityProjection } from '../../../src/shared/subagents'
 import { act, renderDom } from './renderDom'
@@ -89,6 +95,7 @@ describe('Sidebar 子代理会话退出列表', () => {
     resetAgentStoreForTests()
     resetCodeIndexStoreForTests()
     useSubagentProjectionStore.getState().resetForTests()
+    useRunStore.getState().resetForTests()
   })
 
   it('侧栏只展示 primary 会话，store 仍保留子代理数据', () => {
@@ -193,5 +200,34 @@ describe('Sidebar 子代理会话退出列表', () => {
     expect(useSettingsStore.getState().isConfigModalOpen).toBe(true)
     expect(sessionStorage.getItem('nova-settings-nav')).toBe('codeindex')
     renderer.unmount()
+  })
+
+  it('后台运行列表窄选择器：包含运行态主会话、排除当前会话与子代理，且无关快照更新时保持同一引用', () => {
+    useRunStore.setState({
+      snapshotsByRunId: {
+        'run-current': makeRunSnapshot({ runId: 'run-current', sessionId: 'sess-current', status: 'running', sequence: 1 }),
+        'run-bg-retry': makeRunSnapshot({ runId: 'run-bg-retry', sessionId: 'sess-bg-retry', status: 'retrying', sequence: 1 }),
+        'run-bg-cancel': makeRunSnapshot({ runId: 'run-bg-cancel', sessionId: 'sess-bg-cancel', status: 'cancelling', sequence: 1 }),
+        'run-subagent': makeRunSnapshot({ runId: 'run-subagent', sessionId: 'sess-child', parentRunId: 'run-current', status: 'running', sequence: 1 }),
+        'run-done': makeRunSnapshot({ runId: 'run-done', sessionId: 'sess-done', status: 'completed', sequence: 1 })
+      }
+    })
+
+    const before = selectBackgroundRunningSessions(useRunStore.getState(), 'sess-current')
+    expect(before).toEqual([
+      { sessionId: 'sess-bg-retry', runId: 'run-bg-retry' },
+      { sessionId: 'sess-bg-cancel', runId: 'run-bg-cancel' }
+    ])
+
+    // 当前聚焦会话高频更新 sequence/turnDraft 时，后台运行投影返回同一引用，避免触发 Sidebar 重渲染
+    useRunStore.setState((state) => ({
+      snapshotsByRunId: {
+        ...state.snapshotsByRunId,
+        'run-current': makeRunSnapshot({ runId: 'run-current', sessionId: 'sess-current', status: 'running', sequence: 99 })
+      }
+    }))
+    const after = selectBackgroundRunningSessions(useRunStore.getState(), 'sess-current')
+    expect(after).toBe(before)
+    expect(areRunningSessionsEqual(before, after)).toBe(true)
   })
 })

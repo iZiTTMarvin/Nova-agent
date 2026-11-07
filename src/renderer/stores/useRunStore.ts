@@ -57,6 +57,48 @@ export interface WaitingSessionBadge {
   pendingCount: number
 }
 
+export interface RunningSessionBadge {
+  sessionId: string
+  runId: string
+}
+
+const BACKGROUND_RUNNING_STATUSES = new Set(['running', 'retrying', 'resuming', 'cancelling'])
+
+let cachedSnapshotsRef: Record<string, RunSnapshot> | null = null
+let cachedCurrentSessionId: string | null | undefined = undefined
+let cachedRunningSessions: RunningSessionBadge[] = []
+
+export function selectBackgroundRunningSessions(
+  state: Pick<RunViewState, 'snapshotsByRunId'>,
+  currentSessionId: string | null
+): RunningSessionBadge[] {
+  if (state.snapshotsByRunId === cachedSnapshotsRef && currentSessionId === cachedCurrentSessionId) {
+    return cachedRunningSessions
+  }
+  const map = new Map<string, RunningSessionBadge>()
+  for (const snap of Object.values(state.snapshotsByRunId)) {
+    if (!snap.parentRunId && BACKGROUND_RUNNING_STATUSES.has(snap.status) && snap.sessionId !== currentSessionId) {
+      map.set(snap.sessionId, { sessionId: snap.sessionId, runId: snap.runId })
+    }
+  }
+  const next = [...map.values()]
+  cachedSnapshotsRef = state.snapshotsByRunId
+  cachedCurrentSessionId = currentSessionId
+  if (!areRunningSessionsEqual(cachedRunningSessions, next)) {
+    cachedRunningSessions = next
+  }
+  return cachedRunningSessions
+}
+
+export function areRunningSessionsEqual(a: RunningSessionBadge[], b: RunningSessionBadge[]): boolean {
+  if (a === b) return true
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].sessionId !== b[i].sessionId || a[i].runId !== b[i].runId) return false
+  }
+  return true
+}
+
 export interface RunViewState {
   snapshot: RunSnapshot | null
   lastSequence: number

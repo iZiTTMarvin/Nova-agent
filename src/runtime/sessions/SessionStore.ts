@@ -85,8 +85,7 @@ import { metricSessionAppend } from '../../shared/diagnostics/metrics'
 import {
   buildMessageIndex,
   isIndexFresh,
-  loadMessageIndex,
-  type MessageIndexSnapshot
+  loadMessageIndex
 } from './messageIndex'
 import {
   appendMessagePatch as appendPatchEvent,
@@ -811,7 +810,7 @@ export class SessionStore {
     const messages = ensureMessageParentChain(patched).map(normalizeMessageToBlocksSource)
     const currentLeafId = resolveCurrentLeafId(messages, metadata.currentLeafId)
     // 后台确保索引与 jsonl 对齐（损坏时重建）
-    this.ensureMessageIndex(sessionDir, messages, currentLeafId)
+    this.ensureMessageIndex(sessionDir, currentLeafId)
     return {
       ...metadata,
       messages,
@@ -825,9 +824,8 @@ export class SessionStore {
    */
   private ensureMessageIndex(
     sessionDir: string,
-    messages: SessionMessage[],
     currentLeafId: string | null
-  ): MessageIndexSnapshot {
+  ): void {
     const jsonlPath = path.join(sessionDir, SESSION_MESSAGES_FILE)
     let fileSize = 0
     try {
@@ -841,13 +839,6 @@ export class SessionStore {
     } catch {
       // SQLite 失败不阻断加载
     }
-
-    // 旧索引只读：若仍 fresh 可复用；否则从内存消息重建快照（不落盘）
-    const existing = loadMessageIndex(sessionDir)
-    if (existing && isIndexFresh(existing, fileSize)) {
-      return existing
-    }
-    return buildMessageIndex(messages, currentLeafId)
   }
 
   /**

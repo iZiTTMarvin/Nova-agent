@@ -86,6 +86,23 @@ describe('codeIndexHandler', () => {
     expect(mocks.openPath).toHaveBeenCalledWith('C:\\data\\code-graph\\a')
     expect(mocks.ensure).not.toHaveBeenCalled()
   })
+
+  it('提供 loadMetadata 时优先只读取会话元数据，不触发全量消息加载', async () => {
+    const load = vi.fn(() => {
+      throw new Error('不应调用全量 load')
+    })
+    const loadMetadata = vi.fn(() => ({ workspaceRoot: 'C:\\repo', codeIndexEnabled: true }))
+    mocks.handlers.clear()
+    registerCodeIndexHandler(
+      { getState: () => state },
+      () => ({ load, loadMetadata }),
+      () => null
+    )
+
+    await invoke('codeindex:get-status')
+    expect(loadMetadata).toHaveBeenCalledWith('sess-a')
+    expect(load).not.toHaveBeenCalled()
+  })
 })
 
 async function invoke(channel: string): Promise<unknown> {

@@ -9,6 +9,7 @@ import {
   SubagentToolRow
 } from '../../../src/renderer/features/subagents/SubagentActivityRow'
 import { useSubagentProjectionStore } from '../../../src/renderer/features/subagents/projection'
+import '../../../src/renderer/features/subagents/SubagentDetailPopover'
 import {
   resetAgentStoreForTests,
   useAgentStore
@@ -108,6 +109,8 @@ describe('SubagentActivityRow', () => {
       ? { snapshot } : { messages: [], hasMore: false }))
     const renderer = renderDom(<SubagentActivityRow projection={baseProjection({ status: 'running' })} />)
     act(() => renderer.container.querySelector<HTMLButtonElement>('.subagent-activity-row__trigger')!.click())
+    await flushAsync()
+    await waitFor(() => document.body.querySelector('.subagent-detail-popover') !== null)
     await flushAsync()
     expect(document.body.querySelector('.subagent-detail-popover')?.textContent).toContain('index.html')
     const historyReads = mockInvoke.mock.calls.filter(([channel]) => channel === 'load-session-messages').length
@@ -226,6 +229,8 @@ describe('SubagentActivityRow', () => {
     await flushAsync()
 
     // 面板 portal 到 body，脱离消息流滚动容器与虚拟行 transform，fixed 定位防裁剪
+    await waitFor(() => document.body.querySelector('.subagent-detail-popover') !== null)
+    await flushAsync()
     const popover = document.body.querySelector<HTMLElement>('.subagent-detail-popover')
     expect(popover).not.toBeNull()
     expect(popover?.style.position).toBe('fixed')

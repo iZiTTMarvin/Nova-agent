@@ -23,6 +23,7 @@ interface CodeIndexSessionContext {
 }
 
 interface CodeIndexSessionReader {
+  loadMetadata?(sessionId: string): { readonly workspaceRoot: string; readonly codeIndexEnabled: boolean } | null
   load(sessionId: string): {
     readonly workspaceRoot: string
     readonly codeIndexEnabled: boolean
@@ -72,7 +73,9 @@ function resolveCurrentContext(
   if (state.currentProjectPath === null || state.currentSessionId === null) {
     return { workspaceRoot: state.currentProjectPath, enabled: false }
   }
-  const session = sessionStore.load(state.currentSessionId)
+  const session = sessionStore.loadMetadata
+    ? sessionStore.loadMetadata(state.currentSessionId)
+    : sessionStore.load(state.currentSessionId)
   return {
     workspaceRoot: state.currentProjectPath,
     enabled: session?.workspaceRoot === state.currentProjectPath && session.codeIndexEnabled === true

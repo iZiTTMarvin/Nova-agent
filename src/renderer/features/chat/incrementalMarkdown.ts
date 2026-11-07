@@ -24,6 +24,15 @@ export interface IncrementalMarkdownSplit {
   openFenceStart: number
 }
 
+export interface IncrementalMarkdownBoundary {
+  /** sealed 部分在原文中的结束偏移 */
+  sealedEndOffset: number
+  /** 未闭合 fence 起点；无则 -1。供下一帧增量扫描复用 */
+  openFenceStart: number
+  /** 本帧增量扫描字节数 */
+  scannedBytes: number
+}
+
 const FENCE_LINE_RE = /^(```|~~~)([^\n`]*)?$/
 
 /**
@@ -163,27 +172,21 @@ function findBlankLineBoundaries(content: string, from: number, to: number): num
 }
 
 /**
- * 把流式 Markdown 拆成 sealed + activeTail。
- *
- * @param content 当前完整（或打字机已放出）文本
- * @param isFinal 轮次结束时为 true，强制封口全部剩余
- * @param prevSealedEnd 上一帧已封口偏移；只允许前进，避免回退导致重复解析
+ * 增量推进流式 Markdown 的封口边界（不切分旧前缀段落，避免每帧重扫已封口区）。
  */
-export function splitIncrementalMarkdown(
+export function advanceIncrementalMarkdownBoundary(
   content: string,
   isFinal = false,
   prevSealedEnd = 0,
   prevContentLength = 0,
   prevOpenFenceStart = -1
-): IncrementalMarkdownSplit & { scannedBytes: number } {
+): IncrementalMarkdownBoundary {
   if (!content) {
-    return { sealedParts: [], activeTail: '', sealedEndOffset: 0, openFenceStart: -1, scannedBytes: 0 }
+    return { sealedEndOffset: 0, openFenceStart: -1, scannedBytes: 0 }
   }
 
   if (isFinal) {
     return {
-      sealedParts: content.length > 0 ? [content] : [],
-      activeTail: '',
       sealedEndOffset: content.length,
       openFenceStart: -1,
       scannedBytes: 0
@@ -220,6 +223,44 @@ export function splitIncrementalMarkdown(
   // 若整段都在未闭合 fence 内且此前无 sealed，保持全量 active
   if (sealedEnd > content.length) sealedEnd = content.length
 
+  return {
+    sealedEndOffset: sealedEnd,
+    openFenceStart: openFence,
+    scannedBytes: scannedBytes + boundaryScan
+  }
+}
+
+/**
+ * 把流式 Markdown 拆成 sealed + activeTail。
+ *
+ * @param content 当前完整（或打字机已放出）文本
+ * @param isFinal 轮次结束时为 true，强制封口全部剩余
+ * @param prevSealedEnd 上一帧已封口偏移；只允许前进，避免回退导致重复解析
+ */
+export function splitIncrementalMarkdown(
+  content: string,
+  isFinal = false,
+  prevSealedEnd = 0,
+  prevContentLength = 0,
+  prevOpenFenceStart = -1
+): IncrementalMarkdownSplit & { scannedBytes: number } {
+  if (!content) {
+    return { sealedParts: [], activeTail: '', sealedEndOffset: 0, openFenceStart: -1, scannedBytes: 0 }
+  }
+
+  if (isFinal) {
+    return {
+      sealedParts: content.length > 0 ? [content] : [],
+      activeTail: '',
+      sealedEndOffset: content.length,
+      openFenceStart: -1,
+      scannedBytes: 0
+    }
+  }
+
+  const { sealedEndOffset: sealedEnd, openFenceStart: openFence, scannedBytes } =
+    advanceIncrementalMarkdownBoundary(content, false, prevSealedEnd, prevContentLength, prevOpenFenceStart)
+
   const sealedText = content.slice(0, sealedEnd)
   const activeTail = content.slice(sealedEnd)
 
@@ -233,7 +274,7 @@ export function splitIncrementalMarkdown(
     activeTail,
     sealedEndOffset: sealedEnd,
     openFenceStart: openFence,
-    scannedBytes: scannedBytes + boundaryScan
+    scannedBytes
   }
 }
 

@@ -3,6 +3,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import {
+  advanceIncrementalMarkdownBoundary,
   estimateParseCostChars,
   findOpenFenceStart,
   splitIncrementalMarkdown
@@ -132,5 +133,32 @@ describe('incrementalMarkdown', () => {
     // fence 闭合后、后文空行到来前，也不在 fence 内部空行处封口
     expect(parts.some(p => p.includes('const a = 1') && !p.includes('```'))).toBe(false)
     expect(parts[parts.length - 1]).toContain('const b = 2')
+  })
+
+  it('advanceIncrementalMarkdownBoundary 与 splitIncrementalMarkdown 边界完全一致且不重扫已封口前缀', () => {
+    const paragraph = '一段已封口的 Markdown 内容。\n\n'
+    let content = ''
+    let sealedEnd = 0
+    let prevLen = 0
+    let openFence = -1
+    let boundaryScanned = 0
+
+    for (let i = 0; i < 120; i++) {
+      content += i === 60 ? '```ts\nconst x = 1\n\nconst y = 2\n```\n\n' : paragraph
+      const isFinal = i === 119
+      const boundary = advanceIncrementalMarkdownBoundary(content, isFinal, sealedEnd, prevLen, openFence)
+      const fullSplit = splitIncrementalMarkdown(content, isFinal, sealedEnd, prevLen, openFence)
+
+      expect(boundary.sealedEndOffset).toBe(fullSplit.sealedEndOffset)
+      expect(boundary.openFenceStart).toBe(fullSplit.openFenceStart)
+
+      sealedEnd = boundary.sealedEndOffset
+      prevLen = content.length
+      openFence = boundary.openFenceStart
+      boundaryScanned += boundary.scannedBytes
+    }
+
+    expect(sealedEnd).toBe(content.length)
+    expect(boundaryScanned).toBeLessThan(content.length * 2.5)
   })
 })

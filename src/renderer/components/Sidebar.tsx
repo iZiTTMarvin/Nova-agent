@@ -36,7 +36,11 @@ import { DropdownMenu, DropdownMenuItem } from '@astryxdesign/core/DropdownMenu'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import { TextInput } from '@astryxdesign/core/TextInput'
 import { SideNav, SideNavItem, SideNavSection } from '@astryxdesign/core/SideNav'
-import { useRunStore } from '../stores/useRunStore'
+import {
+
+  selectBackgroundRunningSessions,
+  useRunStore
+} from '../stores/useRunStore'
 import { useAgentStore } from '../stores/useAgentStore'
 import { selectCurrentCodeIndexStatus, useCodeIndexStore } from '../stores/useCodeIndexStore'
 import {
@@ -218,7 +222,6 @@ const SidebarSessions = React.memo(function SidebarSessions({
 
   const codeIndexSnapshot = useCodeIndexStore(selectCurrentCodeIndexStatus)
   const waitingSessions = useRunStore(state => state.waitingSessions)
-  const snapshotsByRunId = useRunStore(state => state.snapshotsByRunId)
   const cancelExecution = useAgentStore(state => state.cancelExecution)
 
   // 搜索与过滤局部状态
@@ -239,17 +242,11 @@ const SidebarSessions = React.memo(function SidebarSessions({
     setIsFilterOpen(false)
   }
 
-  /** 后台运行中会话：非焦点、非终态 run，按 sessionId 去重 */
-  const runningSessions = useMemo(() => {
-    const activeStatuses = new Set(['running', 'retrying', 'resuming', 'cancelling'])
-    const map = new Map<string, { sessionId: string; runId: string }>()
-    for (const snap of Object.values(snapshotsByRunId)) {
-      if (activeStatuses.has(snap.status) && snap.sessionId !== currentSessionId) {
-        map.set(snap.sessionId, { sessionId: snap.sessionId, runId: snap.runId })
-      }
-    }
-    return [...map.values()]
-  }, [snapshotsByRunId, currentSessionId])
+  /** 后台运行中会话：非焦点、非终态 run，按 sessionId 去重；仅活跃集合变化时重渲染 */
+  const runningSessions = useRunStore(
+    state => selectBackgroundRunningSessions(state, currentSessionId)
+
+  )
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
