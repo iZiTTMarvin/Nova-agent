@@ -177,4 +177,18 @@ describe('GeneralSettingsPanel 应用更新区块', () => {
     expect(findButton(renderer.container, '检查更新').disabled).toBe(true)
     renderer.unmount()
   })
+
+  it('默认运行模式包含领航模式选项', async () => {
+    const renderer = await renderPanel()
+    expect(renderer.container.textContent).toContain('默认运行模式')
+    const trigger = renderer.container.querySelector('button[role="combobox"]')
+    expect(trigger).not.toBeNull()
+    expect(trigger?.textContent).toContain('默认模式（模型自主循环）')
+
+    const options = Array.from(renderer.container.querySelectorAll('[role="option"]')).map(el => el.textContent?.trim())
+    expect(options).toContain('领航模式（按任务自适应引导与实证）')
+    expect(options).toContain('默认模式（模型自主循环）')
+    expect(options).toContain('计划模式（只读分析）')
+    renderer.unmount()
+  })
 })

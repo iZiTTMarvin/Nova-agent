@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   filterAndRankCandidates,
   nativeCommandsToCandidates,
+  pilotSkillsToCandidates,
   scoreCandidate,
   skillsToCandidates,
   type SlashCandidate
@@ -106,5 +107,38 @@ describe('skillsToCandidates 过滤', () => {
     delete (skill as Record<string, unknown>).hidden
     const result = skillsToCandidates([skill])
     expect(result).toHaveLength(1)
+  })
+})
+
+describe('pilotSkillsToCandidates', () => {
+  it('技能列表为空时返回「选择技能…」引导动作项', () => {
+    const candidates = pilotSkillsToCandidates([])
+    expect(candidates).toHaveLength(1)
+    expect(candidates[0].name).toBe('选择技能…')
+    expect(candidates[0].isAction).toBe(true)
+    expect(candidates[0].kind).toBe('skill')
+  })
+
+  it('技能列表非空时在已许可技能末尾追加「管理可用技能…」动作项', () => {
+    const candidates = pilotSkillsToCandidates([
+      makeSkill({ name: 'frontend-design', description: '前端设计' })
+    ])
+    expect(candidates).toHaveLength(2)
+    expect(candidates[0].name).toBe('frontend-design')
+    expect(candidates[0].isAction).toBeUndefined()
+    expect(candidates[1].name).toBe('管理可用技能…')
+    expect(candidates[1].isAction).toBe(true)
+  })
+
+  it('排序时动作项排在已许可技能之后，命令依然排在最前', () => {
+    const pilotCandidates = pilotSkillsToCandidates([
+      makeSkill({ name: 'zebra' }),
+      makeSkill({ name: 'apple' })
+    ])
+    const all = [...nativeCommandsToCandidates(), ...pilotCandidates]
+    const ranked = filterAndRankCandidates('', all)
+    const names = ranked.map(c => c.name)
+    expect(names.slice(0, 3)).toEqual(['compact', 'init', 'plan'])
+    expect(names.slice(3)).toEqual(['apple', 'zebra', '管理可用技能…'])
   })
 })

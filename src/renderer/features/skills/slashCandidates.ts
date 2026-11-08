@@ -7,6 +7,8 @@ export interface SlashCandidate {
   description: string
   kind: 'skill' | 'command'
   source?: string
+  isAction?: boolean
+  action?: () => void
 }
 
 export function skillsToCandidates(skills: SkillSummary[]): SlashCandidate[] {
@@ -18,6 +20,34 @@ export function skillsToCandidates(skills: SkillSummary[]): SlashCandidate[] {
       kind: 'skill' as const,
       source: s.source
     }))
+}
+
+export function pilotSkillsToCandidates(
+  skills: SkillSummary[],
+  onOpenSettings?: () => void
+): SlashCandidate[] {
+  const normalSkills = skillsToCandidates(skills)
+  if (normalSkills.length === 0) {
+    return [
+      {
+        name: '选择技能…',
+        description: '领航默认不启用通用技能，从设置中加入后可通过 / 调用',
+        kind: 'skill',
+        isAction: true,
+        action: onOpenSettings
+      }
+    ]
+  }
+  return [
+    ...normalSkills,
+    {
+      name: '管理可用技能…',
+      description: '在设置中选择哪些技能可在领航模式中通过 / 调用',
+      kind: 'skill',
+      isAction: true,
+      action: onOpenSettings
+    }
+  ]
 }
 
 export function nativeCommandsToCandidates(): SlashCandidate[] {
@@ -40,6 +70,9 @@ export function scoreCandidate(query: string, candidate: SlashCandidate): number
     const allCharsPresent = q.length >= 2 && [...q].every(ch => name.includes(ch))
     if (allCharsPresent) score = 60
   }
+  if (candidate.isAction && score === 0 && candidate.description.toLowerCase().includes(q)) {
+    score = 50
+  }
   if (candidate.kind === 'skill' && score > 0) score += 0.5
   return score
 }
@@ -52,6 +85,7 @@ export function filterAndRankCandidates(
   if (!token) {
     return [...candidates].sort((a, b) => {
       if (a.kind !== b.kind) return a.kind === 'command' ? -1 : 1
+      if (Boolean(a.isAction) !== Boolean(b.isAction)) return a.isAction ? 1 : -1
       return a.name.localeCompare(b.name)
     })
   }

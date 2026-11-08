@@ -1,0 +1,143 @@
+/* 领航模式设置面板样式 */
+
+.pilot-settings-guide {
+  margin-bottom: 16px;
+}
+
+.pilot-settings-guide .astryx-banner {
+  border-radius: var(--radius-md);
+  border: 0.5px solid var(--border-cream);
+}
+
+.pilot-settings__card-aside {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pilot-settings__search {
+  width: 200px;
+}
+
+.pilot-skill-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.pilot-skill-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  gap: 16px;
+  border-bottom: 0.5px solid var(--glass-edge);
+  border-radius: var(--radius-md);
+  transition: background-color 0.15s var(--glass-ease, ease);
+}
+
+.pilot-skill-row:last-child {
+  border-bottom: none;
+}
+
+.pilot-skill-row:hover {
+  background-color: var(--glass-fill-hover);
+}
+
+.pilot-skill-row__content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.pilot-skill-row__title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--font-size-base, 14px);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.pilot-skill-row__name {
+  font-family: var(--font-mono, monospace);
+  color: var(--text-primary);
+}
+
+.pilot-skill-row__desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pilot-skill-row__control {
+  flex-shrink: 0;
+}
+
+/* 失效技能行与卡片 */
+.pilot-stale-card {
+  border-color: color-mix(in srgb, var(--color-error, #dc2626) 30%, var(--glass-edge));
+}
+
+.pilot-stale-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.pilot-stale-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  gap: 12px;
+  border-bottom: 0.5px solid var(--glass-edge);
+  border-radius: var(--radius-md);
+}
+
+.pilot-stale-row:last-child {
+  border-bottom: none;
+}
+
+.pilot-stale-row__content {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.pilot-stale-row__name {
+  font-family: var(--font-mono, monospace);
+  font-weight: 500;
+  font-size: var(--font-size-sm, 13px);
+  color: var(--text-primary);
+}
+
+.pilot-stale-row__detail {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pilot-empty-card {
+  padding: 32px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.pilot-empty-card__text {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 380px;
+  line-height: 1.5;
+  margin: 0;
+}

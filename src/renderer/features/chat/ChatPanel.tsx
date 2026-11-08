@@ -69,6 +69,7 @@ import {
   type ImageAttachment
 } from '../../lib/image-attachments'
 import { createComposerSkillTrigger, skillComposerToken } from '../skills/composerSkillTrigger'
+import type { SkillSummary } from '../../../shared/skills/types'
 import { createComposerFileTrigger } from './composerFileTrigger'
 import { useTriggerMenuGeometry } from './useTriggerMenuGeometry'
 import { revealCaretInScroller } from './composerCaret'
@@ -124,6 +125,7 @@ export const ChatPanel: React.FC = () => {
   const composerPrefill = useSettingsStore(state => state.composerPrefill)
   const clearComposerPrefill = useSettingsStore(state => state.clearComposerPrefill)
   const openMemorySettings = useSettingsStore(state => state.openMemorySettings)
+  const openPilotSettings = useSettingsStore(state => state.openPilotSettings)
   const isSessionLoading = useWorkspaceStore(state => state.isSessionLoading)
   const setPermissionMode = useWorkspaceStore(state => state.setPermissionMode)
 
@@ -253,17 +255,33 @@ export const ChatPanel: React.FC = () => {
   slashSkillsRef.current = slashSkills
   const skillsDiagnosticsRef = useRef(skillsDiagnostics)
   skillsDiagnosticsRef.current = skillsDiagnostics
+  const currentModeRef = useRef(currentMode)
+  currentModeRef.current = currentMode
+
+  const getSlashSkills = useCallback(async (): Promise<SkillSummary[]> => {
+    if (currentModeRef.current === 'pilot') {
+      try {
+        const snapshot = await window.nova.skill.list({ mode: 'pilot' })
+        return snapshot.skills
+      } catch {
+        return []
+      }
+    }
+    return slashSkillsRef.current
+  }, [])
 
   // `/`、`@` 菜单钉在 composer 盒上沿并等宽，几何由盒上 CSS 变量驱动
   useTriggerMenuGeometry(composerBoxRef)
 
   // 命令不依赖技能目录；trigger 保持稳定，打开菜单时读取最新技能。
   const skillTrigger = useMemo(
-    () => createComposerSkillTrigger(() => slashSkillsRef.current, {
+    () => createComposerSkillTrigger(getSlashSkills, {
       emptySearchResultsText: '没有匹配的技能或命令',
-      getDiagnostics: () => skillsDiagnosticsRef.current
+      getDiagnostics: () => skillsDiagnosticsRef.current,
+      getMode: () => currentModeRef.current,
+      onOpenPilotSettings: () => openPilotSettings()
     }),
-    []
+    [getSlashSkills, openPilotSettings]
   )
   const fileTrigger = useMemo(
     () => createComposerFileTrigger(() => currentProject),

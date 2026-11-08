@@ -42,6 +42,8 @@ export interface SettingsState {
   /** 最近一次缓存诊断摘要（ContextIndicator hover 展示） */
   lastCacheDiagnostic: CacheDiagnosticUi | null
   composerPrefill: string | null
+  /** 请求导航到的设置分区（外部/跨面板唤起用） */
+  requestedSettingsSection: string | null
 
   // ── Actions ──
   loadLlmRegistry: () => Promise<void>
@@ -70,6 +72,9 @@ export interface SettingsState {
   openMemorySettings: () => void
   /** 打开设置并定位到技能与规则定制面板 */
   openCustomizeSettings: (initialTab?: 'skills' | 'rules') => void
+  /** 打开设置并定位到领航模式面板 */
+  openPilotSettings: () => void
+  setRequestedSettingsSection: (section: string | null) => void
   selectProject: () => Promise<void>
   setMode: (mode: Mode) => Promise<void>
   applySessionUsage: (snapshot: SessionUsageSnapshot) => void
@@ -136,6 +141,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   contextBreakdown: null,
   lastCacheDiagnostic: null,
   composerPrefill: null,
+  requestedSettingsSection: null,
 
   loadLlmRegistry: async () => {
     try {
@@ -280,7 +286,20 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch {
       // 忽略
     }
-    set({ isConfigModalOpen: true })
+    set({ isConfigModalOpen: true, requestedSettingsSection: initialTab })
+  },
+
+  openPilotSettings: () => {
+    try {
+      sessionStorage.setItem(SETTINGS_NAV_KEY, 'pilot')
+    } catch {
+      // 忽略
+    }
+    set({ isConfigModalOpen: true, requestedSettingsSection: 'pilot' })
+  },
+
+  setRequestedSettingsSection: (section: string | null) => {
+    set({ requestedSettingsSection: section })
   },
 
   selectProject: async () => {
@@ -349,6 +368,7 @@ export function resetSettingsStoreForTests(): void {
     sessionUsageByProfile: {},
     contextBreakdown: null,
     lastCacheDiagnostic: null,
-    composerPrefill: null
+    composerPrefill: null,
+    requestedSettingsSection: null
   })
 }

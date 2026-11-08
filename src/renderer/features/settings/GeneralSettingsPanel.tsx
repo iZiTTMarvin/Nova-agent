@@ -37,6 +37,7 @@ import { FullAccessConfirmDialog } from '../permissions/FullAccessConfirmDialog'
 import { formatSettingsTime } from './formatDateTime'
 
 const MODE_OPTIONS: { value: Mode; label: string }[] = [
+  { value: 'pilot', label: '领航模式（按任务自适应引导与实证）' },
   { value: 'default', label: '默认模式（模型自主循环）' },
   { value: 'plan', label: '计划模式（只读分析）' }
 ]

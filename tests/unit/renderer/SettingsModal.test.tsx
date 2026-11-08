@@ -112,6 +112,7 @@ describe('SettingsModal 设置导航与视觉样式', () => {
     expect(itemLabels).toContain('子 Agent')
     expect(itemLabels).toContain('记忆')
     expect(itemLabels).toContain('规则')
+    expect(itemLabels).toContain('领航模式')
     expect(itemLabels).toContain('技能')
     expect(itemLabels).toContain('代码索引')
     expect(itemLabels).toContain('联网搜索')
@@ -311,6 +312,20 @@ describe('SettingsModal 设置导航与视觉样式', () => {
 
     expect(window.nova.skill.list).toHaveBeenCalled()
     expect(window.nova.skill.reload).not.toHaveBeenCalled()
+    unmount()
+  })
+
+  it('openPilotSettings 唤起并切到领航模式分区', async () => {
+    useSettingsStore.setState({ isConfigModalOpen: false })
+    const { container, unmount } = renderDom(<SettingsModal />)
+
+    await act(async () => {
+      useSettingsStore.getState().openPilotSettings()
+    })
+
+    const selectedItem = container.querySelector('.settings-nav__item--selected')
+    expect(selectedItem?.textContent).toContain('领航模式')
+    expect(container.querySelector('.settings-shell__title')?.textContent).toBe('领航模式')
     unmount()
   })
 })

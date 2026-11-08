@@ -28,6 +28,11 @@ async function expectSkillChip(input: Locator, name: string): Promise<void> {
   await expect(chip).toContainText(`/${name}`)
 }
 
+test.beforeEach(async ({ nova }) => {
+  await nova.invoke('settings:set', { defaultMode: 'default' })
+  await nova.invoke('workspace:set-mode', { mode: 'default' })
+})
+
 test('/ 触发显示项目技能，点击或键盘选中后插入技能芯片；无匹配显示空态', async ({ nova }) => {
   await writeProjectSkill(nova.workspacePath, 'e2e-demo', 'E2E 演示技能')
   await reloadRenderer(nova)

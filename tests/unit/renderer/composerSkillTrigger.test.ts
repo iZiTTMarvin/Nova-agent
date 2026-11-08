@@ -82,4 +82,46 @@ describe('createComposerSkillTrigger', () => {
     expect(trigger.character).toBe('/')
     expect(trigger.menuLabel).toBe('技能与命令')
   })
+
+  it('pilot 模式无可用技能时展示「选择技能…」引导，选中唤起设置且返回空串', async () => {
+    let opened = false
+    const trigger = createComposerSkillTrigger(() => [], {
+      getMode: () => 'pilot',
+      onOpenPilotSettings: () => {
+        opened = true
+      }
+    })
+    const boot = await trigger.searchSource.bootstrap()
+    const labels = boot.map(item => item.label)
+    expect(labels).toEqual(['compact', 'init', 'plan', '选择技能…'])
+
+    const selectAction = boot.find(item => item.label === '选择技能…') as ComposerSkillItem
+    expect(selectAction).toBeDefined()
+    expect(selectAction.auxiliaryData.isAction).toBe(true)
+
+    const result = trigger.onSelect(selectAction)
+    expect(result).toBe('')
+    expect(opened).toBe(true)
+  })
+
+  it('pilot 模式有已许可技能时末尾追加「管理可用技能…」动作项', async () => {
+    let opened = false
+    const trigger = createComposerSkillTrigger(() => [FRONTEND_SKILL], {
+      getMode: () => 'pilot',
+      onOpenPilotSettings: () => {
+        opened = true
+      }
+    })
+    const boot = await trigger.searchSource.bootstrap()
+    const labels = boot.map(item => item.label)
+    expect(labels).toEqual(['compact', 'init', 'plan', 'frontend-design', '管理可用技能…'])
+
+    const manageAction = boot.find(item => item.label === '管理可用技能…') as ComposerSkillItem
+    expect(manageAction).toBeDefined()
+    expect(manageAction.auxiliaryData.isAction).toBe(true)
+
+    const result = trigger.onSelect(manageAction)
+    expect(result).toBe('')
+    expect(opened).toBe(true)
+  })
 })

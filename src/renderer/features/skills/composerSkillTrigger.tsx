@@ -12,10 +12,12 @@ import type {
 } from '@astryxdesign/core/Chat'
 import type { SearchSource } from '@astryxdesign/core/Typeahead'
 import type { SkillCatalogDiagnostic, SkillSummary } from '../../../shared/skills/types'
+import type { Mode } from '../../../shared/session/types'
 import {
   filterAndRankCandidates,
   nativeCommandsToCandidates,
   skillsToCandidates,
+  pilotSkillsToCandidates,
   type SlashCandidate
 } from './slashCandidates'
 import './composerSkillTrigger.css'
@@ -47,8 +49,17 @@ function toSearchable(candidate: SlashCandidate): ComposerSkillItem {
   }
 }
 
-function rankQuery(query: string, skills: SkillSummary[]): ComposerSkillItem[] {
-  const candidates = [...nativeCommandsToCandidates(), ...skillsToCandidates(skills)]
+function rankQuery(
+  query: string,
+  skills: SkillSummary[],
+  opts?: ComposerSkillTriggerOptions
+): ComposerSkillItem[] {
+  const mode = opts?.getMode?.()
+  const skillCandidates =
+    mode === 'pilot'
+      ? pilotSkillsToCandidates(skills, opts?.onOpenPilotSettings)
+      : skillsToCandidates(skills)
+  const candidates = [...nativeCommandsToCandidates(), ...skillCandidates]
   const ranked = filterAndRankCandidates(query, candidates)
   // 组标题按首个 item 的出现顺序渲染，命令必须整体排在技能前，不能被高分技能穿插
   const commands = ranked.filter(c => c.kind === 'command')
@@ -60,6 +71,10 @@ export interface ComposerSkillTriggerOptions {
   emptySearchResultsText?: string
   /** 目录诊断；模式受限类在候选项上给出发送前提示 */
   getDiagnostics?: () => SkillCatalogDiagnostic[]
+  /** 当前运行模式 */
+  getMode?: () => Mode
+  /** 点击引导/管理项时唤起设置 */
+  onOpenPilotSettings?: () => void
 }
 
 /**
@@ -67,13 +82,19 @@ export interface ComposerSkillTriggerOptions {
  * 避免 skills 变更时重建 trigger（会打断已打开的菜单）。
  */
 export function createComposerSkillTrigger(
-  getSkills: () => SkillSummary[],
+  getSkills: () => SkillSummary[] | Promise<SkillSummary[]>,
   opts?: ComposerSkillTriggerOptions
 ): ChatComposerTrigger {
   const getDiagnostics = opts?.getDiagnostics ?? (() => [])
   const searchSource: SearchSource<ComposerSkillItem> = {
-    bootstrap: async () => rankQuery('', getSkills()),
-    search: async query => rankQuery(query, getSkills())
+    bootstrap: async () => {
+      const skills = await getSkills()
+      return rankQuery('', skills, opts)
+    },
+    search: async query => {
+      const skills = await getSkills()
+      return rankQuery(query, skills, opts)
+    }
   }
 
   return {
@@ -84,6 +105,21 @@ export function createComposerSkillTrigger(
     loadingText: '搜索中…',
     renderItem: (item): ReactNode => {
       const candidate = (item as ComposerSkillItem).auxiliaryData
+      if (candidate.isAction) {
+        return (
+          <span className="composer-skill-trigger__item composer-skill-trigger__item--action">
+            <span className="composer-skill-trigger__title">
+              <span className="composer-skill-trigger__slash" style={{ opacity: 0.6 }}>✦</span>
+              {candidate.name}
+            </span>
+            {candidate.description ? (
+              <span className="composer-skill-trigger__desc">
+                {candidate.description}
+              </span>
+            ) : null}
+          </span>
+        )
+      }
       const profileNote =
         candidate.kind === 'skill'
           ? getDiagnostics().find(
@@ -109,6 +145,10 @@ export function createComposerSkillTrigger(
     },
     onSelect: item => {
       const candidate = (item as ComposerSkillItem).auxiliaryData
+      if (candidate.isAction) {
+        candidate.action?.()
+        return ''
+      }
       return skillComposerToken(candidate.name)
     }
   }

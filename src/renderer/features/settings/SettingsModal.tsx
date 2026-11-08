@@ -23,6 +23,7 @@ import {
   ShieldCheckIcon,
   DatabaseIcon,
   InfoIcon,
+  SparklesIcon,
   ArrowLeftIcon
 } from '../../components/Icons'
 // 11 个设置面板改由下方 SETTINGS_PANELS 的 lazy() 按需加载，不在此静态 import
@@ -33,6 +34,7 @@ const NAV_STORAGE_KEY = 'nova-settings-nav'
 export type SettingsSection =
   | 'general'
   | 'llm'
+  | 'pilot'
   | 'subagents'
   | 'memory'
   | 'rules'
@@ -46,6 +48,7 @@ export type SettingsSection =
 const SECTION_IDS: SettingsSection[] = [
   'general',
   'llm',
+  'pilot',
   'subagents',
   'memory',
   'rules',
@@ -115,6 +118,13 @@ const NAV_GROUPS: NavGroupMeta[] = [
         description: rulesI18n.panelDesc,
         keywords: 'rules',
         icon: <ScrollIcon size={16} />
+      },
+      {
+        id: 'pilot',
+        label: '领航模式',
+        description: '配置领航模式下可通过斜杠 / 调用的技能与交互设置。',
+        keywords: 'pilot 领航 技能 slash 斜杠 工作流 自适应 引导 实证',
+        icon: <SparklesIcon size={16} />
       },
       {
         id: 'skills',
@@ -226,6 +236,7 @@ const SETTINGS_PANELS: Record<SettingsSection, SettingsPanelModule> = {
   subagents: lazyPanel(() => import('./SubagentsSettingsPanel').then(m => m.SubagentsSettingsPanel)),
   memory: lazyPanel(() => import('./MemorySettingsPanel').then(m => m.MemorySettingsPanel)),
   rules: lazyPanel(() => import('./RulesSettingsPanel').then(m => m.RulesSettingsPanel)),
+  pilot: lazyPanel(() => import('./PilotSettingsPanel').then(m => m.PilotSettingsPanel)),
   skills: lazyPanel(() => import('./SkillsSettingsPanel').then(m => m.SkillsSettingsPanel)),
   codeindex: lazyPanel(() => import('./CodeIndexSettingsPanel').then(m => m.CodeIndexSettingsPanel)),
   websearch: lazyPanel(() => import('./WebSearchSettingsPanel').then(m => m.WebSearchSettingsPanel)),
@@ -330,6 +341,16 @@ const SettingsModalSession: React.FC<{
     }
     navRefs.current[id]?.focus()
   }
+
+  const requestedSection = useSettingsStore(state => state.requestedSettingsSection)
+  const setRequestedSection = useSettingsStore(state => state.setRequestedSettingsSection)
+
+  useEffect(() => {
+    if (requestedSection && (SECTION_IDS as string[]).includes(requestedSection)) {
+      selectSection(requestedSection as SettingsSection)
+      setRequestedSection(null)
+    }
+  }, [requestedSection, setRequestedSection])
 
   const normalizedQuery = query.trim().toLowerCase()
   const visibleGroups = normalizedQuery
