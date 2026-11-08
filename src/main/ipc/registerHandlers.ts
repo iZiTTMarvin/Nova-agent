@@ -19,6 +19,7 @@ import { registerMemoryHandler } from './memoryHandler'
 import { registerFsHandler } from './fsHandler'
 import { registerBrowserHandler } from './browserHandler'
 import { initBrowserSessionHost, getBrowserSessionHost } from '../browser'
+import { registerEvidenceHandler } from './evidenceHandler'
 import { registerImageHandler } from './imageHandler'
 import { registerVisualizationHandler } from './visualizationHandler'
 import { registerRunHandler } from './runHandler'
@@ -219,6 +220,7 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   // 落盘目录与会话目录同级（sessions/{sessionId}/images/），随会话删除自然清理。
   const imageStore = new ImageStore(join(app.getPath('userData'), 'sessions'))
   registerImageHandler(() => imageStore)
+  registerEvidenceHandler()
   registerVisualizationHandler(() => getVisualizationStoreFor(getSessionStore().getSessionsDir()))
 
   return imageStore

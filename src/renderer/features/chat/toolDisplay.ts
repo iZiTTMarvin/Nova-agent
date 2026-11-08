@@ -71,6 +71,8 @@ export function getToolDisplayName(toolName: string): string {
       return '查询代码上下文 (code_context)'
     case 'askQuestion':
       return '询问用户 (askQuestion)'
+    case 'present_evidence':
+      return '展示证据 (present_evidence)'
     case 'present_visualization':
       return '展示可视化 (present_visualization)'
     case 'save_plan':

@@ -185,6 +185,8 @@ export const DOWNLOAD_APP_UPDATE = 'app:update:download' as const
 export const INSTALL_APP_UPDATE = 'app:update:install' as const
 /** 图片落盘：用户上传的 base64 data URL → 主进程写盘 → 返回 nova-image:// URL */
 export const IMAGE_SAVE = 'image:save' as const
+export const EVIDENCE_READ_ARTIFACT = 'evidence:read-artifact' as const
+export const EVIDENCE_OPEN_BROWSER = 'evidence:open-browser' as const
 /** 内置浏览器：人工浏览命令（AI 工具不走这些通道） */
 export const BROWSER_OPEN = 'browser:open' as const
 export const BROWSER_NAVIGATE = 'browser:navigate' as const

@@ -39,7 +39,8 @@ import { createBrowserOpenTool } from '../../../runtime/tools/browser_open'
 import { createBrowserObserveTool } from '../../../runtime/tools/browser_observe'
 import { createBrowserActTool } from '../../../runtime/tools/browser_act'
 import { createBrowserCloseTool } from '../../../runtime/tools/browser_close'
-import { createBrowserCaptureTool } from '../../../runtime/tools/browser_capture'
+import { createBrowserCaptureTool, type BrowserCaptureToolDeps } from '../../../runtime/tools/browser_capture'
+import { createPresentEvidenceTool, type PresentEvidenceDeps } from '../../../runtime/tools/present_evidence'
 import { createPresentVisualizationTool } from '../../../runtime/tools/present_visualization'
 import { validateRegistryAgainstCatalog } from '../../../runtime/tools/catalog'
 import type { BrowserPort } from '../../../runtime/browser'
@@ -65,6 +66,7 @@ import type { RunCoordinator } from '../../../runtime/run'
 import type { SubagentCatalogEntry } from '../../../shared/subagents'
 
 export interface BuiltinToolRegistrationDeps {
+  evidence?: PresentEvidenceDeps
   mode: Mode
   skillRegistry: SkillRegistry
   /** invoke_skill 执行时惰性读取；工具创建可早于 AgentLoop */
@@ -95,11 +97,7 @@ export interface BuiltinToolRegistrationDeps {
   /** 内置浏览器端口；缺省时浏览器工具返回 unavailable。 */
   getBrowserPort?: () => BrowserPort | null
   /** 截图本地证据落盘；缺省则只返回文字说明。 */
-  saveBrowserCaptureEvidence?: (input: {
-    readonly sessionId: string
-    readonly mimeType: string
-    readonly base64: string
-  }) => Promise<string | null>
+  saveBrowserCaptureEvidence?: BrowserCaptureToolDeps['saveEvidence']
   /** 会话内可视化快照存储；缺省时 present_visualization 返回不可用。 */
   getVisualizationStore?: () => VisualizationStore | null
   /** 是否注册 present_visualization：可视化讲解只属于学习会话，开发会话保持精简的工具面。 */
@@ -159,6 +157,10 @@ export function registerBuiltinTools(
   toolRegistry.register(shellSessionTool)
   toolRegistry.register(archiveReadTool)
   toolRegistry.register(historyReadTool)
+  toolRegistry.register(createPresentEvidenceTool(deps.evidence ?? {
+    getReferences: () => [],
+    getImageStore: () => { throw new Error('图片存储不可用') }
+  }))
   toolRegistry.register(todoWriteTool)
   toolRegistry.register(askQuestionTool)
   if (deps.visualizationEnabled) {

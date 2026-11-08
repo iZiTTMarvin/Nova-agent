@@ -4,10 +4,11 @@
  * 路径：{sessionsDir}/{sessionId}/artifacts/{id}
  * ID 使用短 uuid（12 位 hex），并发写入互不冲突。
  */
-import { copyFile, mkdir, readFile, rename, unlink, writeFile, access, stat } from 'fs/promises'
+import { copyFile, mkdir, readFile, rename, unlink, writeFile, access, stat, open, realpath } from 'fs/promises'
 import { constants } from 'fs'
 import { join } from 'path'
 import { createHash, randomBytes } from 'crypto'
+import { EVIDENCE_ARTIFACT_MAX_BYTES, type EvidenceReference } from '../../shared/evidence'
 
 export interface ArtifactMeta {
   id: string
@@ -43,6 +44,37 @@ export function countTextLines(text: string): number {
 
 export class ArtifactStore {
   constructor(private readonly sessionsDir: string) {}
+
+  async resolveEvidence(sessionId: string, id: string, sourceTool: string): Promise<Extract<EvidenceReference, { kind: 'artifact' }>> {
+    const { bytes } = await this.readEvidenceFile(sessionId, id, false)
+    return { kind: 'artifact', artifactId: id, mimeType: 'text/plain', bytes, sourceTool, description: '工具输出' }
+  }
+
+  async readEvidence(sessionId: string, id: string): Promise<string> {
+    return (await this.readEvidenceFile(sessionId, id, true)).text
+  }
+
+  private async readEvidenceFile(sessionId: string, id: string, full: boolean): Promise<{ bytes: number; text: string }> {
+    if (!/^[A-Za-z0-9_-]+$/.test(sessionId) || !/^(?:[a-f0-9]{12}|sha256-[a-f0-9]{64})$/.test(id)) {
+      throw new Error('Artifact 引用无效')
+    }
+    const filePath = this.resolvePath(sessionId, id)
+    if (await realpath(filePath) !== join(await realpath(this.sessionsDir), sessionId, 'artifacts', id)) throw new Error('Artifact 引用越界')
+    const file = await open(filePath, 'r')
+    try {
+      const info = await file.stat()
+      if (!info.isFile()) throw new Error('Artifact 不是普通文件')
+      if (full && info.size > EVIDENCE_ARTIFACT_MAX_BYTES) throw new Error('Artifact 超出文本查看大小限制')
+      const buffer = Buffer.alloc(Math.min(info.size, EVIDENCE_ARTIFACT_MAX_BYTES))
+      const { bytesRead } = await file.read(buffer, 0, buffer.length, 0)
+      const content = buffer.subarray(0, bytesRead)
+      if (content.includes(0)) throw new Error('Artifact 不是文本文件')
+      let text: string
+      try { text = new TextDecoder('utf-8', { fatal: true }).decode(content, { stream: !full && info.size > buffer.length }) }
+      catch { throw new Error('Artifact 不是 UTF-8 文本') }
+      return { bytes: info.size, text }
+    } finally { await file.close() }
+  }
 
   /** 返回会话 artifact 目录绝对路径 */
   getArtifactsDir(sessionId: string): string {

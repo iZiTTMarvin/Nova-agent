@@ -86,6 +86,7 @@ export function forwardEventToRenderer(
         result: sanitizeToolOutput(event.toolName, event.result, event.failed),
         sessionId: event.sessionId,
         ...(event.failed !== undefined ? { failed: event.failed } : {}),
+        ...(event.evidence?.length ? { evidence: event.evidence } : {}),
         ...(event.artifactId ? { artifactId: event.artifactId } : {}),
         ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {}),
         ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),

@@ -42,6 +42,7 @@ const DESCRIPTORS: Record<string, ToolPermissionDescriptor> = {
   run_code: { effects: [], pathScope: 'none' },
   todo_write: { effects: ['session.write'], pathScope: 'none' },
   askQuestion: { effects: ['session.write'], pathScope: 'none' },
+  present_evidence: { effects: ['session.write'], pathScope: 'none' },
   present_visualization: { effects: ['session.write'], pathScope: 'none' },
   load_tools: { effects: ['session.write'], pathScope: 'none' },
   save_plan: {

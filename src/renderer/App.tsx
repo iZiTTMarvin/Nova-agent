@@ -180,7 +180,7 @@ function App(): React.ReactNode {
 
     // 监听：Agent 工具执行完毕拿到结果
     const unsubToolResult = window.api.on('agent:tool-result', gateAgentEvent('tool-result', (data) => {
-      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result, data.parentToolCallId, data.failed, data.processHandle)
+      handleToolResult(data.messageId, data.toolCallId, data.toolName, data.result, data.parentToolCallId, data.failed, data.processHandle, data.evidence)
     }))
 
     // 监听：Agent 执行中实时 diff 更新

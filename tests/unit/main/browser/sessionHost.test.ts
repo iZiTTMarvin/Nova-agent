@@ -214,6 +214,25 @@ async function openReady(
 }
 
 describe('BrowserSessionHost 生命周期', () => {
+  it('实时证据只恢复同会话、同身份且未改变地址的存活页面', async () => {
+    const guest = new FakeGuest({ id: 80, url: 'https://example.com/app' })
+    const harness = createHarness(new Map([[80, guest]]))
+    const browserId = await openReady(harness, 80)
+    const page = harness.snapshots.at(-1)!.pages.find(page => page.browserId === browserId)!
+    const target = { browserId, generation: page.generation, documentEpoch: page.documentEpoch, url: page.url }
+    expect(await harness.host.openEvidence('sess_other', target)).toMatchObject({ status: 'not_applied', code: 'not_owner' })
+    expect(await harness.host.openEvidence('sess_1', { ...target, generation: page.generation + 1 })).toMatchObject({ status: 'not_applied' })
+    await harness.host.hide(browserId, 'sess_1')
+    expect(await harness.host.openEvidence('sess_1', target)).toMatchObject({ status: 'applied', page: { browserId } })
+    guest.url = 'https://example.com/replaced'
+    expect(await harness.host.openEvidence('sess_1', target)).toMatchObject({ status: 'not_applied', code: 'stale_observation' })
+    guest.url = page.url
+    guest.emit('did-navigate')
+    expect(await harness.host.openEvidence('sess_1', target)).toMatchObject({ status: 'not_applied', code: 'stale_observation' })
+    harness.host.revokeSession('sess_1')
+    expect(await harness.host.openEvidence('sess_1', target)).toMatchObject({ status: 'not_applied' })
+  })
+
   it('按宿主分配的隔离槽绑定真实 guest，不依赖 Renderer 挂载回执', async () => {
     const guest = new FakeGuest({ id: 42, url: '' })
     guest.loading = true

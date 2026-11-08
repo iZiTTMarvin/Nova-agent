@@ -44,6 +44,7 @@ import {
   type BrowserObserveResult,
   type BrowserOpenCommand
 } from '../../shared/browser'
+import type { EvidenceBrowserTarget } from '../../shared/evidence'
 import type { BrowserCommandContext, BrowserPort } from '../../runtime/browser'
 import type { BrowserControlFence, BrowserPageControl } from './controlPort'
 import { BROWSER_USER_PARTITION } from './partitionSlots'
@@ -95,6 +96,7 @@ interface BrowserAttachParams {
 }
 
 export interface BrowserSessionHost extends BrowserPort {
+  openEvidence(sessionId: string, target: EvidenceBrowserTarget): Promise<BrowserNavigateResult>
   attach(params: BrowserAttachParams): Promise<BrowserAttachResult>
   attachPartition(partition: string, webContentsId: number): Promise<BrowserAttachResult>
   /** 用户页 guest 配对：界面按它创建的 webview 指认归属，主进程校验 partition。 */
@@ -1580,6 +1582,24 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     })
   }
 
+  async function openEvidence(sessionId: string, target: EvidenceBrowserTarget): Promise<BrowserNavigateResult> {
+    const found = lookupPage(target.browserId, sessionId)
+    if ('status' in found) return found
+    return enqueueSerial(found.record, undefined, async () => {
+      const current = ledger.inspect(target.browserId, sessionId)
+      const record = found.record
+      if (!current.ok || current.value.generation !== target.generation || current.value.documentEpoch !== target.documentEpoch ||
+          !record.guest || safeDestroyed(record.guest) || record.guest.isCrashed() || record.loading || record.loadError ||
+          !['ready', 'hidden'].includes(record.lifecycle) || record.url !== target.url || record.guest.getURL() !== target.url) {
+        return browserNotApplied('stale_observation', '实时页面已失效或发生变化，请重新启动或验证')
+      }
+      record.visible = true
+      record.lifecycle = 'ready'
+      emit()
+      return { status: 'applied', page: project(current.value, record) }
+    })
+  }
+
   function noteRendererReloading(): void {
     for (const record of pages.values()) {
       if (record.lifecycle === 'closing' || record.lifecycle === 'failed') continue
@@ -1641,6 +1661,7 @@ export function createBrowserSessionHost(deps: BrowserSessionHostDeps): BrowserS
     grantsForPartition,
     noteGuestHandoff,
     inspectBinding,
+    openEvidence,
     livePageCount,
     cancelRun,
     releaseAgent,

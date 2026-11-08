@@ -23,6 +23,13 @@ describe('ImageStore', () => {
   })
 
   describe('save', () => {
+    it('写入失败不签发引用，能落盘但不能解码的内容也不能成为证据', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'sess_blocked'), 'not a directory')
+      expect(() => store.save('sess_blocked', PNG_DATA_URL)).toThrow()
+      const damaged = store.save('sess_damaged', 'data:image/png;base64,YmFkLWltYWdl')
+      await expect(store.resolveEvidence('sess_damaged', damaged.url)).rejects.toThrow()
+    })
+
     it('落盘后返回 nova-image:// URL，文件存在且内容正确', () => {
       const result = store.save('sess_test1', PNG_DATA_URL, 'image/png')
 

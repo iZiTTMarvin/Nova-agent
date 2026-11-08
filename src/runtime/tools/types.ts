@@ -211,6 +211,7 @@ export interface ToolResult {
    * AgentLoop 会将 output + images 组合为多模态 content 数组发送给模型。
    */
   images?: ImageContent[]
+  evidence?: import('../../shared/evidence').EvidenceReference[]
   /**
    * 大输出落盘后的会话内 artifact ID。
    * 模型上下文只保留截断文本 + artifact:// 指针；全文可通过 read artifact:// 续读。

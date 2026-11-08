@@ -61,7 +61,7 @@ export function registerNovaImageHandler(imageStore: ImageStore): void {
     return new Response(webStream, {
       headers: {
         'Content-Type': resolved.mimeType,
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-store'
       }
     })
   })

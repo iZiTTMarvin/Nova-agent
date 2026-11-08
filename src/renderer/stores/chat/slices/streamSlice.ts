@@ -397,7 +397,8 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
     result: string,
     parentToolCallId?: string,
     failed?: boolean,
-    processHandle?: AgentToolProcessHandle
+    processHandle?: AgentToolProcessHandle,
+    evidence?: import('../../../../shared/evidence').EvidenceReference[]
   ) => {
     const isError = failed ?? (result.startsWith('工具执行失败') || result.startsWith('权限拒绝:'))
 
@@ -428,6 +429,7 @@ export const createStreamSlice: ChatSliceCreator<StreamSliceState> = (set, get) 
             ...b,
             status: isError ? 'error' as const : 'success' as const,
             result: sanitizedResult,
+            evidence,
             ...(processHandle ? { processHandle } : {})
           }
         }

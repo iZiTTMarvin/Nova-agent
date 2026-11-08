@@ -62,6 +62,7 @@ import {
   restoreOrInjectHistory
 } from '../../../runtime/sessions/contextSnapshot'
 import type { ImageStore } from '../../../runtime/storage/ImageStore'
+import { listSessionEvidence } from '../evidence'
 import { ArtifactStore } from '../../../runtime/artifacts/ArtifactStore'
 import { setPersistentShellEnabled } from '../../../runtime/tools/bash'
 import type { NovaSettings } from '../../../runtime/settings/novaSettings'
@@ -271,9 +272,17 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     getBrowserPort: () => getBrowserSessionHost(),
     getVisualizationStore: () => getVisualizationStoreFor(sessionsDir),
     visualizationEnabled: session.mode === 'learn',
+    evidence: {
+      getImageStore,
+      getReferences: context => context.sessionId
+        ? listSessionEvidence(sessionStore, runCoordinator, context.sessionId)
+        : []
+    },
     saveBrowserCaptureEvidence: async ({ sessionId, mimeType, base64 }) => {
       try {
-        return getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`).filePath
+        if (!sessionStore.loadMetadata(sessionId)) return null
+        const saved = getImageStore().save(sessionId, `data:${mimeType};base64,${base64}`)
+        return { ...await getImageStore().resolveEvidence(sessionId, saved.url), sourceTool: 'browser_capture', description: '浏览器截图' }
       } catch (error) {
         console.error('[browser_capture] 截图证据落盘失败:', error)
         return null

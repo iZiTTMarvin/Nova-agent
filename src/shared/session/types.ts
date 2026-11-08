@@ -75,6 +75,7 @@ export interface TextBlock {
 export interface ToolBlock {
   type: 'tool'
   resultImages?: import('../tools/types').ImageContent[]
+  evidence?: import('../evidence').EvidenceReference[]
   delivery?: ToolDelivery
   responseStep?: number
   toolCallId: string

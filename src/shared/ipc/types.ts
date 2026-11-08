@@ -709,6 +709,14 @@ export interface IpcCommands {
     params: void
     result: void
   }
+  'evidence:read-artifact': {
+    params: { sessionId: string; id: string }
+    result: import('../evidence').EvidenceReadResult
+  }
+  'evidence:open-browser': {
+    params: { sessionId: string; id: string }
+    result: import('../browser').BrowserNavigateResult
+  }
   'image:save': {
     params: {
       sessionId: string
@@ -812,6 +820,7 @@ export interface IpcEvents {
     parentToolCallId?: string
   }
   'agent:tool-result': {
+    evidence?: import('../evidence').EvidenceReference[]
     messageId: string
     toolCallId: string
     toolName: string

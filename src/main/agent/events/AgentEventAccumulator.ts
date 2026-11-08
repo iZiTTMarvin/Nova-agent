@@ -317,6 +317,7 @@ export function accumulateStreamEvent(sessionId: string, event: AgentEvent, ctx:
             result: event.result,
             ...(event.processOutcome ? { processOutcome: { ...event.processOutcome } } : {}),
             ...(event.resultImages?.length ? { resultImages: event.resultImages.map(image => ({ ...image })) } : {}),
+            ...(event.evidence?.length ? { evidence: structuredClone(event.evidence) } : {}),
             ...(event.artifactId ? { artifactId: event.artifactId } : {}),
             ...(event.truncationMeta ? { truncationMeta: event.truncationMeta } : {}),
             ...(subagentNotificationIds ? { subagentNotificationIds } : {})

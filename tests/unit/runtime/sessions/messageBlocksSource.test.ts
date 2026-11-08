@@ -20,6 +20,19 @@ import type { MessageBlock } from '../../../../src/shared/session'
 import { projectUserMessages } from '../../../../src/runtime/request-projection'
 
 describe('消息 block 单一事实源', () => {
+  it('证据引用随 ToolBlock 往返保存，拒绝损坏引用和夹带 Base64', () => {
+    const evidence = [{ kind: 'artifact' as const, artifactId: 'a'.repeat(12), mimeType: 'text/plain' as const,
+      bytes: 4, sourceTool: 'bash', description: '命令失败日志' }]
+    const disk = serializeMessageForDisk({ id: 'evidence', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{ type: 'tool', toolCallId: 'delivery', toolName: 'present_evidence', arguments: {}, status: 'success', evidence }] })
+    expect(normalizeMessageToBlocksSource(JSON.parse(JSON.stringify(disk))).blocks?.[0]).toMatchObject({ evidence })
+    for (const invalid of [{ ...evidence[0], artifactId: '../secret' }, { ...evidence[0], data: 'base64' }]) {
+      const broken = JSON.parse(JSON.stringify(disk))
+      broken.blocks[0].evidence = [invalid]
+      expect(() => normalizeMessageToBlocksSource(broken)).toThrow('Invalid tool evidence')
+    }
+  })
+
   it('schema 升级到当前版本（含 v8 blocks 源）', () => {
     const v7 = {
       schemaVersion: 7,

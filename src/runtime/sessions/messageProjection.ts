@@ -12,6 +12,7 @@ import { decodeRuntimeInputBlock, type MessageBlock, type ToolCall } from '../..
 import type { SessionMessage, SessionToolCall, SerializableContentBlock } from './types'
 import { extractTextFromSerializableContent } from './types'
 import { isToolFailureText } from '../../shared/toolResultStatus'
+import { isEvidenceReference } from '../../shared/evidence'
 import { isToolProcessOutcome } from '../../shared/tools/processOutcome'
 
 /** 消息 schema 子版本：嵌在 SessionMessage.messageSchemaVersion */
@@ -251,6 +252,8 @@ function validateMessageFacts(message: SessionMessage): void {
       }
       runtimeInputOrders.set(decoded.afterStep, decoded.order)
     } else if (block.type === 'tool') {
+      if (block.evidence !== undefined && (!Array.isArray(block.evidence) || block.evidence.length > 8 ||
+          block.evidence.some(ref => !isEvidenceReference(ref)))) throw new Error('Invalid tool evidence')
       if (block.resultImages !== undefined && (!Array.isArray(block.resultImages) || block.resultImages.some(image =>
         !image || typeof image.data !== 'string' || !image.data || typeof image.mimeType !== 'string' ||
         !/^image\/(png|jpeg|gif|webp)$/.test(image.mimeType)))) throw new Error('Invalid tool images')

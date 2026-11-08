@@ -57,6 +57,7 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
     codeMode: 'direct-only',
     registration: 'conditional'
   },
+  { name: 'present_evidence', capability: 'interaction', exposure: 'always', codeMode: 'direct-only' },
   { name: 'todo_write', capability: 'plan', exposure: 'always', codeMode: 'direct-only' },
   { name: 'askQuestion', capability: 'interaction', exposure: 'always', codeMode: 'direct-only' },
   {

@@ -454,6 +454,7 @@ async function executePreparedToolCall(
   let resultText = ''
   let structuredContent: JsonValue | undefined
   let resultImages: ImageContent[] | undefined
+  let evidence: import('../../../shared/evidence').EvidenceReference[] | undefined
   let artifactId: string | undefined
   let truncationMeta: ToolTruncationMeta | undefined
   let control: ToolControlSignal | undefined
@@ -471,6 +472,7 @@ async function executePreparedToolCall(
       }
     }
 
+    evidence = toolResult.evidence
     processOutcome = toolResult.processOutcome
     if (toolResult.success) {
       // 已走 OutputSink / OutputAccumulator 控量并附 artifact 指针时，跳过二次截断
@@ -503,6 +505,17 @@ async function executePreparedToolCall(
           : ''
       resultText = limitToolErrorText(`工具执行失败: ${toolResult.error}${detail}`)
       failed = true
+    }
+    if (toolResult.artifactId && toolContext.artifactStore && toolContext.sessionId) {
+      try {
+        const reference = await toolContext.artifactStore.resolveEvidence(toolContext.sessionId, toolResult.artifactId, item.tool.name)
+        evidence = [...(evidence ?? []), reference]
+      } catch {
+        resultText += '\n证据引用不可用：工具输出未能解析为已保存的文本产物。'
+      }
+    }
+    if (options.abortSignal?.aborted) {
+      return { outcome: createSkippedOutcome(item.index, item.toolCall, item.args), emitted: false }
     }
   } catch (err) {
     resultText = limitToolErrorText(`工具执行失败: ${(err as Error).message}`)
@@ -545,6 +558,7 @@ async function executePreparedToolCall(
     toolName: item.toolCall.name,
     result: resultText,
     ...(resultImages?.length ? { resultImages } : {}),
+    ...(evidence?.length ? { evidence } : {}),
     failed,
     ...(artifactId ? { artifactId } : {}),
     ...(truncationMeta ? { truncationMeta } : {}),

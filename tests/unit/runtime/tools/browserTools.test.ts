@@ -217,7 +217,7 @@ describe('browser 工具契约', () => {
     expect(result.output).toContain('- e1  button  保存')
   })
 
-  it('截图发图前做真实探测，关键字为 false 也不当作可用', async () => {
+  it.each([true, false])('不支持看图时仍可保存证据，保存成功=%s，不伪造视觉验收', async saved => {
     const png =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
     const port = fakePort({
@@ -241,14 +241,18 @@ describe('browser 工具契约', () => {
     const capture = createBrowserCaptureTool({
       getPort: () => port,
       probeVision: async () => false,
-      saveEvidence: async () => 'D:\\\\captures\\\\shot.png'
+      saveEvidence: async () => saved ? ({ kind: 'image', url: 'nova-image://sess_1/' + 'a'.repeat(32) + '.png', mimeType: 'image/png', width: 1, height: 1, bytes: 100, sourceTool: 'browser_capture', description: '截图' }) : null
     })
     const result = await capture.execute({ observation }, context({ supportsVision: false }))
     expect(result.success).toBe(true)
     expect(result.images).toBeUndefined()
     expect(result.output).toContain('text_only')
     expect(result.output).toContain('真实探测失败')
-    expect(result.output).toContain('D:\\\\captures\\\\shot.png')
+    if (saved) expect(result.evidence?.[0]).toMatchObject({ kind: 'image', url: expect.stringContaining('nova-image://sess_1/') })
+    else {
+      expect(result.evidence).toBeUndefined()
+      expect(result.output).toContain('not saved')
+    }
   })
 
   it('截图 run 预算在第六张之后耗尽', async () => {

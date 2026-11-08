@@ -112,7 +112,8 @@ export interface StreamSliceState {
     result: string,
     parentToolCallId?: string,
     failed?: boolean,
-    processHandle?: AgentToolProcessHandle
+    processHandle?: AgentToolProcessHandle,
+    evidence?: import('../../../shared/evidence').EvidenceReference[]
   ) => void
 }
 

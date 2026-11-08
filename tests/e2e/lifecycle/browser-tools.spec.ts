@@ -1,9 +1,11 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import http from 'node:http'
 import type { AddressInfo } from 'node:net'
 import path from 'node:path'
 import { expect, test, type NovaHarness } from '../fixtures/nova'
 import {
+  EVIDENCE_OPEN_BROWSER,
+  EVIDENCE_READ_ARTIFACT,
   BROWSER_CLAIM,
   BROWSER_GET_SNAPSHOT,
   BROWSER_NAVIGATE,
@@ -728,6 +730,81 @@ test('模型常见写法走通整条链路：多填字段、原页跳转、省�
       expect(listed.snapshot.pages.map((item) => item.browserId)).toEqual([browserId])
       expect(listed.snapshot.pages[0]?.url).toBe(`${fixture.origin}/`)
     }
+  } finally {
+    nova.provider.setTurnFactory(null)
+    await fixture.close()
+  }
+})
+
+test('真实截图和命令产物经过选择、IPC 读取与刷新恢复，失效页面和跨会话请求被拒绝', async ({ nova }) => {
+  test.setTimeout(120_000)
+  const sessionId = await grantFullAccess(nova)
+  const fixture = await startFormFixture()
+  try {
+    const opened = await nova.invoke(BROWSER_OPEN, { sessionId, url: `${fixture.origin}/` })
+    if (opened.status !== 'applied') throw new Error('Fixture browser did not open')
+    const browserId = opened.page.browserId
+    await expect(nova.page.locator('webview[data-browser-id]')).toBeVisible()
+    let step = 0
+    let imageUrl = ''
+    let artifactId = ''
+    nova.provider.setTurnFactory(record => {
+      const latest = toolTexts(record.body).at(-1) ?? ''
+      switch (step++) {
+        case 0: return { kind: 'tool', name: 'browser_observe', arguments: { action: 'snapshot', browserId }, callId: 'evidence-observe' }
+        case 1: return { kind: 'tool', name: 'browser_capture', arguments: { observation: {
+          browserId, generation: Number(field(latest, 'generation')), documentEpoch: Number(field(latest, 'documentEpoch')),
+          observationId: field(latest, 'observationId')
+        } }, callId: 'evidence-capture' }
+        case 2:
+          imageUrl = field(latest, 'imageEvidence')
+          expect(imageUrl).toMatch(/^nova-image:\/\//)
+          return { kind: 'tool', name: 'present_evidence', arguments: { items: [{ kind: 'image', url: imageUrl, description: '真实表单截图，未声明视觉验收通过' }] }, callId: 'evidence-image-delivery' }
+        case 3:
+          expect(latest).toContain('已选择真实产物')
+          return { kind: 'tool', name: 'bash', arguments: { command: `node -e "process.stdout.write('EVIDENCE_OUTPUT'.repeat(6000))"` }, callId: 'evidence-command' }
+        case 4:
+          artifactId = /artifact:\/\/([a-z0-9-]+)/.exec(latest)?.[1] ?? ''
+          expect(artifactId).not.toBe('')
+          return { kind: 'tool', name: 'present_evidence', arguments: { items: [{ kind: 'artifact', artifactId, description: '真实命令输出' }] }, callId: 'evidence-log-delivery' }
+        default:
+          expect(latest).toContain('已选择真实产物')
+          return { kind: 'text', text: 'NOVA_EVIDENCE_STORAGE_OK' }
+      }
+    })
+    await nova.sendPrompt('保留真实截图与命令输出供查看')
+    await expect(nova.page.getByText('NOVA_EVIDENCE_STORAGE_OK', { exact: true })).toBeVisible()
+    await nova.waitUntilIdle()
+    const before = await nova.invoke('load-session', { sessionId })
+    const evidenceBlocks = before?.messages.flatMap(message => message.blocks ?? []).filter(block => block.type === 'tool' && block.toolName === 'present_evidence')
+    expect(evidenceBlocks).toHaveLength(2)
+    expect(JSON.stringify(evidenceBlocks)).not.toMatch(/resultImages|base64/)
+    expect(await nova.invoke(EVIDENCE_READ_ARTIFACT, { sessionId, id: artifactId })).toEqual({ status: 'available', text: 'EVIDENCE_OUTPUT'.repeat(6000) })
+    expect(await nova.invoke(EVIDENCE_OPEN_BROWSER, { sessionId, id: imageUrl })).toMatchObject({ status: 'applied', page: { browserId } })
+    const loadImage = () => nova.page.evaluate(url => new Promise<boolean>(resolve => {
+      const image = new Image()
+      image.onload = () => resolve(image.naturalWidth > 0 && image.naturalHeight > 0)
+      image.onerror = () => resolve(false)
+      image.src = url
+    }), imageUrl)
+    expect(await loadImage()).toBe(true)
+    await nova.page.reload()
+    await expect(nova.page.getByText('NOVA_EVIDENCE_STORAGE_OK', { exact: true })).toBeVisible()
+    const after = await nova.invoke('load-session', { sessionId })
+    expect(after?.messages.flatMap(message => message.blocks ?? []).filter(block => block.type === 'tool' && block.toolName === 'present_evidence')).toEqual(evidenceBlocks)
+    expect(await loadImage()).toBe(true)
+    expect(await nova.invoke(EVIDENCE_READ_ARTIFACT, { sessionId, id: artifactId })).toMatchObject({ status: 'available' })
+    expect(await nova.invoke(EVIDENCE_OPEN_BROWSER, { sessionId, id: imageUrl })).toMatchObject({ status: 'not_applied' })
+    const other = await nova.createSession('pilot')
+    expect(await nova.invoke(EVIDENCE_READ_ARTIFACT, { sessionId: other.currentSessionId!, id: artifactId })).toMatchObject({ status: 'unavailable' })
+    expect(await nova.invoke(EVIDENCE_OPEN_BROWSER, { sessionId: other.currentSessionId!, id: imageUrl })).toMatchObject({ status: 'not_applied' })
+    const imageFile = path.join(nova.profileRoot, 'userData', 'sessions', sessionId, 'images', new URL(imageUrl).pathname.slice(1))
+    expect(existsSync(imageFile)).toBe(true)
+    await nova.invoke('workspace:delete-session', { sessionId })
+    expect(existsSync(imageFile)).toBe(false)
+    expect(await loadImage()).toBe(false)
+    expect(await nova.invoke(EVIDENCE_READ_ARTIFACT, { sessionId, id: artifactId })).toMatchObject({ status: 'unavailable' })
+    expect(nova.pageErrors).toEqual([])
   } finally {
     nova.provider.setTurnFactory(null)
     await fixture.close()

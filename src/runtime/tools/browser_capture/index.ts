@@ -1,3 +1,4 @@
+import { assertSideEffectAllowed } from '../types'
 import type { ToolExecutor, ToolResult } from '../types'
 import type { BrowserToolDeps } from '../../browser'
 import {
@@ -26,7 +27,7 @@ export interface BrowserCaptureToolDeps extends BrowserToolDeps {
     readonly sessionId: string
     readonly mimeType: string
     readonly base64: string
-  }) => Promise<string | null>
+  }) => Promise<Extract<import('../../../shared/evidence').EvidenceReference, { kind: 'image' }> | null>
   readonly probeVision?: (
     modelClient: ModelClient | undefined,
     options?: { readonly abortSignal?: AbortSignal }
@@ -37,8 +38,8 @@ const DESCRIPTION = `browser_capture — capture a screenshot of the currently s
 
 Parameters: {"observation":{"browserId":"brw_…","generation":1,"documentEpoch":1,"observationId":"obs_…"}}; copy the observation line returned by the most recent browser_observe snapshot verbatim.
 Images are budget-constrained: DPR=1, long edge ≤1440, ≤2MP, ≤1MiB per image, ≤6 per turn.
-When the current model cannot consume images, the tool returns a text explanation plus a local evidence path — a screenshot must not be treated as passed visual acceptance.
-Multimodal images are not archived; only this turn's budget constrains them.`
+When the current model cannot consume images, the tool returns a text explanation plus a saved evidence reference — a screenshot must not be treated as passed visual acceptance.
+Saved evidence references can be selected with present_evidence. Saving failure does not imply visual acceptance.`
 
 export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExecutor {
   const probe = deps.probeVision ?? probeProviderVision
@@ -88,13 +89,24 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
         return failApplied(browserNotApplied('budget_exceeded', consumed.detail))
       }
 
-      const evidencePath = deps.saveEvidence
+      assertSideEffectAllowed(context, '保存截图证据')
+      const saved = deps.saveEvidence
         ? await deps.saveEvidence({
             sessionId: resolved.value.sessionId,
             mimeType: constrained.mimeType,
             base64: constrained.base64
           })
         : null
+
+      assertSideEffectAllowed(context, '返回截图证据')
+      const pages = await port.listPages({ sessionId: resolved.value.sessionId }, resolved.value)
+      const page = pages.status === 'applied' ? pages.snapshot.pages.find(page =>
+        page.sessionId === resolved.value.sessionId && page.browserId === captured.observation.browserId &&
+        page.generation === captured.observation.generation && page.documentEpoch === captured.observation.documentEpoch) : undefined
+      const evidence = saved ? [{ ...saved, ...(page ? { browser: {
+        browserId: page.browserId, generation: page.generation, documentEpoch: page.documentEpoch, url: page.url
+      } } : {}) }] : undefined
+      const savedNotice = saved ? `imageEvidence: ${saved.url}` : 'imageEvidence: (not saved; no persistent screenshot available)'
 
       const header = [
         `observationId: ${captured.observation.observationId}`,
@@ -108,6 +120,7 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
       ]
 
       const canSendImage = await probe(context.modelClient, { abortSignal: context.abortSignal })
+      assertSideEffectAllowed(context, '返回截图证据')
 
       if (!canSendImage) {
         return {
@@ -116,8 +129,9 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
             ...header,
             `status: text_only`,
             '当前服务商未能接受图片（真实探测失败，不能只凭模型名判断）。视觉验收需换可看图的模型。',
-            evidencePath ? `localEvidence: ${evidencePath}` : 'localEvidence: (not saved)'
-          ].join('\n')
+            savedNotice
+          ].join('\n'),
+          ...(evidence ? { evidence } : {})
         }
       }
 
@@ -126,10 +140,11 @@ export function createBrowserCaptureTool(deps: BrowserCaptureToolDeps): ToolExec
         output: [
           ...header,
           `status: image`,
-          evidencePath ? `localEvidence: ${evidencePath}` : ''
+          savedNotice
         ]
           .filter((line) => line.length > 0)
           .join('\n'),
+        ...(evidence ? { evidence } : {}),
         images: [{ data: constrained.base64, mimeType: constrained.mimeType }]
       }
     }

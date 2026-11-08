@@ -33,6 +33,21 @@ function makeMainWindow() {
 }
 
 describe('forwardEventToRenderer（recovery / hook IPC）', () => {
+  it('实时与历史 DTO 使用同一证据引用，均剥离图片 Base64', async () => {
+    const { toSharedMessage } = await import('../../../src/main/ipc/sessionMessageMapper')
+    const evidence = [{ kind: 'image' as const, url: 'nova-image://sess_1/' + 'a'.repeat(32) + '.png',
+      mimeType: 'image/png', width: 1, height: 1, bytes: 10, sourceTool: 'browser_capture', description: '操作后的画面' }]
+    const win = makeMainWindow()
+    const images = [{ mimeType: 'image/png', data: 'DO_NOT_SEND_BASE64' }]
+    forwardEventToRenderer(win as never, { type: 'tool_result', messageId: 'm', toolCallId: 't', toolName: 'browser_capture', result: 'saved', evidence, resultImages: images })
+    const live: unknown = win._send.mock.calls.at(-1)?.[1]
+    const restored = toSharedMessage({ id: 'm', role: 'assistant', content: '', timestamp: 1,
+      blocks: [{ type: 'tool', toolCallId: 't', toolName: 'browser_capture', arguments: {}, status: 'success', evidence, resultImages: images }] })
+    expect(live).toMatchObject({ evidence })
+    expect(restored.blocks?.[0]).toMatchObject({ evidence })
+    expect(JSON.stringify([live, restored])).not.toContain('DO_NOT_SEND_BASE64')
+  })
+
   it('hook_error → agent:hook-error', () => {
     const win = makeMainWindow()
     const event: AgentEvent = {

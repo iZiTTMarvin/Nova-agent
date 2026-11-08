@@ -12,6 +12,9 @@ import { createHash } from 'crypto'
 import { existsSync } from 'fs'
 import * as path from 'path'
 import { atomicWriteFileSync } from './atomicFile'
+import { readFile, realpath } from 'fs/promises'
+import sharp from 'sharp'
+import type { EvidenceReference } from '../../shared/evidence'
 
 /** 协议 scheme（nova-image://） */
 export const NOVA_IMAGE_SCHEME = 'nova-image'
@@ -95,6 +98,23 @@ export interface ResolvedImageUrl {
 
 export class ImageStore {
   constructor(private readonly sessionsDir: string) {}
+
+  async resolveEvidence(sessionId: string, url: string): Promise<Omit<Extract<EvidenceReference, { kind: 'image' }>, 'sourceTool' | 'description'>> {
+    assertSafeSessionId(sessionId)
+    if (!url.startsWith(`${NOVA_IMAGE_SCHEME}://${sessionId}/`)) throw new Error('图片不属于当前会话')
+    const resolved = this.resolveUrl(url)
+    if (!resolved || url !== this.buildUrl(sessionId, path.basename(resolved.filePath))) throw new Error('图片引用无效')
+    const actual = await realpath(resolved.filePath)
+    const expectedDir = path.join(await realpath(this.sessionsDir), sessionId, 'images')
+    if (actual !== path.join(expectedDir, path.basename(resolved.filePath))) throw new Error('图片引用越界')
+    const buffer = await readFile(actual)
+    if (createHash('sha256').update(buffer).digest('hex').slice(0, 32) !== path.basename(actual).split('.')[0]) {
+      throw new Error('图片内容已损坏')
+    }
+    const decoded = await sharp(buffer).raw().toBuffer({ resolveWithObject: true })
+    return { kind: 'image', url, mimeType: resolved.mimeType, bytes: buffer.length,
+      width: decoded.info.width, height: decoded.info.height }
+  }
 
   /** 返回会话图片目录绝对路径 */
   getImagesDir(sessionId: string): string {
