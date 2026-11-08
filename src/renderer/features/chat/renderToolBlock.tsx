@@ -71,19 +71,14 @@ export function renderToolBlock(
     )
   }
 
-  if (block.toolName === 'switch_mode' || block.toolName === 'stage_transition') {
+  if (block.toolName === 'switch_mode') {
     // 控制面工具只有两种可见形态：等待审批的状态行（交互在底部审批 dock），
     // 以及忽略决定随工具结果持久化后的灰态记录
     if (context?.pendingPlanReview?.toolCallId === block.toolCallId) {
       return <PlanApprovalPendingRow key={block.toolCallId} />
     }
     if (isPlanReviewIgnoredResult(block.result)) {
-      return (
-        <PlanApprovalIgnoredCard
-          key={block.toolCallId}
-          source={block.toolName === 'stage_transition' ? 'compose' : 'plan'}
-        />
-      )
+      return <PlanApprovalIgnoredCard key={block.toolCallId} />
     }
     return null
   }

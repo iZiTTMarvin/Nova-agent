@@ -12,7 +12,7 @@ describe('buildStableSystemPrompt', () => {
     expect(prompt).toContain('D:\\work')
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.')
+    expect(prompt).toContain('- pilot — Nova pilot: organizes development with the built-in pilot method and grounds delivery in real artifacts.')
   })
 
   it('headless 运行面不注入交互模式与编排说明', () => {
@@ -32,7 +32,7 @@ describe('getStableSystemPrompt', () => {
     const prompt = getStableSystemPrompt()
     expect(prompt).toContain('plan')
     expect(prompt).toContain('default')
-    expect(prompt).toContain('compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.')
+    expect(prompt).toContain('- pilot — Nova pilot: organizes development with the built-in pilot method and grounds delivery in real artifacts.')
   })
 
   it('多次调用返回逐字节相同内容', () => {
@@ -63,6 +63,36 @@ describe('getStableSystemPrompt', () => {
     ].join('\n')
 
     expect(normalizeFrozenSystemPrompt(legacyV2Prompt)).toBe(getStableSystemPrompt())
+  })
+
+  it('旧英文 XForge 模式行被归一为 pilot，其他自定义内容保持原样', () => {
+    const legacy = [
+      'custom role line',
+      'Nova runs in three modes; the active mode and its constraints ride with each user message:',
+      '- plan — read-only analysis and planning; no edits, writes, or commands.',
+      '- default — read, modify, and verify the workspace; approvals follow user settings.',
+      '- compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.',
+      '',
+      "If a request exceeds the active mode's limits, say what switch is needed instead of working around it."
+    ].join(String.fromCharCode(10))
+
+    const normalized = normalizeFrozenSystemPrompt(legacy)
+    expect(normalized).toContain('custom role line')
+    expect(normalized).toContain('- pilot — Nova pilot:')
+    expect(normalized).not.toContain('compose')
+    expect(normalized).not.toContain('XForge')
+  })
+
+  it('旧中文 XForge 模式行被归一为 pilot', () => {
+    const legacy = [
+      'Nova 有三种运行模式，当前激活的模式会在每轮对话中告知你：',
+      '- compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。',
+      '请严格遵守当前模式的约束。'
+    ].join(String.fromCharCode(10))
+    const normalized = normalizeFrozenSystemPrompt(legacy)
+    expect(normalized).toContain('- pilot 模式：领航模式。')
+    expect(normalized).not.toContain('XForge')
+    expect(normalized).toContain('请严格遵守当前模式的约束。')
   })
 
   it('未知 frozen prompt 保持原样，避免误伤自定义 prompt', () => {

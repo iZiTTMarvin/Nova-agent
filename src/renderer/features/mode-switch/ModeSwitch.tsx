@@ -5,7 +5,6 @@ import { DropdownMenu } from '@astryxdesign/core/DropdownMenu'
 import {
   HandIcon,
   PlanIcon,
-  CodeIcon,
   CheckSmallIcon,
   CloseIcon,
   ImageIcon,
@@ -90,20 +89,12 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
       desc: '分析仓库并保存到项目 .nova/plans，确认后衔接默认模式',
       icon: <PlanIcon size={14} />
     },
-    {
-      id: 'compose',
-      name: 'XForge 锻造',
-      desc: '你说想法，它先帮你砍，再帮你做，最后当着你面验一遍',
-      icon: <CodeIcon size={14} />
-    }
   ]
 
   const activeOption = modeOptions.find(option => option.id === currentMode) ?? modeOptions[0]
   const activeChip = currentMode === 'plan'
     ? { label: 'Plan', className: 'mode-switch__chip--plan' }
-    : currentMode === 'compose'
-      ? { label: 'XForge 锻造', className: 'mode-switch__chip--compose' }
-      : null
+    : null
 
   const openMenu = () => {
     setSwitchError(null)

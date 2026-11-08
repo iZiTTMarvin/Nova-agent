@@ -16,7 +16,8 @@ import {
   xmlToolDisclosureCovers,
   getSubAgentSpec,
   listSubAgents,
-  createAssistantCompletionPolicy
+  createAssistantCompletionPolicy,
+  normalizeFrozenSystemPrompt
 } from '../../../runtime/agent'
 import { SystemPromptBuilder } from '../../../runtime/agent/promptBuilder/SystemPromptBuilder'
 import { renderCompactedSystem } from '../../../runtime/agent/core/renderHandoffPacket'
@@ -78,10 +79,8 @@ import { getWorkspaceService } from '../../services/WorkspaceService'
 import { createAskQuestionHandler, type PendingAskQuestionEntry } from '../interaction/askQuestionWaiters'
 import { resolveToDataUrl } from './imageResolve'
 import { registerBuiltinTools } from './registerBuiltinTools'
-import { createComposeStageFactsProvider } from './composeStageWiring'
 import { resolveSessionAgentBinding } from './sessionAgentBinding/resolveSessionAgentBinding'
 import { assertLearningModuleAvailable } from './learningModuleGate'
-import { getSubagentProjectionService } from '../../services/SubagentProjectionServiceHost'
 import { getVisualizationStoreFor } from '../../services/VisualizationStoreHost'
 import { loadDiagnosticState, saveDiagnosticState } from './diagnosticPersistence'
 import { isReadablePlanInWorkspace } from '../../../runtime/plans'
@@ -91,7 +90,6 @@ import {
 } from '../../../runtime/subagents'
 import type { CodeContextQueryPort } from '../../../runtime/code-graph'
 import { writerLeaseRegistry } from '../../../runtime/workspace'
-import { planReviewWaiters } from '../interaction/planReviewWaiters'
 import { getBrowserSessionHost } from '../../browser/hostRef'
 
 export interface AgentRuntimeRunRefs {
@@ -116,7 +114,7 @@ export interface PreparedAgentRuntime {
   /** 由 TurnService / agentHandler 在 startRun 后填入；runners / askQuestion 读取 */
   runRefs: AgentRuntimeRunRefs
   setAskQuestionHandler: AgentLoop['setAskQuestionHandler']
-  /** compose 阶段工具门禁；非 compose 会话为 null。子代理派生时继承。 */
+  /** 工具授权 overlay；学习会话提供策略，开发会话为 null。子代理派生时继承。 */
   toolAuthorizationPolicy: ToolAuthorizationPolicy | null
 }
 
@@ -281,15 +279,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
         return null
       }
     },
-    getStageFacts: sid => {
-      let projection
-      try {
-        projection = getSubagentProjectionService()
-      } catch {
-        return { criticCompleted: false, inspectorPassed: false }
-      }
-      return createComposeStageFactsProvider({ sessionStore, projection })(sid)
-    }
   })
 
   const sessionBinding = resolveSessionAgentBinding(session.mode)
@@ -427,10 +416,14 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     const prompt = SystemPromptBuilder.build({ ...baseSystemPromptLayers, toolSummary })
     return contextSnapshot ? [prompt, renderCompactedSystem(prompt, contextSnapshot)] : [prompt]
   })
+  const frozenSystemPrompt = session.frozenSystemPrompt
+    ? normalizeFrozenSystemPrompt(session.frozenSystemPrompt)
+    : undefined
   const systemPromptEpoch = needsFrozenSystemPromptEpoch({
     dialect: toolDialect,
     availability: toolAvailability,
     session,
+    frozenSystemPrompt,
     ledgerDisclosure: contextSnapshot?.activatedToolDisclosure,
     effectiveToolDefinitions,
     stableSystemPrompts
@@ -440,9 +433,7 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     : baselineToolSummary
 
   const reuseFrozenSystemPrompt =
-    !systemPromptEpoch && typeof session.frozenSystemPrompt === 'string'
-      ? session.frozenSystemPrompt
-      : undefined
+    !systemPromptEpoch && frozenSystemPrompt ? frozenSystemPrompt : undefined
   const agentLoop = new AgentLoop(modelPool, eventBus, {
     ...(reuseFrozenSystemPrompt ? { reuseFrozenSystemPrompt } : {}),
     systemPromptLayers: {
@@ -494,12 +485,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     if (!currentSession) {
       throw new Error('当前会话不存在')
     }
-    if (currentSession.mode === 'compose') {
-      throw new Error('compose 模式不能通过 switch_mode 切换')
-    }
-    if (currentSession.mode === 'learn') {
-      throw new Error('学习会话不能通过 switch_mode 切换')
-    }
     if (currentSession.mode === 'plan' && targetMode === 'default') {
       const activePath = currentSession.activePlan?.path
       const hasReadableActivePlan = isReadablePlanInWorkspace(projectPath, activePath)
@@ -527,38 +512,6 @@ export function prepareAgentRuntime(input: PrepareAgentRuntimeInput): PreparedAg
     pending: pendingAskQuestions,
     eventBus
   }))
-  agentLoop.setPlanReviewHandler((ref) => {
-    if (
-      ref.sessionId !== sessionId ||
-      ref.runId !== runRefs.runId ||
-      ref.messageId.trim().length === 0 ||
-      ref.toolCallId.trim().length === 0
-    ) {
-      throw new Error('计划审阅工具调用身份与当前 run 不匹配')
-    }
-
-    const pending = planReviewWaiters.create(ref)
-    try {
-      runCoordinator.inbox.enqueue({
-        runId: ref.runId,
-        sessionId: ref.sessionId,
-        messageId: ref.messageId,
-        type: 'planApproval',
-        interactionId: pending.interactionId,
-        payload: {
-          toolName: 'stage_transition',
-          action: 'complete',
-          toolCallId: ref.toolCallId
-        }
-      })
-      writerLeaseRegistry.release(runRefs.resourceOwnerRunId)
-    } catch (error) {
-      planReviewWaiters.cancel(pending.interactionId)
-      throw error
-    }
-    return pending.promise
-  })
-
   const providerForCache =
     modelPool instanceof ModelClientPool
       ? modelPool.getActiveProvider()
@@ -651,11 +604,13 @@ function needsFrozenSystemPromptEpoch(input: {
   dialect: ReturnType<typeof preferredToolDialect>
   availability: ToolAvailability
   session: SessionData
+  /** 已过已知旧格式归一化的冻结提示词；由调用方统一处理，避免各消费者口径漂移。 */
+  frozenSystemPrompt: string | undefined
   ledgerDisclosure: string | undefined
   effectiveToolDefinitions: readonly ToolDefinition[]
   stableSystemPrompts: readonly string[]
 }): boolean {
-  const frozen = input.session.frozenSystemPrompt
+  const frozen = input.frozenSystemPrompt
   if (frozen !== undefined) {
     const hasXmlCatalog = frozen.includes('## Tool catalog (XML inband calls)')
     if ((input.dialect === 'xml') !== hasXmlCatalog) return true

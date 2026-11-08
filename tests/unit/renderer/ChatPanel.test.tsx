@@ -556,9 +556,9 @@ sessions: [primarySession('sessA')]})
 
     await act(async () => {
       useAgentStore.setState({ pendingPermissionRequest: null })
-      useSettingsStore.setState({ currentMode: 'compose' })
+      useSettingsStore.setState({ currentMode: 'pilot' })
       useChatStore.setState({
-        sessions: [{ ...session, mode: 'compose' }]
+        sessions: [{ ...session, mode: 'pilot' }]
       })
       await Promise.resolve()
     })

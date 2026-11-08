@@ -23,8 +23,7 @@ const review: PendingPlanReview = {
   runId: 'run-1',
   sessionId: 'session-1',
   messageId: 'message-1',
-  toolCallId: 'tool-1',
-  source: 'plan'
+  toolCallId: 'tool-1'
 }
 
 function button(container: HTMLElement, label: string): HTMLButtonElement {
@@ -99,16 +98,8 @@ describe('PlanApprovalCard', () => {
     renderer.unmount()
   })
 
-  it('compose 源标题为确认一页纸，批准说明进入锤', () => {
-    const renderer = renderDom(<PlanApprovalCard review={{ ...review, source: 'compose' }} />)
-    expect(renderer.container.querySelector('.plan-approval-card__title')?.textContent).toBe('确认一页纸')
-    expect(renderer.container.textContent).toContain('进入「锤」')
-    expect(renderer.container.textContent).not.toContain('进入开发阶段')
-    renderer.unmount()
-  })
-
   it('忽略使用同一命令通道且不携带 feedback', async () => {
-    const renderer = renderDom(<PlanApprovalCard review={{ ...review, source: 'compose' }} />)
+    const renderer = renderDom(<PlanApprovalCard review={review} />)
     act(() => button(renderer.container, '忽略').click())
     await flush()
 
@@ -139,40 +130,25 @@ describe('PlanApprovalCard', () => {
 describe('忽略终态', () => {
   it('忽略决定随工具结果持久化，渲染为灰态「已忽略」且不可交互', () => {
     const renderer = renderDom(
-      <div>
-        {renderToolBlock(
-          {
-            type: 'tool',
-            toolCallId: 'call-switch-ignore',
-            toolName: 'switch_mode',
-            arguments: { mode: 'default' },
-            status: 'success',
-            result: '用户选择忽略当前计划，本轮正常结束。'
-          },
-          false,
-          { messageId: 'message-1', sessionId: 'session-1' }
-        )}
-        {renderToolBlock(
-          {
-            type: 'tool',
-            toolCallId: 'call-stage-ignore',
-            toolName: 'stage_transition',
-            arguments: { action: 'complete' },
-            status: 'success',
-            result: '用户选择忽略当前计划；计划未批准，仍停留在「计划」阶段。'
-          },
-          false,
-          { messageId: 'message-1', sessionId: 'session-1' }
-        )}
-      </div>
+      renderToolBlock(
+        {
+          type: 'tool',
+          toolCallId: 'call-switch-ignore',
+          toolName: 'switch_mode',
+          arguments: { mode: 'default' },
+          status: 'success',
+          result: '用户选择忽略当前计划，本轮正常结束。'
+        },
+        false,
+        { messageId: 'message-1', sessionId: 'session-1' }
+      )
     )
-    const cards = renderer.container.querySelectorAll('.plan-approval-card--ignored')
-    expect(cards).toHaveLength(2)
-    expect(cards[0].textContent).toContain('已忽略')
-    expect(cards[0].textContent).toContain('实施计划')
-    expect(cards[1].textContent).toContain('确认一页纸')
-    expect(cards[0].querySelector('button')).toBeNull()
-    expect(cards[0].querySelector('textarea')).toBeNull()
+    const card = renderer.container.querySelector('.plan-approval-card--ignored')
+    expect(card).not.toBeNull()
+    expect(card?.textContent).toContain('已忽略')
+    expect(card?.textContent).toContain('实施计划')
+    expect(card?.querySelector('button')).toBeNull()
+    expect(card?.querySelector('textarea')).toBeNull()
     renderer.unmount()
   })
 

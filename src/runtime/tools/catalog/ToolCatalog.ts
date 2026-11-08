@@ -76,8 +76,6 @@ const ENTRIES: readonly ToolCatalogEntry[] = [
   { name: 'batch_task', capability: 'agent', exposure: 'deferred', groupId: 'agent', codeMode: 'direct-only' },
   { name: 'save_plan', capability: 'plan', exposure: 'mode-bound', codeMode: 'direct-only' },
   { name: 'switch_mode', capability: 'mode', exposure: 'mode-bound', codeMode: 'direct-only' },
-  { name: 'stage_transition', capability: 'compose', exposure: 'mode-bound', codeMode: 'direct-only' },
-  { name: 'inspection_report', capability: 'compose', exposure: 'always', codeMode: 'direct-only', registration: 'conditional' },
   { name: 'load_tools', capability: 'internal', exposure: 'internal', codeMode: 'direct-only' },
   {
     name: 'learning_context',

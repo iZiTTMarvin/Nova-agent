@@ -484,7 +484,7 @@ export async function sendAgentMessage(
       const childPrepared = prepareSubagentRuntime({
         ...input,
         registry,
-        // compose 阶段门禁随父会话继承，子代理能力只能收窄
+        // 工具授权 overlay 随父会话继承，子代理能力只能收窄
         toolAuthorizationPolicy: prepared.toolAuthorizationPolicy,
         resolveTool: (name) => prepared.toolRegistry.getTool(name),
         sessionStore,

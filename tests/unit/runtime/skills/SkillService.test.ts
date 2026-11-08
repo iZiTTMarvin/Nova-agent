@@ -191,17 +191,17 @@ describe('SkillService', () => {
     // 无效 frontmatter：无 description 且正文为空；带 agent 字段也不叠加次级诊断
     const badDir = join(globalDir, 'bad-skill')
     mkdirSync(badDir, { recursive: true })
-    writeFileSync(join(badDir, 'SKILL.md'), '---\nname: bad-skill\nagent: compose\n---\n')
+    writeFileSync(join(badDir, 'SKILL.md'), '---\nname: bad-skill\nagent: review\n---\n')
     // 同名遮蔽：global 覆盖 builtin
     const dupDir = join(globalDir, 'onboard')
     mkdirSync(dupDir, { recursive: true })
     writeFileSync(join(dupDir, 'SKILL.md'), md('onboard', 'global override'))
-    // 模式受限：仅 compose 可用
-    const gatedDir = join(globalDir, 'compose-only')
+    // 模式受限：仅 review 可用
+    const gatedDir = join(globalDir, 'review-only')
     mkdirSync(gatedDir, { recursive: true })
     writeFileSync(
       join(gatedDir, 'SKILL.md'),
-      '---\nname: compose-only\ndescription: gated\nagent: compose\n---\nbody'
+      '---\nname: review-only\ndescription: gated\nagent: review\n---\nbody'
     )
 
     service.load(null)
@@ -218,9 +218,9 @@ describe('SkillService', () => {
     expect(shadowed?.message).toContain('内置')
 
     const restricted = diagnostics.find(
-      d => d.code === 'profile_restricted' && d.skillName === 'compose-only'
+      d => d.code === 'profile_restricted' && d.skillName === 'review-only'
     )
-    expect(restricted?.message).toContain('compose')
+    expect(restricted?.message).toContain('review')
 
     const keys = diagnostics.map(d => d.skillName ?? d.path ?? '')
     expect([...keys].sort((a, b) => a.localeCompare(b))).toEqual(keys)

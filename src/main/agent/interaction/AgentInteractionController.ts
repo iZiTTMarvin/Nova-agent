@@ -6,7 +6,6 @@ import type {
   PlanReviewCommand,
   PlanReviewResolution
 } from '../../../shared/planReview'
-import type { ToolInvocationRef } from '../../../runtime/tools/types'
 import {
   getRunCoordinator,
   getRunExecutionRegistry
@@ -333,37 +332,6 @@ export async function respondPlanReview(
       }
       const resolution = planReviewResolution(command)
       resolveApplied = () => loop.respondPlanReview(requestId, resolution)
-    }
-  } else if (found.type === 'planApproval') {
-    const toolCallId = found.payload.toolCallId
-    if (
-      found.payload.toolName !== 'stage_transition' ||
-      found.payload.action !== 'complete' ||
-      typeof toolCallId !== 'string' ||
-      toolCallId.trim().length === 0
-    ) {
-      return identityMismatchResult('该 planApproval 不是 stage_transition complete 请求', found)
-    }
-
-    if (isPendingInteraction(found)) {
-      if (found.version !== command.expectedVersion) {
-        return versionMismatchResult(command.expectedVersion, found)
-      }
-      const executionError = liveExecutionIdentityError(found)
-      if (executionError) return identityMismatchResult(executionError, found)
-      const ref: ToolInvocationRef = {
-        runId: found.runId,
-        sessionId: found.sessionId,
-        messageId: found.messageId,
-        toolCallId
-      }
-      if (!planReviewWaiters.has(found.interactionId, ref)) {
-        return identityMismatchResult(`计划审阅 ${found.interactionId} 没有匹配的 waiter`, found)
-      }
-      const resolution = planReviewResolution(command)
-      resolveApplied = () => {
-        planReviewWaiters.resolve(found.interactionId, resolution)
-      }
     }
   } else {
     return identityMismatchResult(`interaction 类型不支持计划审阅：${found.type}`, found)

@@ -77,10 +77,6 @@ export function getToolDisplayName(toolName: string): string {
       return '保存实施计划 (save_plan)'
     case 'switch_mode':
       return '切换运行模式 (switch_mode)'
-    case 'stage_transition':
-      return '推进生命周期阶段 (stage_transition)'
-    case 'inspection_report':
-      return '提交核验结果 (inspection_report)'
     case 'load_tools':
       return '加载工具组 (load_tools)'
     case 'learning_context':
@@ -297,13 +293,6 @@ export function getToolSummary(toolName: string, args: Record<string, unknown>):
     case 'switch_mode': {
       const mode = typeof args.mode === 'string' ? args.mode : ''
       return mode ? `请求切换到 ${mode} 模式` : '请求切换运行模式'
-    }
-    case 'stage_transition': {
-      const action = typeof args.action === 'string' ? args.action : ''
-      if (action === 'complete') return '正在完成当前生命周期阶段'
-      if (action === 'skip') return '正在跳过当前生命周期阶段'
-      if (action === 'return') return '正在回退生命周期阶段'
-      return '正在推进生命周期阶段'
     }
     case 'learning_checkpoint':
       return '正在保存学习停点'

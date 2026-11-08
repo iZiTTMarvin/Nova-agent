@@ -6,10 +6,6 @@ import {
   renderBaseRules,
   renderMinimalEngineeringPolicy
 } from '../../../../runtime/agent'
-import {
-  createComposeModeInstructionProvider,
-  createComposeStageToolPolicy
-} from '../composeStageWiring'
 
 function createBinding(mode: DevelopmentMode): SessionAgentBinding {
   return {
@@ -20,19 +16,11 @@ function createBinding(mode: DevelopmentMode): SessionAgentBinding {
         baseRules: renderBaseRules(),
         taskPolicy: renderMinimalEngineeringPolicy(),
         skillContext: buildSkillContextForMode(mode, ctx.listSkillsForContext),
-        modeInstruction:
-          mode === 'compose'
-            ? createComposeModeInstructionProvider(ctx.sessionStore, ctx.sessionId)
-            : null
+        modeInstruction: null
       }
     },
-    applyToAgentLoop(loop, ctx) {
-      if (mode !== 'compose') {
-        return null
-      }
-      const policy = createComposeStageToolPolicy(ctx.sessionStore, ctx.sessionId)
-      loop.setToolAuthorizationPolicy(policy)
-      return policy
+    applyToAgentLoop() {
+      return null
     },
     registerDomainTools() {
       return () => {}
@@ -42,10 +30,10 @@ function createBinding(mode: DevelopmentMode): SessionAgentBinding {
 
 const DEFAULT_BINDING = createBinding('default')
 const PLAN_BINDING = createBinding('plan')
-const COMPOSE_BINDING = createBinding('compose')
+const PILOT_BINDING = createBinding('pilot')
 
 export function getDevelopmentSessionAgentBinding(mode: DevelopmentMode): SessionAgentBinding {
-  if (mode === 'compose') return COMPOSE_BINDING
+  if (mode === 'pilot') return PILOT_BINDING
   if (mode === 'plan') return PLAN_BINDING
   return DEFAULT_BINDING
 }

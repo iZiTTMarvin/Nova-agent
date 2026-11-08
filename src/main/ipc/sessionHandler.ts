@@ -89,12 +89,7 @@ function toSessionDetail(
     messageCount: totalCount,
     hasMoreMessagesAbove,
     currentLeafId,
-    // compose 阶段表随会话详情透出，renderer 水合阶段条；旧会话为 undefined
-    composeStages: data.composeStages,
-    composeReviewLoops: data.composeReviewLoops,
-    // 计划确认门状态随详情水合，renderer 据此决定审阅卡是否已放行；旧会话为 undefined
-    composePlanApproval: data.composePlanApproval,
-    // 会话级待办随详情水合，renderer 恢复 TodoPanel 与 compose 阶段条进度；旧会话为 undefined
+    // 会话级待办随详情水合，renderer 恢复 TodoPanel；旧会话为 undefined
     todos: data.todos,
     messages: withBranch.map(msg => ({
       ...toMessage(msg),

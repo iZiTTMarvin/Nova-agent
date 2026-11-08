@@ -13,9 +13,9 @@ import {
 
 describe('toolVisibility', () => {
   describe('isToolVisibleInMode', () => {
-    it('default / compose 暴露常规工具，plan 隐藏写入类', () => {
+    it('default / pilot 暴露常规工具，plan 隐藏写入类', () => {
       expect(isToolVisibleInMode('default', 'bash')).toBe(true)
-      expect(isToolVisibleInMode('compose', 'edit')).toBe(true)
+      expect(isToolVisibleInMode('pilot', 'edit')).toBe(true)
       expect(isToolVisibleInMode('plan', 'bash')).toBe(false)
       expect(isToolVisibleInMode('plan', 'read')).toBe(true)
     })
@@ -25,24 +25,12 @@ describe('toolVisibility', () => {
       expect(isToolVisibleInMode('learn', 'bash')).toBe(false)
       expect(isToolVisibleInMode('default', 'learning_checkpoint')).toBe(false)
       expect(isToolVisibleInMode('plan', 'learning_context')).toBe(false)
-      expect(isToolVisibleInMode('compose', 'learning_assess')).toBe(false)
+      expect(isToolVisibleInMode('pilot', 'learning_assess')).toBe(false)
     })
 
-    it('stage_transition 仅 compose 可见', () => {
-      expect(isToolVisibleInMode('compose', 'stage_transition')).toBe(true)
-      expect(isToolVisibleInMode('default', 'stage_transition')).toBe(false)
-      expect(isToolVisibleInMode('plan', 'stage_transition')).toBe(false)
-    })
-
-    it('getModeVisibleTools 过滤掉非 compose 下的 stage_transition', () => {
-      const tools = ['read', 'stage_transition', 'write'].map(name => ({ name }))
-      expect(getModeVisibleTools('compose', tools).map(t => t.name)).toEqual([
-        'read',
-        'stage_transition',
-        'write'
-      ])
-      expect(getModeVisibleTools('default', tools).map(t => t.name)).toEqual(['read', 'write'])
-      expect(getModeVisibleTools('plan', tools).map(t => t.name)).toEqual(['read'])
+    it('pilot 保留开发工具，但不暴露 Agent 模式切换', () => {
+      expect(getModeVisibleTools('pilot', ['read', 'write', 'switch_mode'].map(name => ({ name }))).map(t => t.name))
+        .toEqual(['read', 'write'])
     })
 
     it('plan 模式下 todo_write 可见', () => {
@@ -77,10 +65,6 @@ describe('toolVisibility', () => {
     it('plan 模式下浏览器观察/截图可见', () => {
       expect(isToolVisibleInMode('plan', 'browser_observe')).toBe(true)
       expect(isToolVisibleInMode('plan', 'browser_capture')).toBe(true)
-    })
-
-    it('compose 不暴露普通模式切换', () => {
-      expect(isToolVisibleInMode('compose', 'switch_mode')).toBe(false)
     })
 
     it('同一过滤器可同时驱动 native schema 与 XML 工具目录', () => {
@@ -131,9 +115,9 @@ describe('toolVisibility', () => {
       expect(isModeHiddenWriteTool('plan', 'shell_session')).toBe(false)
     })
 
-    it('default / compose 模式下没有工具被隐藏', () => {
+    it('default / pilot 模式下没有工具被隐藏', () => {
       expect(isModeHiddenWriteTool('default', 'bash')).toBe(false)
-      expect(isModeHiddenWriteTool('compose', 'edit')).toBe(false)
+      expect(isModeHiddenWriteTool('pilot', 'edit')).toBe(false)
     })
   })
 })

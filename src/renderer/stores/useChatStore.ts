@@ -1,7 +1,6 @@
 import { createChatStore } from './chat/createChatStore'
 import { resetChatStoreStateForTests } from './chat/testing'
 import { useSubagentProjectionStore } from '../features/subagents/projection'
-import { useComposeStageStore } from '../features/compose/useComposeStageStore'
 import { useTodoStore } from '../features/todo/useTodoStore'
 import { useSettingsStore } from './useSettingsStore'
 
@@ -13,12 +12,6 @@ export const useChatStore = createChatStore({
     if (detail.usage) useSettingsStore.getState().applySessionUsage(detail.usage)
     if (detail.contextBreakdown) useSettingsStore.getState().setContextBreakdown(detail.contextBreakdown)
     useSubagentProjectionStore.getState().hydrateSessionDetail(detail)
-    // compose 阶段表随详情水合：磁盘是事实源（转换先落盘后推送）；
-    // 旧会话无表时写 null，阶段条按初始表纯显示。本回调在 epoch 守卫之后触发
-    useComposeStageStore.getState().setSessionStages(detail.id, detail.composeStages ?? null)
-    useComposeStageStore.getState().setSessionPlanApproval(detail.id, detail.composePlanApproval ?? null)
-    // 修复-复审循环计数随详情水合：重开会话后回退入口的上限判定立即可用
-    useComposeStageStore.getState().setSessionReviewLoops(detail.id, detail.composeReviewLoops ?? 0)
     // 待办随详情恢复，不等下一次更新；空清单不制造无数据投影。
     if (detail.todos && detail.todos.length > 0) {
       useTodoStore.getState().setSessionTodos(detail.id, detail.todos)

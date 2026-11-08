@@ -2,7 +2,6 @@ import type {
   SubagentActivityProjection,
   SubagentSessionListMetadata
 } from '../subagents'
-import type { ComposePlanApproval, ComposeStageEntry } from '../composeLifecycle'
 import type { TodoItem } from '../todo/types'
 import type { ToolTruncationMeta } from '../tools/types'
 
@@ -27,10 +26,10 @@ export type ToolDelivery =
  * 行为模式（ModeSwitch）：
  * - default：模型自主循环（协作聊天）
  * - plan：只读规划
- * - compose：编排脚本强制推进（阶段 C1）
+ * - pilot：领航，用内置方法组织开发，复用普通 Run 与工具面
  * 权限档位由 PermissionMode 独立表达，不再用 Mode 表达 auto。
  */
-export type Mode = 'plan' | 'default' | 'compose' | 'learn'
+export type Mode = 'plan' | 'default' | 'pilot' | 'learn'
 
 /** 当前会话的工具执行权限档位。 */
 export type PermissionMode = 'request_approval' | 'auto' | 'full_access'
@@ -252,22 +251,7 @@ export type SessionDetail = Session & {
   /** 当前激活叶子 id；正常 UI 不依赖，调试与 Tier 1 上下文用 */
   currentLeafId?: string | null
   /**
-   * compose 生命周期五阶段表。仅 compose 会话由 stage_transition 工具写入；
-   * 旧会话缺省，renderer 按初始表投影纯显示，不回填落盘。
-   */
-  composeStages?: ComposeStageEntry[]
-  /**
-   * 从「验」回退的循环计数（代码兜底上限 2）。
-   * 随详情水合阶段条，用于预禁用已达上限的回退入口；旧会话缺省视为 0。
-   */
-  composeReviewLoops?: number
-  /**
-   * 「图」阶段确认门状态。仅 compose 会话由 save_plan / stage_transition / 批准 IPC 写入；
-   * 旧会话缺省，renderer 视为 pending。
-   */
-  composePlanApproval?: ComposePlanApproval
-  /**
-   * 会话级待办清单随详情透出，renderer 水合 TodoPanel 与 compose 阶段条进度；
+   * 会话级待办清单随详情透出，renderer 水合 TodoPanel；
    * 旧会话或从未写过待办的会话缺省。
    */
   todos?: TodoItem[]

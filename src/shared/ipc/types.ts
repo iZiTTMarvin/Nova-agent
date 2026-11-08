@@ -15,7 +15,6 @@ import type { ChatRequestPurpose } from '../model/types'
 import type { HookEvent } from '../agent/types'
 import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
-import type { ComposePlanApproval, ComposeStageAction, ComposeStageEntry } from '../composeLifecycle'
 import type {
   SkillCatalogSnapshot,
   SkillSlashRejection,
@@ -557,10 +556,6 @@ export interface IpcCommands {
     params: { path: string }
     result: void
   }
-  'compose:apply-stage-transition': {
-    params: { sessionId: string; action: ComposeStageAction }
-    result: { ok: true; stages: ComposeStageEntry[] } | { ok: false; error: string }
-  }
   'workspace:regenerate': {
     params: { sessionId: string; messageId: string }
     result: WorkspaceState
@@ -891,16 +886,6 @@ export interface IpcEvents {
     sessionId: string
     todos: TodoItem[]
     view: TodoViewInfo
-  }
-  'agent:compose-stages-updated': {
-    sessionId: string
-    stages: ComposeStageEntry[]
-    /** 修复-复审循环计数；renderer 据此预禁用已达上限的回退入口 */
-    reviewLoops: number
-  }
-  'agent:compose-plan-approval-updated': {
-    sessionId: string
-    approval: ComposePlanApproval
   }
   'agent:error': {
     messageId: string

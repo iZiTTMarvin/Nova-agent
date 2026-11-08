@@ -26,7 +26,7 @@ test('统一状态：独立右侧、双主题、轮次审阅回退与侧栏互�
   await expect(nova.page.locator(capsule)).toHaveAttribute('data-expanded', 'true')
   await expect(nova.page.locator(capsule).getByLabel('任务清单')).toContainText('2/2')
   await expect(nova.page.locator(capsule).locator('[data-status="completed"]')).toHaveCount(2)
-  await expect(nova.page.locator('.todo-dock, .active-background-banner, .xforge-capsule')).toHaveCount(0)
+  await expect(nova.page.locator('.todo-dock, .active-background-banner')).toHaveCount(0)
   await expect(nova.page.locator('.chat-messages .diff-viewer')).toHaveCount(0)
   await expect(nova.page.locator(capsule).getByLabel('文件改动')).toContainText('e2e-marker.txt')
 

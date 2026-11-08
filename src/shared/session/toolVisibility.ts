@@ -1,4 +1,5 @@
 import type { Mode } from './types'
+import { isAgentSwitchableMode } from './mode'
 import type { PermissionCapabilityCeiling } from '../permissions/types'
 import {
   getToolPermissionDescriptor,
@@ -27,11 +28,8 @@ export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
   if (isLearningDomainTool(toolName)) {
     return false
   }
-  if (toolName === 'stage_transition') {
-    return mode === 'compose'
-  }
-  if (mode === 'compose' && toolName === 'switch_mode') {
-    return false
+  if (toolName === 'switch_mode') {
+    return isAgentSwitchableMode(mode)
   }
   if (mode !== 'plan') {
     return true
@@ -39,7 +37,6 @@ export function isToolVisibleInMode(mode: Mode, toolName: string): boolean {
 
   if (
     toolName === 'save_plan' ||
-    toolName === 'switch_mode' ||
     toolName === 'shell_session'
   ) {
     return true

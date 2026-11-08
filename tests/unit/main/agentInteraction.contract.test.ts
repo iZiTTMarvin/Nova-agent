@@ -54,7 +54,6 @@ import {
   respondPlanReview
 } from '../../../src/main/agent/interaction/AgentInteractionController'
 import { pendingAskQuestions } from '../../../src/main/agent/interaction/askQuestionWaiters'
-import { planReviewWaiters } from '../../../src/main/agent/interaction/planReviewWaiters'
 
 describe('AgentInteractionController 契约', () => {
   beforeEach(() => {
@@ -636,70 +635,6 @@ describe('AgentInteractionController 契约', () => {
       decision: 'revise',
       feedback: '补充数据库回滚步骤'
     })
-  })
-
-  it('planApproval 仅在 durable answer 首次生效后 resolve 对应完整调用身份', async () => {
-    const ref = {
-      runId: 'run_1',
-      sessionId: 's1',
-      messageId: 'm1',
-      toolCallId: 'tool_1'
-    }
-    const pending = planReviewWaiters.create(ref)
-    const found = {
-      interactionId: pending.interactionId,
-      runId: ref.runId,
-      sessionId: ref.sessionId,
-      messageId: ref.messageId,
-      type: 'planApproval' as const,
-      status: 'pending' as const,
-      version: 1,
-      createdAt: 1,
-      payload: {
-        toolName: 'stage_transition',
-        action: 'complete',
-        toolCallId: ref.toolCallId
-      }
-    }
-    const snapshot = {
-      runId: ref.runId,
-      sessionId: ref.sessionId,
-      status: 'waiting_user',
-      executionGeneration: 7
-    }
-    const durable = { ok: true, firstApplied: true, interaction: found, snapshot }
-    coordinator.findInteraction.mockReturnValue(found)
-    coordinator.getSnapshot.mockReturnValue(snapshot)
-    coordinator.inbox.answer.mockReturnValue(durable)
-    executionRegistry.get.mockReturnValue({ runId: ref.runId, generation: 7 })
-    executionRegistry.isCurrent.mockReturnValue(true)
-    const resolveSpy = vi.spyOn(planReviewWaiters, 'resolve')
-    const command = {
-      interactionId: pending.interactionId,
-      commandId: 'approve-plan',
-      expectedVersion: 1,
-      decision: 'approve' as const
-    }
-
-    expect(await respondPlanReview(command)).toEqual(durable)
-    expect(await pending.promise).toEqual({ decision: 'approve' })
-    expect(resolveSpy).toHaveBeenCalledOnce()
-
-    const answered = { ...found, status: 'answered' as const, version: 2 }
-    const duplicateAck = {
-      ok: true,
-      firstApplied: false,
-      duplicate: true,
-      interaction: answered,
-      snapshot
-    }
-    coordinator.findInteraction.mockReturnValue(answered)
-    coordinator.inbox.answer.mockReturnValue(duplicateAck)
-    const duplicate = await respondPlanReview(command)
-    expect(duplicate).toEqual(duplicateAck)
-    expect(coordinator.inbox.answer).toHaveBeenCalledTimes(2)
-    expect(resolveSpy).toHaveBeenCalledOnce()
-    resolveSpy.mockRestore()
   })
 
   it('plan review 不得借普通 permission 回答非 switch_mode(default) 请求', async () => {

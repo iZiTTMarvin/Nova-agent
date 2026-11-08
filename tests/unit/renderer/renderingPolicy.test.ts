@@ -24,13 +24,13 @@ describe('renderingPolicy', () => {
   it('todo_write 由顶部面板统一展示，所有模式都不在消息流渲染', () => {
     expect(shouldRenderToolBlock('default', 'todo_write')).toBe(false)
     expect(shouldRenderToolBlock('plan', 'todo_write')).toBe(false)
-    expect(shouldRenderToolBlock('compose', 'todo_write')).toBe(false)
+    expect(shouldRenderToolBlock('pilot', 'todo_write')).toBe(false)
   })
 
   it('load_tools 是 Harness 内部控制动作，任何模式都不生成工具卡片', () => {
     expect(shouldRenderToolBlock('default', 'load_tools')).toBe(false)
     expect(shouldRenderToolBlock('plan', 'load_tools')).toBe(false)
-    expect(shouldRenderToolBlock('compose', 'load_tools')).toBe(false)
+    expect(shouldRenderToolBlock('pilot', 'load_tools')).toBe(false)
   })
 
   it('学习模式核对点、评估与上下文不作为工具卡片重复渲染', () => {

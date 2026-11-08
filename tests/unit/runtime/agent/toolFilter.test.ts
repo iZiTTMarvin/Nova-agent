@@ -109,7 +109,7 @@ describe('AgentLoop 工具集恒定 (缓存 Harness)', () => {
     const { createLoop, getTools } = captureTools('custom-model', 'xml')
     const eventBus = new EventBus()
     const loop = createLoop(eventBus)
-    loop.setMode('compose')
+    loop.setMode('pilot')
 
     const allDefs = makeToolDefs(ALL_TOOLS)
     const mockRegistry = {

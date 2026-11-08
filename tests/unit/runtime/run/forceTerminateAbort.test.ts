@@ -40,7 +40,7 @@ describe('force-terminate 必须 abort 执行句柄', () => {
           register: (h: {
             runId: string
             generation: number
-            kind: 'agent' | 'compose'
+            kind: 'agent' | 'pilot'
             abort: (reason: string) => void
             settled: Promise<void>
           }) => void

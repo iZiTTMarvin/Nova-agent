@@ -1,5 +1,5 @@
-import { lazy, Suspense, type ReactNode, type RefObject } from 'react'
-import { ChatPanel, type ChatPanelHandle } from '../chat/ChatPanel'
+import { lazy, Suspense, type ReactNode } from 'react'
+import { ChatPanel } from '../chat/ChatPanel'
 import { InspectorPanel } from '../inspector/InspectorPanel'
 import { InspectorToggleButton } from '../inspector/InspectorToggleButton'
 import { GlassSessionHeader } from '../../components/ContentTopBar'
@@ -18,10 +18,7 @@ const LearningSurface = lazy(() =>
  * 玻璃面内部横向：「会话头 + 主区」列 | inspector 列；inspector 通顶通底，
  * 分隔线因此贯穿整个玻璃面，会话头只覆盖主区。
  */
-export function BrowserWorkspaceBody(props: {
-  chatPanelRef: RefObject<ChatPanelHandle | null>
-}): ReactNode {
-  const { chatPanelRef } = props
+export function BrowserWorkspaceBody(): ReactNode {
   const currentSessionId = useWorkspaceStore((state) => state.currentSessionId)
   const currentMode = useWorkspaceStore((state) => state.currentMode)
   const sessionKind = useChatStore(state => state.sessions.find(session => session.id === currentSessionId)?.kind)
@@ -41,17 +38,15 @@ export function BrowserWorkspaceBody(props: {
             </Suspense>
           ) : (
             <div className="chat-workspace">
-              <ChatPanel ref={chatPanelRef} />
+              <ChatPanel />
               {currentSessionId && sessionKind && !isSessionLoading && (
-                <SessionStatusPanel key={currentSessionId} sessionId={currentSessionId} mode={sessionKind === 'subagent' ? 'default' : currentMode} onRequestSupplement={() => chatPanelRef.current?.requestSupplement()} />
+                <SessionStatusPanel key={currentSessionId} sessionId={currentSessionId} />
               )}
             </div>
           )}
         </div>
       </div>
-      <InspectorPanel
-        onRequestSupplement={() => chatPanelRef.current?.requestSupplement()}
-      />
+      <InspectorPanel />
       {/* 开合按钮常驻右上角、盖在面板之上：面板从它下方滑出，开合两态同坐标 */}
       <InspectorToggleButton className="inspector-pinned-toggle" />
     </div>

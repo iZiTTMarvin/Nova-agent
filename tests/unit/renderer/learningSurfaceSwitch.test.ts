@@ -45,7 +45,7 @@ describe('学习表面切换', () => {
   it('返回开发优先恢复记录的原开发会话', () => {
     const sessions = [
       session('dev-old', 'default', 1),
-      session('dev-new', 'compose', 5)
+      session('dev-new', 'pilot', 5)
     ]
     rememberLastDevSession('D:/workspace', 'dev-old')
     expect(readLastDevSession('D:/workspace')).toBe('dev-old')

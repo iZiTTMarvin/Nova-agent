@@ -242,9 +242,9 @@ describe('SessionStore', () => {
 
     it('创建会话时可以指定模式', () => {
       const store = new SessionStore(tmpDir)
-      const session = store.create('/project/root', 'compose' as Mode)
+      const session = store.create('/project/root', 'pilot' as Mode)
 
-      expect(session.mode).toBe('compose')
+      expect(session.mode).toBe('pilot')
     })
 
     it('非法 mode 在创建入口即拒绝，不落盘', () => {
@@ -522,11 +522,11 @@ describe('SessionStore', () => {
       const store = new SessionStore(tmpDir)
       const session = store.create('/project/root', 'default')
 
-      const updated = store.updateMode(session.id, 'compose')
+      const updated = store.updateMode(session.id, 'pilot')
 
       expect(updated).not.toBeNull()
-      expect(updated!.mode).toBe('compose')
-      expect(store.load(session.id)!.mode).toBe('compose')
+      expect(updated!.mode).toBe('pilot')
+      expect(store.load(session.id)!.mode).toBe('pilot')
     })
 
     it('更新不存在的会话模式返回 null', () => {
@@ -1149,13 +1149,13 @@ describe('SessionStore', () => {
       const sessionDir = path.join(tmpDir, 'sessions', session.id)
       const jsonlBefore = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
 
-      store.updateMode(session.id, 'compose' as Mode)
+      store.updateMode(session.id, 'pilot' as Mode)
 
       const jsonlAfter = fs.readFileSync(path.join(sessionDir, 'messages.jsonl'), 'utf8')
       expect(jsonlAfter).toBe(jsonlBefore)
 
       const metadata = JSON.parse(fs.readFileSync(path.join(sessionDir, 'session.json'), 'utf8'))
-      expect(metadata.mode).toBe('compose')
+      expect(metadata.mode).toBe('pilot')
     })
 
     it('appendMessage 对未迁移的旧版会话直接追加，旧消息不丢', () => {

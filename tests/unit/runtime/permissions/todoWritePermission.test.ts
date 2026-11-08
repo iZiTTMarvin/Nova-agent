@@ -24,7 +24,7 @@ function query(
 describe('todo_write 权限', () => {
   const manager = new PermissionManager()
 
-  it.each(['plan', 'default', 'compose'] as const)('%s 模式下允许 todo_write', mode => {
+  it.each(['plan', 'default', 'pilot'] as const)('%s 模式下允许 todo_write', mode => {
     expect(manager.check(query('todo_write', { todos: [] }), mode).decision).toBe('allow')
   })
 

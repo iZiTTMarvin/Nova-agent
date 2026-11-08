@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, useImperativeHandle, useMemo, Profiler } from 'react'
+import React, { lazy, Suspense, useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo, Profiler } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import { IconButton } from '@astryxdesign/core/IconButton'
 import {
@@ -114,11 +114,7 @@ const HISTORY_LOAD_SCROLL_THRESHOLD_PX = 80
 /** 记住阅读位置的会话数上限 */
 const MAX_REMEMBERED_SCROLL_POSITIONS = 50
 
-export interface ChatPanelHandle {
-  requestSupplement: () => void
-}
-
-export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref }) => {
+export const ChatPanel: React.FC = () => {
   const rootRef = useRef<HTMLDivElement | null>(null)
   // ── settings store（项目/模型/模式/配置弹窗） ──
   const currentProject = useSettingsStore(state => state.currentProject)
@@ -237,8 +233,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
       retainDevComposerDrafts(chatSessions.map(session => session.id))
     }
   }, [chatSessions])
-  /** compose 点「补充要求」后的输入框提示；切会话即清，避免带到非 compose */
-  const [composeSupplementHint, setComposeSupplementHint] = useState(false)
   /** 用户上滚离开底部时显示「回到底部」 */
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const slashSkills = useSkillsStore(state => state.skills)
@@ -250,16 +244,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   useEffect(() => {
     composerInputHandleRef.current?.focus()
   }, [currentSessionId, composerFocusVersion])
-  const isComposeSession = currentSession?.mode === 'compose'
-
-  useEffect(() => {
-    setComposeSupplementHint(false)
-  }, [currentSessionId])
-
-  const handleComposeSupplement = useCallback(() => {
-    setComposeSupplementHint(true)
-    composerInputHandleRef.current?.focus()
-  }, [])
   const composerBoxRef = useRef<HTMLDivElement>(null)
   const composerStackRef = useRef<HTMLDivElement>(null)
   const composerStackTopRef = useRef<number | null>(null)
@@ -389,10 +373,6 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
   })
   // 隐藏的文件上传 input
   const fileInputRef = useRef<HTMLInputElement>(null)
-
-  useImperativeHandle(ref, () => ({
-    requestSupplement: handleComposeSupplement
-  }), [handleComposeSupplement])
 
   const canAutoScroll = useCallback(() => {
     if (isWithinUserScrollCooldown(userScrollCooldownUntilRef.current)) {
@@ -1047,7 +1027,7 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
           isPausedForUserInput={isPausedForUserInput}
           pausedMessageId={pausedMessageId}
           pendingPlanReview={pendingPlanReview}
-          {...(!isComposeSession ? { onLearnChange: handleLearnChange } : {})}
+          onLearnChange={handleLearnChange}
         />
 
         {interruptionNotice && (
@@ -1234,13 +1214,9 @@ export const ChatPanel: React.FC<{ ref?: React.Ref<ChatPanelHandle> }> = ({ ref 
                 label="消息输入"
                 placeholder={pendingAskQuestion
                   ? '请先回答上方问题，再发送新消息（或输入排队）'
-                  : isGenerating && isComposeSession
-                    ? '按 Enter 排队，本轮结束后处理；需立即调整可先暂停…'
-                    : isGenerating
-                      ? 'Agent 正在运行，输入将进入排队队列...'
-                      : isComposeSession && composeSupplementHint
-                        ? '输入补充要求并发送'
-                        : '向 Nova 提问或分配编程任务...'}
+                  : isGenerating
+                    ? 'Agent 正在运行，输入将进入排队队列...'
+                    : '向 Nova 提问或分配编程任务...'}
                 value={inputVal}
                 onChange={handleInputChange}
                 onKeyDown={handleComposerKeyDown}

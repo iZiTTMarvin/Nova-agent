@@ -1,11 +1,12 @@
 import type { ToolExecutor } from '../types'
+import { isAgentSwitchableMode } from '../../../shared/session/mode'
 
 export const switchModeTool: ToolExecutor = {
   name: 'switch_mode',
   description:
     'Switch between plan and default modes within the same session. ' +
-    'Entering plan continues planning immediately in the current task; returning from plan to default requires user approval; ' +
-    'XForge, governed by an independent lifecycle, cannot be entered or exited here.',
+    'Entering plan continues planning immediately in the current task; returning from plan to default requires user approval. ' +
+    'Pilot mode is selected by the user in the UI, not by this tool.',
   executionMode: 'sequential',
   isConcurrencySafe: () => false,
   parameters: {
@@ -27,7 +28,7 @@ export const switchModeTool: ToolExecutor = {
   async execute(args, context) {
     const target = args.mode
     const reason = typeof args.reason === 'string' ? args.reason.trim() : ''
-    if (target !== 'plan' && target !== 'default') {
+    if (!isAgentSwitchableMode(target)) {
       return { success: false, output: '', error: 'mode 只能是 plan 或 default' }
     }
     if (!reason) {

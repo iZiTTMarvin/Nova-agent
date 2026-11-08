@@ -109,29 +109,4 @@ describe('forwardEventToRenderer（recovery / hook IPC）', () => {
 
     expect(win.webContents.send).not.toHaveBeenCalled()
   })
-
-  it('compose_stages_updated → agent:compose-stages-updated', () => {
-    const win = makeMainWindow()
-    const stages = [
-      { id: 'interview' as const, status: 'completed' as const, completedAt: 1 },
-      { id: 'blueprint' as const, status: 'in_progress' as const },
-      { id: 'build' as const, status: 'pending' as const },
-      { id: 'inspect' as const, status: 'pending' as const },
-      { id: 'deliver' as const, status: 'pending' as const }
-    ]
-    const event: AgentEvent = {
-      type: 'compose_stages_updated',
-      sessionId: 'sess_1',
-      stages,
-      reviewLoops: 2
-    }
-
-    forwardEventToRenderer(win as never, event)
-
-    expect(win._send).toHaveBeenCalledWith('agent:compose-stages-updated', {
-      sessionId: 'sess_1',
-      stages,
-      reviewLoops: 2
-    })
-  })
 })

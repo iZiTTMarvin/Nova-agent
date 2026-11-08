@@ -242,7 +242,7 @@ export const GeneralSettingsPanel: React.FC = () => {
     )
   }
 
-  const defaultMode = settings.defaultMode === 'compose' ? 'default' : settings.defaultMode
+  const defaultMode = settings.defaultMode
   const updateAction = getUpdateAction(updateSnapshot)
 
   return (

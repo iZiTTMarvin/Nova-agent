@@ -53,7 +53,7 @@ describe('task tool spawn adapter', () => {
     const { tool } = setup()
     expect(tool.name).toBe('task')
     expect(tool.description).toBe(
-      'Launch a subagent to complete a subtask. Subagents run in a clean context and return results as a summary. Prefer explore/code/review for specialized tasks; general-purpose is only for mixed tasks that do not fit pure exploration/coding/review. Under XForge, use critic to poke holes in the one-pager and inspector for independent verification.'
+      'Launch a subagent to complete a subtask. Subagents run in a clean context and return results as a summary. Prefer explore/code/review for specialized tasks; general-purpose is only for mixed tasks that do not fit pure exploration/coding/review. Use critic to challenge a proposed plan and inspector for independent verification.'
     )
     expect(tool.parameters).toEqual({
       type: 'object',

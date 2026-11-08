@@ -259,7 +259,7 @@ describe('builtin general-purpose profile', () => {
     const snapshot = resolveSubagentProfileSnapshot(spec, 'general-purpose')
     expect(snapshot.permissionCeiling).toBe('workspace_write')
     expect(snapshot.toolNames).toEqual(expect.arrayContaining(['ls', 'read', 'write', 'bash', 'web_search', 'run_code']))
-    for (const forbidden of ['task', 'invoke_skill', 'save_plan', 'stage_transition', 'askQuestion', 'switch_mode', 'todo_write']) {
+    for (const forbidden of ['task', 'invoke_skill', 'save_plan', 'askQuestion', 'switch_mode', 'todo_write']) {
       expect(snapshot.toolNames).not.toContain(forbidden)
     }
     expect(snapshot.toolNames).not.toContain('memory_search')

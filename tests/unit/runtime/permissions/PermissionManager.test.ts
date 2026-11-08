@@ -53,14 +53,14 @@ describe('PermissionManager', () => {
     }
   )
 
-  it('compose 使用会话权限模式，不再固定采用自动语义', () => {
+  it('pilot 使用会话权限模式，不再固定采用自动语义', () => {
     expect(manager.check(
       query('bash', { command: 'npm test' }, 'request_approval'),
-      'compose'
+      'pilot'
     ).decision).toBe('ask')
     expect(manager.check(
       query('bash', { command: 'npm test' }, 'auto'),
-      'compose'
+      'pilot'
     ).decision).toBe('allow')
   })
 
@@ -289,7 +289,12 @@ describe('PermissionManager', () => {
 
   it.each([
     ['default', 'plan', 'allow'],
-    ['plan', 'default', 'ask']
+    ['plan', 'default', 'ask'],
+    ['pilot', 'plan', 'deny'],
+    ['pilot', 'default', 'deny'],
+    ['default', 'pilot', 'deny'],
+    ['plan', 'pilot', 'deny'],
+    ['learn', 'plan', 'deny']
   ] as const)('模式切换 %s → %s 的边界保持不变', (mode, target, expected) => {
     expect(manager.check(
       query('switch_mode', { mode: target }, 'full_access'),

@@ -242,9 +242,9 @@ export async function launchNova(
     await page.waitForFunction(() => Boolean((window as typeof window & { api?: unknown }).api))
   }
 
-  await expect(page.getByLabel('消息输入')).toBeVisible()
-
   const getWorkspace = () => invoke(WORKSPACE_GET)
+  const workspace = await getWorkspace()
+  await expect(page.getByLabel(workspace.currentMode === 'learn' ? '学习提问' : '消息输入')).toBeVisible()
 
   const getRunSnapshot = async (sessionId?: string): Promise<RunSnapshot | null> => {
     const workspace = sessionId ? null : await getWorkspace()

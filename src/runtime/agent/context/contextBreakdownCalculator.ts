@@ -10,7 +10,7 @@
  */
 import { estimateTokens, estimateChatMessageTokens } from '../tokenEstimator'
 import { SystemPromptBuilder } from '../promptBuilder/SystemPromptBuilder'
-import { getStableSystemPrompt } from '../promptBuilder/modePrompt'
+import { getStableSystemPrompt, normalizeFrozenSystemPrompt } from '../promptBuilder/modePrompt'
 import { buildSkillContext } from '../promptBuilder/buildSkillContext'
 import { discoverProjectRules } from './projectRulesDiscovery'
 import { renderBaseRules, renderMinimalEngineeringPolicy } from '../promptRenderer'
@@ -63,7 +63,7 @@ export interface BreakdownResult {
 export function calculateContextBreakdown(inputs: BreakdownInputs): BreakdownResult {
   const { session, skills, toolDefinitions, contextLimit } = inputs
 
-  const fullSystemPrompt = session.frozenSystemPrompt ?? getStableSystemPrompt()
+  const fullSystemPrompt = normalizeFrozenSystemPrompt(session.frozenSystemPrompt)
   const skillsTokens = skills === undefined
     ? estimateTokens(extractPromptLayer(fullSystemPrompt, 'Skills'))
     : typeof skills === 'number'

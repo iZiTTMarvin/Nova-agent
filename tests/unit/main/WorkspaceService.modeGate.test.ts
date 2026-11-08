@@ -142,6 +142,35 @@ describe('WorkspaceService mode gate', () => {
 
     service.setMode({ mode: 'plan', sessionId: session.id, source: 'agent' })
     expect(store.load(session.id)?.mode).toBe('plan')
+    service.setMode({ mode: 'default', sessionId: session.id, source: 'agent' })
+    expect(store.load(session.id)?.mode).toBe('default')
+  })
+
+  it.each([
+    ['pilot', 'plan'],
+    ['pilot', 'default'],
+    ['default', 'pilot'],
+    ['plan', 'pilot'],
+    ['learn', 'default']
+  ] as const)('Agent 不能把 %s 会话切换为 %s，拒绝后磁盘与工作区保持原样', (previous, next) => {
+    const session = store.create(workspace, previous)
+    service.initOnStartup()
+    const before = service.getState()
+
+    expect(() => service.setMode({ mode: next, sessionId: session.id, source: 'agent' }))
+      .toThrow('Agent 只能在 plan 与 default 模式之间切换')
+    expect(store.load(session.id)?.mode).toBe(previous)
+    expect(service.getState()).toEqual(before)
+  })
+
+  it('用户仍可在领航与普通开发模式间切换', () => {
+    const session = store.create(workspace, 'pilot')
+    service.initOnStartup()
+
+    for (const mode of ['plan', 'pilot', 'default', 'pilot'] as const) {
+      expect(service.setMode({ mode, sessionId: session.id, source: 'user' }).currentMode).toBe(mode)
+      expect(store.load(session.id)?.mode).toBe(mode)
+    }
   })
 
   it('权限模式写入当前会话，运行中保持原值，完全访问可启用', () => {

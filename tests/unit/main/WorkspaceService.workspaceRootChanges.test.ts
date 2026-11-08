@@ -102,8 +102,8 @@ describe('WorkspaceService workspace root changes', () => {
     const next = service.createSession({ workspaceRoot: '/workspace/a' }).currentSessionId!
     expect(next).not.toBe(first)
     expect(store.load(first)?.messages.map(message => message.content)).toEqual(['hello'])
-    expect(service.createSession({ workspaceRoot: '/workspace/a', mode: 'compose' }).currentSessionId).toBe(next)
-    expect(store.load(next)?.mode).toBe('compose')
+    expect(service.createSession({ workspaceRoot: '/workspace/a', mode: 'pilot' }).currentSessionId).toBe(next)
+    expect(store.load(next)?.mode).toBe('pilot')
     expect(store.load(first)?.mode).toBe('plan')
   })
 

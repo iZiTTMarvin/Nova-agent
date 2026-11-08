@@ -65,12 +65,6 @@ import type { Mode, PermissionMode, RuntimeInputBlock } from '../../shared/sessi
 import { assertSessionModeMutable, parseStrictMode } from '../../shared/session/mode'
 import type { ActiveModelRef, ReasoningEffort } from '../../shared/config/llmRegistry'
 import type { TodoItem } from '../../shared/todo/types'
-import {
-  applyStageTransition,
-  type ComposePlanApproval,
-  type ComposeStageAction,
-  type ComposeStageEntry
-} from '../../shared/composeLifecycle'
 import { CURRENT_SESSION_SCHEMA_VERSION, migrateSessionFile, migrateSessionData } from './migrations'
 import {
   computeActivePath,
@@ -1704,103 +1698,6 @@ export class SessionStore {
     const session = this.loadMetadata(sessionId)
     if (!session) return []
     return Array.isArray(session.todos) ? session.todos : []
-  }
-
-  /**
-   * 读取 compose 阶段表。旧会话（无 composeStages 字段）返回 null。
-   */
-  getComposeStages(sessionId: string): ComposeStageEntry[] | null {
-    const session = this.loadMetadata(sessionId)
-    if (!session) return null
-    return Array.isArray(session.composeStages) ? session.composeStages : null
-  }
-
-  /**
-   * 校验并写入一次 compose 阶段转换（单次 load，避免双次读盘）。
-   * null = 会话不存在；rejected = 非法转换；applied = 已落盘。
-   */
-  applyComposeStageTransition(
-    sessionId: string,
-    action: ComposeStageAction
-  ):
-    | {
-        status: 'applied'
-        session: SessionData
-        stages: ComposeStageEntry[]
-        previousStages: ComposeStageEntry[] | null
-        /** 从「验」回退的循环计数随结果透出，调用方经事件转发供 renderer 预禁用回退入口 */
-        reviewLoops: number
-      }
-    | { status: 'rejected'; error: string }
-    | null {
-    const session = this.loadMetadata(sessionId)
-    if (!session) return null
-
-    const previousStages = Array.isArray(session.composeStages) ? session.composeStages : null
-    const result = applyStageTransition(
-      previousStages,
-      action,
-      Date.now(),
-      session.composeReviewLoops ?? 0
-    )
-    if (!result.ok) {
-      return { status: 'rejected', error: result.error }
-    }
-
-    session.composeStages = result.stages
-    session.composeReviewLoops = result.reviewLoops
-    session.updatedAt = Date.now()
-    this.saveMetadata(session)
-    return {
-      status: 'applied',
-      session,
-      stages: result.stages,
-      previousStages,
-      reviewLoops: result.reviewLoops
-    }
-  }
-
-  /**
-   * 读取计划确认门状态。旧会话或尚未保存过计划的会话视为 pending——
-   * 硬门默认关闭，stage_transition 无法把「图」阶段 complete 掉。
-   */
-  getComposePlanApproval(sessionId: string): ComposePlanApproval | null {
-    const session = this.loadMetadata(sessionId)
-    if (!session) return null
-    return session.composePlanApproval ?? { status: 'pending' }
-  }
-
-  /**
-   * 批准计划确认门（用户手动点击，或 auto 模式下自动放行并留痕 auto: true）。
-   * 不校验当前阶段是否为「计划」——阶段判断属于调用方的编排职责，
-   * 持久化层只负责状态写入本身。
-   */
-  approveComposePlan(sessionId: string, opts: { auto: boolean }): ComposePlanApproval | null {
-    const session = this.loadMetadata(sessionId)
-    if (!session) return null
-
-    const approval: ComposePlanApproval = {
-      status: 'approved',
-      approvedAt: Date.now(),
-      auto: opts.auto
-    }
-    session.composePlanApproval = approval
-    session.updatedAt = Date.now()
-    this.saveMetadata(session)
-    return approval
-  }
-
-  /**
-   * 计划文档被重新保存后，此前的批准针对的是旧内容，必须清空重新走一遍确认门。
-   */
-  resetComposePlanApproval(sessionId: string): SessionData | null {
-    const session = this.loadMetadata(sessionId)
-    if (!session) return null
-
-    session.composePlanApproval = { status: 'pending' }
-    session.updatedAt = Date.now()
-    this.saveMetadata(session)
-    return session
   }
 
   /**

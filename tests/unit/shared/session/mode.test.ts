@@ -3,9 +3,9 @@ import { assertSessionModeMutable, parseStrictMode } from '../../../../src/share
 import { migrateSessionData, CURRENT_SESSION_SCHEMA_VERSION } from '../../../../src/runtime/sessions/migrations'
 
 describe('session mode strict parsing', () => {
-  it('当前 schema 合法 learn 保持 learn', () => {
+  it.each([22, CURRENT_SESSION_SCHEMA_VERSION])('schema %s 合法 learn 保持 learn', schemaVersion => {
     const migrated = migrateSessionData({
-      schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+      schemaVersion,
       kind: 'primary',
       id: 'sess',
       workspaceRoot: '/ws',
@@ -18,10 +18,10 @@ describe('session mode strict parsing', () => {
     expect(migrated.mode).toBe('learn')
   })
 
-  it('当前 schema 未知 mode 拒绝', () => {
+  it.each([22, CURRENT_SESSION_SCHEMA_VERSION])('schema %s 未知 mode 拒绝', schemaVersion => {
     expect(() =>
       migrateSessionData({
-        schemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+        schemaVersion,
         kind: 'primary',
         id: 'sess',
         workspaceRoot: '/ws',

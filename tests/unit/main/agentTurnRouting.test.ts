@@ -1,7 +1,7 @@
 /**
  * AgentTurnService 路由行为级集成测试。
  * 真实执行 sendAgentMessage，观察 startRun / appendMessageFast 的调用，
- * 证明 compose 与 default 都沿普通 AgentLoop durable run 进入执行。
+ * 证明 pilot 与 default 都沿普通 AgentLoop durable run 进入执行。
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -255,7 +255,7 @@ function createRegistry(skills: Array<{ name: string }>): SkillRegistry {
 }
 
 function makeSession(
-  mode: 'default' | 'compose' = 'default',
+  mode: 'default' | 'pilot' = 'default',
   codeIndexEnabled = false
 ) {
   return {
@@ -344,9 +344,9 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(codeGraphHost.ensure).toHaveBeenCalledWith('/tmp/ws')
   })
 
-  it('compose + 普通文本 → 创建 agent run，且 route 传给 sendMessage', async () => {
+  it('pilot + 普通文本 → 创建 agent run，且 route 传给 sendMessage', async () => {
     registryHolder.current = createRegistry([])
-    sessionStore.load.mockReturnValue(makeSession('compose'))
+    sessionStore.load.mockReturnValue(makeSession('pilot'))
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '实现登录功能' }, deps)
 
@@ -357,9 +357,9 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(sentRoutes[0]).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
   })
 
-  it('compose + 普通 slash skill → 仍创建 agent run', async () => {
+  it('pilot + 普通 slash skill → 仍创建 agent run', async () => {
     registryHolder.current = createRegistry([{ name: 'onboard' }])
-    sessionStore.load.mockReturnValue(makeSession('compose'))
+    sessionStore.load.mockReturnValue(makeSession('pilot'))
 
     await sendAgentMessage({ sessionId: 'sess-1', content: '/onboard 当前项目' }, deps)
 
@@ -448,9 +448,9 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(coordinator.startRun).not.toHaveBeenCalled()
   })
 
-  it('compose 图片消息 → 创建 agent run', async () => {
+  it('pilot 图片消息 → 创建 agent run', async () => {
     registryHolder.current = createRegistry([])
-    sessionStore.load.mockReturnValue(makeSession('compose'))
+    sessionStore.load.mockReturnValue(makeSession('pilot'))
 
     await sendAgentMessage({
       sessionId: 'sess-1',

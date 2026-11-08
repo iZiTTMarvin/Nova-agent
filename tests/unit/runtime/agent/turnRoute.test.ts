@@ -52,7 +52,7 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     ]
     const route = resolveAgentTurnRoute(baseInput({
       content: blocks,
-      mode: 'compose'
+      mode: 'pilot'
     }))
     expect(route.kind).toBe('agent')
     expect(routeRunKind(route)).toBe('agent')
@@ -65,21 +65,21 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     expect(route.kind).toBe('agent')
   })
 
-  it('compose + passthrough → agent', () => {
+  it('pilot + passthrough → agent', () => {
     const root = mkdtempSync(join(tmpdir(), 'nova-route-'))
     roots.push(root)
     const registry = createRegistry(root, [])
     const route = resolveAgentTurnRoute(baseInput({
       content: '实现登录功能',
-      mode: 'compose',
+      mode: 'pilot',
       skillRegistry: registry
     }))
     expect(route).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
     expect(routeRunKind(route)).toBe('agent')
   })
 
-  it('compose + passthrough remains a single AgentLoop route', () => {
-    const route = resolveAgentTurnRoute(baseInput({ mode: 'compose' }))
+  it('pilot + passthrough remains a single AgentLoop route', () => {
+    const route = resolveAgentTurnRoute(baseInput({ mode: 'pilot' }))
     expect(route.kind).toBe('agent')
     expect(routeRunKind(route)).toBe('agent')
     if (route.kind === 'agent') {

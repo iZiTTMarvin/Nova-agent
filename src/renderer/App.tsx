@@ -9,14 +9,12 @@ import { useSettingsStore } from './stores/useSettingsStore'
 import { useWorkspaceStore } from './stores/useWorkspaceStore'
 import { startWorkspaceDispatcher } from './stores/workspaceDispatcher'
 import { Sidebar, SidebarChrome } from './components/Sidebar'
-import { type ChatPanelHandle } from './features/chat/ChatPanel'
 import { BrowserGuestLayer } from './features/browser/BrowserGuestLayer'
 import { BrowserWorkspaceBody } from './features/browser/BrowserWorkspaceBody'
 import { startBrowserStore } from './features/browser/useBrowserStore'
 import { ContentTopBar } from './components/ContentTopBar'
 import { ConfirmDialogHost } from './features/confirm/ConfirmDialogHost'
 import { useTodoStore } from './features/todo/useTodoStore'
-import { useComposeStageStore } from './features/compose/useComposeStageStore'
 import { useRunStore } from './stores/useRunStore'
 import { useSubagentProjectionStore } from './features/subagents/projection'
 import { useCodeIndexStore } from './stores/useCodeIndexStore'
@@ -52,7 +50,6 @@ const SettingsModal = lazy(() =>
  */
 function App(): React.ReactNode {
   const [updateSnapshot, setUpdateSnapshot] = useState<AppUpdateSnapshot | null>(null)
-  const chatPanelRef = useRef<ChatPanelHandle>(null)
 
   // settings：仅稳定 action
   const loadModelConfig = useSettingsStore(state => state.loadModelConfig)
@@ -73,11 +70,6 @@ function App(): React.ReactNode {
 
   // todo: 由事件总线独立维护，订阅 IPC 即可
   const applyTodoUpdate = useTodoStore(state => state.applyUpdate)
-
-  // compose 阶段表：阶段条唯一推送源，订阅 IPC 写入独立 store
-  const applyComposeStageUpdate = useComposeStageStore(state => state.applyUpdate)
-  // compose 计划确认门：审阅卡与阶段条共用同一份批准状态缓存
-  const applyComposePlanApprovalUpdate = useComposeStageStore(state => state.applyPlanApprovalUpdate)
 
   // 1. 初始化时加载持久化的配置和会话列表
   //    会话列表改为由 workspace:get 统一拉取（单一事实源），
@@ -224,20 +216,6 @@ function App(): React.ReactNode {
       applyTodoUpdate({ sessionId: data.sessionId, todos: data.todos, view: data.view })
     })
 
-    // 监听：compose 阶段表更新（工具与手动兜底共用同一事件，阶段条据此刷新）
-    const unsubComposeStagesUpdated = window.api.on('agent:compose-stages-updated', (data) => {
-      applyComposeStageUpdate({
-        sessionId: data.sessionId,
-        stages: data.stages,
-        reviewLoops: data.reviewLoops
-      })
-    })
-
-    // 监听：计划确认门批准状态更新（手动批准 IPC 与 auto 模式自动放行共用同一事件）
-    const unsubComposePlanApprovalUpdated = window.api.on('agent:compose-plan-approval-updated', (data) => {
-      applyComposePlanApprovalUpdate({ sessionId: data.sessionId, approval: data.approval })
-    })
-
     // 监听：Agent 本轮思考和应答全部完成 → 强制 flush
     const unsubMessageEnd = window.api.on('agent:message-end', gateAgentEvent('message-end', (data) => {
       buffer.flushNow()
@@ -315,8 +293,6 @@ function App(): React.ReactNode {
       unsubCodeIndexStatus()
       unsubSubagentLinked()
       unsubTodosUpdated()
-      unsubComposeStagesUpdated()
-      unsubComposePlanApprovalUpdated()
       unsubMessageEnd()
       unsubUsage()
       unsubCacheDiagnostic()
@@ -335,8 +311,6 @@ function App(): React.ReactNode {
     handleDiffUpdate,
     handleError,
     applyTodoUpdate,
-    applyComposeStageUpdate,
-    applyComposePlanApprovalUpdate,
     handleMessageEnd,
     applySessionUsage,
     setContextBreakdown
@@ -364,7 +338,7 @@ function App(): React.ReactNode {
       >
         <div className="app-workspace">
           <ContentTopBar />
-          <BrowserWorkspaceBody chatPanelRef={chatPanelRef} />
+          <BrowserWorkspaceBody />
         </div>
         <BrowserGuestLayer />
         {/* 模型参数配置模态窗：须叠在 guest 之上，DOM 合成才能挡住网页 */}

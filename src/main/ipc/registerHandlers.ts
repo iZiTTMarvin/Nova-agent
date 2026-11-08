@@ -24,7 +24,6 @@ import { registerVisualizationHandler } from './visualizationHandler'
 import { registerRunHandler } from './runHandler'
 import { registerCodeIndexHandler } from './codeIndexHandler'
 import { registerSubagentProjectionHandler } from './subagentProjectionHandler'
-import { registerComposeStageHandler } from './composeStageHandler'
 import { registerPlanFileHandler } from './planFileHandler'
 import { initWorkspaceService } from '../services/WorkspaceService'
 import { disposeIdleLoopForSession } from '../agent/turn'
@@ -90,9 +89,6 @@ export async function registerIpcHandlers(): Promise<ImageStore> {
   // 须在任何会话创建前判定，否则全新安装首个会话会让自己被当成老用户
   initializeNovaSettingsForFirstRun({ hasHistorySessions: () => getSessionStore().list().length > 0 })
   initializeMemoryExtractHost()
-
-  // compose 阶段条手动推进/回退（依赖 SessionStore，须在 registerSessionHandler 之后）
-  registerComposeStageHandler()
 
   // 注册技能管理 IPC
   registerSkillHandler(getMainWindow)

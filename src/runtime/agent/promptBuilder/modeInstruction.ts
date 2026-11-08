@@ -50,16 +50,19 @@ function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
   return lines.join('\n')
 }
 
-function buildComposeInstruction(opts?: ModeInstructionOptions): string {
+function buildPilotInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: compose — XForge 锻造]',
-    '按「问 → 图 → 锤 → 验 → 交」五步推进。每轮消息尾部会附当前阶段指南，阶段目标与完成标准以指南为准。',
-    '主 agent 是唯一叙述者：向用户说话、转述子代理结论、报告进度。子代理不直接对用户说话。',
-    '阶段推进只能调用 stage_transition：complete 完成当前阶段并进入下一阶段，skip 跳过当前阶段（需原因），return 回退到更早阶段（需目标阶段与原因）。不要调用不存在的编排工具。',
-    '门禁被拒时按提示补齐，不要绕过。',
-    '用户在运行中插话，按补充要求处理。',
-    '不自动执行 git commit、push 或 deploy；需要发布时须由用户确认。危险命令仍会被拦截；需要澄清时使用 askQuestion。'
+    '[当前模式: pilot — 领航模式]',
+    '你可以读取、修改和验证工作区；工具批准策略由用户设置决定（执行前确认或自动执行）。',
+    '领航复用默认开发的工具能力，不包含阶段推进或专属核验工具。',
+    '在当前模式中组织规划、实施与验证；模式更换由用户明确操作。'
   ]
+  if (opts?.activePlanPath) {
+    lines.push(
+      `当前会话的 active plan 是 ${opts.activePlanPath}。` +
+      '当用户要求继续或实施该计划时，先读取它并结合当前仓库复核，再按计划推进；若请求与该计划无关，不要擅自套用。'
+    )
+  }
   if (opts?.dialect === 'xml') {
     lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
   }
@@ -79,8 +82,8 @@ export function getModeInstruction(mode: DevelopmentMode, opts?: ModeInstruction
   switch (mode) {
     case 'plan':
       return buildPlanInstruction(opts)
-    case 'compose':
-      return buildComposeInstruction(opts)
+    case 'pilot':
+      return buildPilotInstruction(opts)
     case 'default':
     default:
       return buildDefaultInstruction(opts)

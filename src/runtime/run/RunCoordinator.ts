@@ -880,7 +880,43 @@ export class RunCoordinator {
 
     // 扫描终态 run 的未完成 outbox，供 handler 注册后 drain
     this.pendingOutboxOnStartup = this.collectPendingOutboxKeys()
+    this.cancelLegacyStageReviewInteractions()
     return interrupted
+  }
+
+  /**
+   * 旧 XForge 计划审阅已无执行方：把仍挂起的 stage_transition 交互一次性收敛为 cancelled，
+   * 避免历史会话出现永远等待的批准卡。只处理该类交互，普通 plan 的 switch_mode(default) 审批不受影响。
+   * 已中断 run 的交互在上一轮启动对账里已统一收敛，这里只补齐旧版本留下的终态记录。
+   */
+  private cancelLegacyStageReviewInteractions(): void {
+    for (const runId of this.store.listRunIds()) {
+      let peek: RunSnapshot | null
+      try {
+        peek = this.store.loadSnapshot(runId)
+      } catch (err) {
+        console.error(`[RunCoordinator] 跳过腐坏 run 记录 runId=${runId}:`, err)
+        continue
+      }
+      if (!peek || !hasPendingLegacyStageReview(peek)) continue
+      const snap =
+        isTerminalRunStatus(peek.status) && !peek.dispatch && !peek.deliveryBinding
+          ? peek
+          : this.store.loadSnapshotWithReplay(runId)
+      if (!snap) continue
+      let changed = false
+      for (const inter of snap.pendingInteractions) {
+        if (inter.status !== 'pending' && inter.status !== 'submitting') continue
+        if (inter.type !== 'planApproval' || inter.payload.toolName !== 'stage_transition') continue
+        inter.status = 'cancelled'
+        inter.version += 1
+        changed = true
+      }
+      if (!changed) continue
+      this.runs.set(snap.runId, snap)
+      this.indexSession(snap.sessionId, snap.runId)
+      this.commit(snap, 'reconcile_legacy_plan_review', { reason: 'xforge_removed' })
+    }
   }
 
   /** 启动时发现的 pending outbox keys，供 drainPendingOutbox 使用 */
@@ -1256,6 +1292,16 @@ function deliveryBindingContentEquals(
     (a.boundSessionId ?? undefined) === (b.boundSessionId ?? undefined) &&
     (a.paused ?? undefined) === (b.paused ?? undefined) &&
     (a.invalidatedReason ?? undefined) === (b.invalidatedReason ?? undefined)
+  )
+}
+
+/** 旧 XForge 计划审阅交互：只认 stage_transition 产生的 planApproval。 */
+function hasPendingLegacyStageReview(snap: RunSnapshot): boolean {
+  return snap.pendingInteractions.some(
+    inter =>
+      (inter.status === 'pending' || inter.status === 'submitting') &&
+      inter.type === 'planApproval' &&
+      inter.payload.toolName === 'stage_transition'
   )
 }
 

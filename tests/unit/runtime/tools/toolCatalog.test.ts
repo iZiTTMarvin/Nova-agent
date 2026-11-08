@@ -201,7 +201,7 @@ describe('Deferred 组暴露规则', () => {
   })
 
   it('mode-bound 工具与 load_tools 元数据齐全', () => {
-    for (const name of ['save_plan', 'switch_mode', 'stage_transition']) {
+    for (const name of ['save_plan', 'switch_mode']) {
       expect(getCatalogEntry(name)?.exposure).toBe('mode-bound')
     }
     expect(getCatalogEntry('load_tools')?.exposure).toBe('internal')

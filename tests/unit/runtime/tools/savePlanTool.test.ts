@@ -8,14 +8,12 @@ import { SessionStore } from '../../../../src/runtime/sessions/SessionStore'
 import { resetSessionIndexHostForTests } from '../../../../src/runtime/sessions/SessionIndexHost'
 import { writerLeaseRegistry } from '../../../../src/runtime/workspace'
 import type { ToolContext } from '../../../../src/runtime/tools/types'
-import { parseCapabilityItems } from '../../../../src/shared/composeLifecycle'
 
 let tempRoot: string
 let workspace: string
 let appData: string
 let store: SessionStore
 let sessionId: string
-const ONE_PAGE = '## 你要的东西\n计时器\n## 做完你能做什么\n1. 点击开始会倒计时\n## 我决定不做的\n账号\n## 技术选择\n单文件 HTML'
 
 beforeEach(() => {
   resetSessionIndexHostForTests()
@@ -46,33 +44,17 @@ function context(): ToolContext {
 }
 
 describe('save_plan', () => {
-  it('能力通过参数提交，正文标题任意；修订时旧清单被替换且持久化投影一致', async () => {
-    const composeSessionId = store.create(workspace, 'compose').id
-    const ctx = { ...context(), sessionId: composeSessionId }
-    const first = await savePlanTool.execute({ title: '计划', content: '# 任意标题\n目的说明', capabilities: ['打开计时器'] }, ctx)
-    expect(first.success, first.error).toBe(true)
-    const planPath = path.join(workspace, store.load(composeSessionId)!.activePlan!.path)
-    expect(parseCapabilityItems(fs.readFileSync(planPath, 'utf8'))).toEqual(['打开计时器'])
-    const revised = await savePlanTool.execute({ title: '计划', content: fs.readFileSync(planPath, 'utf8'), capabilities: ['暂停计时器'] }, ctx)
-    expect(revised.success, revised.error).toBe(true)
-    expect(parseCapabilityItems(fs.readFileSync(planPath, 'utf8'))).toEqual(['暂停计时器'])
-    expect(fs.readFileSync(planPath, 'utf8')).toContain('目的说明')
-    for (const capabilities of [[], [' '], ['一行\n## 注入标题'], [42]]) {
-      expect((await savePlanTool.execute({ title: '计划', content: '正文', capabilities }, ctx)).success).toBe(false)
-    }
-    expect(parseCapabilityItems(fs.readFileSync(planPath, 'utf8'))).toEqual(['暂停计时器'])
+  it.each(['pilot', 'plan'] as const)('%s 保存计划后保留模式，只在普通模式切换范围内提示审阅', async mode => {
+    store.updateMode(sessionId, mode)
+    const result = await savePlanTool.execute({ title: '实施方案', content: '# 实施方案' }, context())
+
+    expect(result.success).toBe(true)
+    expect(result.output.includes('switch_mode')).toBe(mode === 'plan')
+    const session = store.load(sessionId)!
+    expect(session.mode).toBe(mode)
+    expect(fs.readFileSync(path.join(workspace, session.activePlan!.path), 'utf8')).toBe('# 实施方案\n')
   })
-  it('compose 拒绝不可展示的计划；合法一页纸保存后指向阶段确认', async () => {
-    const composeSessionId = store.create(workspace, 'compose').id
-    const ctx = { ...context(), sessionId: composeSessionId }
-    const rejected = await savePlanTool.execute({ title: '计划', content: '# 十二段技术方案' }, ctx)
-    expect(rejected.success).toBe(false)
-    expect(store.load(composeSessionId)?.activePlan).toBeUndefined()
-    const saved = await savePlanTool.execute({ title: '计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] }, ctx)
-    expect(saved.success).toBe(true)
-    expect(saved.output).toContain('stage_transition')
-    expect(saved.output).not.toContain('switch_mode')
-  })
+
   it('生成当前工作区 .nova/plans 下的可读文件名，并只在会话元数据保存引用', async () => {
     const marker = 'PLAN_BODY_MUST_STAY_IN_WORKSPACE'
     const result = await savePlanTool.execute({
@@ -155,71 +137,6 @@ describe('save_plan', () => {
     expect(result.success).toBe(false)
     expect(result.error).toContain('硬链接')
     expect(fs.readFileSync(outsideLink, 'utf8')).toBe('# original\n')
-  })
-
-  it('compose 模式下计划阶段重新保存计划会清空已有批准，逼用户重新走确认门', async () => {
-    const composeSessionId = store.create(workspace, 'compose').id
-    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 构思 → 计划
-    store.approveComposePlan(composeSessionId, { auto: false })
-    expect(store.getComposePlanApproval(composeSessionId)).toMatchObject({ status: 'approved' })
-
-    await savePlanTool.execute(
-      { title: '修订计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
-      { ...context(), sessionId: composeSessionId }
-    )
-
-    expect(store.getComposePlanApproval(composeSessionId)).toEqual({ status: 'pending' })
-  })
-
-  it('compose 模式下开发阶段修订计划同样清空批准，回退计划阶段后必须重新获批', async () => {
-    const composeSessionId = store.create(workspace, 'compose').id
-    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 构思 → 计划
-    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 计划 → 开发
-    store.approveComposePlan(composeSessionId, { auto: false })
-
-    await savePlanTool.execute(
-      { title: '开发中修订计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
-      { ...context(), sessionId: composeSessionId }
-    )
-
-    expect(store.getComposePlanApproval(composeSessionId)).toEqual({ status: 'pending' })
-  })
-
-  it('compose 模式重新保存清空已有批准时推送确认门事件，renderer 得以同步回 pending', async () => {
-    const composeSessionId = store.create(workspace, 'compose').id
-    store.applyComposeStageTransition(composeSessionId, { type: 'complete' }) // 构思 → 计划
-    store.approveComposePlan(composeSessionId, { auto: false })
-    const events: unknown[] = []
-
-    await savePlanTool.execute(
-      { title: '修订计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
-      { ...context(), sessionId: composeSessionId, eventBus: { emit: (e: unknown) => events.push(e) } as never }
-    )
-
-    expect(events).toEqual([
-      {
-        type: 'compose_plan_approval_updated',
-        sessionId: composeSessionId,
-        approval: { status: 'pending' }
-      }
-    ])
-  })
-
-  it('compose 模式保存时本就未批准，不重复推送确认门事件', async () => {
-    const composeSessionId = store.create(workspace, 'compose').id
-    const events: unknown[] = []
-
-    await savePlanTool.execute(
-      { title: '初版计划', content: ONE_PAGE, capabilities: ['点击开始会倒计时'] },
-      { ...context(), sessionId: composeSessionId, eventBus: { emit: (e: unknown) => events.push(e) } as never }
-    )
-
-    expect(events).toEqual([])
-  })
-
-  it('非 compose 模式保存计划不触碰计划确认门', async () => {
-    await savePlanTool.execute({ title: 'Plan Mode', content: '# v1' }, context())
-    expect(store.getComposePlanApproval(sessionId)).toEqual({ status: 'pending' })
   })
 
   it('文件名清理非法字符、控制长度并为纯标点标题提供回退名', () => {

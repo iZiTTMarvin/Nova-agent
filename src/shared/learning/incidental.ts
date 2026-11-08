@@ -26,7 +26,7 @@ export interface IncidentalTurnOverlayContribution {
 
 /** 记忆排除粒度：session.mode=learn 或带随堂标记的消息范围。 */
 export interface LearningMemoryExclusionScope {
-  readonly sessionMode: 'learn' | 'default' | 'plan' | 'compose'
+  readonly sessionMode: 'learn' | 'default' | 'plan' | 'pilot'
   readonly incidentalMessageIds: readonly string[]
 }
 

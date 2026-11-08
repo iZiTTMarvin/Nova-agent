@@ -118,12 +118,12 @@ describe('AgentRuntimeFactory feature-off cache golden', () => {
   })
 
   // 三种开发模式的最终请求字节基线；bash 描述锚定为常量、系统消息行尾统一 LF，
-  // 任何一种模式哈希变化都视为回归，应查装配参数而不是更新期望值
+  // 未改变工具契约时，哈希变化应追查装配参数，不能直接更新期望值。
   it.each([
-    ['default', { toolsHash: '27f377665324568a', systemContentHash: 'f9bbf5b936f720ca' }],
-    ['plan', { toolsHash: 'e23c3784a5f05f95', systemContentHash: '0cb33ec8aa249773' }],
-    ['compose', { toolsHash: '5f31113a956d7bf8', systemContentHash: 'f1c6aa842a50b9af' }]
-  ] as const)('保持改动前的工具面和首条 system message 字节基线（%s）', async (mode, expected) => {
+    ['default', { toolsHash: 'badf7deea56e86d6', systemContentHash: 'd0a519f7d119c855' }],
+    ['plan', { toolsHash: '0668bfda5851b7c4', systemContentHash: '1ebaed93d050e4ff' }],
+    ['pilot', { toolsHash: '8344955172c4a0bd', systemContentHash: '589eea2574b676c0' }]
+  ] as const)('工具面和首条 system message 符合模式字节基线（%s）', async (mode, expected) => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-code-graph-cache-golden-'))
     roots.push(sessionsDir)
     const workspaceRoot = '/nova-code-graph-cache-golden'
@@ -472,6 +472,32 @@ describe('AgentRuntimeFactory 动态工具披露与恢复', () => {
     const second = prepareCacheRuntime(restored, store, sessionsDir, 'xml')
     try {
       expect(second.frozenPrompt).toBe(frozen)
+      expect(second.agentLoop.getCacheDiagnosticObservation().epochId).toBe('epoch_0')
+    } finally {
+      second.agentLoop.dispose()
+    }
+  })
+
+  it('旧 compose 冻结提示词在恢复时归一为 pilot，不把 XForge 说明带给模型', () => {
+    const { sessionsDir, store, session } = createSession()
+    const first = prepareCacheRuntime(session, store, sessionsDir, 'native')
+    const legacy = first.frozenPrompt.replace(
+      '- pilot — Nova pilot: organizes development with the built-in pilot method and grounds delivery in real artifacts.',
+      '- compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.'
+    )
+    expect(legacy).not.toBe(first.frozenPrompt)
+    first.agentLoop.dispose()
+    session.frozenSystemPrompt = legacy
+    store.save(session)
+
+    const restored = store.load(session.id)
+    if (!restored) throw new Error('会话恢复失败')
+    const second = prepareCacheRuntime(restored, store, sessionsDir, 'native')
+    try {
+      expect(second.frozenPrompt).toContain('- pilot — Nova pilot:')
+      expect(second.frozenPrompt).not.toContain('XForge')
+      expect(second.frozenPrompt).not.toContain('- compose —')
+      // 只替换已知模式行，内容与当前稳定提示词一致，不需要重建 epoch
       expect(second.agentLoop.getCacheDiagnosticObservation().epochId).toBe('epoch_0')
     } finally {
       second.agentLoop.dispose()

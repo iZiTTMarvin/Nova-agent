@@ -54,6 +54,20 @@ describe('novaSettings', () => {
     expect(loadNovaSettings().thirdPartySkillSources).toEqual({ agents: false, claude: false })
   })
 
+  it('旧 defaultMode=compose 归一为 pilot，pilot 可持久化，compose 不再可写回', () => {
+    writeFileSync(
+      join(mockHome, '.nova', 'settings.json'),
+      JSON.stringify({ defaultMode: 'compose' }),
+      'utf-8'
+    )
+    expect(loadNovaSettings().defaultMode).toBe('pilot')
+
+    saveNovaSettings({ defaultMode: 'pilot' })
+    expect(loadNovaSettings().defaultMode).toBe('pilot')
+
+    expect(() => saveNovaSettings({ defaultMode: 'compose' as never })).toThrow('defaultMode')
+  })
+
   it('streamSmoothness 默认 smooth，合法值持久化，非法值拒绝且旧文件缺省回落', async () => {
     const { loadNovaSettings, saveNovaSettings, DEFAULT_NOVA_SETTINGS } = await import(
       '../../../../src/runtime/settings/novaSettings'

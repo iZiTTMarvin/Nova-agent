@@ -37,12 +37,10 @@ export const LEARN_FORBIDDEN_TOOL_NAMES: readonly string[] = [
   'subagent_read',
   'save_plan',
   'switch_mode',
-  'stage_transition',
   'load_tools',
   'run_code',
   'agent_list',
   'model_list',
-  'inspection_report'
 ]
 
 const FORBIDDEN = new Set(LEARN_FORBIDDEN_TOOL_NAMES)

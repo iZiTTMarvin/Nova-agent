@@ -16,7 +16,7 @@ export type PlanReviewResolution =
   | { decision: 'ignore' }
 
 /**
- * 忽略决定写入 switch_mode / stage_transition 工具结果的开头标记。
+ * 忽略决定写入 switch_mode 工具结果的开头标记。
  * 工具结果随消息持久化，渲染层据此在历史中恢复灰态「已忽略」卡，跨 run 与重启仍成立。
  */
 export const PLAN_REVIEW_IGNORED_RESULT_MARKER = '用户选择忽略当前计划'
@@ -32,7 +32,6 @@ export type PendingPlanReview = {
   sessionId: string
   messageId: string
   toolCallId: string
-  source: 'plan' | 'compose'
 }
 
 export type PlanReviewCommandParseResult =
@@ -120,8 +119,7 @@ export function projectPendingPlanReview(
     runId: interaction.runId,
     sessionId: interaction.sessionId,
     messageId: interaction.messageId,
-    toolCallId,
-    source: interaction.type === 'planApproval' ? 'compose' : 'plan'
+    toolCallId
   }
 }
 
@@ -135,9 +133,5 @@ export function isPlanReviewPermissionPayload(payload: Readonly<Record<string, u
 
 function isPendingPlanReviewInteraction(interaction: PendingInteraction): boolean {
   if (interaction.status !== 'pending' && interaction.status !== 'submitting') return false
-  if (interaction.type === 'planApproval') {
-    return interaction.payload.toolName === 'stage_transition' &&
-      interaction.payload.action === 'complete'
-  }
   return interaction.type === 'permission' && isPlanReviewPermissionPayload(interaction.payload)
 }

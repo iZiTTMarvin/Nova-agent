@@ -59,7 +59,7 @@ describe('持久化压缩提交', () => {
     const file = join(directory, 'sessions', session.id, 'messages.jsonl')
     return { session, context, service, diagnostics, original: readFileSync(file), file, expire: () => { authority = false } }
   }
-  it.each(['default', 'plan', 'compose'] as const)('%s 本轮投影留在尾部，提交后完成归档与重启保持一致', async mode => {
+  it.each(['default', 'plan', 'pilot'] as const)('%s 本轮投影留在尾部，提交后完成归档与重启保持一致', async mode => {
     const f = fixture()
     const facts = { userMessageId: 'current-user', sessionPrefix: '当前工作区', modeInstruction: getModeInstruction(mode) }
     store.appendMessage(f.session.id, { id: facts.userMessageId, role: 'user', content: '继续', timestamp: 100 })

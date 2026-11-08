@@ -2,17 +2,13 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { createPortal } from 'react-dom'
 import { shallow } from 'zustand/shallow'
 import type { ActivePlanDocument } from '../../../shared/workspace/types'
-import type { Mode } from '../../../shared/session/types'
-import { COMPOSE_STAGE_LABELS, createInitialStageTable, getComposeStageCursor } from '../../../shared/composeLifecycle'
 import { CheckIcon, ChevronIcon, CodeIcon, PlanIcon } from '../../components/Icons'
 import { presentSubagentStatus, summarizeActiveSubagents } from '../subagents/statusPresentation'
 import { useChatStore } from '../../stores/useChatStore'
 import { useLayoutStore } from '../../stores/useLayoutStore'
 import { useRunStore, selectSessionIsRunning, selectSessionSnapshot } from '../../stores/useRunStore'
 import { selectSessionTodoState, useTodoStore } from '../todo/useTodoStore'
-import { useComposeStageStore, selectSessionComposeStages } from '../compose/useComposeStageStore'
 import { useSubagentProjectionStore, selectActiveBackgroundSubagentsByParentSessionId } from '../subagents/projection'
-import { ComposeStatusSection } from './ComposeStatusSection'
 import { StatusSprite } from './StatusSprite'
 import { findStatusPlan } from './statusModel'
 import { useSessionChanges } from './useSessionChanges'
@@ -27,7 +23,7 @@ function CollapseCardIcon() {
   )
 }
 
-export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surface = 'rail' }: { sessionId: string; mode: Mode; onRequestSupplement: () => void; surface?: 'rail' | 'inspector' }) {
+export function SessionStatusPanel({ sessionId, surface = 'rail' }: { sessionId: string; surface?: 'rail' | 'inspector' }) {
   const railRef = useRef<HTMLElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -39,11 +35,9 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
   const openStatus = useLayoutStore(state => state.openStatus)
   const closeInspector = useLayoutStore(state => state.closeInspector)
   const todoState = useTodoStore(state => selectSessionTodoState(state, sessionId))
-  const stages = useComposeStageStore(state => selectSessionComposeStages(state, sessionId))
   const background = useSubagentProjectionStore(state => selectActiveBackgroundSubagentsByParentSessionId(state, sessionId), shallow)
   const savedPlan = useChatStore(state => findStatusPlan(state.messages, sessionId), shallow)
   const running = useRunStore(state => selectSessionIsRunning(state, sessionId))
-  const sendInFlight = useChatStore(state => state.sendInFlight && state.currentSessionId === sessionId)
   const waiting = useRunStore(state => selectSessionSnapshot(state, sessionId)?.status === 'waiting_user')
   const { turns, failedIds, retryLoad } = useSessionChanges(sessionId)
   const hasMore = useChatStore(state => state.hasMoreMessagesAbove)
@@ -61,19 +55,15 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
   const [allTasks, setAllTasks] = useState(false)
   const [documentVisible, setDocumentVisible] = useState(() => document.visibilityState !== 'hidden')
   const [headerSlot, setHeaderSlot] = useState<HTMLElement | null>(null)
-  const isCompose = mode === 'compose'
-  const stageTable = useMemo(() => stages ?? createInitialStageTable(), [stages])
-  const cursor = getComposeStageCursor(stageTable)
-  const stageLabel = cursor.currentStageId ? COMPOSE_STAGE_LABELS[cursor.currentStageId] : '交'
   const total = todoState?.total ?? 0
   const completed = todoState?.completed ?? 0
   const complete = total > 0 && todoState!.todos.every(todo => todo.status === 'completed')
   const selectedTurn = turns[0]
-  const hasContent = isCompose || total > 0 || !!plan || turns.length > 0 || background.length > 0 || failedIds.length > 0 || !!planError
+  const hasContent = total > 0 || !!plan || turns.length > 0 || background.length > 0 || failedIds.length > 0 || !!planError
   const expanded = surface === 'inspector' || (wantsExpanded && wide && !inspectorOpen && (hasContent || manualEmptyOpen))
   const tiny = surface !== 'inspector' && (!wide || inspectorOpen)
   const visible = surface === 'inspector' || hasContent || manualEmptyOpen
-  const hasOtherSections = isCompose || !!plan || !!planError || !!selectedTurn || failedIds.length > 0 || background.length > 0
+  const hasOtherSections = !!plan || !!planError || !!selectedTurn || failedIds.length > 0 || background.length > 0
   const backgroundSummary = summarizeActiveSubagents(background.map(agent => agent.status))
   // 后台只有等待授权或正在停止时不播运行动画，避免把「需要你处理」显示成「正在跑」
   const isRunningSprite = ((running && !waiting) || backgroundSummary.working) && documentVisible
@@ -81,13 +71,11 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
     ? '进程'
     : background.length > 0
       ? '后台任务'
-      : isCompose
-        ? (expanded ? '锻造阶段' : stageLabel)
-        : selectedTurn
-          ? `${selectedTurn.files.length} 个文件改动`
-          : plan
-            ? '计划已就绪'
-            : '会话状态'
+      : selectedTurn
+        ? `${selectedTurn.files.length} 个文件改动`
+        : plan
+          ? '计划已就绪'
+          : '会话状态'
 
   useEffect(() => {
     let active = true
@@ -169,12 +157,11 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
     if (rail.parentElement) observer.observe(rail.parentElement)
     observer.observe(body)
     return () => observer.disconnect()
-  }, [visible, allTasks, total, turns.length, background.length, !!plan, isCompose])
+  }, [visible, allTasks, total, turns.length, background.length, !!plan])
 
   // 只有领域内容变更才激活；流式正文、审阅标记和窗口缩放不重新弹开。
   const updateKey = JSON.stringify([
     todoState?.todos.map(todo => [todo.content, todo.status]),
-    isCompose ? stageTable.map(stage => stage.status) : null,
     plan?.updatedAt,
     turns[0]?.messageId, turns[0]?.cache ? [turns[0].added, turns[0].removed] : null,
     background.map(agent => [agent.childRunId, agent.status])
@@ -315,16 +302,6 @@ export function SessionStatusPanel({ sessionId, mode, onRequestSupplement, surfa
             </div>
             <div className="session-status__viewport" inert={!expanded} aria-hidden={!expanded}>
               <div ref={bodyRef} className="session-status__body">
-                {isCompose && (
-                  <ComposeStatusSection
-                    sessionId={sessionId}
-                    stages={stageTable}
-                    plan={plan}
-                    todos={todoState?.todos ?? []}
-                    interactionLocked={running || sendInFlight || waiting}
-                    onRequestSupplement={onRequestSupplement}
-                  />
-                )}
                 {plan && (
                   <section className="session-status__section" aria-label="计划文档">
                     <div className="session-status__section-title">计划</div>

@@ -85,12 +85,6 @@
   color: var(--color-warning-text);
 }
 
-.mode-switch__chip--compose {
-  border-color: light-dark(rgba(99, 102, 241, 0.45), rgba(167, 155, 230, 0.5));
-  background: light-dark(rgba(99, 102, 241, 0.08), rgba(118, 101, 181, 0.22));
-  color: light-dark(#4338ca, #cec3ff);
-}
-
 .mode-switch__chip-main,
 .mode-switch__chip-close {
   min-height: 30px;

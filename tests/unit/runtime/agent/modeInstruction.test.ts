@@ -48,29 +48,22 @@ describe('modeInstruction', () => {
     expect(instruction).toContain('不要滥用计划模式')
   })
 
-  it('Compose 为 XForge 锻造五步，主 agent 是唯一叙述者', () => {
-    const instruction = getModeInstruction('compose')
-    expect(instruction).toContain('[当前模式: compose — XForge 锻造]')
-    expect(instruction).toContain('问 → 图 → 锤 → 验 → 交')
-    expect(instruction).toContain('唯一叙述者')
-    expect(instruction).toContain('阶段指南')
-    expect(instruction).toContain('stage_transition')
-    expect(instruction).toContain('complete')
-    expect(instruction).toContain('skip')
-    expect(instruction).toContain('return')
-    expect(instruction).toContain('askQuestion')
+  it('Pilot 在当前模式组织开发，不引导 Agent 换模式或推进阶段', () => {
+    const instruction = getModeInstruction('pilot')
+    expect(instruction).toContain('[当前模式: pilot — 领航模式]')
+    expect(instruction).toContain('模式更换由用户明确操作')
+    expect(instruction).not.toContain('switch_mode')
+    expect(instruction).not.toContain('stage_transition')
+    expect(instruction).not.toContain('inspection_report')
+    expect(instruction).not.toContain('五步')
   })
 
-  it('Compose 门禁被拒时按提示补齐，不绕过', () => {
-    const instruction = getModeInstruction('compose')
-    expect(instruction).toContain('被拒')
-    expect(instruction).toContain('补齐')
-    expect(instruction).toContain('不要绕过')
-  })
-
-  it('Compose 保留不自动发布与危险命令拦截约束', () => {
-    const instruction = getModeInstruction('compose')
-    expect(instruction).toContain('不自动执行 git commit、push 或 deploy')
-    expect(instruction).toContain('危险命令仍会被拦截')
+  it('Pilot 同样在存在合法 active plan 时注入实施指针', () => {
+    const withPlan = getModeInstruction('pilot', {
+      activePlanPath: '.nova/plans/2026-07-24-auth.md'
+    })
+    expect(withPlan).toContain('.nova/plans/2026-07-24-auth.md')
+    expect(withPlan).toContain('先读取')
+    expect(getModeInstruction('pilot')).not.toContain('active plan')
   })
 })

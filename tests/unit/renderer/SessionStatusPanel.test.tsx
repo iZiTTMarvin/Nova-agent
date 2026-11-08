@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SessionStatusPanel } from '../../../src/renderer/features/session-status/SessionStatusPanel'
 import { buildStatusDiffTurns, statusRailWidth } from '../../../src/renderer/features/session-status/statusModel'
 import { useTodoStore } from '../../../src/renderer/features/todo/useTodoStore'
-import { useComposeStageStore } from '../../../src/renderer/features/compose/useComposeStageStore'
 import { useSubagentProjectionStore } from '../../../src/renderer/features/subagents/projection'
 import { resetChatStoreForTests, useChatStore } from '../../../src/renderer/stores/useChatStore'
 import { resetLayoutStoreForTests, useLayoutStore } from '../../../src/renderer/stores/useLayoutStore'
@@ -16,21 +15,20 @@ import { act, renderDom } from './renderDom'
 import { makeRunSnapshot, publishRunSnapshot } from './runSnapshotFixture'
 
 const invoke = vi.fn()
-const supplement = vi.fn()
 const cancel = vi.fn().mockResolvedValue(undefined)
 const plan = { path: '.nova/plans/test.md', title: '番茄钟', updatedAt: 1, content: '# 番茄钟\n## 做完你能做什么\n1. 打开计时器\n2. 开始倒计时\n## 我决定不做的\n不做账号' }
 const todos: TodoItem[] = [{ content: '打开计时器', status: 'completed', priority: 'medium' }, { content: '开始倒计时', status: 'in_progress', priority: 'medium' }]
 function message(id: string, sessionId = 'sess_1'): ExtendedMessage { return { id, sessionId, role: 'assistant', content: '', timestamp: 1, _revision: 1 } }
 function click(element: Element) { act(() => element.dispatchEvent(new MouseEvent('click', { bubbles: true }))) }
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve() }) }
-function panel(mode: 'default' | 'compose' = 'default') { return renderDom(<SessionStatusPanel sessionId="sess_1" mode={mode} onRequestSupplement={supplement} />) }
+function panel() { return renderDom(<SessionStatusPanel sessionId="sess_1" />) }
 function button(container: HTMLElement, text: string) { const result = [...container.querySelectorAll<HTMLButtonElement>('button')].find(element => element.textContent === text); if (!result) throw new Error(`按钮不存在：${text}`); return result }
 
 beforeEach(() => {
   vi.clearAllMocks()
   resetChatStoreForTests(); resetLayoutStoreForTests(); resetAgentStoreForTests()
   useRunStore.getState().resetForTests()
-  useTodoStore.getState().reset(); useComposeStageStore.getState().reset(); useSubagentProjectionStore.getState().resetForTests()
+  useTodoStore.getState().reset(); useSubagentProjectionStore.getState().resetForTests()
   useChatStore.setState({ currentSessionId: 'sess_1' })
   useAgentStore.setState({ cancelExecution: cancel })
   invoke.mockImplementation(async channel => channel === 'workspace:read-active-plan' ? plan : channel === 'get-message-diffs' ? { diffs: [], reviews: {} } : undefined)
@@ -101,25 +99,6 @@ describe('会话状态入口', () => {
     view.unmount()
   })
 
-  it('保留 compose 阶段、一页纸清单与运行/空闲操作权限', async () => {
-    useComposeStageStore.getState().setSessionStages('sess_1', [{ id: 'interview', status: 'completed' }, { id: 'blueprint', status: 'completed' }, { id: 'build', status: 'in_progress' }, { id: 'inspect', status: 'pending' }, { id: 'deliver', status: 'pending' }])
-    useTodoStore.getState().setSessionTodos('sess_1', todos)
-    const view = panel('compose'); await flush()
-    expect(view.container.querySelector('.session-status__capabilities [data-checked="true"]')?.textContent).toContain('打开计时器')
-    expect(button(view.container, '暂停').disabled).toBe(true)
-    expect(button(view.container, '回到方案').disabled).toBe(false)
-    click(button(view.container, '补充要求')); expect(supplement).toHaveBeenCalledTimes(1)
-    click(button(view.container, '回到方案')); await flush()
-    expect(invoke).toHaveBeenCalledWith('compose:apply-stage-transition', { sessionId: 'sess_1', action: { type: 'return', targetStage: 'blueprint', reason: '回到方案' } })
-    act(() => publishRunSnapshot(makeRunSnapshot()))
-    expect(button(view.container, '暂停').disabled).toBe(false)
-    expect(button(view.container, '回到方案').disabled).toBe(true)
-    click(button(view.container, '暂停')); expect(cancel).toHaveBeenCalledTimes(1)
-    act(() => publishRunSnapshot(makeRunSnapshot({ sequence: 2, status: 'waiting_user' })))
-    expect(button(view.container, '暂停').disabled).toBe(false)
-    view.unmount()
-  })
-
   it('胶囊常驻顶部栏槽位并通过点击激活或收起下方浮窗；前置完成项可折叠展开', async () => {
     invoke.mockImplementation(async () => undefined)
     const slot = document.createElement('div')
@@ -155,7 +134,7 @@ describe('会话状态入口', () => {
   it('隐藏文档与等待用户期间停止运行态动画', async () => {
     act(() => publishRunSnapshot(makeRunSnapshot()))
     const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    const view = panel('compose'); await flush()
+    const view = panel(); await flush()
     expect(view.container.querySelector('.status-sprite')?.getAttribute('data-running')).toBe('true')
     act(() => { visibility.mockReturnValue('hidden'); document.dispatchEvent(new Event('visibilitychange')) })
     expect(view.container.querySelector('.status-sprite')?.getAttribute('data-running')).toBe('false')
@@ -179,7 +158,7 @@ describe('会话状态入口', () => {
     invoke.mockImplementation(channel => channel === 'workspace:read-active-plan' ? new Promise<typeof plan>(done => resolves.push(done)) : Promise.resolve({ diffs: [], reviews: {} }))
     const view = panel()
     act(() => useChatStore.setState({ currentSessionId: 'other' }))
-    view.render(<SessionStatusPanel key="other" sessionId="other" mode="default" onRequestSupplement={supplement} />)
+    view.render(<SessionStatusPanel key="other" sessionId="other" />)
     await act(async () => { resolves[1]({ ...plan, title: '新会话计划' }); await Promise.resolve(); await Promise.resolve() })
     await act(async () => { resolves[0]({ ...plan, title: '旧会话计划' }); await Promise.resolve(); await Promise.resolve() })
     expect(view.container.textContent).toContain('新会话计划')

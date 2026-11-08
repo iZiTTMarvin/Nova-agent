@@ -119,7 +119,7 @@ describe('SubagentProjectionService', () => {
     return sessionStore.createChildIfAbsent({
       childSessionId: deriveChildSessionId(`workflow:${toolCallId}`),
       workspaceRoot: workspace,
-      mode: 'compose',
+      mode: 'pilot',
       permissionMode: 'request_approval',
       task: 'research question',
       subagent: metadata

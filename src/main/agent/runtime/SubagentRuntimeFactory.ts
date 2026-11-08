@@ -34,10 +34,7 @@ import type {
 import type { ToolAuthorizationPolicy } from '../../../runtime/permissions/PermissionCoordinator'
 import type { LlmRegistry } from '../../../shared/config'
 import { resolveChildModelFromHeader } from '../subagents/childModelRouting'
-import { inspectionReportTool } from '../../../runtime/tools/inspection_report'
 import { isBrowserToolName } from '../../../shared/browser'
-import { INSPECTION_REPORT_INSTRUCTION } from '../../../shared/composeLifecycle'
-import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 
 const BASE_RULES_MINIMAL = 'Follow tool results and report concisely. You are a subagent; do not ask the parent agent questions.'
 
@@ -49,7 +46,7 @@ export interface PrepareSubagentRuntimeInput extends PrepareSubagentTurnInput {
   readonly readState: ReadState
   readonly promptCacheKey?: string
   readonly resolveImageUrl?: (url: string) => string
-  /** 父会话的阶段工具门禁（compose）；子代理继承，只能收窄。 */
+  /** 父会话的工具授权 overlay；子代理继承，只能收窄。 */
   readonly toolAuthorizationPolicy?: ToolAuthorizationPolicy | null
 }
 
@@ -70,12 +67,6 @@ export function prepareSubagentRuntime(
     const tool = input.resolveTool(toolName)
     if (tool) toolRegistry.register(tool)
   }
-  // 宿主协议随运行时提供，冻结的旧 inspector profile 也能补交正式结果。
-  const parent = input.sessionStore.load(input.childSession.subagent.lineage.parentSessionId)
-  const submitsInspection = input.profile.profileId === BUILTIN_SUBAGENT_IDS.inspector &&
-    parent?.mode === 'compose' &&
-    input.sessionStore.getComposeStages(parent.id)?.some(stage => stage.id === 'inspect' && stage.status === 'in_progress')
-  if (submitsInspection) toolRegistry.register(inspectionReportTool)
   const capabilityCeiling = isReadonly ? 'read_only' as const : null
   const visibleToolDefinitions = applyLedgerToolVisibility(
     projectEffectiveToolDefinitions(
@@ -95,9 +86,7 @@ export function prepareSubagentRuntime(
     baseRules: BASE_RULES_MINIMAL,
     projectRules: null,
     skillContext: '',
-    modeInstruction: submitsInspection
-      ? INSPECTION_REPORT_INSTRUCTION
-      : 'You are a sub-agent. Be concise. Return a structured summary.',
+    modeInstruction: 'You are a sub-agent. Be concise. Return a structured summary.',
     taskPolicy: renderMinimalEngineeringPolicy(),
     toolSummary: toolSummaryRenderer(visibleToolDefinitions)
   }
@@ -146,11 +135,11 @@ export function prepareSubagentRuntime(
   agentLoop.setAssistantCompletionPolicy(createAssistantCompletionPolicy())
   agentLoop.setToolRegistry(toolRegistry)
   agentLoop.setMode(input.childSession.mode)
-  // compose 阶段门禁 overlay 随父会话继承：子代理能力只能比父会话更窄。
+  // 工具授权 overlay 随父会话继承：子代理能力只能比父会话更窄。
   if (input.toolAuthorizationPolicy) {
     agentLoop.setToolAuthorizationPolicy(input.toolAuthorizationPolicy)
   }
-  // 子代理不执行主会话的 Plan / Compose 产品流程，避免注入不适用的模式指令。
+  // 子代理不执行主会话的开发模式流程，避免注入不适用的模式指令。
   agentLoop.setModeInstructionProvider(() => '')
   agentLoop.setSessionContext(input.sessionStore, input.childSession.id, { resolveImageUrl: input.resolveImageUrl })
   agentLoop.setReadState(input.readState)

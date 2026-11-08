@@ -121,8 +121,6 @@ export const WORKSPACE_READ_ACTIVE_PLAN = 'workspace:read-active-plan' as const
 export const WORKSPACE_OPEN_ACTIVE_PLAN = 'workspace:open-active-plan' as const
 /** 在系统文件管理器中打开指定目录（项目根目录） */
 export const WORKSPACE_OPEN_DIRECTORY = 'workspace:open-directory' as const
-/** compose 胶囊手动回退到方案（与 stage_transition 工具同一套校验） */
-export const COMPOSE_APPLY_STAGE_TRANSITION = 'compose:apply-stage-transition' as const
 /** 重新生成助手消息（分叉准备：undo 文件 + 倒回 currentLeafId 到父 user） */
 export const WORKSPACE_REGENERATE = 'workspace:regenerate' as const
 /** 切换兄弟分支（LCA 文件 undo + setCurrentLeaf） */
@@ -214,8 +212,6 @@ export const AGENT_ASK_QUESTION_REQUEST = 'agent:ask-question-request' as const
 export const AGENT_ASK_QUESTION_RESOLVED = 'agent:ask-question-resolved' as const
 export const AGENT_DIFF_UPDATE = 'agent:diff-update' as const
 export const AGENT_TODOS_UPDATED = 'agent:todos-updated' as const
-export const AGENT_COMPOSE_STAGES_UPDATED = 'agent:compose-stages-updated' as const
-export const AGENT_COMPOSE_PLAN_APPROVAL_UPDATED = 'agent:compose-plan-approval-updated' as const
 export const AGENT_ERROR = 'agent:error' as const
 export const AGENT_MESSAGE_END = 'agent:message-end' as const
 export const AGENT_THINKING_DELTA = 'agent:thinking-delta' as const

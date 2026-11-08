@@ -37,7 +37,7 @@ export function arePendingPlanReviewsEqual(a: PendingPlanReview | null, b: Pendi
   if (!a || !b) return false
   return a.interactionId === b.interactionId && a.commandVersion === b.commandVersion &&
     a.runId === b.runId && a.sessionId === b.sessionId && a.messageId === b.messageId &&
-    a.toolCallId === b.toolCallId && a.source === b.source
+    a.toolCallId === b.toolCallId
 }
 
 export function selectPendingPlanReview(snapshot: RunSnapshot | null): PendingPlanReview | null {

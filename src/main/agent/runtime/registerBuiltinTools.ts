@@ -31,8 +31,6 @@ import { getModelDirectory } from '../../../shared/config'
 import { loadLlmRegistry } from '../../../runtime/model/config'
 import { savePlanTool } from '../../../runtime/tools/savePlan'
 import { switchModeTool } from '../../../runtime/tools/switchMode'
-import { createStageTransitionTool } from '../../../runtime/tools/stageTransition'
-import type { ComposeStageFacts } from '../../../shared/composeLifecycle'
 import { archiveReadTool } from '../../../runtime/tools/archiveRead'
 import { historyReadTool } from '../../../runtime/tools/historyRead'
 import { createLoadToolsTool } from '../../../runtime/tools/loadTools'
@@ -102,11 +100,6 @@ export interface BuiltinToolRegistrationDeps {
     readonly mimeType: string
     readonly base64: string
   }) => Promise<string | null>
-  /**
-   * compose 阶段完成的运行时事实。缺省视为两项均未满足（拒绝完成「图」「验」）；
-   * 测试注册工具时不必接投影服务。
-   */
-  getStageFacts?: (sessionId: string) => ComposeStageFacts
   /** 会话内可视化快照存储；缺省时 present_visualization 返回不可用。 */
   getVisualizationStore?: () => VisualizationStore | null
   /** 是否注册 present_visualization：可视化讲解只属于学习会话，开发会话保持精简的工具面。 */
@@ -177,13 +170,6 @@ export function registerBuiltinTools(
   }
   toolRegistry.register(savePlanTool)
   toolRegistry.register(switchModeTool)
-  toolRegistry.register(
-    createStageTransitionTool({
-      getStageFacts:
-        deps.getStageFacts ??
-        (() => ({ criticCompleted: false, inspectorPassed: false }))
-    })
-  )
   toolRegistry.register(
     createInvokeSkillTool({
       skillRegistry: deps.skillRegistry,

@@ -50,7 +50,7 @@ describe('ModeSwitch 工作流菜单', () => {
 
   it('Plan 标签可通过关闭按钮返回默认模式', async () => {
     const originalSetMode = useSettingsStore.getState().setMode
-    const setMode = vi.fn(async (mode: 'default' | 'plan' | 'compose') => {
+    const setMode = vi.fn(async (mode: 'default' | 'plan' | 'pilot') => {
       useSettingsStore.setState({ currentMode: mode })
     })
     useSettingsStore.setState({ currentMode: 'plan', setMode })
@@ -66,34 +66,6 @@ describe('ModeSwitch 工作流菜单', () => {
       expect(setMode).toHaveBeenCalledWith('default')
       expect(useSettingsStore.getState().currentMode).toBe('default')
       expect(renderer.container.querySelectorAll('[data-testid="active-mode-chip"]')).toHaveLength(0)
-      renderer.unmount()
-    } finally {
-      useSettingsStore.setState({ setMode: originalSetMode })
-    }
-  })
-
-  it('选择 compose 显示 XForge 锻造文案', async () => {
-    const originalSetMode = useSettingsStore.getState().setMode
-    const setMode = vi.fn(async (mode: 'default' | 'plan' | 'compose') => {
-      useSettingsStore.setState({ currentMode: mode })
-    })
-    useSettingsStore.setState({ setMode })
-
-    try {
-      const renderer = renderDom(<ModeSwitch />)
-      act(() => {
-        renderer.container.querySelector<HTMLButtonElement>('[aria-label="添加工作流、上下文与工具"]')?.click()
-      })
-      expect(renderer.container.textContent).toContain('XForge 锻造')
-      expect(renderer.container.textContent).toContain('你说想法，它先帮你砍，再帮你做，最后当着你面验一遍')
-
-      await act(async () => {
-        findButton(renderer.container, 'XForge 锻造').click()
-        await Promise.resolve()
-      })
-      expect(setMode).toHaveBeenCalledWith('compose')
-      expect(renderer.container.querySelector('[data-testid="active-mode-chip"]')?.textContent)
-        .toContain('XForge 锻造')
       renderer.unmount()
     } finally {
       useSettingsStore.setState({ setMode: originalSetMode })

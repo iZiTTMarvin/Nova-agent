@@ -8,7 +8,6 @@
 import { getSubAgentSpecFromStore, listCustomPresets } from '../../subagents'
 import { BUILTIN_SUBAGENT_IDS } from '../../../shared/subagents/presetIdentity'
 import type { SubAgentSpec } from '../../../shared/settings/types'
-import { INSPECTION_REPORT_INSTRUCTION } from '../../../shared/composeLifecycle'
 
 export type { SubAgentSpec }
 
@@ -59,7 +58,7 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     description: '方案挑刺：针对技术方案进行缺陷推演与冗余消融，输出改进建议。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'code_context'],
-    prompt: `你是只读批评者。你收到一份「一页纸」（目标、做完能做什么、不做的、技术选择）和工作区。
+    prompt: `你是只读批评者。你收到一份方案（目标、做完能做什么、不做的、技术选择）和工作区。
 做两件事：(1) 攻击：哪里会坏、漏了什么、初学者会卡在哪、技术选择有没有更简单的；(2) 消融：对「做完能做什么」每一条问「不做它，用户核心诉求还成立吗」，成立就建议砍。核心诉求不可砍。
 不修改文件。输出 markdown：建议砍掉（每条一句理由）/ 必须补上 / 会坏的地方 / 技术选择意见。不超过 300 字。`
   },
@@ -69,11 +68,10 @@ export const BUILTIN_SUBAGENTS: SubAgentSpec[] = [
     description: '独立核验：执行真实测试与命令操作核查功能达成度，不改动源码。',
     enabled: true,
     allowedTools: ['ls', 'read', 'grep', 'find', 'bash', 'shell_session'],
-    prompt: `你是独立核验者。你只收到「一页纸」和工作区，不知道实施过程。
+    prompt: `你是独立核验者。你只收到方案和工作区，不知道实施过程。
 把「做完能做什么」每一条真的操作一遍（安装、启动、请求、读输出）。
 不修改任何源码或测试。
 每条给 ✓/✗ 和一句你看到的现象。
-${INSPECTION_REPORT_INSTRUCTION}
 启动的临时进程用完关掉。`
   }
 ]

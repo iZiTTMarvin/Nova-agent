@@ -21,22 +21,20 @@ export const PlanApprovalPendingRow: React.FC = React.memo(function PlanApproval
   )
 })
 
-/** 忽略后的终态记录：由 switch_mode / stage_transition 工具结果标记驱动，不可交互 */
-export const PlanApprovalIgnoredCard: React.FC<{ source?: 'plan' | 'compose' }> =
-  function PlanApprovalIgnoredCard({ source = 'plan' }) {
-    const title = source === 'compose' ? '确认一页纸' : '实施计划'
-    return (
-      <section className="plan-approval-card plan-approval-card--ignored" aria-label="实施计划审批">
-        <header className="plan-approval-card__header">
-          <div>
-            <span className="plan-approval-card__eyebrow">计划审批</span>
-            <h3 className="plan-approval-card__title">{title}</h3>
-          </div>
-          <span className="plan-approval-card__resolved-badge">已忽略</span>
-        </header>
-      </section>
-    )
-  }
+/** 忽略后的终态记录：由 switch_mode 工具结果标记驱动，不可交互 */
+export const PlanApprovalIgnoredCard: React.FC = function PlanApprovalIgnoredCard() {
+  return (
+    <section className="plan-approval-card plan-approval-card--ignored" aria-label="实施计划审批">
+      <header className="plan-approval-card__header">
+        <div>
+          <span className="plan-approval-card__eyebrow">计划审批</span>
+          <h3 className="plan-approval-card__title">实施计划</h3>
+        </div>
+        <span className="plan-approval-card__resolved-badge">已忽略</span>
+      </header>
+    </section>
+  )
+}
 
 function commandId(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -51,11 +49,8 @@ export const PlanApprovalCard: React.FC<PlanApprovalCardProps> = React.memo(func
   const [error, setError] = useState<string | null>(null)
   const isRespondingRef = useRef(false)
   const stableCommandId = useMemo(() => commandId(), [review.interactionId])
-  const isCompose = review.source === 'compose'
-  const title = isCompose ? '确认一页纸' : '实施计划'
-  const approveDescription = isCompose
-    ? '进入「锤」'
-    : '退出计划模式并开始实施'
+  const title = '实施计划'
+  const approveDescription = '退出计划模式并开始实施'
 
   const respond = async (nextDecision: PlanReviewDecision) => {
     if (isRespondingRef.current || submitting) return

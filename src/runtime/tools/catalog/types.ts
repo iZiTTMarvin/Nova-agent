@@ -7,7 +7,7 @@
 export type ToolExposure =
   /** 常驻可见（注册即对模型可见） */
   | 'always'
-  /** 可见性由模式策略投影决定（save_plan / switch_mode / stage_transition） */
+  /** 可见性由模式策略投影决定（save_plan / switch_mode） */
   | 'mode-bound'
   /** 延迟暴露：所属组激活后才可见 */
   | 'deferred'
@@ -28,7 +28,6 @@ export type ToolCapabilityTag =
   | 'skill'
   | 'agent'
   | 'plan'
-  | 'compose'
   | 'mode'
   | 'interaction'
   | 'archive'

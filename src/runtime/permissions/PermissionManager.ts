@@ -5,6 +5,7 @@
  * 静态命令分类器无法证明任意 Shell 命令安全，未命中仅表示没有命中已知高风险模式。
  */
 import type { Mode } from '../../shared/session/types'
+import { isAgentSwitchableMode } from '../../shared/session/mode'
 import {
   effectsExceedCapabilityCeiling,
   getToolPermissionDescriptor
@@ -163,6 +164,9 @@ export class PermissionManager {
   }
 
   private checkSwitchMode(query: PermissionQuery, mode: Mode): PermissionResult {
+    if (!isAgentSwitchableMode(mode) || !isAgentSwitchableMode(query.args.mode)) {
+      return { decision: 'deny', riskLevel: 'low', reason: 'Agent 只能在 plan 与 default 模式之间切换' }
+    }
     const denyFromRules = this.matchPersistentDecision(query, 'deny')
     if (denyFromRules) return denyFromRules
     if (isSafeAutomaticModeTransition(mode, query.args.mode)) {

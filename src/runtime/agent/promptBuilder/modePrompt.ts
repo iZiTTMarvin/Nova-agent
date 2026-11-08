@@ -33,7 +33,7 @@ export function buildStableSystemPrompt(options: BuildStableSystemPromptOptions)
       'Nova runs in three modes; the active mode and its constraints ride with each user message:',
       '- plan — read-only analysis and planning; no edits, writes, or commands.',
       '- default — read, modify, and verify the workspace; approvals follow user settings.',
-      '- compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.',
+      '- pilot — Nova pilot: organizes development with the built-in pilot method and grounds delivery in real artifacts.',
       '',
       "If a request exceeds the active mode's limits, say what switch is needed instead of working around it."
     )
@@ -87,9 +87,28 @@ const LEGACY_STABLE_SYSTEM_PROMPTS = new Set([
   ].join('\n')
 ])
 
+/** 旧会话冻结 prompt 中已知的 XForge 模式行；只替换这一行，保留用户自定义规则。 */
+const LEGACY_COMPOSE_MODE_LINES: ReadonlyArray<readonly [string, string]> = [
+  [
+    '- compose — XForge staged delivery: interview, one-pager, independent critique, build, independent inspection, plain-language wrap-up.',
+    '- pilot — Nova pilot: organizes development with the built-in pilot method and grounds delivery in real artifacts.'
+  ],
+  [
+    '- compose 模式：XForge 锻造。访谈、一页纸、独立挑刺、实施、独立核验、人话收尾。',
+    '- pilot 模式：领航模式。组织开发、推进结果，并用真实产物说明验证情况。'
+  ]
+]
+
 /** 把旧会话中已知过时/错误的冻结 prompt 归一化到当前稳定版本。 */
 export function normalizeFrozenSystemPrompt(prompt?: string): string {
   if (typeof prompt !== 'string' || prompt.length === 0) return getStableSystemPrompt()
-  const normalized = prompt.replace(/\r\n/g, '\n')
-  return LEGACY_STABLE_SYSTEM_PROMPTS.has(normalized) ? getStableSystemPrompt() : prompt
+  // 整段旧 prompt 的集合按 LF 匹配；行级替换直接作用在原文上，保留原有行尾字节。
+  if (LEGACY_STABLE_SYSTEM_PROMPTS.has(prompt.replace(/\r\n/g, '\n'))) {
+    return getStableSystemPrompt()
+  }
+  return LEGACY_COMPOSE_MODE_LINES.reduce(
+    (current, [legacy, replacement]) =>
+      current.includes(legacy) ? current.replace(legacy, replacement) : current,
+    prompt
+  )
 }

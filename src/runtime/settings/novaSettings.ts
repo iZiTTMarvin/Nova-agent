@@ -88,13 +88,15 @@ function migrateAndFill(raw: unknown): NovaSettings {
   // 旧版 loadThirdPartySkills 布尔值不迁移：第三方技能改为按来源逐项同意，升级后默认关闭。
   const sources = normalizeThirdPartySkillSources(obj.thirdPartySkillSources)
   if (sources) result.thirdPartySkillSources = sources
-  // 旧 Mode 含 auto：迁为 default，并保留其自动权限语义。
+  // 旧 Mode 含 auto：迁为 default，并保留其自动权限语义；旧 compose 归一为 pilot。
   let migratedAutoMode = false
   if (obj.defaultMode === 'auto') {
     result.defaultMode = 'default'
     migratedAutoMode = true
-  } else if (obj.defaultMode === 'plan' || obj.defaultMode === 'default' || obj.defaultMode === 'compose') {
+  } else if (obj.defaultMode === 'plan' || obj.defaultMode === 'default' || obj.defaultMode === 'pilot') {
     result.defaultMode = obj.defaultMode as Mode
+  } else if (obj.defaultMode === 'compose') {
+    result.defaultMode = 'pilot'
   }
   if (
     obj.defaultPermissionMode === 'request_approval' ||
@@ -233,8 +235,8 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
     }
   }
   if ('defaultMode' in patch && patch.defaultMode !== undefined) {
-    if (!['plan', 'default', 'compose'].includes(patch.defaultMode)) {
-      errors.push('defaultMode 必须是 plan / default / compose 之一')
+    if (!['plan', 'default', 'pilot'].includes(patch.defaultMode)) {
+      errors.push('defaultMode 必须是 plan / default / pilot 之一')
     }
   }
   if ('defaultPermissionMode' in patch && patch.defaultPermissionMode !== undefined) {

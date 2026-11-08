@@ -51,7 +51,6 @@ export function isPersistentToolBlock(block: { toolName: string; status: string 
 const STANDALONE_PROCESS_TOOL_NAMES = new Set([
   'save_plan',
   'switch_mode',
-  'stage_transition',
   'askQuestion',
   'task',
   'task_followup',

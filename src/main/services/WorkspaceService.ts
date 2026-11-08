@@ -19,7 +19,7 @@ import type { SessionControlIntent, SessionData, SessionSummary } from '../../ru
 import { clampSessionTitle } from '../../shared/session/title'
 import { getSessionActiveMessages, buildChildrenIndex, ensureMessageParentChain, findCommonAncestor, findSubtreeLeaf, resolveCurrentLeafId, computeActivePath, getBranchPosition } from '../../runtime/sessions/tree'
 import type { Mode, PermissionMode, SessionDetail } from '../../shared/session'
-import { assertSessionModeMutable, parseStrictMode } from '../../shared/session/mode'
+import { assertSessionModeMutable, isAgentSwitchableMode, parseStrictMode } from '../../shared/session/mode'
 import type { LlmRegistry, ReasoningEffort, ActiveModelRef } from '../../shared/config/llmRegistry'
 import { normalizeReasoningEffort } from '../../shared/config'
 import {
@@ -746,20 +746,27 @@ export class WorkspaceService {
     sessionId?: string
     source?: 'user' | 'agent'
   }): WorkspaceState {
+    const mode = parseStrictMode(params.mode)
     const store = this.deps.getSessionStore()
     const sessionId = params.sessionId ?? this.state.currentSessionId
     const source = params.source ?? 'user'
+    const targetSession = sessionId ? store.loadMetadata(sessionId) : null
+    if (sessionId && !targetSession) {
+      throw new Error(`会话不存在: ${sessionId}`)
+    }
+    if (source === 'agent' && (
+      !isAgentSwitchableMode(targetSession?.mode ?? this.state.currentMode) ||
+      !isAgentSwitchableMode(mode)
+    )) {
+      throw new Error('Agent 只能在 plan 与 default 模式之间切换')
+    }
 
-    if (sessionId) {
-      const session = store.loadMetadata(sessionId)
-      if (!session) {
-        throw new Error(`会话不存在: ${sessionId}`)
-      }
-      if (source === 'user' && isSessionTurnInProgress(sessionId)) {
+    if (targetSession) {
+      if (source === 'user' && isSessionTurnInProgress(targetSession.id)) {
         throw new Error('当前会话仍在运行，不能切换模式。请先等待完成或停止当前任务。')
       }
-      assertSessionModeMutable(session.mode, params.mode)
-      const updated = store.updateMode(sessionId, params.mode)
+      assertSessionModeMutable(targetSession.mode, mode)
+      const updated = store.updateMode(targetSession.id, mode)
       // 同步 availableSessions 里的 mode 字段
       if (updated) this.upsertSessionSummary(updated)
       else this.state.availableSessions = store.list()
@@ -770,7 +777,7 @@ export class WorkspaceService {
     // 全局模式不应被后台 run 篡改（否则 UI 模式随机跳变）。
     const targetIsCurrent = !sessionId || sessionId === this.state.currentSessionId
     if (targetIsCurrent) {
-      this.state = { ...this.state, currentMode: params.mode }
+      this.state = { ...this.state, currentMode: mode }
     }
     this.broadcast()
 

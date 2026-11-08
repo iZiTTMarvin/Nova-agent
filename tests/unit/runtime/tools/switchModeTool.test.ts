@@ -44,7 +44,7 @@ describe('switch_mode', () => {
 
   it('拒绝未定义目标和缺少宿主回调', async () => {
     const invalid = await switchModeTool.execute(
-      { mode: 'compose', reason: '绕过流程' },
+      { mode: 'pilot', reason: '绕过流程' },
       { workingDir: 'D:\\workspace', readState: createReadState() }
     )
     expect(invalid.success).toBe(false)

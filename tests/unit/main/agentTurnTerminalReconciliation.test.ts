@@ -173,7 +173,7 @@ import {
   resetSteeringQueueForTests
 } from '../../../src/main/agent/turn/SteeringQueue'
 
-function makeSession(mode: 'default' | 'compose' = 'default') {
+function makeSession(mode: 'default' | 'pilot' = 'default') {
   return {
     id: 'sess-1',
     mode,
@@ -222,7 +222,7 @@ beforeEach(() => {
   resetSteeringQueueForTests()
 })
 
-describe('agent/compose run 按 outcome 提交终态', () => {
+describe('agent/pilot run 按 outcome 提交终态', () => {
   it('outcome completed → commitTerminal completed', async () => {
     await sendAgentMessage({ sessionId: 'sess-1', content: '你好' }, deps)
 

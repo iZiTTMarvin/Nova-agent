@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { BUILTIN_SUBAGENTS, getSubAgentSpec, listSubAgents } from '../../../../src/runtime/agent/core/SubAgentConfig'
 import { BUILTIN_SUBAGENT_IDS, isBuiltinSubagentId } from '../../../../src/shared/subagents/presetIdentity'
-import { INSPECTION_REPORT_INSTRUCTION } from '../../../../src/shared/composeLifecycle'
 
 describe('SubAgentConfig', () => {
   it('内置 definition 与共享保留 ID 双向对账，防止身份出现第二来源', () => {
@@ -75,8 +74,7 @@ describe('SubAgentConfig', () => {
     expect(spec?.allowedTools).not.toContain('edit')
     expect(spec?.allowedTools).not.toContain('write')
     expect(spec?.prompt).toMatch(/不修改任何源码/)
-    // 核验结论走 inspection_report 正式提交，不再依赖正文文本约定
-    expect(spec?.prompt).toContain(INSPECTION_REPORT_INSTRUCTION)
+    expect(spec?.prompt).toMatch(/每条给 ✓\/✗/)
   })
 
   it('BUILTIN_SUBAGENTS 至少 3 个', () => {
@@ -88,7 +86,7 @@ describe('SubAgentConfig', () => {
     expect(spec).toBeDefined()
     expect(spec?.description).toContain('通用')
     expect(spec?.allowedTools).toEqual(expect.arrayContaining(['read', 'edit', 'write', 'bash', 'web_search', 'run_code']))
-    for (const forbidden of ['task', 'invoke_skill', 'save_plan', 'stage_transition', 'askQuestion', 'switch_mode', 'todo_write']) {
+    for (const forbidden of ['task', 'invoke_skill', 'save_plan', 'askQuestion', 'switch_mode', 'todo_write']) {
       expect(spec?.allowedTools).not.toContain(forbidden)
     }
     expect(spec?.allowedTools).not.toContain('memory_search')

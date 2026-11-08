@@ -56,39 +56,6 @@ describe('SubagentRuntimeFactory', () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
   })
 
-  it.each(['inspector', 'critic'])('宿主仅为 inspector 补齐核验协议，冻结旧 %s profile 不被改写', profileId => {
-    const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-inspector-runtime-'))
-    roots.push(sessionsDir)
-    const store = new SessionStore(sessionsDir)
-    const parent = store.create(sessionsDir, 'compose')
-    for (let i = 0; i < 3; i++) store.applyComposeStageTransition(parent.id, { type: 'complete' })
-    const profile = resolveSubagentProfileSnapshot({
-      id: profileId, name: profileId, description: '只读核验',
-      prompt: '最后一行固定为结论：通过或结论：未通过', allowedTools: ['read']
-    }, profileId)
-    const child = store.createChildIfAbsent({
-      childSessionId: deriveChildSessionId(`old-${profileId}`), workspaceRoot: sessionsDir,
-      mode: 'default', permissionMode: 'request_approval', task: '补交结果',
-      subagent: {
-        header: testHeader, profile,
-        lineage: {
-          parentSessionId: parent.id, parentRunId: 'parent-run', rootRunId: 'parent-run', depth: 1,
-          spawnKey: `old-${profileId}`, spawnRunId: 'old-run',
-          origin: { kind: 'task_tool', parentMessageId: 'parent-message', parentToolCallId: 'parent-call' }
-        }
-      }
-    }).session
-    const prepared = prepareSubagentRuntime({
-      profile, task: '补交结果', workingDirectory: sessionsDir, isolation: 'readonly', childSession: child,
-      parentRunId: 'parent-run', rootRunId: 'parent-run', registry: testRegistry,
-      resolveTool: () => undefined, sessionStore: store, sessionsDir, readState: createReadState()
-    })
-    const prompt = prepared.agentLoop.getFrozenSystemPrompt()
-    expect(prompt.includes('inspection_report')).toBe(profileId === 'inspector')
-    expect(store.load(child.id)?.subagent?.profile).toEqual(profile)
-    prepared.agentLoop.dispose()
-  })
-
   it('子代理即使 profile 点名浏览器工具也不会装配', () => {
     const sessionsDir = mkdtempSync(join(tmpdir(), 'nova-subagent-no-browser-'))
     roots.push(sessionsDir)
@@ -545,19 +512,19 @@ describe('SubagentRuntimeFactory 权限装配', () => {
     dispose()
   })
 
-  it('compose 阶段门禁 overlay 随子代理继承，只能收窄', async () => {
+  it('工具授权 overlay 随子代理继承，只能收窄', async () => {
     const { prepared, dispose } = await prepareReadonlyChild({
       isolation: 'shared',
       toolAuthorizationPolicy: (toolName) =>
         toolName === 'grep'
-          ? { allowed: false, reason: '当前阶段禁止 grep' }
+          ? { allowed: false, reason: '父会话禁止 grep' }
           : { allowed: true, reason: '' }
     })
     const results = await prepared.agentLoop.checkBatchPermission([
       { toolCallId: 'tc_grep', toolName: 'grep', args: { pattern: 'x' } },
       { toolCallId: 'tc_read', toolName: 'read', args: { path: 'a.ts' } }
     ], 'msg-child')
-    expect(results.get('tc_grep')).toMatchObject({ allowed: false, reason: '当前阶段禁止 grep' })
+    expect(results.get('tc_grep')).toMatchObject({ allowed: false, reason: '父会话禁止 grep' })
     expect(results.get('tc_read')).toMatchObject({ allowed: true })
     dispose()
   })

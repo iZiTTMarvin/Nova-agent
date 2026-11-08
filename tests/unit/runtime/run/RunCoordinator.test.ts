@@ -332,6 +332,49 @@ describe('RunCoordinator', () => {
     expect(coord2.listWaitingSessions()).toEqual([])
   })
 
+  it('启动对账收敛旧 XForge 计划审阅，普通计划审批与重复启动不受影响', () => {
+    const snap = coord.startRun({ kind: 'agent', workspaceId: '/ws', sessionId: 's1' })
+    coord.markRunning(snap.runId, 'm1')
+    coord.inbox.enqueue({
+      runId: snap.runId,
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'planApproval',
+      interactionId: 'legacy-stage-review',
+      payload: { toolName: 'stage_transition', action: 'complete', toolCallId: 'tc-legacy' }
+    })
+    coord.inbox.enqueue({
+      runId: snap.runId,
+      sessionId: 's1',
+      messageId: 'm1',
+      type: 'permission',
+      interactionId: 'plan-mode-review',
+      payload: { requestId: 'plan-mode-review', toolName: 'switch_mode', args: { mode: 'default', reason: '实施' } }
+    })
+    // interrupted 终态保留 pending 交互，模拟旧版本进程退出时的磁盘状态
+    coord.commitTerminal({ runId: snap.runId, status: 'interrupted' })
+
+    const coord2 = new RunCoordinator({ store })
+    coord2.reconcileOnStartup()
+
+    const reconciled = store.loadSnapshot(snap.runId)!
+    const legacy = reconciled.pendingInteractions.find(i => i.interactionId === 'legacy-stage-review')
+    const planReview = reconciled.pendingInteractions.find(i => i.interactionId === 'plan-mode-review')
+    expect(legacy).toMatchObject({ status: 'cancelled', version: 2 })
+    expect(planReview).toMatchObject({ status: 'pending', version: 1 })
+    expect(reconciled.status).toBe('interrupted')
+    expect(reconciled.sequence).toBeGreaterThan(0)
+
+    // 重复启动不重复改写终态
+    const sequenceAfterFirstReconcile = reconciled.sequence
+    const coord3 = new RunCoordinator({ store })
+    coord3.reconcileOnStartup()
+    const again = store.loadSnapshot(snap.runId)!
+    expect(again.pendingInteractions.find(i => i.interactionId === 'legacy-stage-review'))
+      .toMatchObject({ status: 'cancelled', version: 2 })
+    expect(again.sequence).toBe(sequenceAfterFirstReconcile)
+  })
+
   it('waiting_user + pending 交互重启后：run interrupted、交互终态、不计入等待徽标', () => {
     const snap = coord.startRun({
       kind: 'agent',

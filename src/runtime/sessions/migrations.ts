@@ -25,16 +25,9 @@ import { SESSION_DATA_FILE, SESSION_MESSAGES_FILE, SESSION_BACKUP_FILE, extractT
 import { computeActivePath, resolveCurrentLeafId } from './tree'
 import { decodeMemorySnapshot } from './memorySnapshot'
 import { loadNovaSettings, saveNovaSettings } from '../settings/novaSettings'
-import {
-  COMPOSE_STAGE_IDS,
-  createInitialStageTable,
-  type ComposeStageEntry,
-  type ComposeStageId,
-  type ComposeStageStatus
-} from '../../shared/composeLifecycle'
 
 /** 当前 schema 版本 */
-export const CURRENT_SESSION_SCHEMA_VERSION = 22
+export const CURRENT_SESSION_SCHEMA_VERSION = 23
 
 /**
  * v0 → v1：规范化历史会话结构。
@@ -348,121 +341,12 @@ export function migrateV17ToV18(data: unknown): SessionData {
   }
 }
 
-const LEGACY_COMPOSE_STAGE_MAP: Record<string, ComposeStageId> = {
-  brainstorm: 'interview',
-  plan: 'blueprint',
-  implement: 'build',
-  verify: 'inspect',
-  review: 'inspect',
-  report: 'deliver'
-}
-
-function isComposeStageStatus(value: unknown): value is ComposeStageStatus {
-  return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'skipped'
-}
-
-function resetUnsafeComposeStages(): ComposeStageEntry[] {
-  const stages = createInitialStageTable()
-  const current = stages.find(entry => entry.status === 'in_progress')
-  if (current) current.note = '旧六阶段表无法安全映射，已重置'
-  return stages
-}
-
-function meaningfulNote(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value : undefined
-}
-
-function mergeInspectEntry(
-  verify: Record<string, unknown> | undefined,
-  review: Record<string, unknown> | undefined
-): ComposeStageEntry {
-  const verifyStatus = verify && isComposeStageStatus(verify.status) ? verify.status : 'pending'
-  const reviewStatus = review && isComposeStageStatus(review.status) ? review.status : 'pending'
-  const notes = [meaningfulNote(verify?.note), meaningfulNote(review?.note)].filter(
-    (note): note is string => note !== undefined
-  )
-  const uniqueNotes = [...new Set(notes)]
-  const completedAts = [verify?.completedAt, review?.completedAt].filter(
-    (value): value is number => typeof value === 'number'
-  )
-
-  let status: ComposeStageStatus = 'pending'
-  if (verifyStatus === 'in_progress' || reviewStatus === 'in_progress') {
-    status = 'in_progress'
-  } else if (verifyStatus === 'completed' || reviewStatus === 'completed') {
-    status = 'completed'
-  } else if (verifyStatus === 'skipped' && reviewStatus === 'skipped') {
-    status = 'skipped'
-  }
-
-  const entry: ComposeStageEntry = { id: 'inspect', status }
-  if (uniqueNotes.length > 0) entry.note = uniqueNotes.join('；')
-  if (status === 'completed' || status === 'skipped') {
-    if (completedAts.length > 0) entry.completedAt = Math.max(...completedAts)
-  }
-  return entry
-}
-
-function mapLegacyComposeStages(raw: unknown): ComposeStageEntry[] {
-  if (!Array.isArray(raw)) return resetUnsafeComposeStages()
-
-  const byOldId = new Map<string, Record<string, unknown>>()
-  for (const item of raw) {
-    if (!isPlainObject(item) || typeof item.id !== 'string' || !isComposeStageStatus(item.status)) {
-      return resetUnsafeComposeStages()
-    }
-    if (!(item.id in LEGACY_COMPOSE_STAGE_MAP)) return resetUnsafeComposeStages()
-    if (byOldId.has(item.id)) return resetUnsafeComposeStages()
-    byOldId.set(item.id, item)
-  }
-
-  const mappedById = new Map<ComposeStageId, ComposeStageEntry>()
-  for (const [oldId, mappedId] of Object.entries(LEGACY_COMPOSE_STAGE_MAP)) {
-    if (mappedId === 'inspect') continue
-    const src = byOldId.get(oldId)
-    if (!src) continue
-    const entry: ComposeStageEntry = {
-      id: mappedId,
-      status: src.status as ComposeStageStatus
-    }
-    const note = meaningfulNote(src.note)
-    if (note) entry.note = note
-    if (
-      typeof src.completedAt === 'number' &&
-      (entry.status === 'completed' || entry.status === 'skipped')
-    ) {
-      entry.completedAt = src.completedAt
-    }
-    mappedById.set(mappedId, entry)
-  }
-  mappedById.set('inspect', mergeInspectEntry(byOldId.get('verify'), byOldId.get('review')))
-
-  const stages: ComposeStageEntry[] = COMPOSE_STAGE_IDS.map(
-    id => mappedById.get(id) ?? { id, status: 'pending' as const }
-  )
-
-  const inProgressCount = stages.filter(entry => entry.status === 'in_progress').length
-  const terminal =
-    inProgressCount === 0 &&
-    stages.length > 0 &&
-    stages.every(entry => entry.status === 'completed' || entry.status === 'skipped')
-  if (inProgressCount > 1 || (inProgressCount === 0 && !terminal)) {
-    return resetUnsafeComposeStages()
-  }
-  return stages
-}
-
-/** 六阶段 composeStages 映射为五阶段；无表的会话只升版本。enteredAt 缺省不补。 */
+/** v18 → v19：仅升级 schemaVersion；旧阶段表已由 v23 迁移移除。 */
 export function migrateV18ToV19(data: unknown): SessionData {
   const session = data as SessionData
-  const rawStages = (data as { composeStages?: unknown }).composeStages
-  if (rawStages === undefined) {
-    return { ...session, schemaVersion: 19 }
-  }
   return {
     ...session,
-    schemaVersion: 19,
-    composeStages: mapLegacyComposeStages(rawStages)
+    schemaVersion: 19
   }
 }
 
@@ -493,6 +377,30 @@ export function migrateV21ToV22(data: unknown): SessionData {
   return {
     ...session,
     schemaVersion: 22
+  }
+}
+
+/**
+ * v22 → v23：XForge compose 收敛为领航 pilot。
+ * 旧阶段表、回退计数与计划确认门不再有执行方，随迁移一次性移除；
+ * 消息、待办、active plan、Diff、图片与 Artifact 不受影响。
+ */
+export function migrateV22ToV23(data: unknown): SessionData {
+  const { mode } = data as { mode: unknown }
+  const {
+    composeStages: _composeStages,
+    composeReviewLoops: _composeReviewLoops,
+    composePlanApproval: _composePlanApproval,
+    ...rest
+  } = data as SessionData & {
+    composeStages?: unknown
+    composeReviewLoops?: unknown
+    composePlanApproval?: unknown
+  }
+  return {
+    ...rest,
+    schemaVersion: 23,
+    mode: parseStrictMode(mode === 'compose' ? 'pilot' : mode)
   }
 }
 
@@ -657,9 +565,10 @@ function normalizeAvailablePermissionMode(value: unknown): PermissionMode {
   throw new Error('会话必须携带合法的 permissionMode')
 }
 
-/** 旧字面量 auto → default；非法值兜底 default */
+/** 旧字面量 auto → default；旧 compose → pilot；非法值兜底 default */
 function normalizeLegacyMode(mode: unknown): Mode {
-  if (mode === 'plan' || mode === 'default' || mode === 'compose') return mode
+  if (mode === 'plan' || mode === 'default' || mode === 'pilot') return mode
+  if (mode === 'compose') return 'pilot'
   if (mode === 'auto') {
     tryPromoteDefaultPermissionModeToAuto()
     return 'default'
@@ -701,7 +610,8 @@ const MIGRATIONS: Array<(data: unknown) => SessionData> = [
   migrateV18ToV19, // v18 → v19
   migrateV19ToV20, // v19 → v20
   migrateV20ToV21, // v20 → v21
-  migrateV21ToV22 // v21 → v22
+  migrateV21ToV22, // v21 → v22
+  migrateV22ToV23 // v22 → v23
 ]
 
 /**

@@ -180,7 +180,7 @@ describe('runAgentLoop 停止原因', () => {
         aborted: false,
         outcomes: [{
           index: 0,
-          toolCall: { id: 't1', name: 'stage_transition', arguments: '{}' },
+          toolCall: { id: 't1', name: 'switch_mode', arguments: '{}' },
           args: {},
           resultText: '用户选择忽略当前计划',
           control: { type: 'turn_complete' },

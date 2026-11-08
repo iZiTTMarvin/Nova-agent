@@ -43,10 +43,9 @@ export interface InspectorPanelProps {
   onDragSessionChange?: (active: boolean) => void
   /** 宽度过渡开始（主区宽度变化量）/结束（null）成对通知，语义同上 */
   onSlideChange?: (mainWidthDelta: number | null) => void
-  onRequestSupplement?: () => void
 }
 
-export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionChange, onSlideChange, onRequestSupplement }) => {
+export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionChange, onSlideChange }) => {
   const learnSessionId = useWorkspaceStore(s => s.currentMode === 'learn' ? s.currentSessionId : null)
   const isLearn = learnSessionId !== null
   const devOpen = useLayoutStore(s => s.inspectorOpen)
@@ -57,7 +56,6 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
   const inspectorSurface = useLayoutStore(s => s.inspectorSurface)
   const statusSessionId = useLayoutStore(s => s.statusSessionId)
   const currentSessionId = useWorkspaceStore(s => s.currentSessionId)
-  const currentMode = useWorkspaceStore(s => s.currentMode)
   const closeDevInspector = useLayoutStore(s => s.closeInspector)
   const closeInspector = isLearn ? closeLearnInspector : closeDevInspector
   const { tabs, activeTab, activate, close } = useInspectorTabs(isLearn)
@@ -173,7 +171,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({ onDragSessionCha
             ) : !isLearn && inspectorSurface === 'subagent' ? (
               <SubagentInspectorView />
             ) : !isLearn && inspectorSurface === 'status' && statusSessionId === currentSessionId && currentSessionId ? (
-              <SessionStatusPanel key={currentSessionId} sessionId={currentSessionId} mode={currentMode} surface="inspector" onRequestSupplement={() => onRequestSupplement?.()} />
+              <SessionStatusPanel key={currentSessionId} sessionId={currentSessionId} surface="inspector" />
             ) : (
               <>
                 <header className="inspector-panel__header">

@@ -106,32 +106,21 @@ describe('toolPromptRenderer', () => {
     expect(out).not.toContain('<invoke name="task">')
   })
 
-  it('stage_transition 在 XML 方言目录中仅 compose 可见（与 native 同源）', () => {
-    const stageTool: ToolDefinition = {
-      name: 'stage_transition',
-      description: 'Advance the lifecycle stage',
-      parameters: {
-        type: 'object',
-        properties: {
-          action: { type: 'string' },
-          reason: { type: 'string' },
-          targetStage: { type: 'string' }
-        },
-        required: ['action']
-      }
+  it('plan 在 XML 方言目录中隐藏编排工具（与 native 同源）', () => {
+    const taskTool: ToolDefinition = {
+      name: 'task',
+      description: 'Launch a subagent',
+      parameters: { type: 'object', properties: {} }
     }
 
-    expect(renderModeToolInventory('compose', [stageTool], { dialect: 'xml' }))
-      .toContain('stage_transition')
-    expect(renderModeToolInventory('default', [stageTool], { dialect: 'xml' }))
-      .not.toContain('stage_transition')
-    expect(renderModeToolInventory('plan', [stageTool], { dialect: 'xml' }))
-      .not.toContain('stage_transition')
-
-    expect(renderModeToolInventory('compose', [stageTool], { dialect: 'native' }))
-      .toContain('stage_transition')
-    expect(renderModeToolInventory('default', [stageTool], { dialect: 'native' }))
-      .not.toContain('stage_transition')
+    expect(renderModeToolInventory('default', [taskTool], { dialect: 'xml' }))
+      .toContain('task')
+    expect(renderModeToolInventory('pilot', [taskTool], { dialect: 'xml' }))
+      .toContain('task')
+    expect(renderModeToolInventory('plan', [taskTool], { dialect: 'xml' }))
+      .not.toContain('task')
+    expect(renderModeToolInventory('plan', [taskTool], { dialect: 'native' }))
+      .not.toContain('task')
   })
 
   it('renderWorkingDirectoryHint 返回工作区绝对路径', () => {

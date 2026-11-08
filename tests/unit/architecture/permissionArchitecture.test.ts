@@ -68,24 +68,6 @@ describe('权限体系静态门禁', () => {
     expect(offenders).toEqual([])
   })
 
-  it('compose 相关文件不得硬编码权限模式判断', () => {
-    const composeFiles = srcFiles.filter(
-      (file) =>
-        file === 'src/main/agent/runtime/composeStageWiring.ts' ||
-        file.startsWith('src/shared/composeLifecycle/')
-    )
-    expect(composeFiles.length).toBeGreaterThan(0)
-    const offenders = composeFiles.filter((file) => {
-      const text = readSource(file)
-      return (
-        text.includes('permissionMode') ||
-        text.includes('full_access') ||
-        text.includes('request_approval')
-      )
-    })
-    expect(offenders).toEqual([])
-  })
-
   it('path.relative 越界判断组合只允许出现在 pathAccess', () => {
     const allowed = new Set(['src/runtime/permissions/pathAccess/canonicalPath.ts'])
     const offenders = srcFiles.filter((file) => {
