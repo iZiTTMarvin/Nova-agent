@@ -73,6 +73,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
 }) => {
   const currentMode = useSettingsStore(state => state.currentMode)
   const setMode = useSettingsStore(state => state.setMode)
+  const dismissPilotEntryGuide = useSettingsStore(state => state.dismissPilotEntryGuide)
   const [isOpen, setIsOpen] = useState(false)
   const [switchError, setSwitchError] = useState<string | null>(null)
 
@@ -109,6 +110,12 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
     setIsOpen(true)
   }
 
+  const changeMode = async (mode: Mode): Promise<void> => {
+    const leavingPilot = currentMode === 'pilot' && mode === 'default'
+    await setMode(mode)
+    if (leavingPilot) dismissPilotEntryGuide()
+  }
+
   const handleModeSelect = async (option: ModeOption): Promise<void> => {
     if (currentMode === option.id) {
       setIsOpen(false)
@@ -116,7 +123,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
     }
     setSwitchError(null)
     try {
-      await setMode(option.id)
+      await changeMode(option.id)
       setIsOpen(false)
     } catch (error) {
       setSwitchError(error instanceof Error ? error.message : '切换模式失败')
@@ -127,7 +134,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
   const handleExitMode = async (): Promise<void> => {
     setSwitchError(null)
     try {
-      await setMode('default')
+      await changeMode('default')
       setIsOpen(false)
     } catch (error) {
       setSwitchError(error instanceof Error ? error.message : '退出模式失败')

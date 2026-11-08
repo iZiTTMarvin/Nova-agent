@@ -802,6 +802,10 @@ test('真实截图和命令产物经过选择、IPC 读取与刷新恢复，失�
     expect(existsSync(imageFile)).toBe(true)
     await nova.invoke('workspace:delete-session', { sessionId })
     expect(existsSync(imageFile)).toBe(false)
+    await expect(nova.page.getByText('NOVA_EVIDENCE_STORAGE_OK', { exact: true })).toHaveCount(0)
+    // 删除后以新的页面上下文核定协议读盘，避免把当前文档持有的 Image 对象当成持久证据。
+    await nova.page.reload()
+    await expect(nova.page.getByText('NOVA_EVIDENCE_STORAGE_OK', { exact: true })).toHaveCount(0)
     expect(await loadImage()).toBe(false)
     expect(await nova.invoke(EVIDENCE_READ_ARTIFACT, { sessionId, id: artifactId })).toMatchObject({ status: 'unavailable' })
     expect(nova.pageErrors).toEqual([])

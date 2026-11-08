@@ -100,7 +100,7 @@ test.describe('学习表面主路径', () => {
 
   test('进入学习不改动开发会话，空状态与大纲入口可辨', async ({ nova }) => {
     test.setTimeout(90_000)
-    const devWorkspace = await nova.getWorkspace()
+    const devWorkspace = await nova.createSession('default')
     const devSessionId = devWorkspace.currentSessionId
     expect(devSessionId).not.toBeNull()
     expect(devWorkspace.currentMode).toBe('default')
@@ -239,7 +239,7 @@ test.describe('学习表面主路径', () => {
     const pending = learningMain(nova).getByRole('status').filter({ hasText: '正在思考' })
     await expect(pending).toHaveCount(1)
     await expect(pending).toBeVisible()
-    await expect(pending).toContainText(/Nova|正在加班中|正在和Bug讲道理|正在摸清这个仓库|认真干活中/)
+    await expect(learningMain(nova).locator('.nova-working-indicator__copy')).toContainText(/Nova|正在加班中|正在和Bug讲道理|正在摸清这个仓库|认真干活中/)
     await expect(learningMain(nova).getByText(/教练正在|导师正在|正在整理与核对/)).toHaveCount(0)
     await cancelButton.click()
     await nova.provider.waitForAbortCount(1, 15_000)
@@ -295,7 +295,7 @@ test.describe('学习表面主路径', () => {
 
   test('返回开发恢复原会话与草稿，学懂这次改动回到学习', async ({ nova }) => {
     test.setTimeout(150_000)
-    const devWorkspace = await nova.getWorkspace()
+    const devWorkspace = await nova.createSession('default')
     const devSessionId = devWorkspace.currentSessionId
     expect(devSessionId).not.toBeNull()
     if (!devSessionId) throw new Error('dev session id missing')

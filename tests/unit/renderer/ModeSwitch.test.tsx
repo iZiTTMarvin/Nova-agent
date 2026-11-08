@@ -17,8 +17,11 @@ function findButton(container: HTMLElement, label: string): HTMLButtonElement {
 }
 
 describe('ModeSwitch 工作流菜单', () => {
+  let dismissPilotEntryGuide: ReturnType<typeof vi.fn>
+
   beforeEach(() => {
-    useSettingsStore.setState({ currentMode: 'default' })
+    dismissPilotEntryGuide = vi.fn()
+    useSettingsStore.setState({ currentMode: 'default', dismissPilotEntryGuide })
     vi.clearAllMocks()
   })
 
@@ -48,6 +51,28 @@ describe('ModeSwitch 工作流菜单', () => {
     }
   })
 
+  it('明确退出领航后关闭普通模式中的后续推荐', async () => {
+    const originalSetMode = useSettingsStore.getState().setMode
+    const setMode = vi.fn(async (mode: 'default' | 'plan' | 'pilot') => {
+      useSettingsStore.setState({ currentMode: mode })
+    })
+    useSettingsStore.setState({ currentMode: 'pilot', setMode })
+
+    try {
+      const renderer = renderDom(<ModeSwitch />)
+      await act(async () => {
+        renderer.container.querySelector<HTMLButtonElement>('[aria-label="退出 领航"]')?.click()
+        await Promise.resolve()
+      })
+
+      expect(setMode).toHaveBeenCalledWith('default')
+      expect(dismissPilotEntryGuide).toHaveBeenCalledTimes(1)
+      renderer.unmount()
+    } finally {
+      useSettingsStore.setState({ setMode: originalSetMode })
+    }
+  })
+
   it('Plan 标签可通过关闭按钮返回默认模式', async () => {
     const originalSetMode = useSettingsStore.getState().setMode
     const setMode = vi.fn(async (mode: 'default' | 'plan' | 'pilot') => {
@@ -64,6 +89,7 @@ describe('ModeSwitch 工作流菜单', () => {
       })
 
       expect(setMode).toHaveBeenCalledWith('default')
+      expect(dismissPilotEntryGuide).not.toHaveBeenCalled()
       expect(useSettingsStore.getState().currentMode).toBe('default')
       expect(renderer.container.querySelectorAll('[data-testid="active-mode-chip"]')).toHaveLength(0)
       renderer.unmount()

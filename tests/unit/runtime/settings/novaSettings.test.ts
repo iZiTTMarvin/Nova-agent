@@ -69,20 +69,38 @@ describe('novaSettings', () => {
     expect(() => saveNovaSettings({ defaultMode: 'compose' as never })).toThrow('defaultMode')
   })
 
-  it('领航许可缺省关闭，读写统一规范化身份并去重，不扩大自动调用许可', () => {
-    expect(loadNovaSettings()).toMatchObject({ pilotSkillIds: [], pilotSkillGuideSeen: false })
+  it('领航许可与提示偏好安全迁移，读写统一校验', () => {
+    expect(loadNovaSettings()).toMatchObject({
+      pilotSkillIds: [],
+      pilotSkillGuideSeen: false,
+      pilotEntryGuideDismissed: false
+    })
     const skillId = createSkillId({ name: 'frontend', source: 'project', sourcePath: 'C:/Work/skills/frontend/SKILL.md' }, 'C:/Work')
     const nonCanonical = JSON.stringify(['frontend', 'project', 'C:\\Work\\skills\\frontend\\SKILL.md', 'C:/Work/.'])
     writeFileSync(join(mockHome, '.nova', 'settings.json'), JSON.stringify({
       pilotSkillIds: [skillId, nonCanonical, 'frontend', 42, {}, '["x"]'],
-      pilotSkillGuideSeen: 'yes'
+      pilotSkillGuideSeen: 'yes',
+      pilotEntryGuideDismissed: 'yes'
     }))
-    expect(loadNovaSettings()).toMatchObject({ pilotSkillIds: [skillId], pilotSkillGuideSeen: false })
-    saveNovaSettings({ pilotSkillIds: [nonCanonical, skillId, 'invalid'], pilotSkillGuideSeen: true })
-    expect(loadNovaSettings()).toMatchObject({ pilotSkillIds: [skillId], pilotSkillGuideSeen: true })
+    expect(loadNovaSettings()).toMatchObject({
+      pilotSkillIds: [skillId],
+      pilotSkillGuideSeen: false,
+      pilotEntryGuideDismissed: false
+    })
+    saveNovaSettings({
+      pilotSkillIds: [nonCanonical, skillId, 'invalid'],
+      pilotSkillGuideSeen: true,
+      pilotEntryGuideDismissed: true
+    })
+    expect(loadNovaSettings()).toMatchObject({
+      pilotSkillIds: [skillId],
+      pilotSkillGuideSeen: true,
+      pilotEntryGuideDismissed: true
+    })
     const before = readFileSync(join(mockHome, '.nova', 'settings.json'), 'utf8')
     expect(() => saveNovaSettings({ pilotSkillIds: 'frontend' as never })).toThrow('pilotSkillIds')
     expect(() => saveNovaSettings({ pilotSkillGuideSeen: 'yes' as never })).toThrow('pilotSkillGuideSeen')
+    expect(() => saveNovaSettings({ pilotEntryGuideDismissed: 'yes' as never })).toThrow('pilotEntryGuideDismissed')
     expect(readFileSync(join(mockHome, '.nova', 'settings.json'), 'utf8')).toBe(before)
   })
 

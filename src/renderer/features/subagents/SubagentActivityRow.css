@@ -70,7 +70,7 @@
 .subagent-activity-row--running .subagent-activity-row__dot {
   background: var(--color-brand);
   opacity: 1;
-  animation: compose-stage-pulse 2s ease-in-out infinite;
+  animation: subagent-activity-pulse 2s ease-in-out infinite;
 }
 
 .subagent-activity-row--attention .subagent-activity-row__dot {
@@ -89,7 +89,7 @@
   background: var(--text-muted);
 }
 
-@keyframes compose-stage-pulse {
+@keyframes subagent-activity-pulse {
   0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-brand) 32%, transparent); }
   50% { box-shadow: 0 0 0 5px transparent; }
 }

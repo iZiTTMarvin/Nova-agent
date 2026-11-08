@@ -205,7 +205,7 @@ test('宣传页截图：一句话做出来，再切到学习搞懂它', async ({
   const input = nova.page.getByLabel('消息输入')
   await expect(input).toBeVisible()
   await input.fill('帮我做一个番茄钟页面，要能记住今天完成了几个')
-  await shot(nova, 'dev-01-compose')
+  await shot(nova, 'dev-01-draft')
 
   // hold 释放后吐出的正文就是本轮最终回复，所以工具都排在它前面
   nova.provider.enqueue(

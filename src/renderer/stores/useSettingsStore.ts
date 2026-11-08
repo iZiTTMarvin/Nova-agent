@@ -32,6 +32,8 @@ export interface SettingsState {
   theme: SettingsTheme
   /** 流式输出节奏（smooth=打字机平滑 / instant=即时显示），持久化设置的 renderer 投影 */
   streamSmoothness: StreamSmoothness
+  /** 普通模式领航推荐的持久化投影；null 表示尚未读取。 */
+  pilotEntryGuideDismissed: boolean | null
   /** 当前会话的只读用量投影；切换后由持久化快照恢复。 */
   sessionUsage: SessionUsageStats | null
   sessionUsageSessionId: string | null
@@ -53,6 +55,9 @@ export interface SettingsState {
   loadStreamSmoothness: () => Promise<void>
   /** 持久化并更新流式输出节奏 */
   setStreamSmoothness: (value: StreamSmoothness) => Promise<void>
+  loadPilotEntryGuidePreference: () => Promise<void>
+  /** 推荐是一次性轻入口；关闭后立即消失，保存失败也不在当前窗口反复出现。 */
+  dismissPilotEntryGuide: () => void
   /** 持久化并更新主题模式；调用方不得维护第二份主题状态 */
   setTheme: (theme: SettingsTheme) => Promise<void>
   /** @deprecated 请使用 loadLlmRegistry */
@@ -134,6 +139,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     typeof localStorage !== 'undefined' && localStorage.getItem('nova-settings-stream-smoothness') === 'instant'
       ? 'instant'
       : 'smooth',
+  pilotEntryGuideDismissed: null,
   sessionUsage: null,
   sessionUsageSessionId: null,
   sessionUsageRevision: 0,
@@ -192,6 +198,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       console.error('保存流式节奏设置失败:', err)
       throw err
     }
+  },
+
+  loadPilotEntryGuidePreference: async () => {
+    if (get().pilotEntryGuideDismissed !== null) return
+    try {
+      const settings = await window.api.invoke('settings:get')
+      // 读取期间的关闭操作优先，迟到的旧快照不能重新显示推荐。
+      if (get().pilotEntryGuideDismissed === null) {
+        set({ pilotEntryGuideDismissed: settings.pilotEntryGuideDismissed })
+      }
+    } catch (err) {
+      console.error('读取领航推荐偏好失败:', err)
+    }
+  },
+
+  dismissPilotEntryGuide: () => {
+    set({ pilotEntryGuideDismissed: true })
+    void window.api.invoke('settings:set', { pilotEntryGuideDismissed: true }).catch((error: unknown) => {
+      console.error('保存领航推荐偏好失败:', error)
+    })
   },
 
   setTheme: async (theme: SettingsTheme) => {
@@ -362,6 +388,7 @@ export function resetSettingsStoreForTests(): void {
     currentProject: null,
     currentMode: 'default',
     theme: 'system',
+    pilotEntryGuideDismissed: null,
     sessionUsage: null,
     sessionUsageSessionId: null,
     sessionUsageRevision: 0,

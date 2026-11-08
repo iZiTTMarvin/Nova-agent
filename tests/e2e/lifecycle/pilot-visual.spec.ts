@@ -1,4 +1,24 @@
-import { expect, test } from '../fixtures/nova'
+import { expect, launchNova, test } from '../fixtures/nova'
+
+test('普通模式的领航推荐可关闭，重载后不反复出现', async ({}, testInfo) => {
+  const nova = await launchNova(testInfo, { skipWorkspaceSetup: true })
+  try {
+    await nova.invoke('settings:set', { defaultMode: 'default' })
+    await nova.invoke('workspace:select-project', { path: nova.workspacePath })
+    await nova.page.reload()
+
+    const bubble = nova.page.getByTestId('welcome-mascot-bubble')
+    await expect(bubble).toContainText('想让我多带你一步吗？')
+    await bubble.getByRole('button', { name: '关闭建议' }).click()
+    await expect(bubble).toHaveCount(0)
+    await expect.poll(async () => (await nova.invoke('settings:get')).pilotEntryGuideDismissed).toBe(true)
+    await nova.page.reload()
+    await expect(bubble).toHaveCount(0)
+    expect(nova.pageErrors).toEqual([])
+  } finally {
+    await nova.cleanup()
+  }
+})
 
 test('领航视觉：空会话气泡、草稿退出、光晕、模式切换与深浅色真实 Electron 检验', async ({ nova }, testInfo) => {
   test.setTimeout(90_000)
@@ -27,25 +47,25 @@ test('领航视觉：空会话气泡、草稿退出、光晕、模式切换与�
   await nova.page.screenshot({ path: shotDraft })
   await testInfo.attach('pilot-draft', { path: shotDraft, contentType: 'image/png' })
 
-  // 3. 清空草稿，气泡恢复；退出领航模式回到默认模式
+  // 3. 清空草稿，气泡恢复；明确退出领航后不再展示推荐，重载也不复发
   await composerInput.fill('')
   await expect(bubble).toBeVisible()
-
-  // 点击退出领航 Chip
   await nova.page.getByRole('button', { name: '退出 领航' }).click()
-  // 默认模式下不应有领航光晕
   await expect(nova.page.locator('.chat-composer-box--pilot')).toHaveCount(0)
-  // 普通模式空态气泡：引导试试领航
-  await expect(bubble).toContainText('想让我多带你一步吗？')
-  const tryPilotBtn = bubble.getByRole('button', { name: '试试领航' })
-  await expect(tryPilotBtn).toBeVisible()
+  await expect(bubble).toHaveCount(0)
+  await expect.poll(async () => (await nova.invoke('settings:get')).pilotEntryGuideDismissed).toBe(true)
 
   const shotDefaultEmpty = testInfo.outputPath('default-light-empty.png')
   await nova.page.screenshot({ path: shotDefaultEmpty })
   await testInfo.attach('default-light-empty', { path: shotDefaultEmpty, contentType: 'image/png' })
 
-  // 4. 点击“试试领航”，切回领航模式
-  await tryPilotBtn.click()
+  await nova.page.reload()
+  await expect(nova.page.locator('.chat-composer-box--pilot')).toHaveCount(0)
+  await expect(bubble).toHaveCount(0)
+
+  // 4. 仍可从模式菜单主动切回领航
+  await nova.page.getByRole('button', { name: '添加工作流、上下文与工具' }).click()
+  await nova.page.getByRole('menuitem', { name: '领航模式' }).click()
   await expect(nova.page.locator('.chat-composer-box--pilot')).toBeVisible()
   await expect(chip).toContainText('领航')
   await expect(bubble).toContainText('把你的 idea 告诉我吧，我将替你完成一切！')

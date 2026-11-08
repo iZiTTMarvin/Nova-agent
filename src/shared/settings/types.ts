@@ -76,6 +76,8 @@ export interface NovaSettingsDto {
   pilotSkillIds: string[]
   /** 领航 Skill 选择提示是否已展示。 */
   pilotSkillGuideSeen: boolean
+  /** 普通模式中的领航推荐是否已关闭或经明确退出而不再展示。 */
+  pilotEntryGuideDismissed: boolean
   /** 新建会话使用的默认权限模式。 */
   defaultPermissionMode: PermissionMode
   /** bash 工具默认 shell 路径（空表示用系统默认） */

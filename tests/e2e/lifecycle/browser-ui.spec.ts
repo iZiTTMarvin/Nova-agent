@@ -423,12 +423,15 @@ test('设置浮层盖住网页，缩放后舞台仍对齐', async ({ nova }) => 
 
     await nova.page.getByRole('button', { name: '返回应用' }).click()
     await expect(settings).toBeHidden()
+    await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
 
     await nova.app.evaluate(async ({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       if (!win) throw new Error('missing window')
-      win.webContents.setZoomFactor(1.5)
+      // 保留聊天区和浏览面板的最小合法空间，独立验证缩放后的舞台对齐。
+      win.webContents.setZoomFactor(1.25)
     })
+    await expect(guest).toBeVisible()
     await expect.poll(async () => {
       const slot = await nova.page.getByTestId('browser-guest-slot').boundingBox()
       const webview = await guest.boundingBox()

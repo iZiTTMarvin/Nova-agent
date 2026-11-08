@@ -63,6 +63,12 @@ vi.mock('../../../src/renderer/components/Icons', () => ({
 }))
 vi.mock('framer-motion', () => import('./_framerMotionMock'))
 
+function defaultInvokeMock(channel: string): unknown {
+  if (channel === 'send-message') return { accepted: true }
+  if (channel === 'settings:get') return { pilotEntryGuideDismissed: true }
+  return undefined
+}
+
 const mockInvoke = vi.fn()
 
 function makeAssistantMessage(id: string): ExtendedMessage {
@@ -91,9 +97,7 @@ describe('ChatPanel → MessageItem isPausedForInput 接线', () => {
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
 
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
+    mockInvoke.mockImplementation(defaultInvokeMock)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: {
@@ -238,9 +242,7 @@ describe('ChatPanel → 自动滚动轮询在 askQuestion 答完后重启', () =
     useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
+    mockInvoke.mockImplementation(defaultInvokeMock)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
@@ -324,9 +326,7 @@ describe('ChatPanel → 流尾状态指示器接线', () => {
     useRunStore.getState().resetForTests()
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
+    mockInvoke.mockImplementation(defaultInvokeMock)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
@@ -401,9 +401,7 @@ describe('ChatPanel → 取消/中断状态归属会话', () => {
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     useRunStore.getState().resetForTests()
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
+    mockInvoke.mockImplementation(defaultInvokeMock)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
@@ -532,7 +530,7 @@ sessions: [primarySession('sessA')]})
     renderer.unmount()
   })
 
-  it('存在 pending 权限请求时禁用盾牌，Compose 仍使用同一权限入口', async () => {
+  it('存在 pending 权限请求时禁用盾牌，领航仍使用同一权限入口', async () => {
     const session = primarySession('sessA')
     act(() => {
       useChatStore.setState({ currentSessionId: session.id, sessions: [session] })
@@ -585,9 +583,7 @@ describe('ChatPanel → sendMessage 拒绝时草稿与附件保留', () => {
     resetAgentStoreForTests()
     useSkillsStore.setState({ skills: [], loading: false, error: null, diagnostics: [] })
     useRunStore.getState().resetForTests()
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message' ? { accepted: true } : undefined
-    )
+    mockInvoke.mockImplementation(defaultInvokeMock)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: { skill: { onChange: vi.fn(() => () => {}), list: vi.fn(() => Promise.resolve({ skills: [], loading: false, error: null, refreshedAt: null, diagnostics: [] })), reload: vi.fn(() => Promise.resolve({ count: 0, errors: [] })) } }
@@ -668,9 +664,12 @@ sendInFlight: false})
 
   it('发送被接收即清空原稿，整轮结束不清空后来输入的补充', async () => {
     let finish!: () => void
-    mockInvoke.mockImplementation((channel: string) => channel === 'send-message'
-      ? new Promise<{ accepted: true }>(resolve => { finish = () => resolve({ accepted: true }) })
-      : Promise.resolve(undefined))
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'settings:get') return Promise.resolve({ pilotEntryGuideDismissed: true })
+      return channel === 'send-message'
+        ? new Promise<{ accepted: true }>(resolve => { finish = () => resolve({ accepted: true }) })
+        : Promise.resolve(undefined)
+    })
     const renderer = renderDom(React.createElement(ChatPanel))
     const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
     act(() => {
@@ -692,6 +691,7 @@ sendInFlight: false})
 
   it('本地命令 completion 释放发送与 Agent 归属状态，后续普通发送不受影响', async () => {
     mockInvoke.mockImplementation(async (channel: string, params?: { content?: string }) => {
+      if (channel === 'settings:get') return defaultInvokeMock(channel)
       if (channel !== 'send-message') return undefined
       return params?.content === '/plan'
         ? { accepted: true, completion: { commandName: 'plan' } }
@@ -788,11 +788,12 @@ sendInFlight: false})
   })
 
   it('主进程本地拒绝无效 slash：草稿恢复、乐观消息回滚、展示原因与推荐', async () => {
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message'
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'settings:get') return defaultInvokeMock(channel)
+      return channel === 'send-message'
         ? { accepted: false, rejection: { reason: 'not_found', skillName: 'typo', suggestions: ['todo'] } }
         : undefined
-    )
+    })
     const renderer = renderDom(React.createElement(ChatPanel))
     const editable = renderer.container.querySelector(
       '[contenteditable="true"]'
@@ -826,8 +827,9 @@ sendInFlight: false})
 
   it('原生命令拒绝直接展示共享 message，并恢复草稿与发送状态', async () => {
     const message = '命令 /compact 不接受参数'
-    mockInvoke.mockImplementation(async (channel: string) =>
-      channel === 'send-message'
+    mockInvoke.mockImplementation(async (channel: string) => {
+      if (channel === 'settings:get') return defaultInvokeMock(channel)
+      return channel === 'send-message'
         ? {
             accepted: false,
             rejection: {
@@ -838,7 +840,7 @@ sendInFlight: false})
             }
           }
         : undefined
-    )
+    })
     const renderer = renderDom(React.createElement(ChatPanel))
     const editable = renderer.container.querySelector<HTMLElement>('[contenteditable="true"]')!
     act(() => {
@@ -871,7 +873,7 @@ describe('ChatPanel → 阅读区宽度手柄只随阅读柱出现', () => {
     resetSettingsStoreForTests()
     resetAgentStoreForTests()
     resetLayoutStoreForTests()
-    mockInvoke.mockResolvedValue(undefined)
+    mockInvoke.mockImplementation(defaultInvokeMock)
     Object.assign(window, {
       api: { invoke: mockInvoke, on: vi.fn(() => () => {}), removeAllListeners: vi.fn() },
       nova: {

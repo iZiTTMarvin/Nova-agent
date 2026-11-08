@@ -58,7 +58,11 @@ describe('WorkspaceService workspace root changes', () => {
   beforeEach(() => {
     tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-workspace-root-change-'))
     store = new SessionStore(tempRoot)
-    loadNovaSettingsMock.mockReturnValue({ codeIndexEnabled: false })
+    loadNovaSettingsMock.mockReturnValue({
+      codeIndexEnabled: false,
+      defaultMode: 'default',
+      defaultPermissionMode: 'auto'
+    })
     resolveDefaultWorkspacePathMock.mockReturnValue('/tmp/nova-default-workspace')
   })
 
@@ -178,7 +182,11 @@ describe('WorkspaceService workspace root changes', () => {
     service.createSession({ workspaceRoot: '/workspace/disabled' })
     const disabledId = service.getState().currentSessionId
 
-    loadNovaSettingsMock.mockReturnValue({ codeIndexEnabled: true })
+    loadNovaSettingsMock.mockReturnValue({
+      codeIndexEnabled: true,
+      defaultMode: 'default',
+      defaultPermissionMode: 'auto'
+    })
     service.createSession({ workspaceRoot: '/workspace/enabled' })
     const enabledId = service.getState().currentSessionId
 

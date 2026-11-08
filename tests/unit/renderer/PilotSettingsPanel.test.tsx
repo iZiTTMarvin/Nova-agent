@@ -124,6 +124,53 @@ describe('PilotSettingsPanel 领航模式设置面板', () => {
     unmount()
   })
 
+  it('连续修改按用户操作顺序保存，不并发覆盖最新选择', async () => {
+    const pendingWrites: Array<{
+      skillIds: string[]
+      resolve: (value: unknown) => void
+    }> = []
+    mockInvoke.mockImplementation((channel: string, payload?: unknown) => {
+      if (channel === 'settings:get') {
+        return Promise.resolve({
+          pilotSkillIds: [sampleSkill1.skillId, staleSkillId],
+          pilotSkillGuideSeen: true
+        })
+      }
+      if (channel === 'settings:set' && payload && typeof payload === 'object' && 'pilotSkillIds' in payload) {
+        return new Promise(resolve => {
+          pendingWrites.push({
+            skillIds: [...(payload as { pilotSkillIds: string[] }).pilotSkillIds],
+            resolve
+          })
+        })
+      }
+      return Promise.resolve(payload)
+    })
+
+    const { container, unmount } = renderDom(<PilotSettingsPanel />)
+    await flushAsync()
+    const switches = container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')
+
+    await act(async () => {
+      switches[1].click()
+      await Promise.resolve()
+    })
+    await act(async () => {
+      switches[0].click()
+      await Promise.resolve()
+    })
+
+    expect(pendingWrites).toHaveLength(1)
+    pendingWrites[0].resolve({})
+    await flushAsync()
+    expect(pendingWrites).toHaveLength(2)
+    expect(pendingWrites[1].skillIds).toEqual([staleSkillId, sampleSkill2.skillId])
+    expect(switches[0].checked).toBe(false)
+    expect(switches[1].checked).toBe(true)
+    pendingWrites[1].resolve({})
+    unmount()
+  })
+
   it('识别已失效的技能并在独立区块展示，点击「移除」将其清理', async () => {
     const { container, unmount } = renderDom(<PilotSettingsPanel />)
     await flushAsync()

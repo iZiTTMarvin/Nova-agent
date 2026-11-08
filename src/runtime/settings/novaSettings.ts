@@ -31,6 +31,7 @@ export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   defaultMode: 'default',
   pilotSkillIds: [],
   pilotSkillGuideSeen: false,
+  pilotEntryGuideDismissed: false,
   defaultPermissionMode: 'auto',
   defaultShell: '',
   persistentShellSessions: true,
@@ -93,6 +94,7 @@ function migrateAndFill(raw: unknown): NovaSettings {
   if (sources) result.thirdPartySkillSources = sources
   result.pilotSkillIds = normalizePilotSkillIds(obj.pilotSkillIds)
   result.pilotSkillGuideSeen = obj.pilotSkillGuideSeen === true
+  result.pilotEntryGuideDismissed = obj.pilotEntryGuideDismissed === true
   // 旧 Mode 含 auto：迁为 default，并保留其自动权限语义；旧 compose 归一为 pilot。
   let migratedAutoMode = false
   if (obj.defaultMode === 'auto') {
@@ -244,6 +246,9 @@ function validatePatch(patch: Partial<NovaSettings>): string[] {
   }
   if ('pilotSkillGuideSeen' in patch && typeof patch.pilotSkillGuideSeen !== 'boolean') {
     errors.push('pilotSkillGuideSeen 必须是布尔值')
+  }
+  if ('pilotEntryGuideDismissed' in patch && typeof patch.pilotEntryGuideDismissed !== 'boolean') {
+    errors.push('pilotEntryGuideDismissed 必须是布尔值')
   }
   if ('thirdPartySkillSources' in patch && patch.thirdPartySkillSources !== undefined) {
     const value = patch.thirdPartySkillSources as unknown as Record<string, unknown> | null

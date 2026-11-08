@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef } from 'react'
 import { LEFT_EYE, RIGHT_EYE, useWelcomeMascotGaze } from './useWelcomeMascotGaze'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import './WelcomeHero.css'
@@ -17,10 +17,19 @@ export const WelcomeHero: React.FC<WelcomeHeroProps> = ({ hasDraft = false }) =>
 
   const currentMode = useSettingsStore(state => state.currentMode)
   const setMode = useSettingsStore(state => state.setMode)
-  const [dismissed, setDismissed] = useState(false)
+  const pilotEntryGuideDismissed = useSettingsStore(state => state.pilotEntryGuideDismissed)
+  const loadPilotEntryGuidePreference = useSettingsStore(state => state.loadPilotEntryGuidePreference)
+  const dismissPilotEntryGuide = useSettingsStore(state => state.dismissPilotEntryGuide)
 
-  // 气泡：无草稿输入、未手动忽略，且当前模式支持引导
-  const showBubble = !hasDraft && !dismissed && (currentMode === 'pilot' || currentMode === 'default')
+  useEffect(() => {
+    if (currentMode === 'default' && pilotEntryGuideDismissed === null) {
+      void loadPilotEntryGuidePreference()
+    }
+  }, [currentMode, pilotEntryGuideDismissed, loadPilotEntryGuidePreference])
+
+  const showBubble = !hasDraft && (
+    currentMode === 'pilot' || (currentMode === 'default' && pilotEntryGuideDismissed === false)
+  )
 
   return (
     <>
@@ -75,7 +84,7 @@ export const WelcomeHero: React.FC<WelcomeHeroProps> = ({ hasDraft = false }) =>
                   type="button"
                   className="welcome-mascot__bubble-dismiss"
                   aria-label="关闭建议"
-                  onClick={() => setDismissed(true)}
+                  onClick={dismissPilotEntryGuide}
                 >
                   ×
                 </button>

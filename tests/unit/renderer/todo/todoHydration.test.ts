@@ -1,6 +1,6 @@
 /**
  * 会话待办水合：重开/切换会话时，load-session 详情里的 todos 必须灌入 useTodoStore，
- * 让 TodoPanel 与 compose 阶段条进度立即可见，而不是等下一次 todo_write 推送。
+ * 让 TodoPanel 进度立即可见，而不是等下一次 todo_write 推送。
  * 旧会话详情没有 todos 字段时不得制造空状态。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'

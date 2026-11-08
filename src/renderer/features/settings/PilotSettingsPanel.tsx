@@ -8,7 +8,7 @@
  * - 失效选择（原技能删除/来源变更）的独立展示与移除
  * - 快速跳转至「技能」管理页新建/导入技能
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Banner } from '@astryxdesign/core/Banner'
 import { Button } from '@astryxdesign/core/Button'
 import { Switch } from '@astryxdesign/core/Switch'
@@ -63,6 +63,8 @@ export const PilotSettingsPanel: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [showGuide, setShowGuide] = useState(false)
+  const settingsRef = useRef<NovaSettingsDto | null>(null)
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve())
 
   const loadData = useCallback(async () => {
     try {
@@ -70,6 +72,7 @@ export const PilotSettingsPanel: React.FC = () => {
         window.api.invoke('settings:get') as Promise<NovaSettingsDto>,
         window.nova.skill.list({ mode: 'default' })
       ])
+      settingsRef.current = s
       setSettings(s)
       setSkills(snapshot.skills)
       if (!s.pilotSkillGuideSeen) {
@@ -101,44 +104,52 @@ export const PilotSettingsPanel: React.FC = () => {
     return settings.pilotSkillIds.filter(id => !candidateIds.has(id))
   }, [settings?.pilotSkillIds, candidateIds])
 
-  const toggleSkill = async (skillId: string, enabled: boolean) => {
-    if (!settings) return
-    const current = new Set(settings.pilotSkillIds)
-    if (enabled) {
-      current.add(skillId)
-    } else {
-      current.delete(skillId)
-    }
-    const nextList = Array.from(current)
-    setSettings(prev => (prev ? { ...prev, pilotSkillIds: nextList } : prev))
-    try {
-      await window.api.invoke('settings:set', { pilotSkillIds: nextList })
-    } catch {
-      await loadData()
-    }
+  const updatePilotSkillIds = useCallback((update: (current: string[]) => string[]) => {
+    const current = settingsRef.current
+    if (!current) return
+    const nextList = update(current.pilotSkillIds)
+    const optimistic = { ...current, pilotSkillIds: nextList }
+    settingsRef.current = optimistic
+    setSettings(optimistic)
+
+    // 整数组写入按点击顺序串行；旧请求失败后的回读也不能覆盖更新的本地意图。
+    saveQueueRef.current = saveQueueRef.current.then(async () => {
+      try {
+        await window.api.invoke('settings:set', { pilotSkillIds: nextList })
+      } catch {
+        if (settingsRef.current?.pilotSkillIds !== nextList) return
+        try {
+          const latest = await window.api.invoke('settings:get') as NovaSettingsDto
+          if (settingsRef.current?.pilotSkillIds !== nextList) return
+          settingsRef.current = latest
+          setSettings(latest)
+          setError('技能选择保存失败，请重试')
+        } catch (err) {
+          setError(err instanceof Error ? err.message : '技能选择保存失败，请重试')
+        }
+      }
+    })
+  }, [])
+
+  const toggleSkill = (skillId: string, enabled: boolean) => {
+    updatePilotSkillIds(currentIds => {
+      const next = new Set(currentIds)
+      if (enabled) {
+        next.add(skillId)
+      } else {
+        next.delete(skillId)
+      }
+      return Array.from(next)
+    })
   }
 
-  const removeStaleId = async (idToRemove: string) => {
-    if (!settings) return
-    const nextList = settings.pilotSkillIds.filter(id => id !== idToRemove)
-    setSettings(prev => (prev ? { ...prev, pilotSkillIds: nextList } : prev))
-    try {
-      await window.api.invoke('settings:set', { pilotSkillIds: nextList })
-    } catch {
-      await loadData()
-    }
+  const removeStaleId = (idToRemove: string) => {
+    updatePilotSkillIds(currentIds => currentIds.filter(id => id !== idToRemove))
   }
 
-  const removeAllStaleIds = async () => {
-    if (!settings) return
+  const removeAllStaleIds = () => {
     const staleSet = new Set(staleIds)
-    const nextList = settings.pilotSkillIds.filter(id => !staleSet.has(id))
-    setSettings(prev => (prev ? { ...prev, pilotSkillIds: nextList } : prev))
-    try {
-      await window.api.invoke('settings:set', { pilotSkillIds: nextList })
-    } catch {
-      await loadData()
-    }
+    updatePilotSkillIds(currentIds => currentIds.filter(id => !staleSet.has(id)))
   }
 
   const normalizedQuery = searchQuery.trim().toLowerCase()
@@ -180,7 +191,7 @@ export const PilotSettingsPanel: React.FC = () => {
           {error && (
             <Banner
               status="error"
-              title="设置加载失败"
+              title="设置操作失败"
               description={error}
               isDismissable
               onDismiss={() => setError(null)}

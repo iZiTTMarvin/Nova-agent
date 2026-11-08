@@ -33,14 +33,20 @@ test('子代理设置通过真实 IPC 完成复制、编辑、启停和项目覆
   await expect(nova.page.getByText('全局配置')).toBeVisible()
   await expect(nova.page.getByText('ID：')).toContainText('explore-2')
 
+  await nova.page.getByRole('button', { name: '返回全部子代理' }).click()
+  const copied = nova.page.getByLabel('explore 副本', { exact: true })
+  await expect(copied).toContainText('全局')
   await nova.page.getByLabel('禁用 explore 副本').click()
-  await expect(nova.page.getByText('全局 · 已禁用')).toBeVisible()
+  await expect(copied).toContainText('已禁用')
   await nova.page.getByLabel('启用 explore 副本').click()
+  await expect(copied).not.toContainText('已禁用')
 
+  await copied.click()
   await nova.page.getByLabel('显示名称').fill('全局探索副本')
   await nova.page.getByRole('button', { name: '保存更改' }).click()
   await expect(nova.page.getByRole('heading', { name: '全局探索副本' })).toBeVisible()
 
+  await nova.page.getByRole('button', { name: '返回全部子代理' }).click()
   await beginCreate(nova, '项目探索副本', 'explore-2')
   await nova.page.getByLabel('保存范围').click()
   await nova.page.getByRole('option', { name: '当前项目' }).click()

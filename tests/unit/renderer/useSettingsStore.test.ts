@@ -52,6 +52,27 @@ it('用量投影拒绝重复、过期和其他会话快照；切回可从磁盘�
   expect(useSettingsStore.getState().sessionUsage?.totalPromptTokens).toBe(200)
 })
 
+describe('领航入口推荐偏好', () => {
+  it('关闭后立即生效，迟到的旧读取不会重新展示', async () => {
+    let finishRead: ((value: { pilotEntryGuideDismissed: boolean }) => void) | null = null
+    mockInvoke.mockImplementation((channel: string) => {
+      if (channel === 'settings:get') {
+        return new Promise<{ pilotEntryGuideDismissed: boolean }>(resolve => { finishRead = resolve })
+      }
+      return Promise.resolve({ pilotEntryGuideDismissed: true })
+    })
+
+    const loading = useSettingsStore.getState().loadPilotEntryGuidePreference()
+    useSettingsStore.getState().dismissPilotEntryGuide()
+    expect(useSettingsStore.getState().pilotEntryGuideDismissed).toBe(true)
+    finishRead?.({ pilotEntryGuideDismissed: false })
+    await loading
+
+    expect(mockInvoke).toHaveBeenCalledWith('settings:set', { pilotEntryGuideDismissed: true })
+    expect(useSettingsStore.getState().pilotEntryGuideDismissed).toBe(true)
+  })
+})
+
 describe('useSettingsStore.theme', () => {
   it('loadTheme 将持久化主题投影到 renderer store', async () => {
     mockInvoke.mockResolvedValue({ theme: 'dark' })

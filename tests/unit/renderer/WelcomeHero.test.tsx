@@ -3,6 +3,7 @@
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { WelcomeHero } from '../../../src/renderer/features/chat/WelcomeHero'
+import { useSettingsStore } from '../../../src/renderer/stores/useSettingsStore'
 import { LEFT_EYE, MAX_PUPIL, pupilOffset } from '../../../src/renderer/features/chat/useWelcomeMascotGaze'
 import { act, renderDom } from './renderDom'
 
@@ -33,6 +34,7 @@ describe('WelcomeHero 空态', () => {
   const originalScreenCTM = Object.getOwnPropertyDescriptor(SVGSVGElement.prototype, 'getScreenCTM')
 
   beforeEach(() => {
+    useSettingsStore.setState({ pilotEntryGuideDismissed: true })
     rafCallbacks = []
     globalThis.requestAnimationFrame = ((cb: FrameRequestCallback) => {
       rafCallbacks.push(cb)
