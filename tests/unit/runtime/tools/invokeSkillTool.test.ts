@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { mkdirSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { createInvokeSkillTool } from '../../../../src/runtime/tools/invokeSkillTool'
@@ -30,6 +30,54 @@ describe('invokeSkillTool', () => {
     expect(result.success).toBe(true)
     expect(result.output).toContain('You are demo.')
     expect(result.output).toContain('do it')
+  })
+
+  it('领航拒绝模型已知的通用名称与裸内置名，不展开正文或授予附件目录', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'skill-pilot-tool-'))
+    try {
+      for (const name of ['domain', 'nova-pilot']) {
+        mkdirSync(join(root, name), { recursive: true })
+        writeFileSync(join(root, name, 'SKILL.md'), `---\nname: ${name}\ndescription: domain\n---\nGENERIC_SECRET_BODY`)
+      }
+      const reg = SkillRegistry.load({ globalDir: root })
+      const roots: string[] = []
+      const tool = createInvokeSkillTool({
+        skillRegistry: reg, getSpawnSubagentPort: unavailablePort,
+        onSkillInvoked: skill => roots.push(skill.directory)
+      })
+      for (const skillName of ['domain', 'nova-pilot', 'builtin:domain', 'builtin:nova-pilot']) {
+        const result = await tool.execute({ skill_name: skillName, task: 'do it' }, { ...ctx, mode: 'pilot' })
+        expect(result).toMatchObject({ success: false, output: '' })
+        expect(result.error).toContain('领航模式只允许模型调用')
+      }
+      expect(roots).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('领航只展开真正的内置方法，项目同名覆盖不改变正文和只读根', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'skill-pilot-builtin-'))
+    try {
+      const builtinDir = join(root, 'builtin')
+      const projectDir = join(root, 'project')
+      for (const [dir, body] of [[builtinDir, 'BUILTIN_BODY'], [projectDir, 'PROJECT_BODY']]) {
+        mkdirSync(join(dir, 'nova-pilot'), { recursive: true })
+        writeFileSync(join(dir, 'nova-pilot', 'SKILL.md'), `---\nname: nova-pilot\ndescription: pilot\nhidden: true\nuser-invocable: false\n---\n${body}`)
+      }
+      const roots: string[] = []
+      const tool = createInvokeSkillTool({
+        skillRegistry: SkillRegistry.load({ builtinDir, projectDir, globalDir: join(root, 'global') }),
+        getSpawnSubagentPort: unavailablePort, onSkillInvoked: skill => roots.push(skill.directory)
+      })
+      const result = await tool.execute({ skill_name: 'builtin:nova-pilot', task: 'task' }, { ...ctx, mode: 'pilot' })
+      expect(result.success).toBe(true)
+      expect(result.output).toContain('BUILTIN_BODY')
+      expect(result.output).not.toContain('PROJECT_BODY')
+      expect(roots).toEqual([join(builtinDir, 'nova-pilot')])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('展开成功后登记 skill 可读根', async () => {

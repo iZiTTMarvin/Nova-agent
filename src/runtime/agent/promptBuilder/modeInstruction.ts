@@ -14,57 +14,62 @@ export interface ModeInstructionOptions {
 
 function buildPlanInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: plan — 仓库分析与实施计划]',
-    '先读取真实代码、测试、配置和项目规范，再形成计划；关键产品或架构歧义可用 askQuestion 澄清。',
-    '禁止修改业务文件、禁止执行 shell。唯一允许的文件副作用是调用 save_plan，把完整 Markdown 计划写入当前项目的 .nova/plans/。',
-    '计划必须覆盖目标、范围与非目标、当前调用链证据、职责与数据流、分阶段改动、保护的已有行为、失败模式、验证、回退和待决事项。',
-    '完成前必须调用 save_plan；不要只在聊天正文里留下不可恢复的计划。',
-    'save_plan 成功后必须立即调用 switch_mode(mode: default)，通过计划审阅交互等待用户批准、更正或忽略；不要先结束本轮。',
-    '不要用 askQuestion 询问是否批准或如何推进计划；审阅结果会在同一 run 内恢复 switch_mode。批准后立即按 active plan 继续实施，更正时根据反馈继续修订，忽略时正常结束本轮。'
+    '[Current mode: plan — repository analysis and implementation planning]',
+    'Read the actual code, tests, configuration, and project rules before planning. Use askQuestion to clarify material product or architecture ambiguities.',
+    'Do not modify application files or execute shell commands. The only allowed file side effect is save_plan, which writes the complete Markdown plan under the current project\'s .nova/plans/.',
+    'Cover the goal, scope and non-goals, call-chain evidence, ownership and data flow, implementation steps, preserved behavior, failure modes, verification, rollback, and open decisions.',
+    'Call save_plan before finishing; a plan left only in the conversation is not a recoverable deliverable.',
+    'Immediately after save_plan succeeds, call switch_mode(mode: default) and wait for the structured plan review: approve, correct, or ignore. Do not end the turn first.',
+    'Do not use askQuestion to duplicate plan approval or ask how to proceed. The review result resumes switch_mode in the same run. After approval, implement the active plan immediately; after corrections, revise it using the feedback; after ignore, finish the turn normally.'
   ]
   if (opts?.activePlanPath) {
-    lines.push(`当前会话已有 active plan: ${opts.activePlanPath}。修订同一计划时沿用原标题，避免生成重复文件。`)
+    lines.push(`The current session already has an active plan: ${opts.activePlanPath}. When revising it, reuse its original title to avoid duplicate files.`)
   }
   if (opts?.dialect === 'xml') {
-    lines.push('请继续用 system prompt 中指定的 XML \u003cinvoke\u003e 格式调用这些工具。')
+    lines.push('Continue calling these tools with the XML <invoke> format specified in the system prompt.')
   }
   return lines.join('\n')
 }
 
 function buildDefaultInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: default — 默认模式]',
-    '你可以读取、修改和验证工作区；工具批准策略由用户设置决定（执行前确认或自动执行）。',
-    '当用户明确要求先规划，或任务涉及多个模块、关键架构取舍、较高回归风险、需求仍需澄清时，先调用 switch_mode 进入 plan，并在当前任务中继续分析和保存计划；不要只口头声称已切换。',
-    '进入 plan 是收窄为只读能力，不需要额外征求用户确认。简单、明确、低风险的局部任务应直接完成，不要滥用计划模式。'
+    '[Current mode: default — standard development]',
+    'You may read, modify, and verify the workspace. Tool approval follows the user\'s settings: request approval or execute automatically.',
+    'When the user explicitly requests planning, or the task involves multiple modules, significant architecture tradeoffs, high regression risk, or unresolved requirements, first call switch_mode to enter plan, then continue analyzing and saving the plan within the current task. Do not merely claim to have switched.',
+    'Entering plan narrows capabilities to read-only analysis and needs no additional user confirmation. Complete simple, clear, low-risk local tasks directly; use plan only when warranted.'
   ]
   if (opts?.activePlanPath) {
     lines.push(
-      `当前会话的 active plan 是 ${opts.activePlanPath}。` +
-      '当用户要求继续或实施该计划时，先读取它并结合当前仓库复核，再按计划推进；若请求与该计划无关，不要擅自套用。'
+      `The current session\'s active plan is ${opts.activePlanPath}. ` +
+      'When the user asks to continue or implement it, read it and check it against the current repository before proceeding. Apply it only when relevant to the request.'
     )
   }
   if (opts?.dialect === 'xml') {
-    lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
+    lines.push('Call tools with the XML <invoke> format specified in the system prompt.')
   }
   return lines.join('\n')
 }
 
 function buildPilotInstruction(opts?: ModeInstructionOptions): string {
   const lines = [
-    '[当前模式: pilot — 领航模式]',
-    '你可以读取、修改和验证工作区；工具批准策略由用户设置决定（执行前确认或自动执行）。',
-    '领航复用默认开发的工具能力，不包含阶段推进或专属核验工具。',
-    '在当前模式中组织规划、实施与验证；模式更换由用户明确操作。'
+    '[Current mode: pilot — Nova pilot]',
+    'You may read, modify, and verify the workspace. Tool approval follows the user\'s settings: request approval or execute automatically.',
+    'For each distinct new task, first call invoke_skill(skill_name: "builtin:nova-pilot", task: the current task). Then use read to load only the relevant workflows/*.md from the returned directory. Reuse the method for ordinary follow-ups; choose again when the task direction changes.',
+    'Briefly restate the goal, then proceed. Use reasonable defaults for clear small tasks instead of a fixed interview. Batch material ambiguities into at most one necessary clarification round, then proceed autonomously.',
+    'Investigate questions answerable through execution, source code, layout inspection, or performance measurement. Ask the user only about goals, preferences, and irreversible actions.',
+    'Organize planning, implementation, and verification within the current mode. Express steps with the ordinary todo_write tool and finish through the ordinary Run terminal state. Mode changes require an explicit user action.',
+    'Verify through the real usage entry point. An incorrect entry point, an uncertain result, or an unexecuted check is not a pass. When real artifacts exist and present_evidence is available, use it to select relevant evidence. An artifact\'s existence is not proof of success; report save failures and unavailable targets honestly.',
+    'Do not automatically commit, push, deploy, or perform irreversible actions.',
+    'General Skills are neither automatically discovered nor automatically invoked. When the user manually invokes a Skill, follow this precedence: the current explicit user task, then the Skill\'s specific behavior, then pilot\'s general organization and honest-delivery rules. Do not mechanically add a duplicate workflow.'
   ]
   if (opts?.activePlanPath) {
     lines.push(
-      `当前会话的 active plan 是 ${opts.activePlanPath}。` +
-      '当用户要求继续或实施该计划时，先读取它并结合当前仓库复核，再按计划推进；若请求与该计划无关，不要擅自套用。'
+      `The current session\'s active plan is ${opts.activePlanPath}. ` +
+      'When the user asks to continue or implement it, read it and check it against the current repository before proceeding. Apply it only when relevant to the request.'
     )
   }
   if (opts?.dialect === 'xml') {
-    lines.push('调用工具时请使用 system prompt 中指定的 XML \u003cinvoke\u003e 格式。')
+    lines.push('Call tools with the XML <invoke> format specified in the system prompt.')
   }
   return lines.join('\n')
 }

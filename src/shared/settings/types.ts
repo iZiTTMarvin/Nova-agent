@@ -72,6 +72,10 @@ export interface NovaSettingsDto {
   // ── PRD §5.6 新增：通用偏好 ──
   /** 默认运行模式（新建会话时使用） */
   defaultMode: Mode
+  /** 允许在领航中手动调用的现有 Skill 身份。 */
+  pilotSkillIds: string[]
+  /** 领航 Skill 选择提示是否已展示。 */
+  pilotSkillGuideSeen: boolean
   /** 新建会话使用的默认权限模式。 */
   defaultPermissionMode: PermissionMode
   /** bash 工具默认 shell 路径（空表示用系统默认） */

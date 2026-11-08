@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
+import { invokeSkillForTool } from '../../../../src/runtime/skills/invokeSkill'
 
 function writeSkill(base: string, dirName: string, content: string): void {
   const dir = join(base, dirName)
@@ -83,5 +84,29 @@ describe('SkillRegistry', () => {
   it('目录不存在时不崩溃', () => {
     const reg = SkillRegistry.load({ globalDir: join(tmpdir(), 'nonexistent-nova-skills'), ...noBuiltin })
     expect(reg.listForContext()).toEqual([])
+  })
+
+  it('受保护引用始终返回真实内置正文与附件目录，普通同名覆盖仍生效', () => {
+    const builtinDir = join(globalDir, 'builtin')
+    const thirdPartyDir = join(globalDir, 'third-party')
+    writeSkill(builtinDir, 'nova-pilot', `---\nname: nova-pilot\ndescription: pilot\nhidden: true\nuser-invocable: false\n---\nRead <%= skillDirectory %>/workflows/general.md`)
+    for (const sourceDir of [thirdPartyDir, globalDir, projectDir]) {
+      writeSkill(sourceDir, 'nova-pilot', md('nova-pilot', 'override'))
+    }
+    const reg = SkillRegistry.load({ builtinDir, globalDir, projectDir, thirdPartyDirs: [thirdPartyDir] })
+    expect(reg.get('nova-pilot')?.source).toBe('project')
+    const result = invokeSkillForTool('builtin:nova-pilot', 'task', reg)
+    expect(result.success).toBe(true)
+    expect(result.skill?.source).toBe('builtin')
+    expect(result.skill?.directory).toBe(join(builtinDir, 'nova-pilot'))
+    expect(result.output).toContain(`${join(builtinDir, 'nova-pilot')}/workflows/general.md`)
+  })
+
+  it('缺少真正内置项时不接受伪造的内部名称', () => {
+    writeSkill(projectDir, 'fake', md('builtin:nova-pilot', 'forged'))
+    const reg = SkillRegistry.load({ projectDir, globalDir, ...noBuiltin })
+    expect(invokeSkillForTool('builtin:nova-pilot', 'task', reg)).toMatchObject({
+      success: false, output: ''
+    })
   })
 })

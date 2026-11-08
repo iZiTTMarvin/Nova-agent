@@ -208,7 +208,14 @@ describe('Sidebar 子代理会话退出列表', () => {
         'run-current': makeRunSnapshot({ runId: 'run-current', sessionId: 'sess-current', status: 'running', sequence: 1 }),
         'run-bg-retry': makeRunSnapshot({ runId: 'run-bg-retry', sessionId: 'sess-bg-retry', status: 'retrying', sequence: 1 }),
         'run-bg-cancel': makeRunSnapshot({ runId: 'run-bg-cancel', sessionId: 'sess-bg-cancel', status: 'cancelling', sequence: 1 }),
-        'run-subagent': makeRunSnapshot({ runId: 'run-subagent', sessionId: 'sess-child', parentRunId: 'run-current', status: 'running', sequence: 1 }),
+        'run-subagent': makeRunSnapshot({
+          runId: 'run-subagent', sessionId: 'sess-child', status: 'running', sequence: 1,
+          dispatch: {
+            version: 1, callKind: 'task', parentSessionId: 'sess-current',
+            parentRunId: 'run-current', parentMessageId: 'msg-current',
+            execution: 'background_read_only', topParentSessionId: 'sess-current'
+          }
+        }),
         'run-done': makeRunSnapshot({ runId: 'run-done', sessionId: 'sess-done', status: 'completed', sequence: 1 })
       }
     })

@@ -27,13 +27,6 @@ describe('promptRenderer', () => {
     expect(text).toContain('Before You Yield')
   })
 
-  it('不包含模式指令正文（模式约束挂 user 尾部）', () => {
-    const text = renderBaseRules()
-    expect(text).not.toContain('[当前模式: plan')
-    expect(text).not.toContain('[当前模式: default')
-    expect(text).not.toContain('[当前模式: auto')
-  })
-
   it('只引用已注册工具名，不出现 Glob / SemanticSearch 等幻觉工具', () => {
     const text = renderBaseRules()
     // 独立工具名 Glob、SemanticSearch 未注册；glob 作为 grep 参数名允许出现

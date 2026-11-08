@@ -1,45 +1,43 @@
-# 行为保持重构
+# Behavior-preserving refactoring
 
-结构改变，行为不变。它不同于功能开发（增加行为）和缺陷修复（纠正行为）。
+Change structure while preserving behavior. Feature development adds behavior; bug fixing corrects it.
 
-## 1. 先固定行为契约
+## 1. Establish the behavior contract
 
-- 先读相关子系统，确认当前行为到底包含什么。
-- 在动结构前写下能捕获当前行为的检查：特征测试、快照、等价脚本或真实入口的基线输出。
-- 类型检查和 lint 不是行为契约。
-- 没有覆盖的区域，先补一个最小 pin 再改。
+- Read the affected subsystem and identify its actual behavior.
+- Before restructuring, capture that behavior with characterization tests, snapshots, equivalence scripts, or baseline output from a real entry point.
+- Typechecking and lint are not behavior contracts.
+- Establish a minimal behavioral check before changing uncovered paths.
 
-## 2. 命名目标形状
+## 2. Name the target structure
 
-- 说清如果今天重写，模块边界、类型和调用图应该是什么样。
-- 新形状必须删掉分支或让非法状态不可表示，不能只是增加一层间接。
-- 形状已经清楚且局部时，保持现有写法，不要为了“更优雅”重排。
+- Explain the desired module boundaries, types, and call graph as if designing them today.
+- The new structure must remove branches or make illegal states unrepresentable, rather than merely add indirection.
+- Preserve established local patterns when the target shape is already clear; avoid rearrangement for style alone.
 
-## 3. 先减后加
+## 3. Subtract before adding
 
-- 先删死代码、只有一个调用方的包装、重复校验、孤儿引用。
-- 只保留能到达目标形状的最小改动；投机性的“顺便清理”要回退。
-- 如果清理中发现缺少的功能或真实缺陷，拆出去单独处理，先按固定契约交付结构改动。
+- Remove dead code, single-caller wrappers, duplicate validation, and orphaned references.
+- Keep only changes necessary to reach the target structure; revert speculative cleanup.
+- Separate missing features and independent defects from the refactor, and deliver the structural change against its established contract.
 
-## 4. 小步移动，每步保持 pin 绿
+## 4. Move in small, verified steps
 
-- 一次只做一类结构变化，做完就验证，不要攒到最后一起跑。
-- 改 API 时同一波迁移所有调用方并删除旧 API，不留兼容 shim 和并行新旧路径。
-- 重命名要对着真实文件逐个核对；字符串、文案和反向引用经常漏改。
-- 每一步都能独立回退。
+- Make one kind of structural change at a time and run the behavioral check after each step.
+- Migrate every caller when changing an API and remove the old API in the same cutover, without compatibility shims or parallel main paths.
+- Check real files, strings, and reverse references when renaming.
+- Keep each step independently reversible.
 
-## 5. 在真实产物上证明行为不变
+## 5. Prove equivalence in real output
 
-- 不只证明“能编译”。跑等价检查、回放基线或真实入口的冒烟。
-- 对比改前改后的实际输出，而不是凭印象。
-- 验证失败时先怀疑观察方式，再怀疑系统。
+- Run equivalence checks, replay the baseline, or smoke the real entry point; compilation alone is insufficient.
+- Compare actual before and after output.
+- When verification fails, inspect the observation method before assuming the system is wrong.
 
-## 6. 衡量是否值得保留
+## 6. Decide whether the refactor earns its place
 
-- 成功的标准是读者负担下降：层数、隐藏状态、可变作用域、需要同时理解的模块数量。
-- 如果 diff 没有让任何一处更容易理解，回退它。
+Judge success by reduced reader burden: fewer layers, hidden states, mutable scopes, or modules that must be understood together. Revert changes that make nothing easier to understand.
 
-## 7. 汇报
+## 7. Report
 
-- 说清：结构改了什么、用哪个 pin 固定行为、等价证明怎么做的、读者负担的变化、哪些改动被回退。
-- 不夹带新行为。
+Describe the structural change, behavioral check, equivalence evidence, effect on reader burden, and any reverted changes. Keep new behavior out of the refactor.

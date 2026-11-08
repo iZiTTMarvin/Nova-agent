@@ -19,14 +19,25 @@ import {
   getCatalogSnapshot,
   getSkillService,
   refreshSkillsAfterMutation,
-  reloadSkillsForWorkspace
+  reloadSkillsForWorkspace,
+  alignSkillsToWorkspace
 } from '../services/SkillServiceHost'
-import type { SkillCreateInput, SkillExportInput, SkillImportInput } from '../../shared/skills/types'
+import type { SkillCatalogQuery, SkillCreateInput, SkillExportInput, SkillImportInput } from '../../shared/skills/types'
+import { parseStrictMode } from '../../shared/session/mode'
+import { getWorkspaceService } from '../services/WorkspaceService'
 
 export function registerSkillHandler(getMainWindow?: () => BrowserWindow | null): void {
   const service = () => getSkillService()
 
-  handle(SKILL_LIST, async () => getCatalogSnapshot())
+  handle(SKILL_LIST, async (_event, query: unknown) => {
+    if (query === undefined) return getCatalogSnapshot()
+    if (!query || typeof query !== 'object' || !('mode' in query)) {
+      throw new Error('技能目录查询必须指定模式')
+    }
+    const request: SkillCatalogQuery = { mode: parseStrictMode(query.mode) }
+    alignSkillsToWorkspace(getWorkspaceService().getState().currentProjectPath)
+    return getCatalogSnapshot(request)
+  })
 
   handle(SKILL_GET, async (_event, name: string) => service().get(name))
 

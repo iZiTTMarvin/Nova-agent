@@ -17,6 +17,7 @@ import type { ToolTruncationMeta } from '../tools/types'
 import type { TodoItem, TodoViewInfo } from '../todo/types'
 import type {
   SkillCatalogSnapshot,
+  SkillCatalogQuery,
   SkillSlashRejection,
   SkillSummary,
   SkillCreateInput,
@@ -411,7 +412,7 @@ export interface IpcCommands {
     result: void
   }
   'skill:list': {
-    params: void
+    params: SkillCatalogQuery | undefined
     result: SkillCatalogSnapshot
   }
   'skill:get': {
@@ -765,6 +766,13 @@ export interface IpcCommands {
 
 /** 所有命令 channel 名称 */
 export type IpcCommandChannel = keyof IpcCommands
+
+/** 缺省参数的目录查询可省略入参，其余命令保持既有必填约束。 */
+export type IpcInvokeArgs<C extends IpcCommandChannel> = IpcCommands[C]['params'] extends void
+  ? []
+  : undefined extends IpcCommands[C]['params']
+    ? [params?: IpcCommands[C]['params']]
+    : [params: IpcCommands[C]['params']]
 
 // ── main → renderer 事件的数据类型 ──────────────────────
 

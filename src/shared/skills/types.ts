@@ -2,6 +2,8 @@
  * Skill IPC 与渲染端共享类型（不含 body 全量，列表接口使用 preview）
  */
 
+import type { Mode } from '../session/types'
+
 /** 技能来源（MVP 三源 + 预留枚举） */
 export type SkillSource =
   | 'builtin'
@@ -35,6 +37,7 @@ export interface ThirdPartySkillSourceStatus {
 
 /** 渲染端 / IPC 安全的技能摘要 */
 export interface SkillSummary {
+  skillId: string
   name: string
   nameZh?: string
   description: string
@@ -120,9 +123,14 @@ export interface SkillCatalogSnapshot {
   thirdPartySources: ThirdPartySkillSourceStatus[]
 }
 
+/** 不传参数保留完整管理目录；指定模式返回当前可手动调用的投影。 */
+export interface SkillCatalogQuery {
+  mode: Mode
+}
+
 /** preload window.nova.skill API 形状 */
 export interface NovaSkillApi {
-  list(): Promise<SkillCatalogSnapshot>
+  list(query?: SkillCatalogQuery): Promise<SkillCatalogSnapshot>
   get(name: string): Promise<SkillSummary | null>
   getBody(name: string): Promise<string | null>
   create(input: SkillCreateInput): Promise<SkillSummary>

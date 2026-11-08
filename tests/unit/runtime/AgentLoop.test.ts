@@ -19,6 +19,7 @@ import { agentRoute, resolveAgentTurnRoute } from '../../../src/runtime/agent/tu
 import { PermissionManager } from '../../../src/runtime/permissions/PermissionManager'
 import type { AgentEvent } from '../../../src/runtime/agent/types'
 import { makeCompactionLedger } from '../../../src/test-support/builders/compactionLedger'
+import { getModeInstruction } from '../../../src/runtime/agent/promptBuilder/modeInstruction'
 
 /** 创建一个包含 ls 工具的测试 Registry */
 function createTestRegistry(): ToolRegistry {
@@ -418,8 +419,7 @@ describe('AgentLoop', () => {
     expect(calls[1].tools?.map(tool => tool.name)).toContain('switch_mode')
     const transitionInstruction = calls[1].messages.at(-1)
     expect(transitionInstruction?.role).toBe('user')
-    expect(transitionInstruction?.content).toContain('[当前模式: plan')
-    expect(transitionInstruction?.content).toContain('save_plan')
+    expect(transitionInstruction?.content).toContain(getModeInstruction('plan'))
   })
 
   it('模型把工具调用误写成 JSON 文本时，仍会兜底解析并继续对话', async () => {

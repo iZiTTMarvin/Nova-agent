@@ -5,12 +5,19 @@ import * as path from 'node:path'
 import { SessionStore } from '../../../src/runtime/sessions/SessionStore'
 import { WorkspaceService } from '../../../src/main/services/WorkspaceService'
 import { isSessionTurnInProgress } from '../../../src/main/agent/state'
+import { DEFAULT_NOVA_SETTINGS, loadNovaSettings } from '../../../src/runtime/settings/novaSettings'
+import type * as NovaSettingsModule from '../../../src/runtime/settings/novaSettings'
 
 vi.mock('electron', () => ({
   app: { getPath: vi.fn(() => '/tmp/nova-test-userdata') },
   dialog: { showOpenDialog: vi.fn() },
   BrowserWindow: class {}
 }))
+
+vi.mock('../../../src/runtime/settings/novaSettings', async importOriginal => {
+  const actual = await importOriginal<typeof NovaSettingsModule>()
+  return { ...actual, loadNovaSettings: vi.fn() }
+})
 
 vi.mock('../../../src/runtime/agent', () => ({
   calculateContextBreakdown: () => ({ payload: {} })
@@ -57,6 +64,7 @@ describe('WorkspaceService mode gate', () => {
       getSessionStore: () => store,
       getMainWindow: () => null
     })
+    vi.mocked(loadNovaSettings).mockReturnValue({ ...DEFAULT_NOVA_SETTINGS, defaultMode: 'pilot' })
     vi.mocked(isSessionTurnInProgress).mockReturnValue(false)
   })
 
@@ -74,6 +82,35 @@ describe('WorkspaceService mode gate', () => {
       currentProjectPath: workspace,
       currentMode: 'plan'
     })
+  })
+
+  it('无会话入口消费默认模式，显式选择与学习会话优先', () => {
+    service.initOnStartup()
+    expect(service.getState().currentMode).toBe('pilot')
+    const created = service.createSession({ workspaceRoot: workspace })
+    expect(created.currentMode).toBe('pilot')
+    expect(store.load(created.currentSessionId!)?.mode).toBe('pilot')
+    const learning = service.createSession({ workspaceRoot: workspace, mode: 'learn' })
+    expect(learning.currentMode).toBe('learn')
+    expect(service.createSession({ workspaceRoot: workspace }).currentMode).toBe('learn')
+  })
+
+  it('最后一个会话删除后重新消费默认设置', async () => {
+    const session = store.create(workspace, 'default')
+    service = new WorkspaceService({
+      disposeIdleLoopForSession: vi.fn(),
+      getSessionStore: () => store,
+      getMainWindow: () => null,
+      getRunCoordinator: () => ({
+        assertNoNonTerminalRunsForSessions() {},
+        deleteRunsForSessions() {},
+        listSnapshotsForSessions: () => []
+      })
+    })
+    service.initOnStartup()
+    await service.deleteSession(session.id)
+    expect(service.getState().currentMode).toBe('pilot')
+    expect(service.createSession({ workspaceRoot: workspace }).currentMode).toBe('pilot')
   })
 
   it('用户可以在没有 active plan 时手动退出 Plan 模式', () => {

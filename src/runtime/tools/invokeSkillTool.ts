@@ -38,6 +38,10 @@ export function createInvokeSkillTool(deps: InvokeSkillToolDeps): ToolExecutor {
       const skillName = String(args.skill_name ?? '')
       const task = String(args.task ?? '')
 
+      if (ctx.mode === 'pilot' && !deps.skillRegistry.isBuiltinPilotReference(skillName)) {
+        return { success: false, output: '', error: '领航模式只允许模型调用 builtin:nova-pilot；通用技能须由用户手动调用。' }
+      }
+
       const result = invokeSkillForTool(skillName, task, deps.skillRegistry, {
         workspacePath: ctx.workingDir,
         arguments: task

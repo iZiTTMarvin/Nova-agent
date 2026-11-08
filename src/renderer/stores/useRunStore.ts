@@ -77,7 +77,7 @@ export function selectBackgroundRunningSessions(
   }
   const map = new Map<string, RunningSessionBadge>()
   for (const snap of Object.values(state.snapshotsByRunId)) {
-    if (!snap.parentRunId && BACKGROUND_RUNNING_STATUSES.has(snap.status) && snap.sessionId !== currentSessionId) {
+    if (!snap.dispatch && BACKGROUND_RUNNING_STATUSES.has(snap.status) && snap.sessionId !== currentSessionId) {
       map.set(snap.sessionId, { sessionId: snap.sessionId, runId: snap.runId })
     }
   }

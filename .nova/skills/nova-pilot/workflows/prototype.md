@@ -1,37 +1,35 @@
-# 原型决策
+# Prototype for a decision
 
-原型是一次性工具，用来做一个设计或行为决策。它不进入生产代码，也不替代正式验证。
+A prototype is a disposable tool for deciding a design or behavior question. It stays outside production code and does not replace formal verification of the eventual implementation.
 
-## 1. 先确定它要回答哪个问题
+## 1. Define the question
 
-- 问题必须具体：哪种布局、哪种交互、哪种密度；或者某个行为、时序、方案是否可行。
-- 没有明确决策就不做原型，直接按功能开发推进。
-- 写清“看到什么结果就选哪个方案”，避免做完再找理由。
+- Choose a concrete question about layout, interaction, density, behavior, timing, or feasibility.
+- Proceed with feature development when there is no unresolved decision to explore.
+- Define which observation would favor each option before building the prototype.
 
-## 2. 需要时先收集参考
+## 2. Gather references when needed
 
-- 设计空间完全开放时，先找同类产品、现有实现或参考样式，归纳几组方向让用户挑。
-- 方向已经确定时跳过这一步，不要用调研拖延实现。
+- When the design space is open, compare similar products, existing implementations, or visual references and offer a few directions for the user to choose from.
+- Skip research when the direction is already decided.
 
-## 3. 在隔离目录里做最轻的东西
+## 3. Build the lightest isolated artifact
 
-- 放在独立草稿目录，不混入生产源码，不接生产框架。
-- 视觉决策用最轻的 HTML/CSS/JS 或现成模板；行为或时序决策用最小脚本。
-- 不写测试、不做抽象、不追求代码质量。原型的严谨性在于用最低成本选对方向。
+- Use a separate draft directory, outside production source and framework integration.
+- Use lightweight HTML/CSS/JS or an existing template for visual questions, and a minimal script for behavior or timing questions.
+- Avoid tests, abstractions, and production-quality scaffolding. Rigor here means reaching the right decision at low cost.
 
-## 4. 少量方案并排比较
+## 4. Compare a few viable alternatives
 
-- 二到三个结构上真正不同的方案，放在同一个切换器后面，每个标注清楚。
-- 方案之间要能回答同一个问题，不要做成三个不同问题。
+- Present two or three structurally distinct variants behind a shared switcher, with clear labels.
+- Every variant must answer the same question.
 
-## 5. 用观察做判断
+## 5. Decide from observation
 
-- 视觉方案：截图每个变体，并真实操作关键交互。
-- 行为或时序方案：打印实际输出、记录耗时、观察渲染结果。
-- 观察结果就是这一步的验证，不需要断言。
+- For visual variants, capture each one and operate the key interactions.
+- For behavior or timing, inspect actual output, measurements, or rendered results.
+- These observations verify the prototype's decision; additional assertions are unnecessary.
 
-## 6. 交付决策，不交付代码
+## 6. Deliver the decision
 
-- 给出：探索了哪些变体、证据（截图或实际输出）、权衡、推荐方案、草稿路径。
-- 明确说明原型是一次性的。
-- 选定的方向交回功能开发（或先定结构）做真正的实现。
+Report the variants, screenshots or actual output, tradeoffs, recommendation, and draft path. State that the prototype is disposable. Continue the chosen direction through feature development, defining the structure first if needed.

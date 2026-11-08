@@ -57,6 +57,37 @@ describe('SkillService', () => {
     expect(names).toContain('new')
   })
 
+  it('领航目录只投影已许可身份，默认候选遵循现有可调用规则，同名覆盖不继承许可', () => {
+    for (const [name, extra] of [
+      ['visible', ''], ['hidden', 'hidden: true\n'],
+      ['internal', 'user-invocable: false\n'], ['restricted', 'agent: review\n']
+    ]) {
+      mkdirSync(join(globalDir, name), { recursive: true })
+      writeFileSync(join(globalDir, name, 'SKILL.md'), `---\nname: ${name}\ndescription: domain\n${extra}---\nDOMAIN_BODY`)
+    }
+    mkdirSync(join(globalDir, 'invalid'), { recursive: true })
+    writeFileSync(join(globalDir, 'invalid', 'SKILL.md'), '')
+    service.load(projectRoot)
+    const candidates = service.listUserInvocable('default')
+    expect(candidates.map(skill => skill.name).sort()).toEqual(['my-global', 'new', 'onboard', 'visible'])
+    const selected = candidates.find(skill => skill.name === 'visible')!
+    expect(service.listForPilot([])).toEqual([])
+    expect(service.listForPilot([selected.skillId]).map(skill => skill.name)).toEqual(['visible'])
+    expect(service.getRegistry().listForContext('pilot')).toEqual([])
+    expect(service.getRegistry().listForContext('default').some(skill => skill.name === 'visible')).toBe(true)
+
+    const projectSkill = join(projectRoot, '.nova', 'skills', 'visible')
+    mkdirSync(projectSkill, { recursive: true })
+    writeFileSync(join(projectSkill, 'SKILL.md'), md('visible', 'replacement'))
+    service.reload()
+    expect(service.get('visible')?.source).toBe('project')
+    expect(service.listForPilot([selected.skillId])).toEqual([])
+    const replacement = service.get('visible')!
+    expect(replacement.skillId).not.toBe(selected.skillId)
+    service.load(null)
+    expect(service.get('visible')?.skillId).not.toBe(selected.skillId)
+  })
+
   it('create 写入 global 目录并可 list', () => {
     service.load(null)
     const created = service.create({

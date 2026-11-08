@@ -1,28 +1,28 @@
-# 只读调查
+# Read-only investigation
 
-调查类任务的交付物是一个有证据的答案或推荐，不是代码改动。
+Deliver an evidence-backed answer or recommendation. Investigation does not authorize code changes.
 
-## 1. 先定交付物
+## 1. Define the deliverable
 
-- 是解释“它怎么工作 / 为什么这样设计”，还是在几个方案里给推荐？
-- 解释类输出：概览、关键概念、运行机制、代码位置、容易踩的坑。
-- 决策类输出：候选方案、权衡表、你的判断和理由。只罗列选项不算交付。
+- Determine whether the user needs an explanation of behavior or design, or a recommendation among options.
+- For explanations, cover the overview, key concepts, execution mechanism, code locations, and likely pitfalls.
+- For decisions, compare viable options, explain tradeoffs, and make a reasoned recommendation. Listing options alone is insufficient.
 
-## 2. 只读地追事实
+## 2. Trace facts without modifying the system
 
-- 从真实入口向外追调用链：路由、handler、service、store、持久化，直到能解释目标行为。
-- 用 `read`、`grep`、`find`、`ls`、`code_context` 定位；跨模块时先看公共契约再进实现。
-- 区分三类内容：源码事实、设计意图、你的推断。推断必须标明。
-- 结论尽量给到文件与行；只给文件名不够。
+- Follow real entry points through routes, handlers, services, stores, and persistence until the target behavior is explained.
+- Locate evidence with `read`, `grep`, `find`, `ls`, or `code_context`. Read public contracts before crossing into another module's implementation.
+- Distinguish source facts, design intent, and inference; label inference explicitly.
+- Cite file and line locations when possible, rather than filenames alone.
 
-## 3. 不要偷偷扩大范围
+## 3. Keep the authorized scope
 
-- 不改业务代码，不新建第二套状态，不为“顺手”重构。
-- 如果调查中发现真实缺陷，写进结论并说明影响，等用户决定是否修。
-- 调查之后要接着改代码时，交回用户并切到功能开发或缺陷修复方法。
+- Preserve application code and state; avoid incidental refactors or a second state path.
+- Report discovered defects and their impact so the user can decide whether to authorize a fix.
+- Hand the decision back to the user before continuing into implementation, then use the feature-development or bug-fixing method.
 
-## 4. 给出判断
+## 4. Give a judgment
 
-- 用户问“这样可行吗”时给真实判断，包括反对意见和理由。
-- 前提本身有问题就直接说，不要为了顺从而给一个勉强的方案。
-- 结论里写清证据覆盖到什么程度，哪些是没验证的推测。
+- Answer feasibility questions directly, including objections and their reasons.
+- State when the premise is incorrect instead of forcing a compliant but unsound proposal.
+- Explain what the evidence covers and which conclusions remain unverified inferences.

@@ -3,7 +3,7 @@
  * 对齐 docs/skill-system-design.md §5.8
  */
 import { ipcRenderer } from 'electron'
-import type { NovaSkillApi } from '../shared/skills/types'
+import type { NovaSkillApi, SkillCatalogSnapshot } from '../shared/skills/types'
 import {
   SKILL_LIST,
   SKILL_GET,
@@ -19,7 +19,7 @@ import {
 import { invokeMain } from './remoteInvoke'
 
 export const skillApi: NovaSkillApi = {
-  list: () => invokeMain(SKILL_LIST),
+  list: (query) => invokeMain(SKILL_LIST, query),
 
   get: (name) => invokeMain(SKILL_GET, name),
 
@@ -38,7 +38,7 @@ export const skillApi: NovaSkillApi = {
   pickImportFile: () => invokeMain(SKILL_PICK_IMPORT),
 
   onChange: (cb) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: { snapshot: import('../shared/skills/types').SkillCatalogSnapshot }) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { snapshot: SkillCatalogSnapshot }) => {
       cb(data.snapshot)
     }
     ipcRenderer.on(SKILL_CHANGED, handler)

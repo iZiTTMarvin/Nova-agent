@@ -1,41 +1,39 @@
-# 性能问题
+# Performance work
 
-每个修复都要绑定一次测量。不要用读源码代替测量，也不要凭感觉声称快了。
+Tie every optimization to a measurement. Source inspection does not replace measurement, and perceived speed is not a measured improvement.
 
-## 1. 先建基线
+## 1. Establish a baseline
 
-- 在匹配的真实界面采集基线：真实命令、真实页面、真实负载。
-- 保存原始产物（profile、日志、计时输出、请求记录），后面每个数字都要能对比。
-- 先确认基线本身可信：测的是不是你以为的那段工作，环境是否稳定，是否被缓存影响。
-- 没有基线就不开始改。
+- Measure through the matching real command, page, or workload.
+- Save raw profiles, logs, timings, or request records so later measurements can be compared.
+- Confirm that the baseline measures the intended work, the environment is stable, and cache effects are understood.
+- Establish the baseline before changing code.
 
-## 2. 按成本顺序找原因
+## 2. Investigate in cost order
 
-先理解相关子系统，再按下面的顺序尝试，越靠前越便宜：
+Understand the affected subsystem, then consider these approaches from cheapest to most involved:
 
-1. 不做：结果没人用的工作直接停掉。
-2. 不重复做：缓存、去重、避免重复请求。
-3. 少做：缩小数据量、范围或频率。
-4. 晚做：延后到真正需要时。
-5. 并发做。
-6. 更便宜地做：换算法、换数据结构、减少分配。
+1. Stop work whose result is unused.
+2. Avoid repeated work through caching, deduplication, or fewer requests.
+3. Reduce data volume, scope, or frequency.
+4. Defer work until it is needed.
+5. Run independent work concurrently.
+6. Use cheaper algorithms, data structures, or fewer allocations.
 
-靠前的办法已经达标就停，不要为了“更彻底”继续往下。
+Stop when an earlier approach meets the target.
 
-## 3. 一次只改一个假设
+## 3. Change one hypothesis at a time
 
-- 每次改动对应一个明确假设，改完立刻测量，再决定保留或回退。
-- 改前改后都用同一口径、同一环境、同一产物格式。
-- 结论不确定时标为不确定，不要当成提升。
+- Associate each change with a specific hypothesis, measure immediately, then retain or revert it.
+- Use the same metric definition, environment, and artifact format before and after.
+- Mark uncertain results as uncertain rather than reporting an improvement.
 
-## 4. 解释数字
+## 4. Explain the measurements
 
-- 说清瓶颈在哪：CPU、IO、网络、渲染、锁竞争还是数据量。
-- 说清口径：样本量、冷热缓存、并发度、机器环境。
-- 区分实测、推断和猜测。没测过的部分不要写成结论。
+- Identify the bottleneck: CPU, I/O, network, rendering, lock contention, or data volume.
+- State sample size, warm or cold cache, concurrency, and machine environment.
+- Distinguish measurements, inference, and guesses. Keep unmeasured behavior out of the conclusions.
 
-## 5. 汇报
+## 5. Report
 
-- 给出基线值、改后值、差值和产物路径。
-- 说明这次优化覆盖的场景，以及没覆盖的场景。
-- 没有达到目标时如实说明，并给出下一步可选方向。
+Give baseline and final measurements, their difference, artifact paths, covered scenarios, and untested boundaries. If the target was not met, say so and identify viable next steps.

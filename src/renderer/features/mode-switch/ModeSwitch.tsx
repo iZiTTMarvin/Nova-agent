@@ -89,12 +89,20 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
       desc: '分析仓库并保存到项目 .nova/plans，确认后衔接默认模式',
       icon: <PlanIcon size={14} />
     },
+    {
+      id: 'pilot',
+      name: '领航模式',
+      desc: '按任务组织开发，用真实结果验证交付',
+      icon: <SparklesIcon size={14} />
+    },
   ]
 
   const activeOption = modeOptions.find(option => option.id === currentMode) ?? modeOptions[0]
   const activeChip = currentMode === 'plan'
     ? { label: 'Plan', className: 'mode-switch__chip--plan' }
-    : null
+    : currentMode === 'pilot'
+      ? { label: '领航', className: '' }
+      : null
 
   const openMenu = () => {
     setSwitchError(null)

@@ -10,6 +10,7 @@ import {
   type SkillLoaderOptions
 } from './SkillLoader'
 import type { LoadError, SkillManifest, SkillSource } from './types'
+import { createSkillId } from '../../shared/skills/identity'
 
 export interface SkillRegistryLoadOptions extends SkillLoaderOptions {
   /** 工作区根目录，自动解析 projectDir = <root>/.nova/skills */
@@ -62,6 +63,12 @@ export class SkillRegistry {
     return this.loader.get(name)
   }
 
+  isBuiltinPilotReference(name: string): boolean {
+    if (name !== 'builtin:nova-pilot') return false
+    const skill = this.loader.get(name)
+    return skill?.source === 'builtin' && skill.name === 'nova-pilot' && !skill.invalid
+  }
+
   getErrors(): LoadError[] {
     return this.loader.getErrors()
   }
@@ -74,8 +81,14 @@ export class SkillRegistry {
     return this.loader.listForContext(profile)
   }
 
-  listUserInvocable(): SkillManifest[] {
-    return this.loader.listUserInvocable()
+  listUserInvocable(profile?: string): SkillManifest[] {
+    return this.loader.listUserInvocable().filter(skill => SkillLoader.isAgentAllowed(skill, profile))
+  }
+
+  canInvokeInPilot(skill: SkillManifest, permittedIds: readonly string[], workspaceRoot?: string): boolean {
+    return skill.userInvocable && !skill.hidden && !skill.invalid &&
+      SkillLoader.isAgentAllowed(skill, 'default') && SkillLoader.isAgentAllowed(skill, 'pilot') &&
+      permittedIds.includes(createSkillId(skill, workspaceRoot ?? this.lastOpts.workspaceRoot))
   }
 
   /** 内部 loader 访问（测试 / 扩展） */

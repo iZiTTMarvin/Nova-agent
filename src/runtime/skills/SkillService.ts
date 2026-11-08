@@ -7,6 +7,7 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { SkillRegistry } from './SkillRegistry'
 import { resolveBuiltinSkillsDir } from './SkillLoader'
+import { createSkillId } from '../../shared/skills/identity'
 import { describeThirdPartySources, resolveThirdPartySkillDirs } from './thirdPartySources'
 import { loadNovaSettings } from '../settings/novaSettings'
 import {
@@ -40,8 +41,9 @@ export interface SkillServiceOptions {
 }
 
 /** 将完整 manifest 转为 IPC 安全摘要 */
-export function toSkillSummary(skill: SkillManifest): SkillSummary {
+export function toSkillSummary(skill: SkillManifest, workspaceRoot?: string | null): SkillSummary {
   return {
+    skillId: createSkillId(skill, workspaceRoot),
     name: skill.name,
     nameZh: skill.nameZh,
     description: skill.description,
@@ -186,19 +188,26 @@ export class SkillService {
     return this.getRegistry()
       .getLoader()
       .listAll()
-      .map(toSkillSummary)
+      .map(skill => toSkillSummary(skill, this.workspaceRoot))
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  listUserInvocable(): SkillSummary[] {
+  listUserInvocable(profile?: string): SkillSummary[] {
     return this.getRegistry()
-      .listUserInvocable()
-      .map(toSkillSummary)
+      .listUserInvocable(profile)
+      .map(skill => toSkillSummary(skill, this.workspaceRoot))
+  }
+
+  listForPilot(permittedIds: readonly string[]): SkillSummary[] {
+    const registry = this.getRegistry()
+    return registry.listUserInvocable('default')
+      .filter(skill => registry.canInvokeInPilot(skill, permittedIds, this.workspaceRoot ?? undefined))
+      .map(skill => toSkillSummary(skill, this.workspaceRoot))
   }
 
   get(name: string): SkillSummary | null {
     const skill = this.getRegistry().get(name)
-    return skill ? toSkillSummary(skill) : null
+    return skill ? toSkillSummary(skill, this.workspaceRoot) : null
   }
 
   /** 获取技能完整正文（创建模板等场景） */
@@ -239,7 +248,7 @@ export class SkillService {
     if (!created) {
       throw new Error(`创建后未能加载技能：${name}`)
     }
-    return toSkillSummary(created)
+    return toSkillSummary(created, this.workspaceRoot)
   }
 
   /**
@@ -303,7 +312,7 @@ export class SkillService {
       if (!imported) {
         throw new Error(`导入后未能加载技能：${name}`)
       }
-      return toSkillSummary(imported)
+      return toSkillSummary(imported, this.workspaceRoot)
     } finally {
       temp.cleanup()
     }

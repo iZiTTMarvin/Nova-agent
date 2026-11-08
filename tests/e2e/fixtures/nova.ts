@@ -19,7 +19,7 @@ import {
   WORKSPACE_SELECT_PROJECT,
   WORKSPACE_SELECT_SESSION
 } from '../../../src/shared/ipc/channels'
-import type { IpcCommandChannel, IpcCommands, IpcEvents } from '../../../src/shared/ipc/types'
+import type { IpcCommandChannel, IpcCommands, IpcEvents, IpcInvokeArgs } from '../../../src/shared/ipc/types'
 import { isTerminalRunStatus, type RunSnapshot } from '../../../src/shared/run/types'
 import type { Mode } from '../../../src/shared/session/types'
 import { startFakeRuntime, type FakeRuntime } from './fake-runtime'
@@ -27,9 +27,6 @@ import type { ToolPresentationMode } from '../../../src/runtime/code-mode/presen
 
 const repoRoot = path.resolve(__dirname, '../../..')
 
-type IpcInvokeArgs<C extends IpcCommandChannel> = IpcCommands[C]['params'] extends void
-  ? []
-  : [IpcCommands[C]['params']]
 
 interface LaunchOptions {
   executablePath?: string

@@ -3,7 +3,7 @@
  * 声明 preload 通过 contextBridge 暴露的 API 类型
  * 所有 IPC 通信必须通过此 API，renderer 无法直接访问 Node/Electron API
  */
-import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents } from '../../shared/ipc/types'
+import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents, IpcInvokeArgs } from '../../shared/ipc/types'
 import type { NovaSkillApi } from '../../shared/skills/types'
 
 export {}
@@ -16,7 +16,7 @@ declare global {
     api: {
       invoke: <C extends IpcCommandChannel>(
         channel: C,
-        ...args: IpcCommands[C]['params'] extends void ? [] : [IpcCommands[C]['params']]
+        ...args: IpcInvokeArgs<C>
       ) => Promise<IpcCommands[C]['result']>
 
       on: <C extends IpcEventChannel>(

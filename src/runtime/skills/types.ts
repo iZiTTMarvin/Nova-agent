@@ -65,10 +65,7 @@ export interface SkillManifest {
   invalidReason?: string
   warnings: string[]
   hasSupportingFiles: boolean
-  /**
-   * 隐藏技能：仅 compose 模式对模型可见（编排 skill）。
-   * 非 compose 的 listForContext 会过滤掉。
-   */
+  /** 不进入模型清单和用户 Slash 目录；内部能力通过受保护引用显式调用。 */
   hidden?: boolean
 }
 

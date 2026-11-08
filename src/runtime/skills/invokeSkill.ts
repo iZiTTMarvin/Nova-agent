@@ -93,6 +93,9 @@ export function invokeSkillForTool(
   if (!skill) {
     return { success: false, output: '', error: `技能 "${skillName}" 未找到` }
   }
+  if (skill.invalid) {
+    return { success: false, output: '', error: `技能 "${skillName}" 无效：${skill.invalidReason ?? 'invalid manifest'}` }
+  }
   if (!skill.modelInvocable) {
     return { success: false, output: '', error: `技能 "${skillName}" 禁止模型调用` }
   }

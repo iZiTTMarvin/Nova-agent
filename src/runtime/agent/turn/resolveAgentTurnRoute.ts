@@ -15,6 +15,7 @@ import {
 import type { SkillRegistry } from '../../skills/SkillRegistry'
 import type { SkillDispatchResult, SkillManifest } from '../../skills/types'
 import { invokeSkill } from '../../skills/invokeSkill'
+import { parseSlashCommand } from '../../skills/parseSlashCommand'
 import {
   resolveNativeCommandDispatch,
   type NativeCommandAgentDispatch
@@ -44,6 +45,7 @@ export interface ResolveTurnRouteInput {
   workspacePath?: string
   regenerate?: boolean
   hasImages?: boolean
+  pilotSkillIds?: readonly string[]
 }
 
 /**
@@ -77,6 +79,17 @@ export function resolveAgentTurnRoute(input: ResolveTurnRouteInput): AgentTurnRo
 
   if (!skillRegistry) {
     return { kind: 'agent', dispatch: { kind: 'passthrough' } }
+  }
+
+  if (mode === 'pilot') {
+    const parsed = parseSlashCommand(content, skillRegistry, mode)
+    if (parsed.found && parsed.skill &&
+      !skillRegistry.canInvokeInPilot(parsed.skill, input.pilotSkillIds ?? [], workspacePath)) {
+      return {
+        kind: 'slash_rejected',
+        rejection: { reason: 'not_user_invocable', skillName: parsed.skill.name, suggestions: [] }
+      }
+    }
   }
 
   const dispatch = invokeSkill({

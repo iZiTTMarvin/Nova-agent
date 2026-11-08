@@ -282,6 +282,10 @@ export class WorkspaceService {
     this.tier1StaleDiffMessageIds = []
   }
 
+  private defaultDevelopmentMode(): Mode {
+    return loadNovaSettings().defaultMode
+  }
+
   /**
    * 启动时初始化：从 SessionStore 加载会话列表，选中最近一条会话（若有）。
    * 在 registerIpcHandlers 之后、createMainWindow 之前调用。
@@ -303,7 +307,7 @@ export class WorkspaceService {
     this.state = {
       currentSessionId: selected?.id ?? null,
       currentProjectPath: selected?.workspaceRoot ?? null,
-      currentMode: selected?.mode ?? 'default',
+      currentMode: selected?.mode ?? this.defaultDevelopmentMode(),
       reasoningEffortOverride: selectedDetail?.reasoningEffortOverride ?? null,
       activeModelRef: this.resolveEffectiveModelRef(selectedDetail ?? undefined),
       availableSessions: sessions
@@ -375,7 +379,9 @@ export class WorkspaceService {
   /** 显式创建新会话（使用给定 workspaceRoot，或沿用当前项目） */
   createSession(params: { workspaceRoot: string; mode?: Mode }): WorkspaceState {
     const store = this.deps.getSessionStore()
-    const mode = parseStrictMode(params.mode ?? this.state.currentMode)
+    const mode = parseStrictMode(params.mode ?? (
+      this.state.currentSessionId ? this.state.currentMode : this.defaultDevelopmentMode()
+    ))
     const existing = store.listDrafts().find(draft =>
       path.relative(draft.workspaceRoot, params.workspaceRoot) === '' &&
       (draft.mode === 'learn') === (mode === 'learn')
@@ -561,7 +567,7 @@ export class WorkspaceService {
         this.state = {
           currentSessionId: null,
           currentProjectPath: null,
-          currentMode: 'default',
+          currentMode: this.defaultDevelopmentMode(),
           reasoningEffortOverride: null,
           activeModelRef: null,
           availableSessions: []

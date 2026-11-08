@@ -1,46 +1,40 @@
-# 通用开发方法
+# General development method
 
-用于没有更贴合方法的任务：跨多个模块的改动、一次性说不清形态的工作、或者你还不确定该按哪种方式推进。
+Use when no more specific method fits: changes across several modules, tasks whose shape is unclear, or work that still needs a practical approach.
 
-## 1. 先把完成标准写成可检验的句子
+## 1. Define observable completion
 
-- 一句话说清“做到什么算完成”，要能被观察或运行证伪，例如“打开设置页能看到领航选项，切换到领航后新消息带领航指令”。
-- 写清范围与非目标。不要用“优化一下”“完善体验”当完成标准。
-- 标准不清楚时，先做只读调查把它变清楚，而不是先写代码。
+- State completion as an observable, falsifiable outcome, such as a pilot option appearing in settings and subsequent messages receiving the pilot instruction after switching modes.
+- Define scope and non-goals. Replace vague requests to improve or polish something with a checkable result.
+- If completion is unclear, investigate read-only before writing code.
 
-## 2. 理解真实结构再动手
+## 2. Understand the actual structure
 
-- 读真实调用方、被调用方、公共类型、状态 Owner、依赖方向和相邻实现。命名一个文件不算理解。
-- 关键问题：这份可变状态谁写？跨模块的契约在哪定义？改动会穿过哪条依赖方向？
-- 已有测试是业务边界的重要来源，先读相关测试再改。
+- Read real callers, callees, public types, state owners, dependency directions, and adjacent implementations.
+- Identify who writes each mutable state, where cross-module contracts are defined, and which dependency boundaries the change crosses.
+- Read relevant tests for existing behavior and boundaries before editing.
 
-## 3. 拆成可独立验证的小步
+## 3. Break work into verifiable steps
 
-- 把步骤写进 `todo_write`，每一步都应以一次可观察的检查结束。
-- 风险最高的未知排在最前；先搭最小验证路径，再做功能。
-- 每一步只做一个主要目标，做完就验证，不要把检查全部堆到最后。
+- Track steps with `todo_write`; end each step with an observable check.
+- Resolve the highest-risk unknown first. Establish a minimal verification path before implementing the feature.
+- Give each step one main objective and verify it before moving on.
 
-## 4. 用最小完整改变实现
+## 4. Make the smallest complete change
 
-- 先删死代码、一次性包装、重复校验，再加新结构。
-- 同一项决策只写在一处，不复制相似逻辑。
-- 不新增平行主路径、重复状态或“先留着以后删”的兼容分支。
-- 数据形状优先用类型、状态机、表或注册表表达，而不是散落的布尔和条件分支。
+- Remove dead code, disposable wrappers, and duplicate validation before adding structure.
+- Keep each decision in one place.
+- Avoid parallel main paths, duplicate state, and compatibility branches without a removal condition.
+- Express the domain through types, state machines, tables, or registries rather than scattered booleans and conditionals.
 
-## 5. 设计遇到系统性阻力时重估
+## 5. Reassess systemic resistance
 
-出现下列信号时，说明形状可能选错了，停下来重估，不要继续打补丁：
+Reconsider the design when the same workaround appears in several unrelated places, multiple boundaries need special cases, types require `any` or assertions to compile, callers must know internal rules, or the same design deviation has been repeated twice.
 
-- 同一种绕路在多个不相关位置反复出现。
-- 多个不相关边界都需要特判。
-- 类型需要 `any`、强制断言或“实际总会赋值”的可选字段才能编译。
-- 调用方必须了解内部规则才能正确使用。
-- 你已经连续两次用同一种偏差绕过设计。
+Re-read the affected code, treat the newly discovered constraint as part of the original problem, and choose a smaller design rather than adding another patch.
 
-重估时先重新理解已写下的代码，再把新约束当成第一天就存在的约束重新设计，并且新设计应该比旧设计更小。
+## 6. Verify through the real entry point and report
 
-## 6. 在真实入口验证并汇报
-
-- 用真实启动、真实交互或真实命令证明行为，不以“能编译”“类型通过”代替。
-- 汇报顺序：结论、改了什么、为什么、影响范围、验证方式与结果、未验证项。
-- 没能验证的部分要单独列出，不要混进“已完成”。
+- Use real startup, interaction, or commands to prove the behavior. Compilation and typechecking are insufficient on their own.
+- Report the result, changes, reasoning, impact, verification, and unverified boundaries.
+- List unverified work separately from completed work.

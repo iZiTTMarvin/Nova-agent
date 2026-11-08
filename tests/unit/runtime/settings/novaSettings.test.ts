@@ -6,6 +6,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { loadNovaSettings, saveNovaSettings } from '../../../../src/runtime/settings/novaSettings'
+import { createSkillId } from '../../../../src/shared/skills/identity'
 
 let mockHome: string
 
@@ -66,6 +67,23 @@ describe('novaSettings', () => {
     expect(loadNovaSettings().defaultMode).toBe('pilot')
 
     expect(() => saveNovaSettings({ defaultMode: 'compose' as never })).toThrow('defaultMode')
+  })
+
+  it('领航许可缺省关闭，读写统一规范化身份并去重，不扩大自动调用许可', () => {
+    expect(loadNovaSettings()).toMatchObject({ pilotSkillIds: [], pilotSkillGuideSeen: false })
+    const skillId = createSkillId({ name: 'frontend', source: 'project', sourcePath: 'C:/Work/skills/frontend/SKILL.md' }, 'C:/Work')
+    const nonCanonical = JSON.stringify(['frontend', 'project', 'C:\\Work\\skills\\frontend\\SKILL.md', 'C:/Work/.'])
+    writeFileSync(join(mockHome, '.nova', 'settings.json'), JSON.stringify({
+      pilotSkillIds: [skillId, nonCanonical, 'frontend', 42, {}, '["x"]'],
+      pilotSkillGuideSeen: 'yes'
+    }))
+    expect(loadNovaSettings()).toMatchObject({ pilotSkillIds: [skillId], pilotSkillGuideSeen: false })
+    saveNovaSettings({ pilotSkillIds: [nonCanonical, skillId, 'invalid'], pilotSkillGuideSeen: true })
+    expect(loadNovaSettings()).toMatchObject({ pilotSkillIds: [skillId], pilotSkillGuideSeen: true })
+    const before = readFileSync(join(mockHome, '.nova', 'settings.json'), 'utf8')
+    expect(() => saveNovaSettings({ pilotSkillIds: 'frontend' as never })).toThrow('pilotSkillIds')
+    expect(() => saveNovaSettings({ pilotSkillGuideSeen: 'yes' as never })).toThrow('pilotSkillGuideSeen')
+    expect(readFileSync(join(mockHome, '.nova', 'settings.json'), 'utf8')).toBe(before)
   })
 
   it('streamSmoothness 默认 smooth，合法值持久化，非法值拒绝且旧文件缺省回落', async () => {
@@ -299,6 +317,7 @@ describe('novaSettings', () => {
     const { initializeNovaSettingsForFirstRun, loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     initializeNovaSettingsForFirstRun({ hasHistorySessions: () => false })
     expect(loadNovaSettings().memoryEnabled).toBe(true)
+    expect(loadNovaSettings().defaultMode).toBe('pilot')
     expect(loadNovaSettings().memoryAutoExtractEnabled).toBe(false)
   })
 
@@ -306,14 +325,16 @@ describe('novaSettings', () => {
     const { initializeNovaSettingsForFirstRun, loadNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
     initializeNovaSettingsForFirstRun({ hasHistorySessions: () => true })
     expect(loadNovaSettings().memoryEnabled).toBe(false)
+    expect(loadNovaSettings().defaultMode).toBe('default')
     expect(existsSync(join(mockHome, '.nova', 'settings.json'))).toBe(false)
   })
 
   it('设置文件中已有值时首次运行初始化不覆盖', async () => {
     const { initializeNovaSettingsForFirstRun, loadNovaSettings, saveNovaSettings } = await import('../../../../src/runtime/settings/novaSettings')
-    saveNovaSettings({ memoryEnabled: false })
+    saveNovaSettings({ memoryEnabled: false, defaultMode: 'plan' })
     initializeNovaSettingsForFirstRun({ hasHistorySessions: () => false })
     expect(loadNovaSettings().memoryEnabled).toBe(false)
+    expect(loadNovaSettings().defaultMode).toBe('plan')
   })
 
   it('采集设置可保存并读回', async () => {

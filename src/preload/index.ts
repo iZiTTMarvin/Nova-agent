@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents } from '../shared/ipc/types'
+import type { IpcCommandChannel, IpcCommands, IpcEventChannel, IpcEvents, IpcInvokeArgs } from '../shared/ipc/types'
 import type { RendererMainLoopLagApi } from '../shared/diagnostics/mainLoopLagTypes'
 import {
   DEV_MAIN_LOOP_LAG_RESET,
@@ -14,7 +14,7 @@ import { invokeMain } from './remoteInvoke'
  */
 function invoke<C extends IpcCommandChannel>(
   channel: C,
-  ...args: IpcCommands[C]['params'] extends void ? [] : [IpcCommands[C]['params']]
+  ...args: IpcInvokeArgs<C>
 ): Promise<IpcCommands[C]['result']> {
   return invokeMain(channel, ...args)
 }

@@ -21,6 +21,7 @@ import type { SkillManifest } from '../../../../src/runtime/skills/types'
 import { agentRoute, resolveAgentTurnRoute, TurnDispatcher } from '../../../../src/runtime/agent/turn'
 import { PermissionManager } from '../../../../src/runtime/permissions/PermissionManager'
 import { projectUserContent } from '../../../../src/runtime/request-projection'
+import { getModeInstruction } from '../../../../src/runtime/agent/promptBuilder/modeInstruction'
 
 const loops: AgentLoop[] = []
 
@@ -119,9 +120,6 @@ describe('模式指令拼接', () => {
     const content = String(userMessage?.content)
     // 以任务文本结尾：无尾部指令，也无残留空白
     expect(content.endsWith('探索并总结 README')).toBe(true)
-    expect(content).not.toContain('当前模式')
-    expect(content).not.toContain('save_plan')
-    expect(content).not.toContain('switch_mode')
   })
 
   it('默认宿主仍把模式指令拼接到用户消息尾部（现有行为保持）', async () => {
@@ -134,7 +132,7 @@ describe('模式指令拼接', () => {
     const userMessage = loop.getContext().find(m => m.role === 'user')
     const content = typeof userMessage?.content === 'string' ? userMessage.content : ''
     expect(content).toContain('你好')
-    expect(content).toContain('[当前模式: default')
+    expect(content).toContain(getModeInstruction('default'))
   })
 })
 

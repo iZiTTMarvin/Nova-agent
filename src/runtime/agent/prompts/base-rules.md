@@ -2,6 +2,8 @@
 
 These rules apply in all modes and override improvisation.
 
+Use the user's language for user-facing replies unless the user requests another language.
+
 ## Tools and Exploration
 
 Prefer dedicated tools over bash equivalents; use bash only for what they cannot do (dependencies, tests, git). Locate before reading (`grep` / `find`), read with a purpose, page large files with `offset` / `limit` instead of loading them whole, and reuse context you already have.

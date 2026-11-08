@@ -1,42 +1,40 @@
-# 真实验证
+# Real verification
 
-用于“怎么证明这件事真的成立”。目标是走真实用户路径、拿到真实产物，并诚实说明覆盖范围。
+Use to establish whether a claim holds. Exercise the real user path, collect genuine artifacts, and report the limits of the evidence.
 
-## 1. 先调查仓库，不要先问用户
+## 1. Investigate the repository before asking the user
 
-从代码和文档回答这些问题，只有观察不到的才问：
+Answer these questions from code and documentation; ask only about what cannot be observed:
 
-- 用户真正接触的界面是什么：Web UI、桌面应用、CLI、HTTP API、库？
-- 项目自己怎么启动：`package.json` 脚本、Makefile、README 里的快速开始？端口、环境变量、种子数据是什么？
-- 现有可编程驱动手段是什么：已有 E2E、Playwright 配置、curl 端点、调试端口、CLI 参数？
-- 能采集什么证据：截图、终端输出、响应体、日志、退出码、数据库状态？
-- 能否并行运行两个实例：端口、数据目录、profile 是否隔离？
+- What surface does the user actually use: web UI, desktop application, CLI, HTTP API, or library?
+- How does the project start? Check package scripts, Makefiles, and documented quick starts for ports, environment variables, and seed data.
+- What programmable controls already exist: E2E tests, Playwright configuration, curl endpoints, debug ports, or CLI arguments?
+- Which evidence can be captured: screenshots, terminal output, response bodies, logs, exit codes, or database state?
+- Can two instances run in isolation with separate ports, data directories, and profiles?
 
-项目自带启动或测试路径优先复用，不要另造一套。
+Reuse the project's existing startup and test paths.
 
-## 2. 建立最小验证路径
+## 2. Establish the smallest real verification path
 
-- 从空数据目录启动也要能到可用状态，包括迁移和初始化数据。
-- “就绪”指真的可用，不是进程有响应：健康检查通过时初始化可能还在跑。
-- 驱动要使用真实用户路径，不用内部 setter、test-only 端点或直接改数据库。
-- 选择器优先稳定标识：无障碍标签、data 属性、路由、命令名，而不是坐标和 Tab 顺序。
+- Startup from an empty data directory must reach a usable state, including migrations and seed data.
+- Readiness means usable behavior, not merely a responding process; initialization may continue after a health check succeeds.
+- Drive real user paths instead of internal setters, test-only endpoints, or direct database edits.
+- Prefer stable accessible labels, data attributes, routes, and command names over coordinates or tab order.
 
-## 3. 保存证据
+## 3. Preserve evidence
 
-- 记录动作和结果状态，不只截最后一张图。
-- 同时核对可见结果和副作用：文件是否写入、记录是否插入、消息是否发出。
-- 证据放在固定位置，清理进程时不要删掉证据。
-- 只清理自己启动的实例，不要按进程名杀。
+- Record actions and resulting state, rather than only a final screenshot.
+- Check both the visible result and side effects, such as files, inserted records, or sent messages.
+- Save artifacts at a known location and preserve them when cleaning up processes.
+- Clean up only instances you started; avoid killing processes by name.
 
-## 4. 只在必要时上形式化验证
+## 4. Use formal verification only when warranted
 
-- 普通任务用真实运行和必要测试就够。
-- 并发、重试、协议、状态机、解析器、内存安全这类高风险边界，才考虑模型检查、不变量证明或生成输入测试。
-- 选工具时说明为什么选它；没有可用工具时，用生成输入测真实代码，不要用手写模型代替。
-- 形式化验证只覆盖模型或给定边界，不等于整个系统通过。
+- Ordinary tasks need real execution and proportionate tests.
+- Consider model checking, invariant proofs, or generated inputs for high-risk concurrency, retry, protocol, state-machine, parser, or memory-safety boundaries.
+- Explain why the chosen tool fits. When no suitable tool exists, exercise the actual code with generated inputs rather than substituting a handwritten model.
+- Formal verification covers its model or declared boundary, not the whole system.
 
-## 5. 如实报告
+## 5. Report honestly
 
-- 写清验证了什么、用什么方式、覆盖到哪、没覆盖什么。
-- 证据存在不等于验证通过；截图和日志本身不构成通过。
-- 无法验证时明确说“未验证”，不要用“应该没问题”补位。
+State what was verified, how, coverage, and untested boundaries. Artifacts are not pass verdicts; screenshots and logs alone do not prove success. Mark unverifiable behavior as unverified rather than filling the gap with reassurance.

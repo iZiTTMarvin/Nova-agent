@@ -2,7 +2,7 @@
  * SkillLoader — 多源扫描、优先级覆盖、错误收集
  * 优先级：builtin(0) < third_party(1) < global(2) < project(3)
  */
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, realpathSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { parseSkillMarkdown } from './frontmatter'
@@ -114,17 +114,20 @@ export function resolveBuiltinSkillsDir(getAppPath?: () => string): string {
 
 export class SkillLoader {
   private skills = new Map<string, SkillManifest>()
+  private readonly builtins: Map<string, SkillManifest>
   private errors: LoadError[] = []
   private shadowed: Record<string, SkillSource> = {}
 
   private constructor(
     skills: Map<string, SkillManifest>,
     errors: LoadError[],
-    shadowed: Record<string, SkillSource>
+    shadowed: Record<string, SkillSource>,
+    builtins: Map<string, SkillManifest>
   ) {
     this.skills = skills
     this.errors = errors
     this.shadowed = shadowed
+    this.builtins = builtins
   }
 
   /**
@@ -133,6 +136,7 @@ export class SkillLoader {
   static loadAll(opts: SkillLoaderOptions = {}): SkillLoader {
     const dirs = resolveDefaultSkillDirs(opts)
     const merged = new Map<string, SkillManifest>()
+    const builtins = new Map<string, SkillManifest>()
     const errors: LoadError[] = []
     const shadowed: Record<string, SkillSource> = {}
 
@@ -151,9 +155,12 @@ export class SkillLoader {
     for (const { dir, source, seen } of sources) {
       if (!dir) continue
       SkillLoader.scanDir(dir, source, merged, errors, shadowed, seen)
+      if (source === 'builtin') {
+        for (const [name, skill] of merged) builtins.set(name, skill)
+      }
     }
 
-    return new SkillLoader(merged, errors, shadowed)
+    return new SkillLoader(merged, errors, shadowed, builtins)
   }
 
   private static scanDir(
@@ -180,7 +187,7 @@ export class SkillLoader {
         const manifest = parseSkillMarkdown(content, {
           fallbackName: dirName,
           source,
-          sourcePath: skillPath,
+          sourcePath: realpathSync(skillPath),
           directory: skillDir
         })
 
@@ -222,6 +229,7 @@ export class SkillLoader {
   }
 
   get(name: string): SkillManifest | undefined {
+    if (name.startsWith('builtin:')) return this.builtins.get(name.slice('builtin:'.length))
     return this.skills.get(name)
   }
 
@@ -240,6 +248,7 @@ export class SkillLoader {
 
   /** 模型可见技能：modelInvocable + 非隐藏 + agent 域；全量收录，按名称固定排序 */
   listForContext(profile?: string): SkillManifest[] {
+    if (profile === 'pilot') return []
     return [...this.skills.values()]
       .filter(s => s.modelInvocable && !s.invalid && !s.hidden && SkillLoader.isAgentAllowed(s, profile))
       .sort((a, b) => a.name.localeCompare(b.name))

@@ -6,9 +6,10 @@ import type { BrowserWindow } from 'electron'
 import { app } from 'electron'
 import { SkillService, toCatalogDiagnostics } from '../../runtime/skills/SkillService'
 import type { SkillRegistry } from '../../runtime/skills/SkillRegistry'
-import type { SkillCatalogSnapshot } from '../../shared/skills/types'
+import type { SkillCatalogQuery, SkillCatalogSnapshot } from '../../shared/skills/types'
 import { SKILL_CHANGED } from '../../shared/ipc/channels'
 import { createSkillRootsWatcher } from './SkillRootsWatcher'
+import { loadNovaSettings } from '../../runtime/settings/novaSettings'
 
 let skillService: SkillService | null = null
 let boundWindow: BrowserWindow | null = null
@@ -98,9 +99,16 @@ function buildSnapshot(service: SkillService): SkillCatalogSnapshot {
  * 拉取当前快照（skill:list）。pull 不改变刷新语义，只返回上次推送状态。
  * 预热前不扫描：同步目录 IO 会堵住首屏期间的其他 IPC，此时返回 loading 快照，预热后推送终态。
  */
-export function getCatalogSnapshot(): SkillCatalogSnapshot {
+export function getCatalogSnapshot(query?: SkillCatalogQuery): SkillCatalogSnapshot {
   if (catalogWarmed && lastSnapshot.refreshedAt === null) {
     lastSnapshot = buildSnapshot(getSkillService())
+  }
+  if (query && lastSnapshot.refreshedAt !== null) {
+    const service = getSkillService()
+    const skills = query.mode === 'pilot'
+      ? service.listForPilot(loadNovaSettings().pilotSkillIds)
+      : service.listUserInvocable(query.mode)
+    return { ...lastSnapshot, skills }
   }
   return { ...lastSnapshot }
 }

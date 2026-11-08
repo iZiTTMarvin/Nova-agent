@@ -624,7 +624,8 @@ export async function sendAgentMessage(
     skillRegistry: prepared.skillRegistry,
     workspacePath: projectPath,
     regenerate: isRegenerate,
-    hasImages: (params.images?.length ?? 0) > 0
+    hasImages: (params.images?.length ?? 0) > 0,
+    pilotSkillIds: session.mode === 'pilot' ? loadNovaSettings().pilotSkillIds : undefined
   })
   // 新发送已在入口锁前 preflight；此处兜底重发（regenerate 取叶子文本）的拒绝。
   // 拒绝不落盘、不建 run、不进执行器。
@@ -853,7 +854,8 @@ function preflightSlashRejection(
     skillRegistry,
     workspacePath: session.workspaceRoot,
     regenerate: params.regenerate === true,
-    hasImages: (params.images?.length ?? 0) > 0
+    hasImages: (params.images?.length ?? 0) > 0,
+    pilotSkillIds: session.mode === 'pilot' ? loadNovaSettings().pilotSkillIds : undefined
   })
   return route.kind === 'slash_rejected' ? route.rejection : null
 }

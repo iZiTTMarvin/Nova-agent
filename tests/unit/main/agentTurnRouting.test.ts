@@ -224,6 +224,8 @@ import {
   sendAgentMessage
 } from '../../../src/main/agent/turn/AgentTurnService'
 import { SkillRegistry } from '../../../src/runtime/skills/SkillRegistry'
+import { createSkillId } from '../../../src/shared/skills/identity'
+import { loadNovaSettings } from '../../../src/runtime/settings/novaSettings'
 import {
   hasSteeringMessage,
   resetSteeringQueueForTests
@@ -357,19 +359,25 @@ describe('sendAgentMessage 路由行为级集成', () => {
     expect(sentRoutes[0]).toEqual({ kind: 'agent', dispatch: { kind: 'passthrough' } })
   })
 
-  it('pilot + 普通 slash skill → 仍创建 agent run', async () => {
-    registryHolder.current = createRegistry([{ name: 'onboard' }])
+  it('pilot + 已许可 slash skill → 仍创建 agent run', async () => {
+    const registry = createRegistry([{ name: 'onboard' }])
+    registryHolder.current = registry
     sessionStore.load.mockReturnValue(makeSession('pilot'))
-
-    await sendAgentMessage({ sessionId: 'sess-1', content: '/onboard 当前项目' }, deps)
-
-    expect(coordinator.startRun).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'agent' })
-    )
-    expect(sentRoutes[0]).toEqual(expect.objectContaining({
-      kind: 'agent',
-      dispatch: expect.objectContaining({ kind: 'inject' })
-    }))
+    const settings = loadNovaSettings()
+    vi.mocked(loadNovaSettings).mockReturnValue({
+      ...settings,
+      pilotSkillIds: [createSkillId(registry.get('onboard')!, '/tmp/ws')]
+    })
+    try {
+      const result = await sendAgentMessage({ sessionId: 'sess-1', content: '/onboard 当前项目' }, deps)
+      expect(result).toEqual({ accepted: true })
+      expect(coordinator.startRun).toHaveBeenCalledWith(expect.objectContaining({ kind: 'agent' }))
+      expect(sentRoutes[0]).toEqual(expect.objectContaining({
+        kind: 'agent', dispatch: expect.objectContaining({ kind: 'inject' })
+      }))
+    } finally {
+      vi.mocked(loadNovaSettings).mockReturnValue(settings)
+    }
   })
 
   it('default + 普通文本 → 创建 agent run', async () => {

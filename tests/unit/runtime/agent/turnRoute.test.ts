@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveAgentTurnRoute, routeRunKind, agentRoute } from '../../../../src/runtime/agent/turn'
 import { SkillRegistry } from '../../../../src/runtime/skills/SkillRegistry'
 import type { ContentBlock } from '../../../../src/runtime/model/types'
+import { createSkillId } from '../../../../src/shared/skills/identity'
 
 const roots: string[] = []
 
@@ -116,6 +117,39 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     if (route.kind === 'agent') {
       expect(route.dispatch.kind).toBe('inject')
     }
+  })
+
+  it.each([false, true])('领航用户 Slash 许可在正文注入或 fork 前按当前身份校验（fork=%s）', forkAgent => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-route-pilot-'))
+    roots.push(root)
+    const registry = createRegistry(root, [{ name: 'domain', forkAgent }])
+    const skill = registry.get('domain')!
+    const request = { content: '/domain task', mode: 'pilot' as const, skillRegistry: registry, workspacePath: root }
+    expect(resolveAgentTurnRoute(request)).toMatchObject({
+      kind: 'slash_rejected', rejection: { reason: 'not_user_invocable', skillName: 'domain' }
+    })
+    const id = createSkillId(skill, root)
+    const accepted = resolveAgentTurnRoute({ ...request, pilotSkillIds: [id] })
+    expect(accepted.kind).toBe(forkAgent ? 'skill_fork' : 'agent')
+    if (accepted.kind === 'agent') expect(accepted.dispatch.kind).toBe('inject')
+    expect(resolveAgentTurnRoute({ ...request, workspacePath: join(root, 'another-workspace'), pilotSkillIds: [id] }).kind).toBe('slash_rejected')
+    expect(resolveAgentTurnRoute({ ...request, mode: 'default' }).kind).toBe(forkAgent ? 'skill_fork' : 'agent')
+    expect(resolveAgentTurnRoute({ ...request, mode: 'plan' }).kind).toBe(forkAgent ? 'skill_fork' : 'agent')
+  })
+
+  it('领航不会把已许可同名 Skill 的其他来源或附件路径当成原身份', () => {
+    const root = mkdtempSync(join(tmpdir(), 'nova-route-replaced-'))
+    roots.push(root)
+    const registry = createRegistry(root, [{ name: 'domain' }])
+    const previous = registry.get('domain')!
+    const id = createSkillId(previous, root)
+    const projectDir = join(root, 'project-skills')
+    mkdirSync(join(projectDir, 'domain'), { recursive: true })
+    writeFileSync(join(projectDir, 'domain', 'SKILL.md'), '---\nname: domain\ndescription: replacement\n---\nREPLACEMENT_BODY')
+    const replaced = SkillRegistry.load({ globalDir: join(root, 'skills'), projectDir })
+    expect(resolveAgentTurnRoute({
+      content: '/domain', mode: 'pilot', skillRegistry: replaced, workspacePath: root, pilotSkillIds: [id]
+    }).kind).toBe('slash_rejected')
   })
 
   it('未找到的 slash → slash_rejected（不进 agent 执行）', () => {

@@ -1,37 +1,35 @@
-# 缺陷修复
+# Bug fixing
 
-每一行修复都要能追到运行证据。“可能有用”的防御性改动是假设，不是修复。
+Trace every fix to runtime evidence. A defensive change that might help is a hypothesis, not a verified fix.
 
-## 1. 先复现
+## 1. Reproduce first
 
-- 在匹配的真实入口复现：真实应用、真实命令、真实请求。
-- 记录复现条件、实际输出、期望输出。
-- 不能直接复现时，收紧条件、合成触发路径或加日志，直到问题稳定出现。
-- 只有真实控制面到不了目标时，才向用户要复现信息，并说明具体原因。
+- Reproduce through the matching real application, command, or request.
+- Record the trigger, actual output, and expected output.
+- If direct reproduction fails, narrow the conditions, construct a triggering path, or add targeted instrumentation until the failure is repeatable.
+- Ask the user for reproduction information only when the available real controls cannot reach the target, and explain the missing access.
 
-## 2. 按证据排除根因
+## 2. Eliminate causes with evidence
 
-- 先读相关子系统与回归历史，形成候选假设，再逐个排除。
-- 每次选择能砍掉最大剩余空间的验证，用运行证据排除，不靠读源码猜。
-- 状态不清楚时加临时日志或断点观察，读完再删。
-- 找到因果链里最早破坏约束的位置，而不是症状出现的位置。
+- Read the affected subsystem and regression history, form candidate hypotheses, and test them individually.
+- Choose observations that eliminate the most uncertainty. Use execution evidence rather than source-code speculation.
+- Inspect unclear state with temporary logs or breakpoints, then remove the instrumentation.
+- Find the earliest violated invariant in the causal chain.
 
-## 3. 修根因
+## 3. Fix the root cause
 
-- 在最早的破坏点修，不在多个下游加保护。
-- 先问这个状态本身是否合法：合法就在该处理它的地方处理；不合法就找产生它的地方。
-- 修复要保持最小完整：只改证据支持的部分，假设不成立时回退它带来的改动。
-- 同一根因的其他位置一起修；独立问题只记录，不擅自扩大范围。
+- Fix the earliest violation instead of adding protection to several downstream locations.
+- Determine whether the state is valid. Handle valid state with its responsible owner; trace invalid state back to its producer.
+- Change only what the evidence supports. Revert changes based on disproved hypotheses.
+- Address other instances of the same cause within scope; report independent issues without silently expanding the task.
 
-## 4. 在同一入口复验
+## 4. Verify at the same entry point
 
-- 原来的复现路径现在通过，才算修复。
-- 换入口、换环境、结论不确定都不算通过。
-- 单测能证明分支行为，不能证明缺陷消失；有便宜的本地测试路径时，先补失败测试再修。
-- 检查取消、失败、重试和清理路径没有被这次修复破坏。
+- The original reproduction path must pass after the fix.
+- A different entry point, changed environment, or uncertain result is not a pass.
+- Unit tests establish branch behavior, not disappearance of the defect. Add a failing regression first when a cheap local seam can reproduce the failure.
+- Check that cancellation, failure, retries, and cleanup still work.
 
-## 5. 汇报
+## 5. Report
 
-- 说清：原来哪里坏了、根因是什么、怎么修、怎么验证。
-- 能贴失败到通过的输出就贴，不要只写“已修复”。
-- 没修的部分、没验证的环境单独列出。
+State the original failure, root cause, fix, and verification. Include failing-before and passing-after output when available. List unfixed behavior and untested environments separately.

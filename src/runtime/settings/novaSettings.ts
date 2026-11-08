@@ -17,6 +17,7 @@ import { atomicWriteFileSync } from '../storage/atomicFile'
 import type { Mode, PermissionMode } from '../../shared/session/types'
 import type { NovaSettingsDto } from '../../shared/settings/types'
 import type { ThirdPartySkillSources } from '../../shared/skills/types'
+import { normalizeSkillId } from '../../shared/skills/identity'
 
 /** 应用级设置字段（与 NovaSettingsDto 完全对齐） */
 export type NovaSettings = NovaSettingsDto
@@ -28,6 +29,8 @@ const CURRENT_SETTINGS_VERSION = 4
 export const DEFAULT_NOVA_SETTINGS: NovaSettings = {
   thirdPartySkillSources: { agents: false, claude: false },
   defaultMode: 'default',
+  pilotSkillIds: [],
+  pilotSkillGuideSeen: false,
   defaultPermissionMode: 'auto',
   defaultShell: '',
   persistentShellSessions: true,
@@ -88,6 +91,8 @@ function migrateAndFill(raw: unknown): NovaSettings {
   // 旧版 loadThirdPartySkills 布尔值不迁移：第三方技能改为按来源逐项同意，升级后默认关闭。
   const sources = normalizeThirdPartySkillSources(obj.thirdPartySkillSources)
   if (sources) result.thirdPartySkillSources = sources
+  result.pilotSkillIds = normalizePilotSkillIds(obj.pilotSkillIds)
+  result.pilotSkillGuideSeen = obj.pilotSkillGuideSeen === true
   // 旧 Mode 含 auto：迁为 default，并保留其自动权限语义；旧 compose 归一为 pilot。
   let migratedAutoMode = false
   if (obj.defaultMode === 'auto') {
@@ -222,12 +227,24 @@ function normalizeThirdPartySkillSources(value: unknown): ThirdPartySkillSources
   return { agents: record.agents === true, claude: record.claude === true }
 }
 
+function normalizePilotSkillIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const ids = value.map(normalizeSkillId).filter((id): id is string => id !== null)
+  return [...new Set(ids)]
+}
+
 /**
  * 校验 patch 的字段合法性。返回错误消息列表（空表示全部合法）。
  * 用于 saveNovaSettings 拒绝非法值。
  */
 function validatePatch(patch: Partial<NovaSettings>): string[] {
   const errors: string[] = []
+  if ('pilotSkillIds' in patch && !Array.isArray(patch.pilotSkillIds)) {
+    errors.push('pilotSkillIds 必须是数组')
+  }
+  if ('pilotSkillGuideSeen' in patch && typeof patch.pilotSkillGuideSeen !== 'boolean') {
+    errors.push('pilotSkillGuideSeen 必须是布尔值')
+  }
   if ('thirdPartySkillSources' in patch && patch.thirdPartySkillSources !== undefined) {
     const value = patch.thirdPartySkillSources as unknown as Record<string, unknown> | null
     if (!value || typeof value.agents !== 'boolean' || typeof value.claude !== 'boolean') {
@@ -374,13 +391,13 @@ export function loadNovaSettings(): NovaSettings {
 }
 
 /**
- * 首次运行初始化：全新安装（无设置文件且无历史会话）落盘一份开启记忆的设置。
- * 无设置文件但有历史会话的是从未改过设置的老用户，保持默认关闭，升级不改变其行为。
+ * 首次运行初始化：全新安装落盘领航默认模式并开启记忆。
+ * 无设置文件但有历史会话的用户保持原默认值。
  */
 export function initializeNovaSettingsForFirstRun(options: { hasHistorySessions: () => boolean }): void {
   // 先查设置文件：常规启动到此即返回，不触发会话目录扫描
   if (existsSync(getSettingsPath()) || options.hasHistorySessions()) return
-  saveNovaSettings({ memoryEnabled: true })
+  saveNovaSettings({ defaultMode: 'pilot', memoryEnabled: true })
 }
 
 /**
@@ -402,6 +419,7 @@ export function saveNovaSettings(patch: Partial<NovaSettings>): NovaSettings {
   const next: NovaSettings & { settingsVersion?: number } = {
     ...current,
     ...patch,
+    pilotSkillIds: normalizePilotSkillIds(patch.pilotSkillIds ?? current.pilotSkillIds),
     settingsVersion: CURRENT_SETTINGS_VERSION
   }
   // 与会话、模型配置一致走原子写：写一半崩溃不该让用户的全部设置静默消失

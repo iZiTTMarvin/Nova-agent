@@ -1,41 +1,40 @@
-# 功能开发
+# Feature development
 
-新增或修改用户可感知的行为时使用。重点是先把系统读懂、把数据形状定对，再写最小完整实现，最后在真实入口验证。
+Use when adding or changing user-visible behavior. Understand the system, choose the right data shape, implement the smallest complete change, and verify through its real entry point.
 
-## 1. 理解相关子系统
+## 1. Understand the affected subsystem
 
-- 读会被这次改动穿过的调用链、公共类型、状态 Owner 和相邻实现。
-- 找到真实的用户入口：哪个页面、命令、IPC 或工具会触发这条路径。
-- 读相关测试，确认现有边界和容易回归的行为。
+- Read the call chain, public types, state owners, and adjacent implementations the change will cross.
+- Locate the actual user entry point: page, command, IPC request, or tool.
+- Read relevant tests for existing boundaries and likely regressions.
 
-## 2. 先定数据形状
+## 2. Define the data shape first
 
-- 在写逻辑前说明：核心数据是什么、谁唯一持有它、状态怎么流转。
-- 优先用类型、状态机、表或注册表表达领域，而不是散落的布尔和 if。
-- 跨模块只使用唯一的类型化契约；外部输入按 `unknown` 接收并在边界校验。
-- 如果数据形状说不清，先回到只读调查，不要用代码试探。
+- Identify the core data, its single owner, and its state transitions before writing logic.
+- Prefer types, state machines, tables, or registries to scattered booleans and conditionals.
+- Use one typed contract across modules. Accept external input as `unknown` and validate it at the boundary.
+- Return to read-only investigation if the data shape is unclear.
 
-## 3. 明确范围与边界
+## 3. Define scope and boundaries
 
-- 写清这次要做什么、不做什么、必须保持哪些不变量。
-- 列出失败路径：空值、取消、并发、重复事件、恢复、清理。
-- 涉及权限、会话归属、持久化格式或公共 API 时，先确认是否有权改，以及迁移和回退方案。
+- State what changes, what does not, and which invariants must hold.
+- Consider empty values, cancellation, concurrency, duplicate events, recovery, and cleanup.
+- Before changing permissions, session ownership, persistence formats, or public APIs, establish authorization, migration, and rollback.
 
-## 4. 实现最小完整改变
+## 4. Implement the smallest complete change
 
-- 改动放在最接近根因、且职责正确的 Owner 里，不在下游重复打补丁。
-- 先删该删的旧路径，再建新结构；不要新旧两套主路径并存。
-- 不新增职责模糊的 `utils` / `helpers` 目录，不把无关功能塞进已有的 Facade 或 Store。
-- 只补能保护真实风险的测试，不为了“有测试”堆表面断言。
+- Put changes at the earliest correct boundary and with the responsible owner, rather than patching several downstream callers.
+- Remove obsolete paths as part of the cutover; keep a single main path.
+- Keep unrelated responsibilities out of existing facades and stores. Avoid vague `utils` or `helpers` directories.
+- Add tests only when they protect a real risk.
 
-## 5. 在真实使用入口验证
+## 5. Verify through real usage
 
-- 启动真实应用、走真实交互，或用真实命令跑通目标行为。
-- 错误入口、内部 setter、test-only 接口都不算验证。
-- 单测证明分支行为，不能单独证明用户看到的结果正确。
-- 涉及 UI 时，观察真实渲染结果；看不了图就说明未完成视觉验收。
+- Launch the actual application, drive the real interaction, or run a real command through the target behavior.
+- An incorrect entry point, internal setter, or test-only interface does not prove the user path.
+- Unit tests establish branch behavior, not the complete user-visible result.
+- Observe the actual rendered UI when relevant. If images cannot be inspected, mark visual verification as unperformed.
 
-## 6. 汇报
+## 6. Report
 
-- 说清：做了什么、为什么这样选、影响了哪些既有功能、怎么验证、还有什么没验证。
-- 有设计取舍时给简短权衡，不要只报“已完成”。
+Explain what changed, why, the effect on existing behavior, verification, and unverified boundaries. Include a brief tradeoff when the design required a choice.
