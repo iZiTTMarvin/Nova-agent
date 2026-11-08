@@ -162,7 +162,7 @@ test('五态对照与观察截图时延', async ({ nova }) => {
 
     const openStarted = Date.now()
     await nova.page.getByRole('button', { name: '审阅、文件与浏览面板' }).click()
-    await nova.page.getByRole('tab', { name: '浏览', exact: true }).click()
+    await (nova.page.getByTestId('inspector-launcher-browser').or(nova.page.getByTestId('inspector-tab-browser'))).click()
     await expect(nova.page.getByTestId('browser-panel')).toBeVisible()
     const surfaceOpenMs = Date.now() - openStarted
     const samplesB = await sampleState(nova, 'B')

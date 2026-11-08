@@ -92,7 +92,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
     {
       id: 'pilot',
       name: '领航模式',
-      desc: '按任务组织开发，用真实结果验证交付',
+      desc: '帮你组织开发、推进结果并展示真实证据',
       icon: <SparklesIcon size={14} />
     },
   ]
@@ -101,7 +101,7 @@ export const ModeSwitch: React.FC<ModeSwitchProps> = ({
   const activeChip = currentMode === 'plan'
     ? { label: 'Plan', className: 'mode-switch__chip--plan' }
     : currentMode === 'pilot'
-      ? { label: '领航', className: '' }
+      ? { label: '领航', className: 'mode-switch__chip--pilot' }
       : null
 
   const openMenu = () => {

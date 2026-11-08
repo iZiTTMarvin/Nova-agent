@@ -1184,7 +1184,7 @@ export const ChatPanel: React.FC = () => {
             </div>
           )}
 
-            {isEmptyState && <WelcomeHero />}
+            {isEmptyState && <WelcomeHero hasDraft={Boolean(inputVal.trim())} />}
 
             {/* Child Session 是 durable 执行记录；继续/恢复必须回到统一子代理执行服务。 */}
             {currentSession?.kind === 'subagent' ? (
@@ -1208,7 +1208,7 @@ export const ChatPanel: React.FC = () => {
               onKeyUp={imeEnterGuard.handleKeyUp}
               className={`chat-composer-box w-full flex flex-col p-3 ${
                 isDragOver ? 'chat-composer-box--dragover' : ''
-              }`}
+              } ${currentMode === 'pilot' ? 'chat-composer-box--pilot' : ''}`}
             >
               {/* 图片预览条 */}
               <ImagePreviewBar

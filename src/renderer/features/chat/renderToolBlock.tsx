@@ -5,6 +5,7 @@
  * - askQuestion：消息内状态行（正在询问 / 已询问 N 题）；答题在底部 AskQuestionPanel
  * - todo_write：由右侧会话状态统一渲染，此处返回 null 避免与消息流重复
  * - present_visualization：可视化卡片（按需加载，不占首屏体积）；失败的调用退回默认行
+ * - present_evidence：工具产物卡（中性外观，不表示验证通过）
  */
 import React from 'react'
 import type { PendingPlanReview } from '../../../shared/planReview'
@@ -12,6 +13,7 @@ import { isPlanReviewIgnoredResult } from '../../../shared/planReview'
 import { AskQuestionToolCard } from './AskQuestionToolCard'
 import { PlanApprovalIgnoredCard, PlanApprovalPendingRow } from './PlanApprovalCard'
 import { PlanReviewCard } from './PlanReviewCard'
+import { EvidenceCard } from './EvidenceCard'
 import { ToolTraceRow } from './ToolTraceRow'
 import { isPersistentToolBlock } from './renderingPolicy'
 import type { RendererToolBlock } from '../../stores/types'
@@ -43,7 +45,12 @@ export function renderToolBlock(
     return null
   }
 
-  if (isPersistentToolBlock(block)) {
+  if (block.toolName === 'present_evidence' && isPersistentToolBlock(block)) {
+    // 证据读取必须带会话归属；无会话上下文时退回默认行
+    if (context?.sessionId && block.evidence) {
+      return <EvidenceCard key={block.toolCallId} sessionId={context.sessionId} evidence={block.evidence} />
+    }
+  } else if (isPersistentToolBlock(block)) {
     return (
       <React.Suspense key={block.toolCallId} fallback={null}>
         <VisualizationCard

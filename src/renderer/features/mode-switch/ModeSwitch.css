@@ -85,6 +85,12 @@
   color: var(--color-warning-text);
 }
 
+.mode-switch__chip--pilot {
+  border-color: color-mix(in srgb, var(--color-brand, #8b5cf6) 55%, transparent);
+  background: color-mix(in srgb, var(--color-brand, #8b5cf6) 12%, var(--bg-card));
+  color: var(--color-brand, #8b5cf6);
+}
+
 .mode-switch__chip-main,
 .mode-switch__chip-close {
   min-height: 30px;

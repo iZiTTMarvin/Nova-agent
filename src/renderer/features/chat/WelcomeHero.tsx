@@ -1,8 +1,13 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState } from 'react'
 import { LEFT_EYE, RIGHT_EYE, useWelcomeMascotGaze } from './useWelcomeMascotGaze'
+import { useSettingsStore } from '../../stores/useSettingsStore'
 import './WelcomeHero.css'
 
-export const WelcomeHero: React.FC = () => {
+export interface WelcomeHeroProps {
+  hasDraft?: boolean
+}
+
+export const WelcomeHero: React.FC<WelcomeHeroProps> = ({ hasDraft = false }) => {
   const rootRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const leftPupilRef = useRef<SVGGElement>(null)
@@ -10,11 +15,18 @@ export const WelcomeHero: React.FC = () => {
 
   useWelcomeMascotGaze({ rootRef, svgRef, leftPupilRef, rightPupilRef })
 
+  const currentMode = useSettingsStore(state => state.currentMode)
+  const setMode = useSettingsStore(state => state.setMode)
+  const [dismissed, setDismissed] = useState(false)
+
+  // 气泡：无草稿输入、未手动忽略，且当前模式支持引导
+  const showBubble = !hasDraft && !dismissed && (currentMode === 'pilot' || currentMode === 'default')
+
   return (
     <>
       <div className="welcome-hero-bg" aria-hidden />
-      <div ref={rootRef} className="welcome-mascot-slot" aria-hidden="true">
-        <svg className="welcome-wordmark" viewBox="0 0 580 244" focusable="false">
+      <div ref={rootRef} className="welcome-mascot-slot">
+        <svg className="welcome-wordmark" viewBox="0 0 580 244" focusable="false" aria-hidden="true">
           <g transform="translate(454 10) scale(.9) rotate(15 64 64)">
             <svg ref={svgRef} className="welcome-mascot" width="128" height="128" viewBox="0 0 128 128" focusable="false">
               <path
@@ -36,6 +48,41 @@ export const WelcomeHero: React.FC = () => {
             <path fillRule="evenodd" d="M424 225L475 72H511L562 225H528L518 192H468L458 225ZM478 161H508L493 113Z" />
           </g>
         </svg>
+
+        {showBubble && (
+          <div
+            className="welcome-mascot__bubble"
+            role="note"
+            data-testid="welcome-mascot-bubble"
+          >
+            {currentMode === 'pilot' ? (
+              <span className="welcome-mascot__bubble-text">
+                把你的 idea 告诉我吧，我将替你完成一切！
+              </span>
+            ) : (
+              <div className="welcome-mascot__bubble-content">
+                <span className="welcome-mascot__bubble-text">
+                  想让我多带你一步吗？
+                </span>
+                <button
+                  type="button"
+                  className="welcome-mascot__bubble-action"
+                  onClick={() => void setMode('pilot')}
+                >
+                  试试领航
+                </button>
+                <button
+                  type="button"
+                  className="welcome-mascot__bubble-dismiss"
+                  aria-label="关闭建议"
+                  onClick={() => setDismissed(true)}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
   )
