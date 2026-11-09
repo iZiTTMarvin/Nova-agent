@@ -119,30 +119,6 @@
   box-shadow: var(--ring-focus);
 }
 
-.chat-composer-box--pilot {
-  border-color: color-mix(in srgb, var(--color-brand, #8b5cf6) 42%, var(--border-subtle));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand, #8b5cf6) 24%, transparent),
-              0 2px 14px color-mix(in srgb, var(--color-brand, #8b5cf6) 12%, transparent);
-}
-
-.chat-composer-box--pilot:hover {
-  border-color: color-mix(in srgb, var(--color-brand, #8b5cf6) 65%, var(--border-strong));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand, #8b5cf6) 36%, transparent),
-              0 3px 18px color-mix(in srgb, var(--color-brand, #8b5cf6) 18%, transparent);
-}
-
-.chat-composer-box--pilot:focus-within {
-  border-color: color-mix(in srgb, var(--color-brand, #8b5cf6) 85%, var(--border-strong));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand, #8b5cf6) 50%, transparent),
-              0 4px 22px color-mix(in srgb, var(--color-brand, #8b5cf6) 24%, transparent);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-composer-box--pilot {
-    transition: none;
-  }
-}
-
 .chat-panel__composer-inner {
   --status-shift: round(
     nearest,

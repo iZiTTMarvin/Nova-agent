@@ -56,6 +56,7 @@ import { ContextIndicator } from './ContextIndicator'
 import { CodeIndexStatusChip } from './CodeIndexStatusChip'
 import { ComposerContextBar } from '../composer-context/ComposerContextBar'
 import { ImagePreviewBar } from '../../components/ImagePreviewBar'
+import { BorderBeam } from '../../components/border-beam'
 import { AskQuestionPanel } from '../ask/AskQuestionPanel'
 import { PlanApprovalCard } from './PlanApprovalCard'
 import { AssistantPendingIndicator, describeRunPhase } from './AssistantPendingIndicator'
@@ -1288,6 +1289,7 @@ export const ChatPanel: React.FC = () => {
                   )}
                 </div>
               </div>
+              <BorderBeam active={currentMode === 'pilot'} />
               </div>
               <ComposerContextBar />
               </div>

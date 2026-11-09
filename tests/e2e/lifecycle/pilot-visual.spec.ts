@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test'
 import { expect, launchNova, test } from '../fixtures/nova'
 
 test('普通模式的领航推荐可关闭，重载后不反复出现', async ({}, testInfo) => {
@@ -20,11 +21,20 @@ test('普通模式的领航推荐可关闭，重载后不反复出现', async ({
   }
 })
 
+// 描边层的强度系数随 color-scheme 切换；读不到说明样式查询失效或覆盖层未渲染
+const readBeamStrokeGain = (page: Page) =>
+  page.evaluate(() => {
+    const beam = document.querySelector('.border-beam')
+    return beam ? getComputedStyle(beam, '::after').getPropertyValue('--beam-layer-gain').trim() : null
+  })
+
 test('领航视觉：空会话气泡、草稿退出、光晕、模式切换与深浅色真实 Electron 检验', async ({ nova }, testInfo) => {
   test.setTimeout(90_000)
 
   // 1. 初始为领航模式，空会话
   await expect(nova.page.locator('.chat-composer-box--pilot')).toBeVisible()
+  await expect(nova.page.locator('.chat-composer-box--pilot .border-beam')).toHaveCount(1)
+  const lightStrokeGain = await readBeamStrokeGain(nova.page)
   const chip = nova.page.locator('[data-testid="active-mode-chip"]')
   await expect(chip).toContainText('领航')
   await expect(chip).toHaveClass(/mode-switch__chip--pilot/)
@@ -52,6 +62,7 @@ test('领航视觉：空会话气泡、草稿退出、光晕、模式切换与�
   await expect(bubble).toBeVisible()
   await nova.page.getByRole('button', { name: '退出 领航' }).click()
   await expect(nova.page.locator('.chat-composer-box--pilot')).toHaveCount(0)
+  await expect(nova.page.locator('.border-beam')).toHaveCount(0)
   await expect(bubble).toHaveCount(0)
   await expect.poll(async () => (await nova.invoke('settings:get')).pilotEntryGuideDismissed).toBe(true)
 
@@ -88,6 +99,12 @@ test('领航视觉：空会话气泡、草稿退出、光晕、模式切换与�
   await nova.page.reload()
   await expect(nova.page.locator('.chat-composer-box--pilot')).toBeVisible()
   await expect(nova.page.getByTestId('welcome-mascot-bubble')).toBeVisible()
+
+  // 流光强度系数随主题切换：浅色（步骤 1）与深色两侧都取到值且互不相同
+  const darkStrokeGain = await readBeamStrokeGain(nova.page)
+  expect(lightStrokeGain).toBeTruthy()
+  expect(darkStrokeGain).toBeTruthy()
+  expect(darkStrokeGain).not.toBe(lightStrokeGain)
 
   const shotDarkEmpty = testInfo.outputPath('pilot-dark-empty.png')
   await nova.page.screenshot({ path: shotDarkEmpty })

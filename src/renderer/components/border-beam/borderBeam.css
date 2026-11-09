@@ -1,0 +1,317 @@
+/*
+ * 边框流光：贴在宿主卡片内沿的覆盖层，由三层叠成——
+ * ::after 描边亮线、::before 向内渗光、.border-beam__bloom 模糊柔光。
+ *
+ * 宿主需 position: relative 并设置 border-radius；覆盖层继承宿主圆角，且不接收指针事件。
+ * 深浅色只写一份：浅色为默认值，深色在文末的样式查询里整体覆盖，
+ * 查询依据是随 color-scheme 求值的 --beam-scheme，因此"跟随系统"同样生效。
+ */
+
+/* 唯一时钟：6 圈为一个循环，旋转角与色相漂移都由它推导 */
+@property --beam-turns {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: true;
+}
+
+@property --beam-opacity {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: true;
+}
+
+@property --beam-scheme {
+  syntax: '<color>';
+  initial-value: #000;
+  inherits: false;
+}
+
+.border-beam {
+  --beam-scheme: light-dark(#000, #fff);
+  --beam-strength: 1;
+  --beam-gain: 1;
+  --beam-brightness: 1.3;
+  --beam-hue-range: 30deg;
+  --beam-inner-alpha: 45%;
+  --beam-angle: calc(mod(var(--beam-turns) * 360deg, 360deg));
+  --beam-hue-shift: calc(var(--beam-hue-range) * -1 * cos(var(--beam-turns) / 6 * 360deg));
+
+  /* 九个固定光斑；亮线扫过时才逐段显现 */
+  --beam-blobs:
+    radial-gradient(ellipse 70px 40px at 33% -7.4%, var(--beam-c1), transparent),
+    radial-gradient(ellipse 60px 35px at 12% -5%, var(--beam-c2), transparent),
+    radial-gradient(ellipse 40px 70px at 2.1% 68.3%, var(--beam-c3), transparent),
+    radial-gradient(ellipse 20px 35px at 2.1% 68.3%, var(--beam-c4), transparent),
+    radial-gradient(ellipse 180px 32px at 74.4% 100%, var(--beam-c5), transparent),
+    radial-gradient(ellipse 85px 26px at 55% 100%, var(--beam-c6), transparent),
+    radial-gradient(ellipse 74px 32px at 93.9% 0%, var(--beam-c7), transparent),
+    radial-gradient(ellipse 26px 42px at 100% 27.1%, var(--beam-c8), transparent),
+    radial-gradient(ellipse 52px 48px at 100% 27.1%, var(--beam-c9), transparent);
+  --beam-blobs-inner:
+    radial-gradient(ellipse 63px 36px at 33% -7.4%, color-mix(in srgb, var(--beam-c1) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 54px 32px at 12% -5%, color-mix(in srgb, var(--beam-c2) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 36px 63px at 2.1% 68.3%, color-mix(in srgb, var(--beam-c3) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 18px 32px at 2.1% 68.3%, color-mix(in srgb, var(--beam-c4) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 162px 29px at 74.4% 100%, color-mix(in srgb, var(--beam-c5) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 77px 23px at 55% 100%, color-mix(in srgb, var(--beam-c6) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 67px 29px at 93.9% 0%, color-mix(in srgb, var(--beam-c7) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 23px 38px at 100% 27.1%, color-mix(in srgb, var(--beam-c8) var(--beam-inner-alpha), transparent), transparent),
+    radial-gradient(ellipse 47px 43px at 100% 27.1%, color-mix(in srgb, var(--beam-c9) var(--beam-inner-alpha), transparent), transparent);
+
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  isolation: isolate;
+  pointer-events: none;
+  /* 圆角裁切 + 独立绘制边界：逐帧重绘只限于覆盖层自身 */
+  contain: strict;
+}
+
+/*
+ * 时钟按 706 步走完 11.76s（6 圈，每圈 1.96s），即每秒 60 次更新：
+ * 每次更新都要重绘三层渐变，不封顶的话高刷屏会按屏幕刷新率重绘。
+ */
+.border-beam[data-phase='active'] {
+  animation:
+    border-beam-clock 11.76s steps(706) infinite,
+    border-beam-fade-in 0.6s ease forwards;
+}
+
+.border-beam[data-phase='fading'] {
+  animation:
+    border-beam-clock 11.76s steps(706) infinite,
+    border-beam-fade-out 0.5s ease forwards;
+}
+
+/* 配色 */
+.border-beam[data-color='colorful'] {
+  --beam-c1: rgb(255 50 100);
+  --beam-c2: rgb(40 140 255);
+  --beam-c3: rgb(50 200 80);
+  --beam-c4: rgb(30 185 170);
+  --beam-c5: rgb(100 70 255);
+  --beam-c6: rgb(40 140 255);
+  --beam-c7: rgb(255 120 40);
+  --beam-c8: rgb(240 50 180);
+  --beam-c9: rgb(180 40 240);
+}
+
+.border-beam[data-color='mono'] {
+  --beam-c1: rgb(180 180 180);
+  --beam-c2: rgb(140 140 140);
+  --beam-c3: rgb(160 160 160);
+  --beam-c4: rgb(130 130 130);
+  --beam-c5: rgb(170 170 170);
+  --beam-c6: rgb(150 150 150);
+  --beam-c7: rgb(190 190 190);
+  --beam-c8: rgb(145 145 145);
+  --beam-c9: rgb(165 165 165);
+  --beam-gain: 0.5;
+  --beam-inner-alpha: 22.5%;
+}
+
+.border-beam[data-color='ocean'] {
+  --beam-c1: rgb(100 80 220);
+  --beam-c2: rgb(60 120 255);
+  --beam-c3: rgb(80 100 200);
+  --beam-c4: rgb(50 140 220);
+  --beam-c5: rgb(120 80 255);
+  --beam-c6: rgb(70 130 255);
+  --beam-c7: rgb(140 100 240);
+  --beam-c8: rgb(90 110 230);
+  --beam-c9: rgb(130 70 255);
+}
+
+.border-beam[data-color='sunset'] {
+  --beam-c1: rgb(255 80 50);
+  --beam-c2: rgb(255 160 40);
+  --beam-c3: rgb(255 120 60);
+  --beam-c4: rgb(255 200 50);
+  --beam-c5: rgb(255 100 80);
+  --beam-c6: rgb(255 180 60);
+  --beam-c7: rgb(255 60 60);
+  --beam-c8: rgb(255 140 50);
+  --beam-c9: rgb(255 90 70);
+}
+
+/* 三层共用：定位、强度合成、主题数值（浅色默认） */
+.border-beam::before,
+.border-beam::after,
+.border-beam__bloom {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: calc(var(--beam-opacity) * var(--beam-layer-gain) * var(--beam-gain) * var(--beam-strength));
+  --beam-saturation: 1.5;
+}
+
+/* 亮线扫过的扇区：仅 ::after 与 ::before 使用，随 --beam-angle 旋转 */
+.border-beam::before,
+.border-beam::after {
+  --beam-sweep: conic-gradient(
+    from var(--beam-angle),
+    transparent 0% 30%,
+    rgb(255 255 255 / 0.1) 36%,
+    rgb(255 255 255 / 0.35) 44%,
+    #fff 52% 80%,
+    rgb(255 255 255 / 0.35) 86%,
+    rgb(255 255 255 / 0.1) 92%,
+    transparent 95% 100%
+  );
+  filter: hue-rotate(var(--beam-hue-shift)) brightness(var(--beam-brightness)) saturate(var(--beam-saturation));
+}
+
+.border-beam[data-color='mono']::before,
+.border-beam[data-color='mono']::after {
+  filter: none;
+}
+
+/* 描边亮线 */
+.border-beam::after {
+  content: '';
+  z-index: 2;
+  padding: 1px;
+  --beam-layer-gain: 0.12;
+  --beam-streak: conic-gradient(
+    from var(--beam-angle),
+    transparent 0% 54%,
+    rgb(0 0 0 / 0.08) 57%,
+    rgb(0 0 0 / 0.2) 60%,
+    rgb(0 0 0 / 0.4) 63%,
+    rgb(0 0 0 / 0.55) 66%,
+    rgb(0 0 0 / 0.4) 69%,
+    rgb(0 0 0 / 0.2) 72%,
+    rgb(0 0 0 / 0.08) 75%,
+    transparent 78% 100%
+  );
+  background: var(--beam-streak), var(--beam-blobs);
+  mask: var(--beam-sweep), linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: intersect, exclude;
+}
+
+/* 向内渗光 */
+.border-beam::before {
+  content: '';
+  z-index: 1;
+  --beam-layer-gain: 0.26;
+  --beam-rim: rgb(0 0 0 / 0.14);
+  background: var(--beam-blobs-inner);
+  box-shadow: inset 0 0 9px 1px var(--beam-rim);
+  mask-image:
+    var(--beam-sweep),
+    linear-gradient(white, transparent 28px, transparent calc(100% - 28px), white),
+    linear-gradient(to right, white, transparent 28px, transparent calc(100% - 28px), white);
+  mask-composite: intersect, add;
+}
+
+/* 模糊柔光 */
+.border-beam__bloom {
+  z-index: 3;
+  padding: 1px;
+  --beam-layer-gain: 0.34;
+  --beam-streak: conic-gradient(
+    from var(--beam-angle),
+    transparent 0% 58%,
+    rgb(0 0 0 / 0.02) 62%,
+    rgb(0 0 0 / 0.08) 65%,
+    rgb(0 0 0 / 0.2) 67%,
+    rgb(0 0 0 / 0.4) 69%,
+    rgb(0 0 0 / 0.6) 70% 70.5%,
+    rgb(0 0 0 / 0.4) 71.5%,
+    rgb(0 0 0 / 0.2) 73%,
+    rgb(0 0 0 / 0.08) 75%,
+    rgb(0 0 0 / 0.02) 78%,
+    transparent 82%
+  );
+  background: var(--beam-streak), var(--beam-blobs);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  filter: blur(8px) brightness(var(--beam-brightness)) saturate(var(--beam-saturation));
+}
+
+@keyframes border-beam-clock {
+  to {
+    --beam-turns: 6;
+  }
+}
+
+@keyframes border-beam-fade-in {
+  to {
+    --beam-opacity: 1;
+  }
+}
+
+@keyframes border-beam-fade-out {
+  from {
+    --beam-opacity: 1;
+  }
+  to {
+    --beam-opacity: 0;
+  }
+}
+
+/* 深色：亮线用白、压光用白的曲线与另一组强度/饱和度 */
+@container style(--beam-scheme: #fff) {
+  .border-beam::before,
+  .border-beam::after,
+  .border-beam__bloom {
+    --beam-saturation: 1.2;
+  }
+
+  .border-beam::after {
+    --beam-layer-gain: 0.26;
+    --beam-streak: conic-gradient(
+      from var(--beam-angle),
+      transparent 0% 54%,
+      rgb(255 255 255 / 0.1) 57%,
+      rgb(255 255 255 / 0.3) 60%,
+      rgb(255 255 255 / 0.6) 63%,
+      rgb(255 255 255 / 0.75) 66%,
+      rgb(255 255 255 / 0.6) 69%,
+      rgb(255 255 255 / 0.3) 72%,
+      rgb(255 255 255 / 0.1) 75%,
+      transparent 78% 100%
+    );
+  }
+
+  .border-beam::before {
+    --beam-layer-gain: 0.42;
+    --beam-rim: rgb(255 255 255 / 0.27);
+  }
+
+  .border-beam__bloom {
+    --beam-layer-gain: 0.24;
+    --beam-streak: conic-gradient(
+      from var(--beam-angle),
+      transparent 0% 58%,
+      rgb(255 255 255 / 0.03) 62%,
+      rgb(255 255 255 / 0.08) 65%,
+      rgb(255 255 255 / 0.2) 67%,
+      rgb(255 255 255 / 0.45) 69%,
+      rgb(255 255 255 / 0.85) 70% 70.5%,
+      rgb(255 255 255 / 0.45) 71.5%,
+      rgb(255 255 255 / 0.2) 73%,
+      rgb(255 255 255 / 0.08) 75%,
+      rgb(255 255 255 / 0.03) 78%,
+      transparent 82%
+    );
+  }
+}
+
+/* 减少动态效果：亮线定格，只保留淡入淡出 */
+@media (prefers-reduced-motion: reduce) {
+  .border-beam[data-phase='active'] {
+    animation: border-beam-fade-in 0.6s ease forwards;
+  }
+
+  .border-beam[data-phase='fading'] {
+    animation: border-beam-fade-out 0.5s ease forwards;
+  }
+}
+
+/* 视口外时由组件打上 data-paused，时钟停摆即停止重绘；须置于所有 animation 声明之后 */
+.border-beam[data-paused] {
+  animation-play-state: paused;
+}
