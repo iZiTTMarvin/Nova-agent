@@ -202,6 +202,29 @@ describe('Sidebar 子代理会话退出列表', () => {
     renderer.unmount()
   })
 
+  it('后台运行中的会话在名称左侧显示像素格，当前会话与空闲会话不显示', () => {
+    const idle: Session = { ...parent, id: 'idle-session', title: 'Idle task' }
+    const focused: Session = { ...parent, id: 'focused-session', title: 'Focused task' }
+    useChatStore.setState({ sessions: [parent, idle, focused], currentSessionId: focused.id })
+    useSettingsStore.setState({ currentProject: 'D:/workspace' })
+    useRunStore.setState({
+      snapshotsByRunId: {
+        'run-parent': makeRunSnapshot({ runId: 'run-parent', sessionId: parent.id, status: 'running', sequence: 1 }),
+        'run-focused': makeRunSnapshot({ runId: 'run-focused', sessionId: focused.id, status: 'running', sequence: 1 })
+      }
+    })
+
+    const renderer = renderDom(<Sidebar />)
+    const rows = Array.from(renderer.container.querySelectorAll('.sidebar-session-row'))
+    const rowOf = (title: string) => rows.find((row) => row.textContent?.includes(title))
+    const grid = rowOf('Parent task')?.querySelector('.sidebar-session-row__running-gutter .sidebar-running-grid')
+    expect(grid?.querySelectorAll('.sidebar-running-grid__cell')).toHaveLength(9)
+    expect(rowOf('Idle task')?.querySelector('.sidebar-running-grid')).toBeNull()
+    expect(rowOf('Focused task')?.querySelector('.sidebar-running-grid')).toBeNull()
+    expect(renderer.container.querySelector('.sidebar-status-dot')).toBeNull()
+    renderer.unmount()
+  })
+
   it('后台运行列表窄选择器：包含运行态主会话、排除当前会话与子代理，且无关快照更新时保持同一引用', () => {
     useRunStore.setState({
       snapshotsByRunId: {

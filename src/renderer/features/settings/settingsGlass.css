@@ -236,6 +236,7 @@ dialog.glass-dialog {
 
 .settings-card {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   padding: 18px 20px 20px;
 }
@@ -276,6 +277,7 @@ dialog.glass-dialog {
 
 .settings-card__body {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
 }

@@ -47,6 +47,11 @@
   margin: 0;
 }
 
+/* 官方输入区空态仅一行高，抬到约两行半，避免卡片显得扁长 */
+.chat-composer__input [aria-multiline='true'] {
+  min-height: 3.75rem;
+}
+
 .chat-composer__input [data-astryx-token] {
   margin-inline: 2px;
 }

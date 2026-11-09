@@ -302,7 +302,7 @@ export const PilotSettingsPanel: React.FC = () => {
                           <span className="pilot-skill-row__name">/{skill.name}</span>
                           <span className="glass-chip">{sourceLabel(skill.source)}</span>
                         </div>
-                        <div className="pilot-skill-row__desc">
+                        <div className="pilot-skill-row__desc" title={skill.descriptionZh || skill.description}>
                           {skill.descriptionZh || skill.description}
                         </div>
                       </div>

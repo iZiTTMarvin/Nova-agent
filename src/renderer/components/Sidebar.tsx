@@ -71,7 +71,7 @@ const ARCHIVED_PROJECTS_KEY = 'nova.sidebar.archivedProjects'
 /** 项目行的折叠指示：收起为合上的文件夹，展开为打开的文件夹（尺寸决定会话行缩进，见 Sidebar.css） */
 function ProjectFolderIcon({ expanded }: { expanded: boolean }) {
   const Icon = expanded ? FolderOpenIcon : FolderIcon
-  return <Icon size={15} className="sidebar-project-folder-icon shrink-0" aria-hidden="true" />
+  return <Icon size={17} className="sidebar-project-folder-icon shrink-0" aria-hidden="true" />
 }
 
 function isEditableKeyboardTarget(target: EventTarget | null): boolean {
@@ -158,14 +158,13 @@ function SidebarStatusDot({
   isPulsing = false,
   onActivate
 }: {
-  tone: 'warning' | 'accent' | 'running'
+  tone: 'warning' | 'accent'
   label: string
   isPulsing?: boolean
   onActivate?: () => void
 }) {
   let color = 'var(--accent-primary, #3b82f6)'
   if (tone === 'warning') color = 'var(--accent-warning, #f59e0b)'
-  else if (tone === 'running') color = 'var(--accent-running, #22c55e)'
 
   const classes = [
     'sidebar-status-dot',
@@ -196,6 +195,27 @@ function SidebarStatusDot({
           }
         : undefined}
     />
+  )
+}
+
+/** 会话运行中的 3×3 像素格：波前由左上向右下推进，延迟取自格子的 (列 + 与中行的距离) */
+const RUNNING_GRID_DELAYS_MS = Array.from({ length: 9 }, (_, index) => {
+  const row = Math.floor(index / 3)
+  const col = index % 3
+  return (col + Math.abs(row - 1)) * 90
+})
+
+function SidebarRunningGrid() {
+  return (
+    <span className="sidebar-running-grid" role="img" aria-label="运行中" title="运行中">
+      {RUNNING_GRID_DELAYS_MS.map((delay, index) => (
+        <span
+          key={index}
+          className="sidebar-running-grid__cell"
+          style={{ animationDelay: `${delay}ms` }}
+        />
+      ))}
+    </span>
   )
 }
 
@@ -647,6 +667,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
     const showRunning = !!runningBadge && !isActive
     const detailTitle = `${displayTitle}\n${formatDetailTitleTime(session.updatedAt)}${session.messageCount > 0 ? `，${session.messageCount} 条对话` : ''}`
     const compactTime = formatCompactRelativeTime(session.updatedAt)
+    const runningGrid = showRunning && !showWaiting ? <SidebarRunningGrid /> : null
     const dragState = dragOptions?.dragState
     const dragProps = !isEditing ? dragOptions?.dragProps : undefined
 
@@ -685,7 +706,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
         ) : (
           <SideNavItem
             label={displayTitle}
-            icon={leadingIcon}
+            icon={runningGrid && leadingIcon ? runningGrid : leadingIcon}
             size="sm"
             isSelected={isActive}
             onClick={() => {
@@ -695,8 +716,6 @@ const SidebarSessions = React.memo(function SidebarSessions({
               <div className="sidebar-session-row__end-cluster flex items-center shrink-0">
                 {showWaiting ? (
                   <SidebarStatusDot tone="warning" label="等待你处理" isPulsing />
-                ) : showRunning ? (
-                  <SidebarStatusDot tone="running" label="运行中" isPulsing />
                 ) : (
                   <span className="sidebar-session-row__meta text-xs text-text-muted tabular-nums shrink-0">
                     {compactTime}
@@ -705,6 +724,9 @@ const SidebarSessions = React.memo(function SidebarSessions({
               </div>
             )}
           />
+        )}
+        {!isEditing && runningGrid && !leadingIcon && (
+          <span className="sidebar-session-row__running-gutter">{runningGrid}</span>
         )}
         {!isEditing && (
           <div className="sidebar-session-row__actions">
@@ -1021,7 +1043,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                     }}
                   >
                     <ProjectFolderIcon expanded={isExpanded} />
-                    <span className="text-[13px] font-semibold text-text-primary truncate">
+                    <span className="text-[14px] font-semibold text-text-primary truncate">
                       {getProjectName(projectPath)}
                     </span>
                     {isPinned && (
@@ -1132,7 +1154,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                         size="sm"
                         width="100%"
                         type="button"
-                        className="w-full text-left pl-[29px] pr-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
+                        className="w-full text-left pl-[31px] pr-2 py-1 text-xs text-text-muted hover:text-text-secondary transition-colors"
                         onClick={(e) => {
                           e.stopPropagation()
                           setExpandedSessionLists(prev => ({
@@ -1198,7 +1220,7 @@ const SidebarSessions = React.memo(function SidebarSessions({
                             }}
                           >
                             <ProjectFolderIcon expanded={isExpanded} />
-                            <span className="text-[13px] font-semibold text-text-muted truncate">
+                            <span className="text-[14px] font-semibold text-text-muted truncate">
                               {getProjectName(projectPath)}
                             </span>
                           </button>

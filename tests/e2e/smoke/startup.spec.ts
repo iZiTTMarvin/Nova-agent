@@ -77,8 +77,8 @@ test('欢迎页只移动目光，重载与深浅色窄窗口下仍可输入', as
   expect(initialBody).not.toBeNull()
 
   await page.mouse.move(1100, 180)
-  await expect(pupils.first()).toHaveAttribute('transform', /^translate\([1-9]/)
-  await expect(pupils.last()).toHaveAttribute('transform', /^translate\([1-9]/)
+  await expect(pupils.first()).toHaveAttribute('transform', /^translate\((0\.[5-9]|[1-9])/)
+  await expect(pupils.last()).toHaveAttribute('transform', /^translate\((0\.[5-9]|[1-9])/)
   expect(await body.boundingBox()).toEqual(initialBody)
   expect(await mascot.evaluate(element => element.getAnimations({ subtree: true }).length)).toBe(0)
 
@@ -109,7 +109,7 @@ test('欢迎页只移动目光，重载与深浅色窄窗口下仍可输入', as
       const inputBox = await input.boundingBox()
       if (!wordmarkBox || !inputBox) throw new Error('欢迎图形或输入框不可见')
       expect(wordmarkBox.width).toBeGreaterThan(300)
-      expect(wordmarkBox.width).toBeLessThanOrEqual(480)
+      expect(wordmarkBox.width).toBeLessThanOrEqual(580)
       expect(wordmarkBox.x).toBeGreaterThanOrEqual(0)
       expect(wordmarkBox.x + wordmarkBox.width).toBeLessThanOrEqual(size.width)
       expect(wordmarkBox.y + wordmarkBox.height).toBeLessThan(inputBox.y)

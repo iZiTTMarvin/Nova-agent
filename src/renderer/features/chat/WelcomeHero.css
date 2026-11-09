@@ -22,7 +22,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: min(480px, 100%);
+  width: min(580px, 100%);
   margin-bottom: 1.5rem;
   pointer-events: none;
   user-select: none;
@@ -91,23 +91,37 @@
   line-height: 1.4;
   pointer-events: auto;
   user-select: auto;
-  opacity: 1;
-  animation: welcome-bubble-fade-in 240ms ease-out;
+  /* 周期性开口说话：停留约 5.6s 后静默约 7.6s；静默期不接收点击，悬停时暂停以便操作 */
+  animation: welcome-bubble-speak 14s ease-in-out 300ms infinite both;
 }
 
-@keyframes welcome-bubble-fade-in {
-  from {
+.welcome-mascot__bubble:hover {
+  animation-play-state: paused;
+}
+
+@keyframes welcome-bubble-speak {
+  0% {
     opacity: 0;
     transform: translateY(4px);
+    pointer-events: none;
   }
-  to {
+  4%,
+  40% {
     opacity: 1;
     transform: translateY(0);
+    pointer-events: auto;
+  }
+  46%,
+  100% {
+    opacity: 0;
+    transform: translateY(-2px);
+    pointer-events: none;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .welcome-mascot__bubble {
+    opacity: 1;
     animation: none;
   }
 }

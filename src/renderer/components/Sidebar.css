@@ -340,7 +340,7 @@
 /* 项目树标题行：高密度紧凑，无多余边框 */
 .sidebar-project-header {
   position: relative;
-  height: 30px;
+  height: 34px;
   border-radius: 6px;
   transition: background-color var(--transition-fast);
 }
@@ -508,12 +508,12 @@
 
 /*
  * 单条会话行（ThreadItem）：
- * 固定 30px~32px 高度，激活卡片纯白/纯深灰底色，描边走 inset 不外扩，
+ * 固定 34px 高度，激活卡片纯白/纯深灰底色，描边走 inset 不外扩，
  * 保证所有行的可视盒严格等大；行距统一由父容器 gap 提供，行自身不带 margin。
  */
 .sidebar-session-row {
   position: relative;
-  height: 32px;
+  height: 34px;
   display: flex;
   align-items: center;
   border-radius: 6px;
@@ -621,9 +621,9 @@
 .sidebar-session-row :is(button, a).astryx-side-nav-item[aria-current='page'] {
   background-color: transparent !important;
   box-shadow: none !important;
-  height: 32px !important;
+  height: 34px !important;
   padding-block: 0 !important;
-  font-size: 13.5px !important;
+  font-size: 14px !important;
 }
 
 /* SideNav 分区标题字号提升，保持清晰易读 */
@@ -687,7 +687,7 @@
 /*
  * 项目内会话列表：行距与 SideNavSection 自带的 2px gap 一致，项目头到首行同样 2px。
  * 高亮盒与项目头同宽同边距，层级关系只通过行内文字缩进表达——
- * 项目名缩进 = 标题行内边距 8px + 文件夹图标 15px + 间距 6px = 29px，由行内条目补齐。
+ * 项目名缩进 = 标题行内边距 8px + 文件夹图标 17px + 间距 6px = 31px，由行内条目补齐。
  * StyleX 原子类带 :not() 提权，需 !important。
  */
 .sidebar-project-children {
@@ -698,7 +698,56 @@
 }
 
 .sidebar-project-children .sidebar-session-row :is(button, a).astryx-side-nav-item {
-  padding-inline-start: 29px !important;
+  padding-inline-start: 31px !important;
+}
+
+/*
+ * 运行中像素格：嵌套会话行没有前导图标，格子落在缩进槽里，与上方项目文件夹图标左对齐；
+ * 置顶行直接占用图标位。减弱动效时冻结在暗态。
+ */
+.sidebar-running-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 4px);
+  gap: 1.5px;
+  flex-shrink: 0;
+}
+
+.sidebar-running-grid__cell {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background-color: var(--text-primary);
+  opacity: 0.18;
+  animation: sidebar-running-cell 650ms ease-in-out infinite;
+}
+
+.sidebar-session-row__running-gutter {
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  z-index: 1;
+  display: flex;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+@keyframes sidebar-running-cell {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  25% {
+    opacity: 1;
+  }
+  60% {
+    opacity: 0.18;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-running-grid__cell {
+    animation: none;
+  }
 }
 
 /* 底部操作区：无顶部分隔线，避免侧栏被横线切开 */

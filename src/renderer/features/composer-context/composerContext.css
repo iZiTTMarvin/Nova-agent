@@ -5,7 +5,7 @@
 
 /*
  * 卡片下方的玻璃延伸条：垫在 z-index 更高的卡片之下，上缘压进卡片底部 16px，只露出下半截。
- * 两侧各内缩 24px（大于卡片圆角半径），落在卡片底边的直线段内，避免与圆角错位。
+ * 两侧各内缩 16px（大于卡片 12px 圆角半径），落在卡片底边的直线段内，避免与圆角错位。
  * 描边用中性色而非卡片的品牌紫呼吸描边，两者靠材质区分，不会叠成一圈。
  */
 .chat-composer-stack {
@@ -22,9 +22,9 @@
   align-items: center;
   gap: 4px;
   box-sizing: border-box;
-  width: calc(100% - 48px);
+  width: calc(100% - 32px);
   margin: -16px auto 0;
-  padding: 20px 8px 5px;
+  padding: 22px 10px 7px;
   border: 0.5px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
   border-top: none;
   border-radius: 0 0 14px 14px;
@@ -40,9 +40,9 @@
 
 /* 条内 chip 更紧凑，工作区与分支各自截断，不撑破延伸条宽度 */
 .composer-context-bar .composer-context-chip {
-  max-width: 200px;
-  padding: 2px 8px;
-  font-size: 0.75rem;
+  max-width: 260px;
+  padding: 3px 10px;
+  font-size: 0.8125rem;
 }
 
 .composer-context-bar .composer-context-chip:hover {
