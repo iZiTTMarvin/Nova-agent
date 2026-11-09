@@ -2,8 +2,8 @@
  * 背景烟雾层：全屏片元着色器。
  * - 暖炭底色上用域扭曲 fbm 画缓慢漂移的烟；显示器位置作为光源，把附近的烟染成屏幕的颜色
  *   （青 → 品红缓慢轮换）。
- * - uScene 从 0 到 1 过渡到胶片段落的深蓝夜空；uDim 压暗正文区域保证可读。
- * - 只以半分辨率渲染，烟雾是低频内容，放大后看不出差别。
+ * - uScene 从 0 到 1 过渡到胶片段落的深蓝夜空，uDim 再把环境稀释成正文用的暖墨，烟雾一直在漂移。
+ * - 只以低分辨率渲染，烟雾是低频内容，放大后看不出差别；正文区进一步降到四分之一分辨率。
  */
 import { createContext, createProgram, releaseContext, resizeCanvas } from './gl.js';
 
@@ -76,7 +76,11 @@ void main() {
   sky += star * (0.5 + 0.5 * sin(uTime * 2.0 + hash(sg + 3.1) * 40.0)) * 0.45;
   col = mix(col, sky, uScene);
 
-  col *= mix(1.0, 0.55, uDim);
+  // 离开胶片后正文浸在稀释的暖墨里：环境还在漂移，但不再抢文字
+  vec3 ink = mix(vec3(0.052, 0.047, 0.058), vec3(0.104, 0.086, 0.098), smoke);
+  ink += vec3(0.16, 0.07, 0.13) * smoke * smoke * smoothstep(0.7, -0.5, p.y);
+  ink += uTint * glow * 0.10;
+  col = mix(col, ink, uDim * 0.9);
   col *= 1.0 - 0.5 * pow(length(uv - 0.5) * 1.22, 2.6);
   col += (hash(gl_FragCoord.xy + fract(uTime * 7.0) * 113.0) - 0.5) * 0.03;
   gl_FragColor = vec4(col, 1.0);
@@ -98,11 +102,11 @@ export function createSmoke(canvas, { still = false } = {}) {
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
   const loc = gl.getAttribLocation(prog.program, 'aPos');
 
-  const params = { light: [0.72, 0.5], lightAmt: 1, scene: 0, dim: 0 };
+  const params = { light: [0.72, 0.5], lightAmt: 1, scene: 0, dim: 0, scale: 0.5 };
   const start = performance.now();
 
   function draw(now) {
-    resizeCanvas(canvas, 0.5);
+    resizeCanvas(canvas, params.scale);
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.useProgram(prog.program);
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);

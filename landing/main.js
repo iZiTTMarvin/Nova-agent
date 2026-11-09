@@ -1,13 +1,17 @@
 /**
- * 宣传页编排：一个 rAF 循环统一驱动烟雾背景、显示器推镜、演示进度条与胶片画廊。
+ * 宣传页编排：一个 rAF 循环统一驱动烟雾背景、显示器推镜、演示进度条、胶片放映机与导航状态。
  *
  * 档位由 <html> 的 is-cinema / is-static 决定：
- * - cinema：首屏与胶片段落钉住，滚动进度决定镜头位置；连续值只写 CSS 变量与 uniform，不进 DOM 状态。
+ * - cinema：只有首屏钉住由滚动推镜；胶片是一屏高的放映机，截图恒速环绕、不受滚动影响，滚轮直接穿透去正文。
  * - static（窄屏或减弱动态）：不钉住，显示器按容器宽度等比缩放，胶片退化为纵向截图列表。
+ * 场景离屏即停：不写样式、不发 draw call；正文区烟雾降到四分之一分辨率、30fps。
  */
 import { createNovaSim, CHAPTERS } from './js/sim.js';
 import { createSmoke } from './js/smoke.js';
-import { createStrip, PITCH } from './js/strip.js';
+import { createStrip, PITCH, pointInQuad, quadBounds } from './js/strip.js';
+import { createLightbox } from './js/lightbox.js';
+import { createReveal } from './js/reveal.js';
+import { createScenes } from './js/scenes.js';
 
 const root = document.documentElement;
 const cinema = root.classList.contains('is-cinema');
@@ -17,7 +21,8 @@ const $ = id => document.getElementById(id);
 const clamp = (v, a = 0, b = 1) => (v < a ? a : v > b ? b : v);
 const ramp = (v, a, b) => clamp((v - a) / (b - a));
 const easeInOut = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
-const easeOutExpo = t => (t >= 1 ? 1 : 1 - Math.pow(2, -10 * t));
+// 系数按秒换算，60Hz 与 120Hz 屏上的跟手程度一致
+const damp = (current, target, dt, rate) => current + (target - current) * (1 - Math.exp(-dt * rate));
 
 /* ---------- 演示 ---------- */
 
@@ -82,10 +87,17 @@ function layoutStatic() {
   wrap.style.height = `${1008 * s}px`;
 }
 
+let heroTop = 0;
+let heroSpan = 1;
+function measureHero() {
+  heroTop = hero.offsetTop;
+  heroSpan = Math.max(1, hero.offsetHeight - innerHeight);
+}
+
 function layoutCinema(time, y) {
   const vw = innerWidth;
   const vh = innerHeight;
-  const p = clamp((y - hero.offsetTop) / (hero.offsetHeight - vh));
+  const p = clamp((y - heroTop) / heroSpan);
   const d = easeInOut(ramp(p, 0.03, 0.5));
   const idle = 1 - d;
 
@@ -121,78 +133,169 @@ function layoutCinema(time, y) {
   bar.style.setProperty('--bar-pe', barO > 0.5 ? 'auto' : 'none');
 }
 
-/* ---------- 胶片 ---------- */
+/* ---------- 胶片放映机 ---------- */
 
 const stripSection = $('moments');
+const stripCanvas = $('strip-gl');
 const frames = [...document.querySelectorAll('#strip-list .frame')];
-let strip = null;
-const stripView = { scroll: 0, target: 0, vel: 0, active: -1, introAt: 0 };
+const items = frames.map(frame => ({
+  src: frame.querySelector('img').getAttribute('src'),
+  alt: frame.querySelector('img').alt,
+  title: frame.dataset.title,
+  meta: frame.dataset.meta
+}));
 
+// 恒速环绕：每个槽位约 4.2 秒，悬停、点击与换章都不改变速度；只有灯箱打开或手动暂停才停
+const SPEED = PITCH / 4.2;
+const mod = (n, m) => ((n % m) + m) % m;
+
+const reel = {
+  scroll: 0,
+  active: -1,
+  hover: frames.map(() => 0),
+  hoverIndex: -1,
+  hoverSlot: 0,
+  dim: 1,
+  playing: !reduced,
+  visible: false,
+  swapTimer: 0
+};
+
+let strip = null;
+let stripObserver = null;
 if (cinema) {
-  strip = createStrip($('strip-gl'), frames.map(frame => frame.querySelector('img').getAttribute('src')));
+  strip = createStrip(stripCanvas, items.map(item => item.src));
   if (!strip) stripSection.classList.add('is-fallback');
 }
 
-const dots = frames.map((frame, i) => {
-  const dot = document.createElement('button');
-  dot.type = 'button';
-  dot.className = 'strip__dot';
-  dot.setAttribute('aria-label', `第 ${i + 1} 张：${frame.dataset.title}`);
-  dot.addEventListener('click', () => scrollToFrame(i));
-  $('strip-dots').appendChild(dot);
-  return dot;
+const playBtn = $('strip-play');
+function paintPlayButton() {
+  playBtn.setAttribute('aria-pressed', String(reel.playing));
+  playBtn.dataset.state = reel.playing ? 'playing' : 'paused';
+  playBtn.querySelector('.strip__play-label').textContent = reel.playing ? '暂停' : '继续';
+}
+paintPlayButton();
+playBtn.addEventListener('click', () => {
+  reel.playing = !reel.playing;
+  paintPlayButton();
 });
 
-/** 胶片段落里滚动进度与帧序号互换：两端各留一段停留区。 */
-function scrollToFrame(index) {
-  const i = clamp(index, 0, frames.length - 1);
-  const sp = 0.05 + (i / (frames.length - 1)) * 0.9;
-  const top = stripSection.offsetTop + sp * (stripSection.offsetHeight - innerHeight);
-  window.scrollTo({ top, behavior: reduced ? 'auto' : 'smooth' });
-}
-$('strip-prev').addEventListener('click', () => scrollToFrame(stripView.active - 1));
-$('strip-next').addEventListener('click', () => scrollToFrame(stripView.active + 1));
-
-let swapTimer = 0;
 function setActiveFrame(index) {
-  if (index === stripView.active) return;
-  stripView.active = index;
-  dots.forEach((dot, i) => dot.setAttribute('aria-current', String(i === index)));
+  reel.active = index;
+  $('strip-count').textContent = `${String(index + 1).padStart(2, '0')} / ${String(frames.length).padStart(2, '0')}`;
   const name = $('strip-name');
   const meta = $('strip-meta');
   name.classList.add('is-swapping');
-  meta.style.opacity = '0';
-  clearTimeout(swapTimer);
-  swapTimer = setTimeout(() => {
-    name.textContent = frames[index].dataset.title;
-    meta.textContent = frames[index].dataset.meta;
+  meta.classList.add('is-swapping');
+  clearTimeout(reel.swapTimer);
+  reel.swapTimer = setTimeout(() => {
+    name.textContent = items[index].title;
+    meta.textContent = items[index].meta;
     name.classList.remove('is-swapping');
-    meta.style.opacity = '1';
-  }, 230);
+    meta.classList.remove('is-swapping');
+  }, reduced ? 0 : 220);
 }
 
-function updateStrip(now, dt) {
-  const vh = innerHeight;
-  const rect = stripSection.getBoundingClientRect();
-  if (rect.bottom < 0 || rect.top > vh) return;
-  if (!stripView.introAt && rect.top < vh * 0.55) stripView.introAt = now;
-  const sp = clamp(-rect.top / (rect.height - vh));
-  stripView.target = ramp(sp, 0.05, 0.95) * (frames.length - 1) * PITCH;
-  const prev = stripView.scroll;
-  // 系数按帧时长换算，60Hz 与 120Hz 屏上的跟手程度一致
-  stripView.scroll += (stripView.target - stripView.scroll) * (1 - Math.exp(-dt * 5.3));
-  const speed = ((stripView.scroll - prev) / dt) / 60;
-  stripView.vel += (clamp(speed * 0.35, -0.07, 0.07) - stripView.vel) * (1 - Math.exp(-dt * 9.75));
-  setActiveFrame(clamp(Math.round(stripView.scroll / PITCH), 0, frames.length - 1));
-  const intro = stripView.introAt ? easeOutExpo(clamp((now - stripView.introAt) / 1600)) : 0;
-  strip.render({ scroll: stripView.scroll - (1 - intro) * 7, vel: stripView.vel });
+/** 灯箱里换页时，让胶片定位到离当前位置最近的那一格，关闭后从那里接着转。 */
+function alignReel(index) {
+  const slot = Math.round(reel.scroll / PITCH);
+  const n = frames.length;
+  const delta = mod(index - mod(slot, n) + n / 2, n) - n / 2;
+  reel.scroll = (slot + delta) * PITCH;
+}
+
+const lightbox = createLightbox({
+  root: $('lightbox'),
+  items,
+  reduced,
+  onIndex: i => { if (strip) alignReel(i); }
+});
+
+function openFrame(i, rect, trigger) {
+  lightbox.open(i, rect, trigger);
+}
+
+// 指针命中用与着色器同一套投影反算出的四角判断，命中帧微放大并提示可点开
+let pointerPos = null;
+stripCanvas.addEventListener('pointermove', event => {
+  const r = stripCanvas.getBoundingClientRect();
+  pointerPos = { x: event.clientX - r.left, y: event.clientY - r.top };
+}, { passive: true });
+stripCanvas.addEventListener('pointerleave', () => { pointerPos = null; }, { passive: true });
+stripCanvas.addEventListener('click', () => {
+  if (!strip || reel.hoverIndex < 0) return;
+  const quad = strip.frameQuad(reel.hoverSlot, reel.hover[reel.hoverIndex]);
+  if (!quad) return;
+  const box = quadBounds(quad);
+  const r = stripCanvas.getBoundingClientRect();
+  openFrame(reel.hoverIndex, { left: box.left + r.left, top: box.top + r.top, width: box.width, height: box.height }, stripCanvas);
+});
+stripCanvas.addEventListener('keydown', event => {
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    openFrame(mod(Math.round(reel.scroll / PITCH), frames.length), null, stripCanvas);
+  }
+});
+
+// 静态档与无 WebGL 兜底：列表里的截图同样能点开看大图
+for (const [i, frame] of frames.entries()) {
+  const img = frame.querySelector('img');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'frame__open';
+  button.setAttribute('aria-label', `放大查看：${items[i].title}`);
+  img.replaceWith(button);
+  button.appendChild(img);
+  button.addEventListener('click', () => {
+    const r = img.getBoundingClientRect();
+    openFrame(i, { left: r.left, top: r.top, width: r.width, height: r.height }, button);
+  });
+}
+
+if (strip) {
+  stripObserver = new IntersectionObserver(entries => {
+    reel.visible = entries.some(entry => entry.isIntersecting);
+  }, { threshold: 0.05 });
+  stripObserver.observe(stripSection);
+}
+
+function updateReel(dt) {
+  if (!strip || !reel.visible) return;
+  const open = lightbox.isOpen();
+  if (reel.playing && !open) reel.scroll += SPEED * dt;
+
+  const mid = Math.round(reel.scroll / PITCH);
+  const centered = mod(mid, frames.length);
+  if (centered !== reel.active) setActiveFrame(centered);
+
+  let hit = -1;
+  let hitSlot = 0;
+  if (pointerPos && !open) {
+    for (let slot = mid - 3; slot <= mid + 3; slot++) {
+      const index = mod(slot, frames.length);
+      const quad = strip.frameQuad(slot, reel.hover[index]);
+      if (quad && pointInQuad(quad, pointerPos.x, pointerPos.y)) { hit = index; hitSlot = slot; break; }
+    }
+  }
+  if (hit !== reel.hoverIndex) {
+    reel.hoverIndex = hit;
+    stripCanvas.style.cursor = hit >= 0 ? 'zoom-in' : 'default';
+  }
+  if (hit >= 0) reel.hoverSlot = hitSlot;
+  for (let i = 0; i < reel.hover.length; i++) {
+    reel.hover[i] = damp(reel.hover[i], i === hit ? 1 : 0, dt, 12);
+  }
+  reel.dim = damp(reel.dim, open ? 0.34 : 1, dt, 9);
+
+  strip.render({ scroll: reel.scroll, hover: reel.hover, dim: reel.dim });
 }
 
 /* ---------- 背景 ---------- */
 
 const smoke = createSmoke($('smoke'), { still: reduced });
+let smokeAt = 0;
 
-function updateSmoke() {
+function updateSmoke(now) {
   const vh = innerHeight;
   const sr = screenEl.getBoundingClientRect();
   smoke.params.light[0] = (sr.left + sr.width / 2) / innerWidth;
@@ -202,22 +305,74 @@ function updateSmoke() {
   const enter = clamp((vh - st.top) / vh);
   const exit = clamp((vh - st.bottom) / (vh * 0.8));
   smoke.params.scene = cinema ? enter * (1 - exit) : 0;
-  smoke.params.dim = clamp((vh - st.bottom) / vh) * 0.75;
+  smoke.params.dim = clamp((vh - st.bottom) / vh);
+  // 正文只剩低频暖墨在漂，降到四分之一分辨率、30fps；首屏与胶片保持满档
+  const quiet = st.bottom < 0;
+  smoke.params.scale = quiet ? 0.28 : 0.5;
+  if (quiet && now - smokeAt < 33) return;
+  smokeAt = now;
+  smoke.draw(now);
 }
 
-// 影院档里主屏和胶片是钉住的全屏画面，导航直接浮在上面；其余正文区需要底衬
+/* ---------- 导航 ---------- */
+
 const chrome = $('chrome');
+const navLinks = [...chrome.querySelectorAll('.chrome__nav a')];
+const navSections = navLinks.map(link => document.querySelector(link.getAttribute('href')));
+let navAt = -2;
+
+const crt = $('crt');
+
 function updateChrome() {
-  const solid = cinema ? stripSection.getBoundingClientRect().bottom < 96 : scrollY > 24;
+  const stripTop = stripSection.getBoundingClientRect().top;
+  const solid = cinema ? stripTop < 96 : scrollY > 24;
   chrome.classList.toggle('is-solid', solid);
+  // 扫描线与噪点属于显示器那一幕；到了截图和正文要撤掉，否则文字与细节会发糊
+  crt.classList.toggle('is-clean', stripTop < innerHeight * 0.7);
+  let at = -1;
+  for (let i = 0; i < navSections.length; i++) {
+    const el = navSections[i];
+    if (el && el.getBoundingClientRect().top <= innerHeight * 0.42) at = i;
+  }
+  if (at === navAt) return;
+  navAt = at;
+  navLinks.forEach((link, i) => {
+    if (i === at) link.setAttribute('aria-current', 'true');
+    else link.removeAttribute('aria-current');
+  });
+}
+
+const reveal = createReveal({ reduced });
+const scenes = createScenes({ reduced });
+
+// 特写图点开同一个灯箱；起点矩形收成截图比例的同心框，接片动画才不会变形
+for (const el of document.querySelectorAll('[data-open]')) {
+  el.addEventListener('click', () => {
+    const r = el.getBoundingClientRect();
+    const width = Math.min(r.width, r.height * 1.6);
+    const height = width / 1.6;
+    openFrame(Number(el.dataset.open), { left: r.left + (r.width - width) / 2, top: r.top + (r.height - height) / 2, width, height }, el);
+  });
 }
 
 /* ---------- 主循环 ---------- */
 
 let dirty = true;
+let heroVisible = true;
 addEventListener('scroll', () => { dirty = true; }, { passive: true });
-addEventListener('resize', () => { dirty = true; if (!cinema) layoutStatic(); });
-if (!cinema) layoutStatic();
+let scenesY = -1;
+function remeasure() {
+  dirty = true;
+  measureHero();
+  scenes.measure();
+  scenesY = -1;
+  if (!cinema) layoutStatic();
+}
+addEventListener('resize', remeasure, { passive: true });
+remeasure();
+document.fonts?.ready.then(remeasure);
+// 正文里的图片按需加载，到位后整页高度会变，位置要重新量
+addEventListener('load', remeasure);
 
 // 滚轮一格就是一次 100px 左右的跳变；首屏推镜跟着平滑后的位置走，镜头才不会一顿一顿
 let smoothY = scrollY;
@@ -227,16 +382,20 @@ function frame(now) {
   const t = now / 1000;
   const dt = lastNow ? Math.min(0.1, Math.max(0.001, (now - lastNow) / 1000)) : 1 / 60;
   lastNow = now;
-  smoothY += (scrollY - smoothY) * (1 - Math.exp(-dt * 14));
+  smoothY = damp(smoothY, scrollY, dt, 14);
   if (Math.abs(scrollY - smoothY) < 0.3) smoothY = scrollY;
-  if (cinema) layoutCinema(t, smoothY);
-  if (strip) updateStrip(now, dt);
-  if (tabs[sim.chapter]) tabs[sim.chapter].style.setProperty('--tab-p', sim.progress().toFixed(3));
-  // 减弱动态下烟雾是静帧：只有滚动或尺寸变化才重画
-  if (smoke && (!reduced || dirty)) {
-    updateSmoke();
-    smoke.draw(now);
+  if (cinema) {
+    heroVisible = smoothY < heroTop + heroSpan + innerHeight * 0.6;
+    if (heroVisible) layoutCinema(t, smoothY);
   }
+  updateReel(dt);
+  if (smoothY !== scenesY) {
+    scenesY = smoothY;
+    scenes.update(smoothY, innerHeight);
+  }
+  if (heroVisible && tabs[sim.chapter]) tabs[sim.chapter].style.setProperty('--tab-p', sim.progress().toFixed(3));
+  // 减弱动态下烟雾是静帧：只有滚动或尺寸变化才重画
+  if (smoke && (!reduced || dirty)) updateSmoke(now);
   if (dirty) updateChrome();
   dirty = false;
   rafId = requestAnimationFrame(frame);
@@ -247,8 +406,10 @@ let rafId = requestAnimationFrame(frame);
 addEventListener('pagehide', event => {
   if (event.persisted) return;
   cancelAnimationFrame(rafId);
-  clearTimeout(swapTimer);
+  clearTimeout(reel.swapTimer);
   simObserver?.disconnect();
+  stripObserver?.disconnect();
+  reveal.disconnect();
   sim.stop();
   strip?.dispose();
   smoke?.dispose();

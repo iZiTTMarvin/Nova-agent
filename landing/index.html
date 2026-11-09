@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nova Agent — 说出来，剩下交给它</title>
-<meta name="description" content="Nova Agent 是本地桌面 AI Agent。一句话把东西做出来，再切到学习，一步一步带你搞懂它。MIT 开源，对话与文件都留在你本机。">
+<meta name="description" content="Nova Agent 是本地桌面 AI Agent。只说目标，它读懂项目、动手实现、把改动摆给你审；再切到学习，一步一步带你搞懂它。MIT 开源，对话与文件都留在你本机。">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#1c1a18">
 <meta property="og:title" content="Nova Agent — 说出来，剩下交给它">
-<meta property="og:description" content="本地桌面 AI Agent：一句话做出来，再一步一步带你学懂。">
+<meta property="og:description" content="本地桌面 AI Agent：只说目标，它做出来；再一步一步带你学懂。">
 <meta property="og:type" content="website">
 <link rel="preload" href="fonts/stix-two-text-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/noto-serif-sc-display.woff2" as="font" type="font/woff2" crossorigin>
@@ -28,7 +28,7 @@
 <a class="skip-link" href="#main">跳到主要内容</a>
 
 <canvas class="smoke" id="smoke" aria-hidden="true"></canvas>
-<div class="crt" aria-hidden="true"><div class="crt__grain"></div></div>
+<div class="crt" id="crt" aria-hidden="true"><div class="crt__grain"></div></div>
 
 <header class="chrome" id="chrome">
   <a class="chrome__brand" href="#top" aria-label="Nova Agent 首页">
@@ -36,11 +36,12 @@
     <span>Nova Agent</span>
   </a>
   <nav class="chrome__nav" aria-label="页面导航">
-    <a href="#demo">看它干活</a>
-    <a href="#moments">真实界面</a>
-    <a href="#capabilities">能力</a>
+    <a href="#demo">演示</a>
+    <a href="#moments">界面</a>
+    <a href="#pilot">领航</a>
+    <a href="#learn">学习</a>
+    <a href="#endurance">长任务</a>
     <a href="#start">上手</a>
-    <a href="#faq">FAQ</a>
   </nav>
   <a class="chrome__cta" href="https://github.com/iZiTTMarvin/Nova-agent/releases" rel="noopener">下载 Windows 版</a>
 </header>
@@ -90,226 +91,316 @@
       <div class="demo-bar" id="demo-bar">
         <ol class="demo-bar__tabs" id="demo-tabs" aria-label="演示章节"></ol>
         <p class="demo-bar__caption" id="demo-caption" aria-live="polite"></p>
-        <p class="demo-bar__note">演示按 Nova 真实界面复刻，对话内容为脚本编写</p>
       </div>
     </div>
   </section>
 
-  <!-- 胶片：真实应用截图沿弯曲胶片划过夜空 -->
+  <!-- 胶片：一屏高的放映机，真实截图沿弯曲胶片恒速环绕；滚轮不被拦住，直接去正文 -->
   <section class="strip" id="moments" aria-labelledby="strip-title">
     <div class="strip__stage">
       <div class="strip__head">
-        <p class="eyebrow">真实界面截图 · 对话内容为脚本编写</p>
         <h2 class="strip__title display" id="strip-title"><span id="strip-name">一句话开工</span></h2>
-        <p class="strip__meta" id="strip-meta">开发 · 读文件、写代码、跑命令都摊在过程行里</p>
+        <p class="strip__meta" id="strip-meta">说一句话，Nova 自己读文件、写代码、跑命令，每一步都摊在过程行里。</p>
       </div>
-      <canvas class="strip__gl" id="strip-gl" aria-hidden="true"></canvas>
+      <canvas class="strip__gl" id="strip-gl" tabindex="0" role="button"
+              aria-label="放大查看当前截图，回车打开大图"></canvas>
       <div class="strip__nav">
-        <button class="strip__arrow" type="button" id="strip-prev" aria-label="上一张">←</button>
-        <div class="strip__dots" id="strip-dots" role="group" aria-label="跳到某一张"></div>
-        <button class="strip__arrow" type="button" id="strip-next" aria-label="下一张">→</button>
+        <button class="strip__play" type="button" id="strip-play" aria-pressed="true">
+          <span class="strip__play-icon" aria-hidden="true"></span>
+          <span class="strip__play-label">暂停</span>
+        </button>
+        <span class="strip__count" id="strip-count">01 / 08</span>
       </div>
     </div>
 
     <ol class="strip__list" id="strip-list">
-      <li class="frame" data-title="一句话开工" data-meta="开发 · 读文件、写代码、跑命令都摊在过程行里">
+      <li class="frame" data-title="一句话开工" data-meta="说一句话，Nova 自己读文件、写代码、跑命令，每一步都摊在过程行里。">
         <img src="assets/shots/dev-03-working.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="Nova 开发会话：用户让它做番茄钟页面，过程行列出读取 README、写入 tomato-timer.html、执行一条命令，下方显示正在工作">
-        <p class="frame__cap"><b>一句话开工</b>读文件、写代码、跑命令都摊在过程行里</p>
+        <p class="frame__cap"><b>一句话开工</b>说一句话，Nova 自己读文件、写代码、跑命令。</p>
       </li>
-      <li class="frame" data-title="删东西之前先问你" data-meta="开发 · 风险命令就地请你授权">
+      <li class="frame" data-title="危险命令先问你" data-meta="递归删除这类命令会停在对话里，等你点头才会执行。">
         <img src="assets/shots/dev-02-permission.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="授权卡：PowerShell 强制递归删除，提供拒绝与允许一次两个按钮，提示拒绝后任务会暂停">
-        <p class="frame__cap"><b>删东西之前先问你</b>风险命令就地请你授权</p>
+        <p class="frame__cap"><b>危险命令先问你</b>递归删除这类命令会停在对话里，等你点头才会执行。</p>
       </li>
-      <li class="frame" data-title="改了什么，一行行看" data-meta="开发 · 每个文件单独保留或回退">
+      <li class="frame" data-title="改动逐个文件审" data-meta="每个文件的改动单独呈现，保留还是回退，由你决定。">
         <img src="assets/shots/dev-06-review.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="右侧审阅面板展开 tomato-timer.html 的新增代码，每个文件都有回退与保留按钮">
-        <p class="frame__cap"><b>改了什么，一行行看</b>每个文件单独保留或回退</p>
+        <p class="frame__cap"><b>改动逐个文件审</b>保留还是回退，由你决定。</p>
       </li>
-      <li class="frame" data-title="学懂这次改动" data-meta="开发 → 学习 · 回复下方一键切过去">
+      <li class="frame" data-title="学懂这次改动" data-meta="回复下方一键切到学习，让 Nova 把刚写的代码讲给你听。">
         <img src="assets/shots/dev-07-learn-entry.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="开发回复下方的操作栏，最右是学懂这次改动的书本图标">
-        <p class="frame__cap"><b>学懂这次改动</b>回复下方一键切到学习</p>
+        <p class="frame__cap"><b>学懂这次改动</b>回复下方一键切到学习，让 Nova 把刚写的代码讲给你听。</p>
       </li>
-      <li class="frame" data-title="一次只讲一步" data-meta="学习 · 讲解里嵌着能点的流程图">
+      <li class="frame" data-title="一次只讲一步" data-meta="讲解沿着数据流往下推进，里面嵌着可以点的流程图。">
         <img src="assets/shots/learn-02-explain.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="学习会话：讲解第 1 步计时从哪开始，嵌入四步流程图与上一步下一步按钮，底部列出接下来可以问的三条建议">
-        <p class="frame__cap"><b>一次只讲一步</b>讲解里嵌着能点的流程图</p>
+        <p class="frame__cap"><b>一次只讲一步</b>讲解沿着数据流往下推进，里面嵌着可以点的流程图。</p>
       </li>
-      <li class="frame" data-title="考考你" data-meta="学习 · 想一想、要提示、直接讲、跳过都行">
+      <li class="frame" data-title="讲完考考你" data-meta="想一想、要提示、让它直接讲，或者跳过，都由你选。">
         <img src="assets/shots/learn-03-question.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="输入区变成想一想面板：问刷新页面后倒计时为什么能接着走，下方有提示、直接讲、跳过与提交">
-        <p class="frame__cap"><b>考考你</b>想一想、要提示、直接讲、跳过都行</p>
+        <p class="frame__cap"><b>讲完考考你</b>想一想、要提示、让它直接讲，或者跳过，都由你选。</p>
       </li>
-      <li class="frame" data-title="真懂了才往下走" data-meta="学习 · 判断理解到位，再讲下一步">
+      <li class="frame" data-title="懂了才往下走" data-meta="判断你理解到位了，再讲下一步。">
         <img src="assets/shots/learn-04-assessed.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="题目行出现绿色对勾，随后讲解第 2 步跨天为什么会清零">
-        <p class="frame__cap"><b>真懂了才往下走</b>判断理解到位，再讲下一步</p>
+        <p class="frame__cap"><b>懂了才往下走</b>判断你理解到位了，再讲下一步。</p>
       </li>
-      <li class="frame" data-title="整个项目一张大纲" data-meta="学习 · 按用途、流程、数据分好组">
+      <li class="frame" data-title="整个项目一张大纲" data-meta="按用途、流程、数据与取舍，把整个项目整理成一张大纲。">
         <img src="assets/shots/learn-05-outline.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="右侧大纲按项目用途、启动与运行、关键用户流程、数据与状态、设计与取舍分组列出主题">
-        <p class="frame__cap"><b>整个项目一张大纲</b>按用途、流程、数据分好组</p>
+        <p class="frame__cap"><b>整个项目一张大纲</b>按用途、流程、数据与取舍整理。</p>
       </li>
     </ol>
   </section>
 
-  <section class="section" id="capabilities" aria-labelledby="cap-title">
-    <div class="shell">
-      <div class="section__head">
-        <p class="eyebrow">长跑也靠得住</p>
-        <h2 class="section__title display" id="cap-title">不只是快，<br>还能陪你干一整天。</h2>
-      </div>
-      <ul class="caps">
-        <li class="cap">
-          <p class="cap__no">01</p>
-          <h3 class="cap__title display">聊久了不失忆，账单也不爆</h3>
-          <p class="cap__body">提示词缓存稳定命中，不重复计费；长对话在合适时机自动压缩。跑几个小时的活儿，成本也压得住。</p>
-        </li>
-        <li class="cap">
-          <p class="cap__no">02</p>
-          <h3 class="cap__title display">聊错了可以反悔</h3>
-          <p class="cap__body">对任意一条回答重新生成，或编辑后重发，原来那条分支都留着，随时切回去。</p>
-        </li>
-        <li class="cap">
-          <p class="cap__no">03</p>
-          <h3 class="cap__title display">它记得你的项目</h3>
-          <p class="cap__body">长期记忆按主题存成文件，能直接看、改、置顶和遗忘。新开会话自动带上核心记忆，不用再介绍一遍。</p>
-        </li>
-        <li class="cap">
-          <p class="cap__no">04</p>
-          <h3 class="cap__title display">联网搜索开箱即用</h3>
-          <p class="cap__body">不填搜索密钥也能搜。读网页时可以按字段提取价格、版本、日期，并附上来源证据；查不准的会明说。</p>
-        </li>
-        <li class="cap">
-          <p class="cap__no">05</p>
-          <h3 class="cap__title display">出了岔子自己接着干</h3>
-          <p class="cap__body">网络抖了自动重试，回复中途断流同一步重放，主模型挂了切到备选模型继续。</p>
-        </li>
-        <li class="cap">
-          <p class="cap__no">06</p>
-          <h3 class="cap__title display">更懂代码，改得更准</h3>
-          <p class="cap__body">超大文件先看 AST 大纲再精读；必须先读过才能改，杜绝盲改；搜索一次就带出上下文行。</p>
-        </li>
-      </ul>
-    </div>
-  </section>
+  <!-- 领航：三种协作方式，加两处界面特写 -->
+  <section class="scene" id="pilot" aria-labelledby="pilot-title">
+    <div class="scene__shell">
+      <p class="scene__tag" data-reveal><span>03</span>领航</p>
+      <h2 class="statement display" id="pilot-title" data-focus>只说目标，其余交给领航。它读懂项目，排好待办，边做边验证，最后把证据摆在你面前。</h2>
 
-  <section class="section" id="compare" aria-labelledby="compare-title">
-    <div class="shell">
-      <div class="section__head">
-        <p class="eyebrow">换个用法</p>
-        <h2 class="section__title display" id="compare-title">和别人有啥不一样</h2>
+      <div class="modes" data-reveal>
+        <article class="mode">
+          <h3 class="mode__name display">默认</h3>
+          <p>功能和修复都很明确时用它。Nova 自己检索代码、修改文件，再跑命令验证。</p>
+        </article>
+        <article class="mode">
+          <h3 class="mode__name display">计划</h3>
+          <p>先只读分析代码库，把方案写进 <code>.nova/plans/</code>，等你确认之后才动手。</p>
+        </article>
+        <article class="mode mode--lead">
+          <h3 class="mode__name display">领航</h3>
+          <p>只描述目标。它按任务挑选方法，用动态待办组织调查、实施与验证，交付时附上真实的截图和命令日志。</p>
+        </article>
       </div>
-      <div class="table-scroll" tabindex="0" role="region" aria-labelledby="compare-title">
-        <table class="compare">
-          <caption class="visually-hidden">Nova Agent 与其他助手的使用方式对比</caption>
-          <thead>
-            <tr><th scope="col">你用别人家…</th><th scope="col">用 Nova Agent…</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>一步步敲命令、记一堆斜杠指令</td><td>像聊天一样说一句话，它自己读、写、跑、查</td></tr>
-            <tr><td>AI 自己改，改坏了才知道</td><td>风险命令先请你授权，改动逐个文件保留或回退</td></tr>
-            <tr><td>东西做完了，你还是看不懂</td><td>切到学习，一次讲一步，还会出题考你</td></tr>
-            <tr><td>长会话账单爆炸</td><td>专门做了缓存治理，成本压得住</td></tr>
-            <tr><td>聊错方向就完蛋</td><td>重新生成保留原分支，随时切回</td></tr>
-            <tr><td>换个会话要重新介绍背景</td><td>项目记忆自动续上</td></tr>
-            <tr><td>只有 IDE 插件</td><td>完整的桌面 app，独立运行</td></tr>
-          </tbody>
-        </table>
+
+      <div class="feature">
+        <div class="feature__media" data-reveal="lens">
+          <button class="shot" type="button" data-open="1" aria-label="放大查看整屏：危险命令先问你" style="--ar: 3.2">
+            <span class="shot__screen">
+              <span class="shot__pan" data-drift="14"><span class="shot__zoom">
+                <img src="assets/shots/dev-02-permission.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.293; --y: 0.255; --w: 0.64" alt="授权卡：PowerShell 强制递归删除，等待允许或拒绝">
+              </span></span>
+            </span>
+          </button>
+        </div>
+        <div class="feature__copy" data-reveal>
+          <p class="feature__no">特写 01</p>
+          <h3 class="feature__title display">危险命令，先问你。</h3>
+          <p>递归删除、改动环境、往交互终端里写入，这类操作会在对话里停住，弹出一张授权卡。你可以只放行这一次，也可以在本会话里一直放行；拒绝之后任务暂停，等你下一步的指示。</p>
+        </div>
+      </div>
+
+      <div class="feature feature--flip">
+        <div class="feature__media" data-reveal="lens">
+          <button class="shot" type="button" data-open="2" aria-label="放大查看整屏：改动逐个文件审" style="--ar: 0.957">
+            <span class="shot__screen">
+              <span class="shot__pan" data-drift="12"><span class="shot__zoom">
+                <img src="assets/shots/dev-06-review.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.665; --y: 0.14; --w: 0.335" alt="审阅面板：tomato-timer.html 的新增代码，带回退与保留按钮">
+              </span></span>
+            </span>
+          </button>
+        </div>
+        <div class="feature__copy" data-reveal>
+          <p class="feature__no">特写 02</p>
+          <h3 class="feature__title display">改了什么，逐个文件看。</h3>
+          <p>所有改动汇进右侧的审阅面板，每个文件单独决定保留还是回退。回退之前，Nova 会先核对磁盘上的最新内容，你在别处手动改过的文件不会被覆盖；批量回退要么整批成功，要么一个文件都不动。</p>
+        </div>
       </div>
     </div>
   </section>
 
-  <section class="section" id="start" aria-labelledby="start-title">
-    <div class="shell">
-      <div class="section__head">
-        <p class="eyebrow">从 GitHub Releases 下载</p>
-        <h2 class="section__title display" id="start-title">三分钟上手</h2>
+  <!-- 学习：开发完立刻读懂它 -->
+  <section class="scene" id="learn" aria-labelledby="learn-title">
+    <div class="scene__shell">
+      <p class="scene__tag" data-reveal><span>04</span>学习</p>
+      <h2 class="statement display" id="learn-title" data-focus>做完不是结束。切到学习，Nova 把刚写的代码一步一步讲给你听，再出题，看你是不是真的懂了。</h2>
+
+      <div class="feature">
+        <div class="feature__media" data-reveal="lens">
+          <button class="shot" type="button" data-open="4" aria-label="放大查看整屏：一次只讲一步" style="--ar: 2.4">
+            <span class="shot__screen">
+              <span class="shot__pan" data-drift="14"><span class="shot__zoom">
+                <img src="assets/shots/learn-02-explain.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.285; --y: 0.2; --w: 0.66" alt="学习讲解：第 1 步计时从哪开始，嵌着四步流程图和上一步下一步按钮">
+              </span></span>
+            </span>
+          </button>
+        </div>
+        <div class="feature__copy" data-reveal>
+          <p class="feature__no">特写 03</p>
+          <h3 class="feature__title display">一次只讲一步。</h3>
+          <p>讲解沿着一条真实的数据流推进：数据从哪里产生，经过什么转换，最后落到哪里。回答里直接嵌着可以点的流程图、参数滑块和对比表，你调过的参数会带进下一轮对话。每条回复的末尾还有追问建议，点一下就能接着往深处问。</p>
+        </div>
       </div>
-      <ol class="steps">
-        <li class="step">
-          <p class="step__no">STEP 01</p>
-          <h3 class="step__title display">装</h3>
-          <p class="step__body">下载 <code>NovaAgent-Setup-*.exe</code>。安装包未做代码签名，Windows 可能弹出 SmartScreen 提示，选「仍要运行」即可。</p>
+
+      <div class="feature feature--flip">
+        <div class="feature__media" data-reveal="lens">
+          <button class="shot" type="button" data-open="5" aria-label="放大查看整屏：讲完考考你" style="--ar: 2.23">
+            <span class="shot__screen">
+              <span class="shot__pan" data-drift="12"><span class="shot__zoom">
+                <img src="assets/shots/learn-03-question.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.29; --y: 0.5; --w: 0.64" alt="想一想面板：刷新页面后倒计时为什么能接着走，带提示、直接讲、跳过与提交">
+              </span></span>
+            </span>
+          </button>
+        </div>
+        <div class="feature__copy" data-reveal>
+          <p class="feature__no">特写 04</p>
+          <h3 class="feature__title display">讲完，考考你。</h3>
+          <p>它不考行号，也不考 API 签名，只问一个关于因果和取舍的问题，并在出题的那一刻锁定评判标准。你可以作答、要提示、让它直接讲，也可以跳过；理解到位了才讲下一步。学习记录保存在你的电脑上。</p>
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature__media" data-reveal="lens">
+          <button class="shot" type="button" data-open="7" aria-label="放大查看整屏：整个项目一张大纲" style="--ar: 1.165">
+            <span class="shot__screen">
+              <span class="shot__pan" data-drift="12"><span class="shot__zoom">
+                <img src="assets/shots/learn-05-outline.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.665; --y: 0.1; --w: 0.335" alt="项目大纲：用途、启动与运行、关键用户流程、数据与状态、设计与取舍">
+              </span></span>
+            </span>
+          </button>
+        </div>
+        <div class="feature__copy" data-reveal>
+          <p class="feature__no">特写 05</p>
+          <h3 class="feature__title display">整个项目，一张大纲。</h3>
+          <p>不管是刚生成的新代码，还是从 GitHub 克隆来的陌生仓库，学习会话只读不写。Nova 读完源码，按项目用途、启动与运行、关键流程、数据与状态、设计取舍，整理出一张可以逐项点开的学习地图。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 长任务 -->
+  <section class="scene" id="endurance" aria-labelledby="endurance-title">
+    <div class="scene__shell">
+      <p class="scene__tag" data-reveal><span>05</span>长任务</p>
+      <h2 class="statement display" id="endurance-title" data-focus>几个小时的活，靠的不是一次聪明的回答，而是不失忆、能反悔、出了岔子还能接着走。</h2>
+
+      <div class="long">
+        <div class="long__fig" data-reveal>
+          <p class="long__num display">5–10%</p>
+          <p class="long__cap">这是大文件的结构大纲占原文的体积。超过 400 行的文件，Nova 先读大纲，再按行号精读真正需要的几段。</p>
+        </div>
+        <div class="long__list" data-stagger>
+          <article class="long__item" data-reveal>
+            <h3 class="long__title display">聊得再久，也不失忆。</h3>
+            <p>请求前缀在整场会话里保持稳定，提示词缓存才能持续命中，长会话的账单不会越滚越大。对话逼近上限时自动压缩，核心上下文和没做完的任务都会留下。</p>
+          </article>
+          <article class="long__item" data-reveal>
+            <h3 class="long__title display">聊错了，可以回头。</h3>
+            <p>任何一条回答都可以重新生成，或者编辑后重发。原来的分支完整保留，随时切回去接着聊。</p>
+          </article>
+          <article class="long__item" data-reveal>
+            <h3 class="long__title display">记得你的项目。</h3>
+            <p>长期记忆分成全局偏好和项目事实，存成你能直接打开、修改、置顶或删除的文件。新开一个会话，核心记忆会自动带上，不必再把背景讲一遍。</p>
+          </article>
+          <article class="long__item" data-reveal>
+            <h3 class="long__title display">不填密钥，也能上网。</h3>
+            <p>搜索开箱即用，一个渠道不通就换下一个。读网页时可以按字段提取价格、版本和日期，并附上原文行号作证据。</p>
+          </article>
+          <article class="long__item" data-reveal>
+            <h3 class="long__title display">出了岔子，自己接着干。</h3>
+            <p>网络抖动会自动重试，回复中途断流就把这一步重放，主模型不可用时切到备选模型继续。</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="scene" id="start" aria-labelledby="start-title">
+    <div class="scene__shell">
+      <p class="scene__tag" data-reveal><span>06</span>上手</p>
+      <h2 class="scene__title display" id="start-title" data-reveal="rack">装好，填 Key，开口说。</h2>
+      <ol class="steps" data-stagger>
+        <li class="step" data-reveal>
+          <span class="step__no display" aria-hidden="true">1</span>
+          <div class="step__body">
+            <h3 class="step__title display">装</h3>
+            <p>从 GitHub Releases 下载 <code>NovaAgent-Setup-*.exe</code> 并运行。安装包没有代码签名，Windows 弹出 SmartScreen 时，选「更多信息」再点「仍要运行」。</p>
+          </div>
         </li>
-        <li class="step">
-          <p class="step__no">STEP 02</p>
-          <h3 class="step__title display">配</h3>
-          <p class="step__body">侧栏底部 <strong>设置 → 模型</strong> 按服务商填 API Key。MiniMax / GLM / DeepSeek 有内置预设；Ollama 和 OpenAI 兼容接口可手动配置。</p>
+        <li class="step" data-reveal>
+          <span class="step__no display" aria-hidden="true">2</span>
+          <div class="step__body">
+            <h3 class="step__title display">配</h3>
+            <p>打开侧栏底部的 <strong>设置 → 模型</strong>，按服务商填入 API Key。DeepSeek、GLM、MiniMax 有内置预设，Ollama 和 OpenAI 兼容接口可以手动配置。</p>
+          </div>
         </li>
-        <li class="step">
-          <p class="step__no">STEP 03</p>
-          <h3 class="step__title display">说</h3>
-          <p class="step__body">直接说你想做什么。第一次不知道说啥就输入 <code>/onboard</code>；想搞懂一个项目，点侧栏顶部的「学习」。</p>
+        <li class="step" data-reveal>
+          <span class="step__no display" aria-hidden="true">3</span>
+          <div class="step__body">
+            <h3 class="step__title display">说</h3>
+            <p>添加一个项目文件夹，直接说你想做什么。不知道从哪开口，就输入 <code>/onboard</code>；想搞懂一个项目，点侧栏顶部的「学习」。</p>
+          </div>
         </li>
       </ol>
-      <p class="note">应用本身不需要装 Node。但让它运行或构建你的项目时，需要你机器上已经装好项目要用的工具（Node.js、Git、Python 等）。你的代码片段和对话会发给你配置的模型服务商。</p>
+      <p class="note" data-reveal>让它运行或构建你的项目，需要本机已经装好项目用到的工具，比如 Node.js、Git 或 Python。</p>
     </div>
   </section>
 
-  <section class="section" id="skills" aria-labelledby="skills-title">
-    <div class="shell">
-      <div class="section__head">
-        <p class="eyebrow">输入 / 就能看到</p>
-        <h2 class="section__title display" id="skills-title">装好就有的小帮手</h2>
+  <section class="scene" id="skills" aria-labelledby="skills-title">
+    <div class="scene__shell skills">
+      <div class="skills__lead">
+        <p class="scene__tag" data-reveal><span>07</span>技能</p>
+        <h2 class="scene__title display" id="skills-title" data-reveal="rack">输入 <span class="skills__slash">/</span>，<br>召唤技能。</h2>
+        <p class="skills__note" data-reveal>想要自己的技能，写一份 <code>SKILL.md</code>：放进 <code>~/.nova/skills/&lt;name&gt;/</code> 所有项目都能用，放进项目里的 <code>.nova/skills/</code> 则只在这个项目生效。</p>
       </div>
-      <ul class="skills">
-        <li><code>/onboard</code><span>首次上手向导：了解工作区、配置规则与技能</span></li>
-        <li><code>/deep-research</code><span>深度调研：拆子问题并行检索，结论带来源引用</span></li>
-        <li><code>/code-review</code><span>代码审查：对 git 变更做只读审查，给出带文件行号的问题清单</span></li>
-        <li><code>/nova-frontend</code><span>创建或重构高质量前端界面，不像 AI 套模板</span></li>
-        <li><code>/skill-creator</code><span>想自己做技能？照着做</span></li>
-        <li><code>/skill-add</code><span>从 URL 或 zip 装一个新技能</span></li>
+      <ul class="skills__list" data-stagger>
+        <li data-reveal><code>/onboard</code><span>首次上手向导，带你熟悉工作区、规则和技能。</span></li>
+        <li data-reveal><code>/deep-research</code><span>把复杂调研拆成并行的子问题，结论都附来源。</span></li>
+        <li data-reveal><code>/code-review</code><span>只读审查 git 变更，给出精确到文件和行号的问题清单。</span></li>
+        <li data-reveal><code>/nova-frontend</code><span>创建或重构有设计感的前端界面。</span></li>
+        <li data-reveal><code>/skill-creator</code><span>一步步带你写出自己的技能。</span></li>
+        <li data-reveal><code>/skill-add</code><span>从链接或压缩包安装别人写好的技能。</span></li>
       </ul>
-      <p class="note">自己的技能把 <code>SKILL.md</code> 放进 <code>~/.nova/skills/&lt;name&gt;/</code>（全局）或 <code>&lt;你的项目&gt;/.nova/skills/</code>（仅当前项目）即可。</p>
     </div>
   </section>
 
-  <section class="section" id="faq" aria-labelledby="faq-title">
-    <div class="shell shell--narrow">
-      <div class="section__head">
-        <p class="eyebrow">还想问的</p>
-        <h2 class="section__title display" id="faq-title">常见问题</h2>
-      </div>
-      <div class="faq">
+  <section class="scene" id="faq" aria-labelledby="faq-title">
+    <div class="scene__shell scene__shell--narrow">
+      <p class="scene__tag" data-reveal><span>08</span>常见问题</p>
+      <h2 class="scene__title display" id="faq-title" data-reveal="rack">你可能想问。</h2>
+      <div class="faq" data-reveal>
         <details>
-          <summary>我不会写代码能用吗？</summary>
-          <p>可以。你不用写代码，用大白话告诉它你想做什么就行。做完看不懂，就切到学习让它讲。</p>
+          <summary>我不会写代码，能用吗？</summary>
+          <div class="faq__body"><p>可以。用大白话说清你想做什么就行。做完看不懂的地方，切到学习，让它讲给你听。</p></div>
         </details>
         <details>
           <summary>学习模式是什么？</summary>
-          <p>侧栏顶部从「开发」切到「学习」。它只读你的代码，一次讲一步，讲完会出题考你、判断你是否理解到位；还能生成整个项目的大纲。学习会话不会改动你的代码。</p>
+          <div class="faq__body"><p>在侧栏顶部从「开发」切到「学习」。它只读你的代码，一次讲一步，讲完出题考你，还能生成整个项目的大纲。学习会话不会改动你的任何文件。</p></div>
         </details>
         <details>
-          <summary>跟 Cursor / Claude Code 比呢？</summary>
-          <p>那些主要在编辑器里用，前提是你得会写代码。Nova Agent 是完整的桌面 app：说一句话它自己读、写、跑命令，改动逐个文件给你审；做完还能让它一步一步讲懂。</p>
+          <summary>它会乱删我的东西吗？</summary>
+          <div class="faq__body"><p>不会。删除文件、运行危险命令之前都会弹出授权，你不点允许它就不动。改过的文件都列在审阅面板里，可以逐个回退。</p></div>
         </details>
         <details>
-          <summary>它会不会乱删我的东西？</summary>
-          <p>删文件、跑危险命令前会弹出授权，你不点允许它就不动。改过的文件都列在审阅里，可以逐个回退。</p>
+          <summary>我的数据存在哪里？</summary>
+          <div class="faq__body"><p>对话、文件和检查点都存在你的电脑上。模型请求直接发给你配置的服务商，Nova 不做中转。</p></div>
         </details>
         <details>
-          <summary>数据安全吗？</summary>
-          <p>Nova Agent 是本地桌面 app，对话、文件、检查点都存在你电脑上。AI 调用走你自己的 API Key，流量只在你和服务商之间。</p>
+          <summary>必须用自己的 API Key 吗？</summary>
+          <div class="faq__body"><p>是的。Nova Agent 本身免费、MIT 开源，你只需要为模型调用付费。</p></div>
         </details>
         <details>
-          <summary>API Key 必须用自己的？</summary>
-          <p>对。Nova Agent 不收 Key、不中转请求、不抽成。它本身免费（MIT 开源），你只出 AI 调用的钱。</p>
-        </details>
-        <details>
-          <summary>跑得动什么、跑不动什么？</summary>
-          <p>跑得动小时级的长任务、多步骤多文件的改动，也能跑测试、装依赖、查文档。不擅长需要你实时看屏幕做判断的事，也不擅长连上你的真机做部署。</p>
+          <summary>它擅长什么，不擅长什么？</summary>
+          <div class="faq__body"><p>擅长小时级的长任务和多文件改动，也能跑测试、装依赖、查文档。需要你实时盯着屏幕做判断的事，以及连上你的真机做部署，它帮不上忙。</p></div>
         </details>
       </div>
     </div>
   </section>
 
   <section class="outro" aria-labelledby="outro-title">
-    <div class="shell">
-      <h2 class="outro__title display" id="outro-title">装上它，<br>说一句话试试。</h2>
-      <div class="hero__actions">
+    <div class="scene__shell">
+      <h2 class="outro__title display" id="outro-title" data-reveal="rack">说一句话，<br>试试。</h2>
+      <div class="hero__actions" data-reveal>
         <a class="btn btn--glow" href="https://github.com/iZiTTMarvin/Nova-agent/releases" rel="noopener">下载 Windows 版</a>
         <a class="btn btn--line" href="https://github.com/iZiTTMarvin/Nova-agent" rel="noopener">在 GitHub 上看看<span aria-hidden="true"> →</span></a>
       </div>
@@ -318,12 +409,33 @@
 </main>
 
 <footer class="foot">
-  <div class="shell foot__inner">
+  <div class="scene__shell foot__inner">
     <p class="foot__brand"><img src="assets/nova-oracle.png" alt="" width="22" height="22">Nova Agent</p>
-    <p>本机运行 · 你的 Key · 不中转不抽成 · <a href="https://github.com/iZiTTMarvin/Nova-agent" rel="noopener">GitHub</a></p>
-    <p class="foot__dim">MIT License — Copyright (c) 2026 Harrison Xu。致谢 pi-agent、opencode、kilo code、openclacky 等项目。</p>
+    <p><a href="https://github.com/iZiTTMarvin/Nova-agent" rel="noopener">GitHub</a> · MIT License · Copyright (c) 2026 Harrison Xu</p>
+    <p class="foot__dim">致谢 pi-agent、opencode、kilo code、openclacky 等项目。</p>
   </div>
 </footer>
+
+<div class="lb" id="lightbox" role="dialog" aria-modal="true" aria-labelledby="lb-title" hidden>
+  <div class="lb__scrim"></div>
+  <div class="lb__stage">
+    <figure class="lb__shot">
+      <img class="lb__img" alt="" decoding="async">
+    </figure>
+    <div class="lb__bar">
+      <div class="lb__text">
+        <p class="lb__counter">01 / 08</p>
+        <h3 class="lb__title display" id="lb-title"></h3>
+        <p class="lb__meta"></p>
+      </div>
+      <div class="lb__tools">
+        <button class="lb__nav lb__prev" type="button" aria-label="上一张">←</button>
+        <button class="lb__nav lb__next" type="button" aria-label="下一张">→</button>
+        <button class="lb__close" type="button" aria-label="关闭大图（Esc）">✕</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="main.js"></script>
 </body>
