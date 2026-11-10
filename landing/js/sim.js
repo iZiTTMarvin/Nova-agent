@@ -2,8 +2,8 @@
  * Nova 界面复刻与脚本化演示。
  *
  * 在 1280×800 的 DOM 里按真实浅色主题重建 Nova 的侧栏、对话流、输入区和右侧面板，
- * 再用一份章节脚本模拟一次完整使用：开发会话里一句话做出番茄钟 → 风险命令授权 →
- * 审阅改动 → 切到学习逐步讲解 → 出题考查 → 生成项目大纲。界面文案取自应用源码。
+ * 模拟一次完整闭环：领航模式下只说目标 → 动态待办推进 → 内置浏览器真实验证 →
+ * 证据卡与诚实交付 → 一键切到学习逐步讲解 → 出题考查 → 生成项目大纲。
  *
  * 时间全部经由 wait() 推进：它负责暂停、取消（runToken 变化即抛出 CANCEL）和章节进度计时；
  * 快进模式下 wait() 立即返回，用于跳章时把前面章节的状态瞬间重建出来。
@@ -23,6 +23,8 @@ const P = {
   chevronDown: '<path d="m6 9 6 6 6-6"/>',
   chevronRight: '<path d="m9 18 6-6-6-6"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
+  globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
   send: '<line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>',
   stop: '<rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/>',
   refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
@@ -52,13 +54,13 @@ function el(tag, className, html) {
   return node;
 }
 
-const PROMPT = '帮我做一个番茄钟页面，要能记住今天完成了几个';
+const PROMPT = '番茄钟刷新页面后又回到 25:00 了，帮我修好';
 const ANSWER = '每秒 save() 把剩余秒数写进 localStorage，页面加载时先 getItem 读回来';
 const QUESTION = '刷新页面后，倒计时为什么能接着上次的走？';
 
 /* AssistantPendingIndicator 的轮换文案 */
 const PENDING_LINES = [
-  'Nova正在捣鼓中...',
+  'Nova正在把思路焊起来...',
   '正在摸清这个仓库的脾气...',
   'Nova正在翻代码，马上回来...',
   '正在和Bug讲道理...',
@@ -66,37 +68,20 @@ const PENDING_LINES = [
   '代码在路上，Nova正在收尾...'
 ];
 
-/* 审阅面板里的新文件：与截图脚本写入的 tomato-timer.html 一致 */
-const DIFF_LINES = [
-  '<span class="tk-tag">&lt;!doctype</span> <span class="tk-attr">html</span><span class="tk-tag">&gt;</span>',
-  '<span class="tk-tag">&lt;meta</span> <span class="tk-attr">charset</span>=<span class="tk-str">"utf-8"</span><span class="tk-tag">&gt;</span>',
-  '<span class="tk-tag">&lt;title&gt;</span>番茄钟<span class="tk-tag">&lt;/title&gt;</span>',
-  '<span class="tk-tag">&lt;h1</span> <span class="tk-attr">id</span>=<span class="tk-str">"timer"</span><span class="tk-tag">&gt;</span>25:00<span class="tk-tag">&lt;/h1&gt;</span>',
-  '<span class="tk-tag">&lt;p&gt;</span>今天完成 <span class="tk-tag">&lt;b</span> <span class="tk-attr">id</span>=<span class="tk-str">"done"</span><span class="tk-tag">&gt;</span>0<span class="tk-tag">&lt;/b&gt;</span> 个<span class="tk-tag">&lt;/p&gt;</span>',
-  '<span class="tk-tag">&lt;button</span> <span class="tk-attr">id</span>=<span class="tk-str">"start"</span><span class="tk-tag">&gt;</span>开始专注<span class="tk-tag">&lt;/button&gt;</span>',
-  '<span class="tk-tag">&lt;button</span> <span class="tk-attr">id</span>=<span class="tk-str">"reset"</span><span class="tk-tag">&gt;</span>重置<span class="tk-tag">&lt;/button&gt;</span>',
-  '<span class="tk-tag">&lt;script&gt;</span>',
-  '<span class="tk-kw">const</span> KEY = <span class="tk-str">\'tomato-state\'</span>',
-  '<span class="tk-kw">const</span> saved = JSON.<span class="tk-fn">parse</span>(localStorage.<span class="tk-fn">getItem</span>(KEY) || <span class="tk-str">\'{}\'</span>)',
-  '<span class="tk-kw">let</span> left = saved.left ?? <span class="tk-fn">25</span> * <span class="tk-fn">60</span>',
-  '<span class="tk-kw">let</span> done = saved.day === <span class="tk-fn">today</span>() ? saved.done : <span class="tk-fn">0</span>',
-  '<span class="tk-kw">let</span> ticking = <span class="tk-kw">null</span>',
-  '',
-  '<span class="tk-kw">function</span> <span class="tk-fn">today</span>() { <span class="tk-kw">return new</span> <span class="tk-fn">Date</span>().<span class="tk-fn">toDateString</span>() }',
-  '<span class="tk-kw">function</span> <span class="tk-fn">save</span>() { localStorage.<span class="tk-fn">setItem</span>(KEY, …) }',
-  '',
-  'start.onclick = () =&gt; {',
-  '  <span class="tk-kw">if</span> (ticking) <span class="tk-kw">return</span>',
-  '  ticking = <span class="tk-fn">setInterval</span>(() =&gt; {'
+const PILOT_TODOS = [
+  '复现：刷新页面，确认倒计时回到 25:00',
+  '定位根因：存档写了，启动时有没有读回',
+  '修复读取，不改写入逻辑',
+  '在真实页面里验证刷新后接着走'
 ];
 
 export const CHAPTERS = [
-  { label: '一句话开工', caption: '你只说要什么，它自己读文件、写代码，过程一行行摊开给你看。', est: 9800 },
-  { label: '危险操作先问你', caption: '要删目录这类风险命令，先停下来请你授权，你点了才动。', est: 9200 },
-  { label: '改动逐个审', caption: '改过的文件都在审阅里，逐个看差异，保留或回退。', est: 7600 },
-  { label: '学懂这次改动', caption: '回复下方点一下，切到学习：一次只讲一步，流程图能点着走。', est: 15500 },
-  { label: '考考你', caption: '讲完出题，你答对了才往下讲；也能要提示、直接讲或跳过。', est: 15000 },
-  { label: '项目大纲', caption: '扫描代码整理成大纲，按用途、流程、数据分组，挑一个开始学。', est: 8200 }
+  { label: '领航接手', caption: '只说目标，领航自动匹配修复打法并列出动态待办，边排查边推进。', est: 9800 },
+  { label: '真实验证', caption: '改完代码不算完，自动拉起右侧内置浏览器与检查脚本核验真实页面。', est: 9400 },
+  { label: '证据交付', caption: '实时页面画面与验证日志收进交付卡，实测结果与未覆盖边界分开交代。', est: 9200 },
+  { label: '学懂这次改动', caption: '点一下回复下方的书本图标切到学习，顺着源码数据流一步步拆解。', est: 15500 },
+  { label: '考考你', caption: '围绕核心因果与取舍出题，确认你真吃透了再往下讲。', est: 15000 },
+  { label: '项目大纲', caption: '自动扫描源码并核对出处，按用途、流程、数据与取舍生成学习地图。', est: 8200 }
 ];
 
 export function createNovaSim(root) {
@@ -176,6 +161,7 @@ export function createNovaSim(root) {
               <span data-ref="panelBtn">${ico('panelRight', 17)}</span>
             </div>
           </header>
+          <div class="nv-pop" data-ref="pop"></div>
           <div class="nv-scroll" data-ref="scroll"><div class="nv-flow" data-ref="flow"></div></div>
           <div class="nv-composer-wrap">
             <div class="nv-composer" data-ref="composer"></div>
@@ -237,6 +223,8 @@ export function createNovaSim(root) {
   function setComposer(mode) {
     const c = refs.composer;
     const running = mode.endsWith('running');
+    const isPilot = mode.startsWith('dev');
+    c.classList.toggle('nv-composer--pilot', isPilot);
     if (mode === 'dock') {
       c.innerHTML = `
         <p class="nv-dock__eyebrow">${ico('book', 13)}想一想</p>
@@ -250,7 +238,7 @@ export function createNovaSim(root) {
         : (running ? 'Agent 正在运行，输入将进入排队队列...' : '向 Nova 提问或分配编程任务...');
       const start = learn
         ? ''
-        : `<span class="nv-ghost">${ico('plus', 17)}</span><span class="nv-ghost${running ? ' is-dim' : ''}">${ico('shield', 15)}自动 ${ico('chevronDown', 14)}</span>`;
+        : `<span class="nv-ghost">${ico('plus', 17)}</span><span class="nv-pilot-pill">${ico('sun', 14)}领航 <i>×</i></span><span class="nv-ghost${running ? ' is-dim' : ''}" style="color:#8a4b00">${ico('shield', 15)}完全访问 ${ico('chevronDown', 14)}</span>`;
       c.innerHTML = `
         <div class="nv-composer__input" data-ref-local="input" data-placeholder="${placeholder}"></div>
         <div class="nv-composer__foot">${start}
@@ -440,29 +428,57 @@ export function createNovaSim(root) {
 
   function hideCursor() { refs.cursor.classList.remove('is-on'); }
 
-  /* ---------- 右侧面板 ---------- */
+  /* ---------- 右侧面板与领航浮窗 ---------- */
 
-  function openReview() {
+  function setTodos(states, open = true) {
+    const done = states.filter(s => s === 'done').length;
+    const allDone = done === PILOT_TODOS.length;
+    setChip(
+      allDone
+        ? `<span style="color:#16a34a;display:inline-flex">${ico('check', 13, 2.5)}</span><span style="color:#16a34a;font-weight:600">进程 ${done}/${PILOT_TODOS.length}</span>`
+        : `<span class="nv-ring" style="width:12px;height:12px;border-color:#bbf7d0;border-top-color:#16a34a"></span><b>进程 ${done}/${PILOT_TODOS.length}</b>`,
+      true
+    );
+    refs.pop.innerHTML = `
+      <div class="nv-pop__head">${ico('check', 14, 2.5)}<span>进程 ${done}/${PILOT_TODOS.length}</span></div>
+      <div class="nv-pop__sub"><span>进度</span><em>${done}/${PILOT_TODOS.length}</em></div>
+      <ul class="nv-pop__list">
+        ${PILOT_TODOS.map((text, i) => `
+          <li class="nv-pop__item${states[i] === 'done' ? ' is-done' : states[i] === 'active' ? ' is-active' : ''}">
+            <i>${states[i] === 'done' ? ico('check', 10, 3) : ''}</i><span>${text}</span>
+          </li>`).join('')}
+      </ul>
+      ${done >= 2 ? `<div class="nv-pop__foot">${ico('code', 13)}<code>tomato-timer.html</code></div>` : ''}`;
+    refs.pop.classList.toggle('is-open', open);
+  }
+
+  function closePop() {
+    refs.pop.classList.remove('is-open');
+  }
+
+  function openBrowser() {
     refs.inspInner.innerHTML = `
-      <div class="nv-insp__top"><span class="nv-tab">${ico('userCheck', 14)}审阅</span>
+      <div class="nv-insp__top"><span class="nv-tab">${ico('globe', 14)}内置浏览器</span>
         <span class="nv-insp__top-end">${ico('plus', 15)}${ico('panelRight', 16)}</span></div>
-      <div class="nv-rv-bar"><b>2 个文件</b><span class="nv-add">+33</span><span class="nv-del">−2</span>
-        <span data-reviewed>已审 0/2</span>
-        <span class="nv-rv-bar__end"><span class="nv-pill-btn" data-expand>全部展开</span><span class="nv-seg"><span>语法</span><span>文本</span></span><span class="nv-pill-btn">换行</span></span></div>
-      <div class="nv-files">
-        <div class="nv-file" data-file="0">
-          <div class="nv-file__head">${ico('chevronRight', 13)}<span class="nv-file__name">tomato-timer.html</span>
-            <span class="nv-badge-new">新建</span><span class="nv-add">+33</span><span class="nv-del">−0</span><span>打开</span>
-            <span class="nv-btn nv-btn--ghost">${ico('undo', 13)}回退</span><span class="nv-btn nv-btn--keep" data-keep>${ico('check', 13)}保留</span></div>
-          <div class="nv-diff">${DIFF_LINES.map((l, i) => `<p><i>${i + 1}</i><code>${l}</code></p>`).join('')}</div>
+      <div class="nv-browser">
+        <div class="nv-browser__bar">
+          <span>←</span><span>→</span><span>↻</span>
+          <div class="nv-browser__url">http://127.0.0.1:6020/</div>
+          <span class="nv-btn" style="height:24px;font-size:12px;padding:0 8px">访问</span>
         </div>
-        <div class="nv-file" data-file="1">
-          <div class="nv-file__head">${ico('chevronRight', 13)}<span class="nv-file__name">stale.txt</span><span class="nv-file__dir">old-build</span>
-            <span class="nv-badge-del">删除</span><span class="nv-add">+0</span><span class="nv-del">−2</span>
-            <span class="nv-btn nv-btn--ghost">${ico('undo', 13)}回退</span><span class="nv-btn nv-btn--keep" data-keep>${ico('check', 13)}保留</span></div>
+        <div class="nv-browser__page">
+          <div class="nv-pomo">
+            <span class="nv-pomo__tag">🍅 专注进行中</span>
+            <div class="nv-pomo__time" data-pomo-time>24:47</div>
+            <div class="nv-pomo__done">今天已完成 <b>3</b> 个番茄</div>
+            <div class="nv-pomo__bar"><i></i></div>
+            <div class="nv-pomo__btns">
+              <span class="nv-btn nv-btn--primary">继续专注</span>
+              <span class="nv-btn nv-btn--ghost">重置</span>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="nv-rv-foot"><span data-pending>待审 2 个文件</span><span class="nv-btn">${ico('undo', 13)}撤销本轮待审改动</span><span class="nv-btn nv-btn--keep">${ico('check', 13)}标记全部已审</span></div>`;
+      </div>`;
     refs.insp.classList.add('is-open');
   }
 
@@ -515,13 +531,13 @@ export function createNovaSim(root) {
   const state = {};
 
   const chapters = [
-    // 一句话开工
+    // 01 领航接手：只说目标，自动匹配修复方法并拉起动态待办
     async () => {
-      await wait(500);
-      await click(refs.input, 0.12, 0.5);
+      await wait(450);
+      await click(refs.input, 0.14, 0.5);
       await typeInto(refs.input, PROMPT);
       refs.send.classList.add('is-ready');
-      await wait(260);
+      await wait(240);
       await click(refs.send);
       hideCursor();
       refs.input.textContent = '';
@@ -529,86 +545,89 @@ export function createNovaSim(root) {
       setComposer('dev-running');
       setTitle(PROMPT);
       let pending = addPending();
-      await wait(1400);
+      await wait(1100);
       pending.remove();
       const proc = addProc();
       state.proc = proc;
-      proc.head('读取 1 个文件');
-      proc.row('fileText', '读取', 'README.md');
+      proc.head('调用技能 1 次，读取 1 个文件');
+      proc.row('fileText', '读取', 'tomato-timer.html');
+      setTodos(['done', 'active', 'pending', 'pending'], true);
       pending = addPending();
-      await wait(900);
-      proc.head('读取 1 个文件，写入 1 个文件');
+      await wait(1100);
+      setTodos(['done', 'done', 'active', 'pending'], true);
+      proc.head('调用技能 1 次，读取 2 个文件，写入 1 个文件');
       proc.row('fileCode', '写入', 'tomato-timer.html', { iconClass: 'nv-row__icon--html' });
-      setChip(`<span class="nv-ring" style="width:13px;height:13px;border-color:#bfdbfe;border-top-color:#3b82f6"></span><b>1</b> 个文件改动`);
-      await wait(1500);
+      await wait(1200);
       state.pending = pending;
     },
 
-    // 危险操作先问你
+    // 02 真实验证：拉起内置浏览器与检查脚本核验真实页面
     async () => {
       const proc = state.proc;
       state.pending?.remove();
-      const row = proc.row('terminal', '执行', 'Remove-Item -Recurse -Force old-build', { cmd: true, state: '等待授权' });
-      proc.head('读取 1 个文件，写入 1 个文件，运行 1 条命令 <b>1 项进行中</b> <i>等待授权</i>');
-      await wait(700);
-      proc.slot.innerHTML = `
-        <div class="nv-perm">
-          <div class="nv-perm__risk">PowerShell 强制递归删除</div>
-          <p class="nv-perm__hint">拒绝后任务会暂停，等待你的下一步指令</p>
-          <div class="nv-perm__acts"><span class="nv-btn nv-btn--split"><span>拒绝</span><i>▾</i></span><span class="nv-btn nv-btn--primary" data-allow>允许一次</span></div>
-        </div>`;
+      setTodos(['done', 'done', 'done', 'active'], true);
+      proc.head('调用技能 1 次，读取 2 个文件，写入 1 个文件，浏览器验证中');
+      proc.row('globe', '验证', 'http://127.0.0.1:6020/ 刷新读回存档');
+      await wait(650);
+      closePop();
+      openBrowser();
       stick();
-      await wait(1900);
-      await click(proc.slot.querySelector('[data-allow]'));
+      await wait(1400);
+      proc.row('terminal', '执行', 'RELOAD CHECK: 1200/1200 restored', { cmd: true });
+      setTodos(['done', 'done', 'done', 'done'], false);
+      const ev = append(el('div', 'nv-ev nv-fade', `
+        <div class="nv-ev__head"><b>工具产物</b><span>仅表示产物存在，不代表目标已验证</span></div>
+        <div class="nv-ev__label">修复后的页面画面 <em>来自 browser_capture</em></div>
+        <div class="nv-ev__preview">
+          <div class="nv-ev__timer">24:47</div>
+          <div class="nv-ev__meta">今天已完成 <b>3</b> 个番茄</div>
+          <span class="nv-ev__pill">专注进行中</span>
+        </div>
+        <span class="nv-btn" data-open-live>打开实时结果</span>
+        <div class="nv-ev__sec">
+          <div class="nv-ev__label">刷新后读回存档的逐次检查输出 <em>来自 bash</em></div>
+          <span class="nv-btn" data-toggle-log>查看日志</span>
+          <div class="nv-ev__log" data-log>
+            [tick 0010] left=1490 saved=1490 after-reload=1490 ok<br>
+            [tick 0011] left=1489 saved=1489 after-reload=1489 ok<br>
+            [tick 0012] left=1488 saved=1488 after-reload=1488 ok<br>
+            [tick 0013] left=1487 saved=1487 after-reload=1487 ok<br>
+            <em>RELOAD CHECK: 1200/1200 restored</em>
+          </div>
+        </div>`));
+      state.ev = ev;
+      await wait(1600);
+    },
+
+    // 03 证据交付：展开验证日志，输出根因、验证方式与未验证边界
+    async () => {
+      closeInspector();
+      await wait(550);
+      const logBtn = state.ev.querySelector('[data-toggle-log]');
+      const logBox = state.ev.querySelector('[data-log]');
+      await click(logBtn);
       hideCursor();
-      proc.slot.innerHTML = '';
-      row.querySelector('.nv-row__state')?.remove();
-      row.querySelector('svg:last-child')?.remove();
-      proc.head('读取 1 个文件，写入 1 个文件，运行 1 条命令');
-      setChip(`<span class="nv-ring" style="width:13px;height:13px;border-color:#bfdbfe;border-top-color:#3b82f6"></span><b>2</b> 个文件改动`);
-      const pending = addPending();
-      await wait(1500);
-      pending.remove();
-      proc.collapse('已工作 3 秒');
+      logBtn.textContent = '收起日志';
+      logBox.classList.add('is-open');
+      stick();
+      await wait(900);
+      state.proc.collapse('已工作 4 秒');
       const reply = addAssistant();
       await stream(reply, [
-        { p: ['做好了。', { code: 'tomato-timer.html' }, ' 双击就能打开：'] },
-        { ul: [['专注 25 分钟，结束自动记一个'], ['刷新页面接着上次的倒计时，跨天计数自动清零'], ['连点「开始专注」不会叠加计时器']] },
-        { p: ['顺手清掉了旧的 ', { code: 'old-build' }, ' 目录。改动都在审阅里，逐个文件看完再保留。'] }
+        { p: ['修好了：刷新页面后倒计时会接着上次的剩余时间走。'] },
+        { p: [{ b: '根因：' }, '每秒都把剩余秒数写进了存档，但页面启动时 ', { code: 'left' }, ' 直接取了 25 分钟，从没读回存档。现在启动时先读存档，写入逻辑没动。'] },
+        { p: [{ b: '验证：' }, '用同一个页面入口反复刷新，剩余秒数与存档逐次一致，输出和页面截图在上方。'] },
+        { p: [{ b: '没验证的：' }, '跨天自动清零、多个标签页同时打开。'] }
       ]);
       state.actions = addActions({ learn: true });
       setComposer('dev');
-      setChip(`${ico('activity', 13)}<b>2</b> 个文件改动`);
-      await wait(1100);
+      await wait(1300);
     },
 
-    // 改动逐个审
-    async () => {
-      await click(refs.chip);
-      openReview();
-      stick();
-      await wait(900);
-      const expand = refs.inspInner.querySelector('[data-expand]');
-      await click(expand);
-      expand.textContent = '全部收起';
-      expand.classList.add('is-on');
-      refs.inspInner.querySelector('[data-file="0"]').classList.add('is-open');
-      await wait(2100);
-      const files = refs.inspInner.querySelectorAll('.nv-file');
-      for (let i = 0; i < files.length; i++) {
-        await click(files[i].querySelector('[data-keep]'));
-        files[i].classList.add('is-kept');
-        refs.inspInner.querySelector('[data-reviewed]').textContent = `已审 ${i + 1}/2`;
-        refs.inspInner.querySelector('[data-pending]').textContent = i === 0 ? '待审 1 个文件' : '没有待审文件';
-        await wait(500);
-      }
-      hideCursor();
-      await wait(800);
-    },
-
-    // 学懂这次改动
+    // 04 学懂这次改动
     async () => {
       closeInspector();
+      closePop();
       await wait(650);
       const learnBtn = state.actions.querySelector('[data-learn]');
       await point(learnBtn);

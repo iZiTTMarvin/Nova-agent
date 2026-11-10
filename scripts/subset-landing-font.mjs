@@ -5,6 +5,8 @@ import { readFile, writeFile } from 'node:fs/promises'
 const html = await readFile('landing/index.html', 'utf8')
 const pieces = []
 for (const m of html.matchAll(/<(\w+)[^>]*class="[^"]*\bdisplay\b[^"]*"[^>]*>([\s\S]*?)<\/\1>/g)) pieces.push(m[2])
+for (const m of html.matchAll(/<summary[^>]*>([\s\S]*?)<\/summary>/g)) pieces.push(m[1])
+for (const m of html.matchAll(/<b>([\s\S]*?)<\/b>/g)) pieces.push(m[1])
 for (const m of html.matchAll(/data-title="([^"]+)"/g)) pieces.push(m[1])
 
 // 只保留 CJK 区段，西文由 STIX Two Text 负责

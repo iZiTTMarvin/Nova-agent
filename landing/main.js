@@ -6,12 +6,12 @@
  * - static（窄屏或减弱动态）：不钉住，显示器按容器宽度等比缩放，胶片退化为纵向截图列表。
  * 场景离屏即停：不写样式、不发 draw call；正文区烟雾降到四分之一分辨率、30fps。
  */
-import { createNovaSim, CHAPTERS } from './js/sim.js';
-import { createSmoke } from './js/smoke.js';
-import { createStrip, PITCH, pointInQuad, quadBounds } from './js/strip.js';
-import { createLightbox } from './js/lightbox.js';
-import { createReveal } from './js/reveal.js';
-import { createScenes } from './js/scenes.js';
+import { createNovaSim, CHAPTERS } from './js/sim.js?v=7';
+import { createSmoke } from './js/smoke.js?v=7';
+import { createStrip, PITCH, pointInQuad, quadBounds } from './js/strip.js?v=7';
+import { createLightbox } from './js/lightbox.js?v=7';
+import { createReveal } from './js/reveal.js?v=7';
+import { createScenes } from './js/scenes.js?v=7';
 
 const root = document.documentElement;
 const cinema = root.classList.contains('is-cinema');
@@ -145,7 +145,7 @@ const items = frames.map(frame => ({
   meta: frame.dataset.meta
 }));
 
-// 恒速环绕：每个槽位约 4.2 秒，悬停、点击与换章都不改变速度；只有灯箱打开或手动暂停才停
+// 恒速环绕：每个槽位约 4.2 秒，悬停、点击与换章都不改变速度；打开灯箱时暂停
 const SPEED = PITCH / 4.2;
 const mod = (n, m) => ((n % m) + m) % m;
 
@@ -167,18 +167,6 @@ if (cinema) {
   strip = createStrip(stripCanvas, items.map(item => item.src));
   if (!strip) stripSection.classList.add('is-fallback');
 }
-
-const playBtn = $('strip-play');
-function paintPlayButton() {
-  playBtn.setAttribute('aria-pressed', String(reel.playing));
-  playBtn.dataset.state = reel.playing ? 'playing' : 'paused';
-  playBtn.querySelector('.strip__play-label').textContent = reel.playing ? '暂停' : '继续';
-}
-paintPlayButton();
-playBtn.addEventListener('click', () => {
-  reel.playing = !reel.playing;
-  paintPlayButton();
-});
 
 function setActiveFrame(index) {
   reel.active = index;

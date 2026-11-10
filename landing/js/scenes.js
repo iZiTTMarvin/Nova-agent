@@ -38,6 +38,67 @@ export function createScenes({ reduced }) {
 
   for (const item of focusItems) splitChars(item.el);
 
+  // 液态玻璃场景卡：平时三张保持完全一致，仅在悬停时浮起并随鼠标视角偏转
+  for (const deck of document.querySelectorAll('[data-deck]')) {
+    const cards = [...deck.querySelectorAll('[data-card]')];
+    const state = cards.map(() => ({ rx: 0, ry: 0, tx: 0, ty: 0, gx: 50, gy: 20, tgx: 50, tgy: 20 }));
+    let raf = 0;
+
+    const tick = () => {
+      let moving = false;
+      for (let i = 0; i < cards.length; i++) {
+        const s = state[i];
+        s.rx += (s.tx - s.rx) * 0.18;
+        s.ry += (s.ty - s.ry) * 0.18;
+        s.gx += (s.tgx - s.gx) * 0.2;
+        s.gy += (s.tgy - s.gy) * 0.2;
+        cards[i].style.setProperty('--rx', `${s.rx.toFixed(2)}deg`);
+        cards[i].style.setProperty('--ry', `${s.ry.toFixed(2)}deg`);
+        cards[i].style.setProperty('--gx', `${s.gx.toFixed(1)}%`);
+        cards[i].style.setProperty('--gy', `${s.gy.toFixed(1)}%`);
+        if (Math.abs(s.tx - s.rx) > 0.04 || Math.abs(s.ty - s.ry) > 0.04 || Math.abs(s.tgx - s.gx) > 0.1 || Math.abs(s.tgy - s.gy) > 0.1) {
+          moving = true;
+        }
+      }
+      raf = moving ? requestAnimationFrame(tick) : 0;
+    };
+    const kick = () => { if (!raf && !reduced) raf = requestAnimationFrame(tick); };
+
+    const setActive = activeIndex => {
+      cards.forEach((c, i) => {
+        const on = i === activeIndex;
+        c.classList.toggle('is-on', on);
+        if (!on) {
+          state[i].tx = 0;
+          state[i].ty = 0;
+          state[i].tgx = 50;
+          state[i].tgy = 20;
+        }
+      });
+      kick();
+    };
+
+    cards.forEach((card, i) => {
+      card.addEventListener('pointerenter', () => setActive(i));
+      card.addEventListener('pointerleave', () => setActive(-1));
+      card.addEventListener('focus', () => setActive(i));
+      card.addEventListener('blur', () => setActive(-1));
+      if (!reduced) {
+        card.addEventListener('pointermove', event => {
+          if (!card.classList.contains('is-on')) setActive(i);
+          const r = card.getBoundingClientRect();
+          const px = clamp((event.clientX - r.left) / r.width);
+          const py = clamp((event.clientY - r.top) / r.height);
+          state[i].ty = (px - 0.5) * 14;
+          state[i].tx = (0.5 - py) * 12;
+          state[i].tgx = px * 100;
+          state[i].tgy = py * 100;
+          kick();
+        }, { passive: true });
+      }
+    });
+  }
+
   function measure() {
     const y = scrollY;
     // 位移会改变包围盒，先归零再量

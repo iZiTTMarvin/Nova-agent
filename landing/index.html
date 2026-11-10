@@ -4,17 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nova Agent — 说出来，剩下交给它</title>
-<meta name="description" content="Nova Agent 是本地桌面 AI Agent。只说目标，它读懂项目、动手实现、把改动摆给你审；再切到学习，一步一步带你搞懂它。MIT 开源，对话与文件都留在你本机。">
+<meta name="description" content="Nova Agent 是新一代本地桌面 Coding Agent。领航模式自动组织开发并在内置浏览器中实测交付，学习模式顺着真实源码与交互流程图带你吃透项目，底层上下文引擎实现 99%+ 提示词缓存命中率。MIT 开源，数据留在你本机。">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#1c1a18">
 <meta property="og:title" content="Nova Agent — 说出来，剩下交给它">
-<meta property="og:description" content="本地桌面 AI Agent：只说目标，它做出来；再一步一步带你学懂。">
+<meta property="og:description" content="新一代本地桌面 Coding Agent：领航模式带着实测证据交付，学习模式顺着源码把项目讲透。">
 <meta property="og:type" content="website">
 <link rel="preload" href="fonts/stix-two-text-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/stix-two-text-italic-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/noto-serif-sc-display.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="fonts/fonts.css">
-<link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="sim.css">
+<link rel="stylesheet" href="fonts/fonts.css?v=7">
+<link rel="stylesheet" href="styles.css?v=7">
+<link rel="stylesheet" href="sim.css?v=7">
 <link rel="icon" href="assets/nova-oracle.png">
 <script>
   // 首帧前决定交互档位，避免先渲染钉住布局再跳回静态
@@ -40,8 +41,8 @@
     <a href="#moments">界面</a>
     <a href="#pilot">领航</a>
     <a href="#learn">学习</a>
-    <a href="#endurance">长任务</a>
-    <a href="#start">上手</a>
+    <a href="#endurance">上下文</a>
+    <a href="#faq">问答</a>
   </nav>
   <a class="chrome__cta" href="https://github.com/iZiTTMarvin/Nova-agent/releases" rel="noopener">下载 Windows 版</a>
 </header>
@@ -51,19 +52,18 @@
   <section class="hero" id="top" aria-labelledby="hero-title">
     <div class="hero__stage">
       <div class="hero__copy" id="hero-copy">
-        <p class="eyebrow">本地桌面 AI Agent · MIT 开源</p>
+        <p class="eyebrow">本地桌面 Coding Agent · MIT 开源</p>
         <h1 class="hero__title display" id="hero-title">说出来，<br>剩下交给它。</h1>
         <p class="hero__lede">
-          一句话，它把东西做出来；切到「学习」，它再一步一步带你搞懂。
-          对话和文件都留在你本机，模型用你自己的 Key。
+          只管用大白话交代目标。领航模式会自动摸清代码、动态推进修改，再拉起内置浏览器实测验证，把跑通的画面和日志摆在你面前；切到学习模式，它就顺着真实源码带你把整个项目吃透。
         </p>
         <div class="hero__actions">
           <a class="btn btn--glow" href="https://github.com/iZiTTMarvin/Nova-agent/releases" rel="noopener">下载 Windows 版</a>
-          <a class="btn btn--line" href="https://github.com/iZiTTMarvin/Nova-agent" rel="noopener">看源码<span aria-hidden="true"> →</span></a>
+          <a class="btn btn--line" href="https://github.com/iZiTTMarvin/Nova-agent" rel="noopener">查看 GitHub 源码<span aria-hidden="true"> →</span></a>
         </div>
         <p class="hero__cue" aria-hidden="true">
           <span class="hero__cue-ticks"><i></i><i></i><i></i></span>
-          往下滚，钻进屏幕看它干一次活
+          往下滚，钻进屏幕看它完整跑一趟
         </p>
       </div>
 
@@ -73,7 +73,7 @@
         <div class="monitor__body">
           <div class="monitor__shell" aria-hidden="true"></div>
           <div class="monitor__screen" id="demo" role="img"
-               aria-label="Nova Agent 运行演示：用户一句话让它做番茄钟页面，它读写文件、遇到删除目录先请求授权、改动逐个审阅；随后切到学习，一步一步讲解代码并出题考查理解。">
+               aria-label="Nova Agent 运行演示：领航模式下用户一句话让它修复番茄钟刷新重置问题，它动态推进待办、拉起内置浏览器实测并附上日志交付；随后一键切到学习模式，沿着源码讲解并出题互动。">
             <div class="screen-fit" id="screen-fit">
               <div class="nv" id="nova-sim" aria-hidden="true"></div>
             </div>
@@ -99,132 +99,171 @@
   <section class="strip" id="moments" aria-labelledby="strip-title">
     <div class="strip__stage">
       <div class="strip__head">
-        <h2 class="strip__title display" id="strip-title"><span id="strip-name">一句话开工</span></h2>
-        <p class="strip__meta" id="strip-meta">说一句话，Nova 自己读文件、写代码、跑命令，每一步都摊在过程行里。</p>
+        <h2 class="strip__title display" id="strip-title"><span id="strip-name">领航接手，动态推进</span></h2>
+        <p class="strip__meta" id="strip-meta">不用你拆解步骤。领航自动定位问题并列出实时待办，边排查边更新进度。</p>
       </div>
       <canvas class="strip__gl" id="strip-gl" tabindex="0" role="button"
               aria-label="放大查看当前截图，回车打开大图"></canvas>
-      <div class="strip__nav">
-        <button class="strip__play" type="button" id="strip-play" aria-pressed="true">
-          <span class="strip__play-icon" aria-hidden="true"></span>
-          <span class="strip__play-label">暂停</span>
-        </button>
+      <div class="strip__nav" aria-hidden="true">
+        <button class="strip__play" id="strip-play" type="button" hidden><span class="strip__play-icon"></span><span class="strip__play-label">暂停</span></button>
         <span class="strip__count" id="strip-count">01 / 08</span>
+        <span class="strip__hint">点击画面放大查看</span>
       </div>
     </div>
 
     <ol class="strip__list" id="strip-list">
-      <li class="frame" data-title="一句话开工" data-meta="说一句话，Nova 自己读文件、写代码、跑命令，每一步都摊在过程行里。">
-        <img src="assets/shots/dev-03-working.png" width="1280" height="800" loading="lazy" decoding="async"
-             alt="Nova 开发会话：用户让它做番茄钟页面，过程行列出读取 README、写入 tomato-timer.html、执行一条命令，下方显示正在工作">
-        <p class="frame__cap"><b>一句话开工</b>说一句话，Nova 自己读文件、写代码、跑命令。</p>
+      <li class="frame" data-title="领航接手，动态推进" data-meta="不用你拆解步骤。领航自动定位问题并列出实时待办，边排查边更新进度。">
+        <img src="assets/shots/pilot-01-todos.png" width="1280" height="800" loading="lazy" decoding="async"
+             alt="领航会话：右侧进度面板里复现、定位根因、修复读取、真实页面验证四项待办全部完成，对话里是带修复后页面截图和命令输出的证据卡">
+        <p class="frame__cap"><b>领航接手，动态推进</b>自动定位问题并列出实时待办，边排查边更新进度。</p>
       </li>
-      <li class="frame" data-title="危险命令先问你" data-meta="递归删除这类命令会停在对话里，等你点头才会执行。">
-        <img src="assets/shots/dev-02-permission.png" width="1280" height="800" loading="lazy" decoding="async"
-             alt="授权卡：PowerShell 强制递归删除，提供拒绝与允许一次两个按钮，提示拒绝后任务会暂停">
-        <p class="frame__cap"><b>危险命令先问你</b>递归删除这类命令会停在对话里，等你点头才会执行。</p>
+      <li class="frame" data-title="内置浏览器真实验证" data-meta="改完代码不算完，直接在右侧拉起内置浏览器跑真实页面，亲眼确认交互正常。">
+        <img src="assets/shots/pilot-01-evidence.png" width="1280" height="800" loading="lazy" decoding="async"
+             alt="领航交付：中间是修复后页面的证据卡，右侧内置浏览器打开同一个番茄钟页面">
+        <p class="frame__cap"><b>内置浏览器真实验证</b>直接在右侧跑真实页面，亲眼确认交互与数据正常。</p>
       </li>
-      <li class="frame" data-title="改动逐个文件审" data-meta="每个文件的改动单独呈现，保留还是回退，由你决定。">
-        <img src="assets/shots/dev-06-review.png" width="1280" height="800" loading="lazy" decoding="async"
-             alt="右侧审阅面板展开 tomato-timer.html 的新增代码，每个文件都有回退与保留按钮">
-        <p class="frame__cap"><b>改动逐个文件审</b>保留还是回退，由你决定。</p>
+      <li class="frame" data-title="改了哪、没测哪，交代清楚" data-meta="交付说明直接给出根因、改法和实测范围，连尚未覆盖的边界情况也坦诚列出。">
+        <img src="assets/shots/pilot-02-delivery.png" width="1280" height="800" loading="lazy" decoding="async"
+             alt="领航的交付说明：修好了，根因、验证方式，以及没验证的跨天清零与多标签页">
+        <p class="frame__cap"><b>改了哪、没测哪，交代清楚</b>根因、验证方式与尚未覆盖的边界情况一目了然。</p>
       </li>
-      <li class="frame" data-title="学懂这次改动" data-meta="回复下方一键切到学习，让 Nova 把刚写的代码讲给你听。">
+      <li class="frame" data-title="实测日志随时核对" data-meta="验证脚本的每一次刷新和读回结果都收在交付卡里，点开就能逐行核验。">
+        <img src="assets/shots/pilot-03-log.png" width="1280" height="800" loading="lazy" decoding="async"
+             alt="证据卡展开命令日志：每次刷新后剩余秒数与存档逐次一致">
+        <p class="frame__cap"><b>实测日志随时核对</b>每次刷新后的读回核验结果都在卡片里，点开即可查看。</p>
+      </li>
+      <li class="frame" data-title="一键切入「学懂这次改动」" data-meta="每条开发回复下方都能直接进入学习模式，刚写出来的代码当场消化。">
         <img src="assets/shots/dev-07-learn-entry.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="开发回复下方的操作栏，最右是学懂这次改动的书本图标">
-        <p class="frame__cap"><b>学懂这次改动</b>回复下方一键切到学习，让 Nova 把刚写的代码讲给你听。</p>
+        <p class="frame__cap"><b>一键切入「学懂这次改动」</b>从开发回复下方直接进入学习模式，当场搞懂刚发生的变化。</p>
       </li>
-      <li class="frame" data-title="一次只讲一步" data-meta="讲解沿着数据流往下推进，里面嵌着可以点的流程图。">
+      <li class="frame" data-title="顺着数据流一步步拆解" data-meta="每一句讲解都锚定在你的真实源码上，内嵌可点击的分步流程图，点着往下走。">
         <img src="assets/shots/learn-02-explain.png" width="1280" height="800" loading="lazy" decoding="async"
-             alt="学习会话：讲解第 1 步计时从哪开始，嵌入四步流程图与上一步下一步按钮，底部列出接下来可以问的三条建议">
-        <p class="frame__cap"><b>一次只讲一步</b>讲解沿着数据流往下推进，里面嵌着可以点的流程图。</p>
+             alt="学习会话：讲解第 1 步计时从哪开始，嵌入四步流程图与上一步下一步按钮">
+        <p class="frame__cap"><b>顺着数据流一步步拆解</b>锚定真实源码，内嵌可点击的交互式流程图。</p>
       </li>
-      <li class="frame" data-title="讲完考考你" data-meta="想一想、要提示、让它直接讲，或者跳过，都由你选。">
+      <li class="frame" data-title="不考行号，只问背后的为什么" data-meta="点一下「考考我」，围绕核心因果与设计取舍做一次互动问答，确认真吃透了再往下讲。">
         <img src="assets/shots/learn-03-question.png" width="1280" height="800" loading="lazy" decoding="async"
-             alt="输入区变成想一想面板：问刷新页面后倒计时为什么能接着走，下方有提示、直接讲、跳过与提交">
-        <p class="frame__cap"><b>讲完考考你</b>想一想、要提示、让它直接讲，或者跳过，都由你选。</p>
+             alt="输入区变成想一想面板：问刷新页面后倒计时为什么能接着走">
+        <p class="frame__cap"><b>不考行号，只问背后的为什么</b>围绕核心因果与架构取舍互动提问，帮你真正吃透逻辑。</p>
       </li>
-      <li class="frame" data-title="懂了才往下走" data-meta="判断你理解到位了，再讲下一步。">
-        <img src="assets/shots/learn-04-assessed.png" width="1280" height="800" loading="lazy" decoding="async"
-             alt="题目行出现绿色对勾，随后讲解第 2 步跨天为什么会清零">
-        <p class="frame__cap"><b>懂了才往下走</b>判断你理解到位了，再讲下一步。</p>
-      </li>
-      <li class="frame" data-title="整个项目一张大纲" data-meta="按用途、流程、数据与取舍，把整个项目整理成一张大纲。">
+      <li class="frame" data-title="陌生仓库的一页学习地图" data-meta="自动扫描项目源码并核对出处，按用途、启动、核心流程、数据状态与设计取舍生成全局大纲。">
         <img src="assets/shots/learn-05-outline.png" width="1280" height="800" loading="lazy" decoding="async"
              alt="右侧大纲按项目用途、启动与运行、关键用户流程、数据与状态、设计与取舍分组列出主题">
-        <p class="frame__cap"><b>整个项目一张大纲</b>按用途、流程、数据与取舍整理。</p>
+        <p class="frame__cap"><b>陌生仓库的一页学习地图</b>按用途、启动、流程、数据与取舍自动生成结构化大纲。</p>
       </li>
     </ol>
   </section>
 
-  <!-- 领航：三种协作方式，加两处界面特写 -->
   <section class="scene" id="pilot" aria-labelledby="pilot-title">
     <div class="scene__shell">
-      <p class="scene__tag" data-reveal><span>03</span>领航</p>
-      <h2 class="statement display" id="pilot-title" data-focus>只说目标，其余交给领航。它读懂项目，排好待办，边做边验证，最后把证据摆在你面前。</h2>
+      <p class="scene__tag" data-reveal><span>03</span>领航模式</p>
+      <h2 class="statement display" id="pilot-title" data-focus>不用写长篇提示词，也不用一步步盯着指挥。你只管说出目标，领航自己摸清代码、规划路线，改完亲自上场实测，最后带着真实运行证据向你交活。</h2>
 
-      <div class="modes" data-reveal>
-        <article class="mode">
-          <h3 class="mode__name display">默认</h3>
-          <p>功能和修复都很明确时用它。Nova 自己检索代码、修改文件，再跑命令验证。</p>
-        </article>
-        <article class="mode">
-          <h3 class="mode__name display">计划</h3>
-          <p>先只读分析代码库，把方案写进 <code>.nova/plans/</code>，等你确认之后才动手。</p>
-        </article>
-        <article class="mode mode--lead">
-          <h3 class="mode__name display">领航</h3>
-          <p>只描述目标。它按任务挑选方法，用动态待办组织调查、实施与验证，交付时附上真实的截图和命令日志。</p>
-        </article>
+      <div class="deck" data-deck data-reveal aria-label="不同开发场景下领航模式的自动应对方式">
+        <div class="deck__stage">
+          <article class="deck__card" data-card="0">
+            <div class="deck__glass">
+              <div class="deck__glare" aria-hidden="true"></div>
+              <p class="deck__k">场景 01 · 从零构建新功能</p>
+              <p class="deck__ask display">「帮我做一个番茄钟页面，要能统计今天完成了几个。」</p>
+              <div class="deck__way">
+                <b class="display">先对齐目标，再自主落地</b>
+                先用一句话跟你确认核心范围，涉及个人偏好的地方最多集中问一轮；随后自己完成结构设计、编写代码，并在内置浏览器里打开成品给你看。
+              </div>
+            </div>
+          </article>
+
+          <article class="deck__card" data-card="1">
+            <div class="deck__glass">
+              <div class="deck__glare" aria-hidden="true"></div>
+              <p class="deck__k">场景 02 · 排查与修复缺陷</p>
+              <p class="deck__ask display">「番茄钟刷新页面后又回到 25:00 了，帮我修好。」</p>
+              <div class="deck__way">
+                <b class="display">先复现定位，再实测核验</b>
+                绝不凭感觉盲改代码。先在页面里复现问题，顺着存档读写链路定位根因，最小化修改后反复刷新页面实测，确认秒数严丝合缝才交活。
+              </div>
+            </div>
+          </article>
+
+          <article class="deck__card" data-card="2">
+            <div class="deck__glass">
+              <div class="deck__glare" aria-hidden="true"></div>
+              <p class="deck__k">场景 03 · 存量项目重构</p>
+              <p class="deck__ask display">「把这套存档读写抽成独立模块，别破坏现在的计时行为。」</p>
+              <div class="deck__way">
+                <b class="display">先梳理依赖，再稳步迁移</b>
+                先扫描全仓调用关系建立基线，按依赖顺序分步改造，每改完一步自动跑校验脚本，确保原有交互和状态零回归。
+              </div>
+            </div>
+          </article>
+        </div>
       </div>
 
       <div class="feature">
         <div class="feature__media" data-reveal="lens">
-          <button class="shot" type="button" data-open="1" aria-label="放大查看整屏：危险命令先问你" style="--ar: 3.2">
+          <button class="shot shot--narrow" type="button" data-open="0" aria-label="放大查看整屏：领航待办" style="--ar: 1.17">
             <span class="shot__screen">
-              <span class="shot__pan" data-drift="14"><span class="shot__zoom">
-                <img src="assets/shots/dev-02-permission.png" width="1280" height="800" loading="lazy" decoding="async"
-                     style="--x: 0.293; --y: 0.255; --w: 0.64" alt="授权卡：PowerShell 强制递归删除，等待允许或拒绝">
+              <span class="shot__pan" data-drift="12"><span class="shot__zoom">
+                <img src="assets/shots/pilot-01-todos.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.752; --y: 0.095; --w: 0.238" alt="领航的进度面板：复现、定位根因、修复读取、在真实页面验证，四项待办全部完成">
               </span></span>
             </span>
           </button>
         </div>
         <div class="feature__copy" data-reveal>
-          <p class="feature__no">特写 01</p>
-          <h3 class="feature__title display">危险命令，先问你。</h3>
-          <p>递归删除、改动环境、往交互终端里写入，这类操作会在对话里停住，弹出一张授权卡。你可以只放行这一次，也可以在本会话里一直放行；拒绝之后任务暂停，等你下一步的指示。</p>
+          <p class="feature__no">特写 01 · 动态任务组织</p>
+          <h3 class="feature__title display">没有死板的固定流程，待办清单跟着实情走。</h3>
+          <p>很多工具不管任务大小，都逼着你走完冗长的计划审批。领航模式不搞形式主义：明确的小需求直接动手；复杂的任务自动拆出眼前的关键几步。排查过程中一旦发现新线索，待办清单会实时增删调整，被推翻的假设直接移出清单，绝不为了走流程而凑数。</p>
         </div>
       </div>
 
       <div class="feature feature--flip">
         <div class="feature__media" data-reveal="lens">
-          <button class="shot" type="button" data-open="2" aria-label="放大查看整屏：改动逐个文件审" style="--ar: 0.957">
+          <button class="shot" type="button" data-open="1" aria-label="放大查看整屏：证据卡" style="--ar: 1.82">
             <span class="shot__screen">
-              <span class="shot__pan" data-drift="12"><span class="shot__zoom">
-                <img src="assets/shots/dev-06-review.png" width="1280" height="800" loading="lazy" decoding="async"
-                     style="--x: 0.665; --y: 0.14; --w: 0.335" alt="审阅面板：tomato-timer.html 的新增代码，带回退与保留按钮">
+              <span class="shot__pan" data-drift="14"><span class="shot__zoom">
+                <img src="assets/shots/pilot-01-evidence.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.21; --y: 0.155; --w: 0.78" alt="工具产物卡和内置浏览器：修复后的番茄钟页面与检查输出">
               </span></span>
             </span>
           </button>
         </div>
         <div class="feature__copy" data-reveal>
-          <p class="feature__no">特写 02</p>
-          <h3 class="feature__title display">改了什么，逐个文件看。</h3>
-          <p>所有改动汇进右侧的审阅面板，每个文件单独决定保留还是回退。回退之前，Nova 会先核对磁盘上的最新内容，你在别处手动改过的文件不会被覆盖；批量回退要么整批成功，要么一个文件都不动。</p>
+          <p class="feature__no">特写 02 · 真实验证闭环</p>
+          <h3 class="feature__title display">改完代码不算完，跑通真实页面才算交活。</h3>
+          <p>最怕 AI 自信满满地回复「已修复」，结果你一打开页面还是崩的。领航模式在写完代码后，会自己拉起内置浏览器和命令行去跑真实入口，点按钮、刷页面、核对数据，再把实时运行画面和检查日志收进交付卡摆在你面前，点一下就能打开实时结果亲自核验。</p>
+        </div>
+      </div>
+
+      <div class="feature">
+        <div class="feature__media" data-reveal="lens">
+          <button class="shot" type="button" data-open="2" aria-label="放大查看整屏：交付说明" style="--ar: 1.7">
+            <span class="shot__screen">
+              <span class="shot__pan" data-drift="12"><span class="shot__zoom">
+                <img src="assets/shots/pilot-02-delivery.png" width="1280" height="800" loading="lazy" decoding="async"
+                     style="--x: 0.22; --y: 0.36; --w: 0.56" alt="交付说明：修好了，根因是启动时没读回存档，验证用同一入口反复刷新，没验证跨天清零和多标签页">
+              </span></span>
+            </span>
+          </button>
+        </div>
+        <div class="feature__copy" data-reveal>
+          <p class="feature__no">特写 03 · 诚实交付账单</p>
+          <h3 class="feature__title display">测过什么、没测什么，每一笔都交代清楚。</h3>
+          <p>交付说明不整虚头巴脑的套话：先给结论，再讲清问题根因、改了哪几处、用什么方式做的验证，最后还会把本轮尚未覆盖的边界情况（比如跨天自动清零、多标签页同时打开）单独列出来。至于提交、推送、发布这类不可逆操作，你不发话，它绝不越权代劳。</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 学习：开发完立刻读懂它 -->
   <section class="scene" id="learn" aria-labelledby="learn-title">
     <div class="scene__shell">
-      <p class="scene__tag" data-reveal><span>04</span>学习</p>
-      <h2 class="statement display" id="learn-title" data-focus>做完不是结束。切到学习，Nova 把刚写的代码一步一步讲给你听，再出题，看你是不是真的懂了。</h2>
+      <p class="scene__tag" data-reveal><span>04</span>源码学习</p>
+      <h2 class="statement display" id="learn-title" data-focus>代码跑起来只是第一步，搞懂它为什么这么写，项目才真正属于你。切到学习模式，Nova 变成纯只读的源码导师，顺着真实数据流带你一层层剥开逻辑。</h2>
 
       <div class="feature">
         <div class="feature__media" data-reveal="lens">
-          <button class="shot" type="button" data-open="4" aria-label="放大查看整屏：一次只讲一步" style="--ar: 2.4">
+          <button class="shot" type="button" data-open="5" aria-label="放大查看整屏：顺着数据流一步步拆解" style="--ar: 2.4">
             <span class="shot__screen">
               <span class="shot__pan" data-drift="14"><span class="shot__zoom">
                 <img src="assets/shots/learn-02-explain.png" width="1280" height="800" loading="lazy" decoding="async"
@@ -234,15 +273,15 @@
           </button>
         </div>
         <div class="feature__copy" data-reveal>
-          <p class="feature__no">特写 03</p>
-          <h3 class="feature__title display">一次只讲一步。</h3>
-          <p>讲解沿着一条真实的数据流推进：数据从哪里产生，经过什么转换，最后落到哪里。回答里直接嵌着可以点的流程图、参数滑块和对比表，你调过的参数会带进下一轮对话。每条回复的末尾还有追问建议，点一下就能接着往深处问。</p>
+          <p class="feature__no">特写 04 · 交互式数据流推演</p>
+          <h3 class="feature__title display">告别枯燥的函数列表，顺着数据流一步步点着看。</h3>
+          <p>刚让 AI 写完一段功能，点一下回复下方的「学懂这次改动」，立刻带着刚发生的变更进入只读研读环境。它不会改你一行文件，每一句讲解都严格对应你仓库里的真实源码。回答里直接嵌着可点击的分步流程图、参数滑块与对比表，你可以边点边看数据从哪产生、经过什么转换、最终落向哪里。</p>
         </div>
       </div>
 
       <div class="feature feature--flip">
         <div class="feature__media" data-reveal="lens">
-          <button class="shot" type="button" data-open="5" aria-label="放大查看整屏：讲完考考你" style="--ar: 2.23">
+          <button class="shot" type="button" data-open="6" aria-label="放大查看整屏：不考行号，只问背后的为什么" style="--ar: 2.23">
             <span class="shot__screen">
               <span class="shot__pan" data-drift="12"><span class="shot__zoom">
                 <img src="assets/shots/learn-03-question.png" width="1280" height="800" loading="lazy" decoding="async"
@@ -252,15 +291,15 @@
           </button>
         </div>
         <div class="feature__copy" data-reveal>
-          <p class="feature__no">特写 04</p>
-          <h3 class="feature__title display">讲完，考考你。</h3>
-          <p>它不考行号，也不考 API 签名，只问一个关于因果和取舍的问题，并在出题的那一刻锁定评判标准。你可以作答、要提示、让它直接讲，也可以跳过；理解到位了才讲下一步。学习记录保存在你的电脑上。</p>
+          <p class="feature__no">特写 05 · 启发式互动检验</p>
+          <h3 class="feature__title display">不考死记硬背的行号，只帮你理清背后的为什么。</h3>
+          <p>听别人讲明白和自己真吃透之间，往往只差一次主动思考。讲完关键环节后点一下「考考我」，Nova 会围绕核心因果机制或设计取舍向你提一个问题。你可以用自己的话作答、要一点思路提示，或者让它直接揭晓答案。确认你真搞懂了再推进下一步，还没理顺就换个更直观的切入点重讲——无论是应对答辩、代码审查还是后续维护，心里都有底。</p>
         </div>
       </div>
 
       <div class="feature">
         <div class="feature__media" data-reveal="lens">
-          <button class="shot" type="button" data-open="7" aria-label="放大查看整屏：整个项目一张大纲" style="--ar: 1.165">
+          <button class="shot" type="button" data-open="7" aria-label="放大查看整屏：陌生仓库的一页学习地图" style="--ar: 1.165">
             <span class="shot__screen">
               <span class="shot__pan" data-drift="12"><span class="shot__zoom">
                 <img src="assets/shots/learn-05-outline.png" width="1280" height="800" loading="lazy" decoding="async"
@@ -270,128 +309,84 @@
           </button>
         </div>
         <div class="feature__copy" data-reveal>
-          <p class="feature__no">特写 05</p>
-          <h3 class="feature__title display">整个项目，一张大纲。</h3>
-          <p>不管是刚生成的新代码，还是从 GitHub 克隆来的陌生仓库，学习会话只读不写。Nova 读完源码，按项目用途、启动与运行、关键流程、数据与状态、设计取舍，整理出一张可以逐项点开的学习地图。</p>
+          <p class="feature__no">特写 06 · 全局源码学习地图</p>
+          <h3 class="feature__title display">几万行的陌生仓库，一页大纲理清来龙去脉。</h3>
+          <p>从 GitHub 克隆下来的开源项目不知从哪看起？打开右侧大纲面板，Nova 会自动扫描源码结构、核对每个模块的文件出处，按「项目用途、启动与运行、关键用户流程、数据与状态、设计与取舍」五个维度整理出一张学习地图。想搞懂哪一块，点开直接开始源码级精讲。</p>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- 长任务 -->
   <section class="scene" id="endurance" aria-labelledby="endurance-title">
     <div class="scene__shell">
-      <p class="scene__tag" data-reveal><span>05</span>长任务</p>
-      <h2 class="statement display" id="endurance-title" data-focus>几个小时的活，靠的不是一次聪明的回答，而是不失忆、能反悔、出了岔子还能接着走。</h2>
+      <p class="scene__tag" data-reveal><span>05</span>上下文引擎</p>
+      <h2 class="statement display" id="endurance-title" data-focus>跑几个小时的大任务，最怕聊到一半开始失忆胡改，或者 Token 账单像滚雪球一样失控。Nova 在底层做了一整套缓存与上下文治理引擎，让长会话既清醒又省钱。</h2>
 
       <div class="long">
         <div class="long__fig" data-reveal>
-          <p class="long__num display">5–10%</p>
-          <p class="long__cap">这是大文件的结构大纲占原文的体积。超过 400 行的文件，Nova 先读大纲，再按行号精读真正需要的几段。</p>
+          <p class="long__num display">99%+</p>
+          <p class="long__cap">长会话提示词缓存命中率。请求前缀在会话开头字节级锁定，历史上下文几乎全部按服务商缓存计价（低至 1 折），长任务账单不再滚雪球。</p>
+          <div class="long__stats">
+            <div class="long__stat">
+              <b>−90%</b>
+              <span>大文件 AST 骨架探路，大幅削减首轮读取消耗</span>
+            </div>
+            <div class="long__stat">
+              <b>0 字节</b>
+              <span>整场会话前缀漂移，切换模式也不击穿缓存</span>
+            </div>
+          </div>
         </div>
         <div class="long__list" data-stagger>
           <article class="long__item" data-reveal>
-            <h3 class="long__title display">聊得再久，也不失忆。</h3>
-            <p>请求前缀在整场会话里保持稳定，提示词缓存才能持续命中，长会话的账单不会越滚越大。对话逼近上限时自动压缩，核心上下文和没做完的任务都会留下。</p>
+            <h3 class="long__title display">冻结请求前缀，从第一轮到第一百轮稳定命中缓存。</h3>
+            <p>主流大模型服务商的 Prompt Cache 只要前缀变动一个字节就会整段失效。Nova 在会话建立时将系统指令、工具声明和核心记忆锁定为不可变快照，哪怕中途切换协作模式也只改写消息尾部，保证整场长对话的前缀逐字节一致，既省下绝大部分重复输入费用，首字响应也快得多。</p>
           </article>
           <article class="long__item" data-reveal>
-            <h3 class="long__title display">聊错了，可以回头。</h3>
-            <p>任何一条回答都可以重新生成，或者编辑后重发。原来的分支完整保留，随时切回去接着聊。</p>
+            <h3 class="long__title display">大文件先提 AST 语法骨架，拒绝整篇盲读烧 Token。</h3>
+            <p>遇到超过 400 行的大型源码文件，Nova 不会一上来就把整篇文件塞进上下文，而是先通过 AST 提取函数、类和接口的结构大纲（仅占原文 5%–10% 体积），找准目标行号后再按需精读关键片段；配合自带前后上下文行的内置 <code>grep</code>，一次调用顶过去的两步往返。</p>
           </article>
           <article class="long__item" data-reveal>
-            <h3 class="long__title display">记得你的项目。</h3>
-            <p>长期记忆分成全局偏好和项目事实，存成你能直接打开、修改、置顶或删除的文件。新开一个会话，核心记忆会自动带上，不必再把背景讲一遍。</p>
+            <h3 class="long__title display">长日志自动转存归档，重度探路交给隔离子代理。</h3>
+            <p>动辄几千行的编译报错和搜索结果，滑出活跃窗口后会自动归档为轻量引用，主会话里只留摘要，模型需要复查时再按页调取。遇到全库大范围摸底或独立代码审查，主 Agent 会派发只读子代理在隔离上下文中跑完，只把精炼结论带回主线。</p>
           </article>
           <article class="long__item" data-reveal>
-            <h3 class="long__title display">不填密钥，也能上网。</h3>
-            <p>搜索开箱即用，一个渠道不通就换下一个。读网页时可以按字段提取价格、版本和日期，并附上原文行号作证据。</p>
-          </article>
-          <article class="long__item" data-reveal>
-            <h3 class="long__title display">出了岔子，自己接着干。</h3>
-            <p>网络抖动会自动重试，回复中途断流就把这一步重放，主模型不可用时切到备选模型继续。</p>
+            <h3 class="long__title display">逼近上限平滑压缩，跨会话自带双层本地记忆。</h3>
+            <p>连续工作几个小时逼近窗口上限时，系统会自动将早期过程平滑压缩，完整保留核心架构状态与未完待办，原始记录落盘备查，重启应用也能接着跑。你的个人偏好与项目事实还会分层沉淀为本机可编辑的 Markdown 记忆，新开会话自动带上，不用每次重头交代背景。</p>
           </article>
         </div>
       </div>
-    </div>
-  </section>
-
-  <section class="scene" id="start" aria-labelledby="start-title">
-    <div class="scene__shell">
-      <p class="scene__tag" data-reveal><span>06</span>上手</p>
-      <h2 class="scene__title display" id="start-title" data-reveal="rack">装好，填 Key，开口说。</h2>
-      <ol class="steps" data-stagger>
-        <li class="step" data-reveal>
-          <span class="step__no display" aria-hidden="true">1</span>
-          <div class="step__body">
-            <h3 class="step__title display">装</h3>
-            <p>从 GitHub Releases 下载 <code>NovaAgent-Setup-*.exe</code> 并运行。安装包没有代码签名，Windows 弹出 SmartScreen 时，选「更多信息」再点「仍要运行」。</p>
-          </div>
-        </li>
-        <li class="step" data-reveal>
-          <span class="step__no display" aria-hidden="true">2</span>
-          <div class="step__body">
-            <h3 class="step__title display">配</h3>
-            <p>打开侧栏底部的 <strong>设置 → 模型</strong>，按服务商填入 API Key。DeepSeek、GLM、MiniMax 有内置预设，Ollama 和 OpenAI 兼容接口可以手动配置。</p>
-          </div>
-        </li>
-        <li class="step" data-reveal>
-          <span class="step__no display" aria-hidden="true">3</span>
-          <div class="step__body">
-            <h3 class="step__title display">说</h3>
-            <p>添加一个项目文件夹，直接说你想做什么。不知道从哪开口，就输入 <code>/onboard</code>；想搞懂一个项目，点侧栏顶部的「学习」。</p>
-          </div>
-        </li>
-      </ol>
-      <p class="note" data-reveal>让它运行或构建你的项目，需要本机已经装好项目用到的工具，比如 Node.js、Git 或 Python。</p>
-    </div>
-  </section>
-
-  <section class="scene" id="skills" aria-labelledby="skills-title">
-    <div class="scene__shell skills">
-      <div class="skills__lead">
-        <p class="scene__tag" data-reveal><span>07</span>技能</p>
-        <h2 class="scene__title display" id="skills-title" data-reveal="rack">输入 <span class="skills__slash">/</span>，<br>召唤技能。</h2>
-        <p class="skills__note" data-reveal>想要自己的技能，写一份 <code>SKILL.md</code>：放进 <code>~/.nova/skills/&lt;name&gt;/</code> 所有项目都能用，放进项目里的 <code>.nova/skills/</code> 则只在这个项目生效。</p>
-      </div>
-      <ul class="skills__list" data-stagger>
-        <li data-reveal><code>/onboard</code><span>首次上手向导，带你熟悉工作区、规则和技能。</span></li>
-        <li data-reveal><code>/deep-research</code><span>把复杂调研拆成并行的子问题，结论都附来源。</span></li>
-        <li data-reveal><code>/code-review</code><span>只读审查 git 变更，给出精确到文件和行号的问题清单。</span></li>
-        <li data-reveal><code>/nova-frontend</code><span>创建或重构有设计感的前端界面。</span></li>
-        <li data-reveal><code>/skill-creator</code><span>一步步带你写出自己的技能。</span></li>
-        <li data-reveal><code>/skill-add</code><span>从链接或压缩包安装别人写好的技能。</span></li>
-      </ul>
     </div>
   </section>
 
   <section class="scene" id="faq" aria-labelledby="faq-title">
     <div class="scene__shell scene__shell--narrow">
-      <p class="scene__tag" data-reveal><span>08</span>常见问题</p>
+      <p class="scene__tag" data-reveal><span>06</span>常见问答</p>
       <h2 class="scene__title display" id="faq-title" data-reveal="rack">你可能想问。</h2>
       <div class="faq" data-reveal>
         <details>
-          <summary>我不会写代码，能用吗？</summary>
-          <div class="faq__body"><p>可以。用大白话说清你想做什么就行。做完看不懂的地方，切到学习，让它讲给你听。</p></div>
+          <summary>Nova 和市面上其他 Coding Agent 最大的区别是什么？</summary>
+          <div class="faq__body"><p>核心在三点护城河：一是<strong>领航模式</strong>，不用你懂复杂的提示词或工作流，它自动拆解动态待办，并在写完后拉起内置浏览器和命令行做真实验证，带着画面与日志交付；二是<strong>源码学习模式</strong>，一键把刚改完的代码或陌生仓库变成带交互流程图与启发式问答的精讲课堂，不让你沦为项目的局外人；三是<strong>底层上下文引擎</strong>，通过字节级前缀冻结与 AST 骨架探路，实现 99%+ 缓存命中率，跑几个小时的大任务既不失忆也不烧钱。</p></div>
         </details>
         <details>
-          <summary>学习模式是什么？</summary>
-          <div class="faq__body"><p>在侧栏顶部从「开发」切到「学习」。它只读你的代码，一次讲一步，讲完出题考你，还能生成整个项目的大纲。学习会话不会改动你的任何文件。</p></div>
+          <summary>领航模式是怎么工作的？需要我自己配置流程吗？</summary>
+          <div class="faq__body"><p>完全不用配置。新装打开默认就是领航模式，你只管用自然语言描述目标。Nova 会根据任务性质（做新功能、修 Bug、重构老代码或性能调优）自动匹配工程打法，把接下来要做的几步列在右上角进度面板里，边做边根据实际情况动态调整，最后在内置浏览器中验证通过再向你交付。</p></div>
         </details>
         <details>
-          <summary>它会乱删我的东西吗？</summary>
-          <div class="faq__body"><p>不会。删除文件、运行危险命令之前都会弹出授权，你不点允许它就不动。改过的文件都列在审阅面板里，可以逐个回退。</p></div>
+          <summary>学习模式在哪里打开？会不会不小心改乱我的代码？</summary>
+          <div class="faq__body"><p>你可以在左侧栏顶部随时从「开发」切到「学习」，或者在任何一条产生了文件修改的开发回复下方直接点「学懂这次改动」。学习模式在底层被严格锁定为纯只读环境，只允许检索和读取源码，绝不会修改你的任何文件或执行外部命令。</p></div>
         </details>
         <details>
-          <summary>我的数据存在哪里？</summary>
-          <div class="faq__body"><p>对话、文件和检查点都存在你的电脑上。模型请求直接发给你配置的服务商，Nova 不做中转。</p></div>
+          <summary>我几乎不会写代码，或者刚接触编程，能用得转吗？</summary>
+          <div class="faq__body"><p>非常适合。开发时你只需要用大白话告诉领航模式你想做出什么效果；等它做出来并在内置浏览器里跑通后，你有任何看不懂的地方，一键切到学习模式，它就会用可视化的流程图和通俗的因果问答带你一步步摸清门道。</p></div>
         </details>
         <details>
-          <summary>必须用自己的 API Key 吗？</summary>
-          <div class="faq__body"><p>是的。Nova Agent 本身免费、MIT 开源，你只需要为模型调用付费。</p></div>
+          <summary>安装之后怎么开始使用？支持哪些模型？</summary>
+          <div class="faq__body"><p>从 GitHub Releases 下载 <code>NovaAgent-Setup-*.exe</code> 安装运行（若弹出 Windows SmartScreen 提示，点「更多信息 → 仍要运行」即可）。在左下角「设置 → 模型」里填入你自己的 API Key，系统已内置 DeepSeek、GLM、MiniMax 等高性价比模型预设，也支持任意 OpenAI 兼容接口与本地 Ollama 模型。</p></div>
         </details>
         <details>
-          <summary>它擅长什么，不擅长什么？</summary>
-          <div class="faq__body"><p>擅长小时级的长任务和多文件改动，也能跑测试、装依赖、查文档。需要你实时盯着屏幕做判断的事，以及连上你的真机做部署，它帮不上忙。</p></div>
+          <summary>我的代码和对话数据存在哪里？怎么收费？</summary>
+          <div class="faq__body"><p>所有对话历史、文件快照、检查点与学习记录都保存在你自己的电脑磁盘上。模型请求由你的本机直接发往你所配置的服务商，Nova 不设云端中转、不留存任何数据。Nova Agent 本身完全免费且遵循 MIT 协议开源，你只需要为自己调用的模型 API 付费。</p></div>
         </details>
       </div>
     </div>
@@ -437,6 +432,6 @@
   </div>
 </div>
 
-<script type="module" src="main.js"></script>
+<script type="module" src="main.js?v=7"></script>
 </body>
 </html>

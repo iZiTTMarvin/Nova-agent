@@ -1,7 +1,7 @@
 /* 自托管字体。
    STIX Two Text — 西文展示衬线；Noto Serif SC — 仅含页面展示标题用到的汉字子集
-   （按 .display 与 data-title 文本取字生成，改标题后需重新取字，见 landing/README.md）；
-   JetBrains Mono — 代码与标签。正文中文交给系统无衬线。 */
+   （改标题后需重新取字，见 landing/README.md）；JetBrains Mono — 代码与标签。
+   展示标题统一走 font-style: italic，与左上角 Nova Agent 品牌字形保持一致。 */
 
 @font-face {
   font-family: "STIX Two Text";

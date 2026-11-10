@@ -482,6 +482,133 @@
 .nv-rv-foot .nv-btn:first-of-type { margin-left: auto; background: #fff; border: 1px solid var(--border-subtle); }
 .nv-rv-foot .nv-btn--keep { height: 28px; }
 
+/* 领航胶囊与流光输入框 */
+.nv-pilot-pill {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.42);
+  color: #2563eb;
+  font-size: 13px;
+  font-weight: 500;
+}
+.nv-pilot-pill i { font-style: normal; opacity: 0.7; margin-left: 2px; }
+.nv-composer--pilot {
+  box-shadow:
+    0 6px 24px rgba(59, 130, 246, 0.07),
+    0 -2px 14px rgba(236, 72, 153, 0.08),
+    0 0 0 1.5px rgba(99, 102, 241, 0.28);
+}
+
+/* 右上角待办进度浮窗 */
+.nv-pop {
+  position: absolute;
+  top: 48px;
+  right: 14px;
+  z-index: 12;
+  width: 284px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  pointer-events: none;
+  transition: opacity 0.28s, transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.nv-pop.is-open { opacity: 1; transform: none; }
+.nv-pop__head { display: flex; align-items: center; gap: 7px; font-size: 13.5px; font-weight: 600; color: #16a34a; margin-bottom: 10px; }
+.nv-pop__sub { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.nv-pop__sub em { font-style: normal; color: #16a34a; font-weight: 600; }
+.nv-pop__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.nv-pop__item { display: flex; align-items: flex-start; gap: 8px; font-size: 12.5px; line-height: 1.45; color: var(--text-secondary); }
+.nv-pop__item i {
+  flex: none;
+  margin-top: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 1.5px solid #d4d4d8;
+  display: grid;
+  place-items: center;
+  color: transparent;
+  transition: border-color 0.25s, color 0.25s, background 0.25s;
+}
+.nv-pop__item.is-active { color: var(--text-primary); font-weight: 500; }
+.nv-pop__item.is-active i { border-color: var(--accent); border-top-color: transparent; animation: nv-spin 1.2s linear infinite; }
+.nv-pop__item.is-done { color: var(--text-muted); text-decoration: line-through; }
+.nv-pop__item.is-done i { border-color: #22c55e; color: #16a34a; background: rgba(34, 197, 94, 0.1); }
+.nv-pop__foot { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); font-size: 12px; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; }
+.nv-pop__foot code { font-size: 12px; }
+
+/* 工具产物证据卡 */
+.nv-ev {
+  margin: 6px 0 18px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-subtle);
+  background: #ffffff;
+}
+.nv-ev__head { display: flex; align-items: baseline; gap: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 12px; }
+.nv-ev__head b { font-size: 14px; }
+.nv-ev__head span { font-size: 12px; color: var(--text-muted); }
+.nv-ev__label { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.nv-ev__label em { font-style: normal; font-weight: 400; font-size: 12px; color: var(--text-muted); font-family: var(--font-mono); }
+.nv-ev__preview {
+  width: 210px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: #faf8f5;
+  margin-bottom: 8px;
+}
+.nv-ev__timer { font-family: var(--font-mono); font-size: 28px; font-weight: 700; letter-spacing: -0.02em; color: #18181b; line-height: 1.1; }
+.nv-ev__meta { margin: 4px 0 8px; font-size: 11.5px; color: var(--text-secondary); }
+.nv-ev__meta b { color: #d97706; }
+.nv-ev__pill { display: inline-block; padding: 2px 8px; border-radius: 5px; background: #18181b; color: #fff; font-size: 11px; }
+.nv-ev__sec { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--border-subtle); }
+.nv-ev__log {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.45s cubic-bezier(0.16, 1, 0.3, 1), margin-top 0.3s;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: #27272a;
+  background: var(--surface-muted);
+  border-radius: 8px;
+}
+.nv-ev__log.is-open { max-height: 140px; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border-subtle); }
+.nv-ev__log em { font-style: normal; color: #16a34a; font-weight: 600; }
+
+/* 右侧内置浏览器 */
+.nv-browser { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.nv-browser__bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; color: var(--text-secondary); }
+.nv-browser__url { flex: 1; height: 26px; display: flex; align-items: center; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border-subtle); background: var(--surface-sidebar); font-family: var(--font-mono); font-size: 12px; color: var(--text-primary); }
+.nv-browser__page { flex: 1; display: flex; align-items: center; justify-content: center; padding: 20px; background: #faf8f5; }
+.nv-pomo {
+  width: 100%;
+  max-width: 310px;
+  padding: 24px 22px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.04);
+  text-align: center;
+}
+.nv-pomo__tag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: #fef3c7; color: #b45309; font-size: 12px; font-weight: 600; }
+.nv-pomo__time { margin: 14px 0 6px; font-family: var(--font-mono); font-size: 54px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; color: #18181b; }
+.nv-pomo__done { font-size: 13.5px; color: var(--text-secondary); margin-bottom: 16px; }
+.nv-pomo__done b { color: #d97706; font-weight: 700; }
+.nv-pomo__bar { height: 6px; border-radius: 999px; background: #f4f4f5; overflow: hidden; margin-bottom: 16px; }
+.nv-pomo__bar i { display: block; width: 92%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #f59e0b, #ea580c); }
+.nv-pomo__btns { display: flex; justify-content: center; gap: 8px; }
+
 /* 大纲 */
 .nv-outline { flex: 1; padding: 8px 16px; overflow: hidden; }
 .nv-outline__menu { text-align: right; color: var(--text-secondary); letter-spacing: 1px; }
