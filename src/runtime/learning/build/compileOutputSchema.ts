@@ -43,15 +43,26 @@ function readIdList(value: unknown, field: string): readonly string[] {
   return value.map((item, index) => readId(item, `${field}[${index}]`))
 }
 
+function extractCompileJsonText(text: string): string {
+  const trimmed = text.trim()
+  const unfenced = trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim()
+  const jsonStart = unfenced.indexOf('{')
+  const jsonEnd = unfenced.lastIndexOf('}')
+  return jsonStart >= 0 && jsonEnd > jsonStart
+    ? unfenced.slice(jsonStart, jsonEnd + 1)
+    : unfenced
+}
+
 export function parseCompileOutputText(text: string): CompileOutput {
   const bytes = Buffer.byteLength(text, 'utf8')
   if (bytes > LEARNING_MAX_COMPILE_OUTPUT_BYTES) {
     throw new Error('编译输出超过字节上限')
   }
   let raw: unknown
-  const trimmed = text.trim()
-  const jsonStart = trimmed.indexOf('{')
-  const jsonText = jsonStart >= 0 ? trimmed.slice(jsonStart) : trimmed
+  const jsonText = extractCompileJsonText(text)
   try {
     raw = JSON.parse(jsonText)
   } catch {
@@ -94,7 +105,11 @@ export function parseCompileOutputText(text: string): CompileOutput {
 }
 
 export function buildCompileRepairUserMessage(errorMessage: string): string {
-  return `上次输出未通过 schema 校验：${errorMessage}。请只返回修正后的 JSON，schemaVersion=${COMPILE_OUTPUT_SCHEMA_VERSION}。`
+  return [
+    `上次输出未通过 schema 校验：${errorMessage}。`,
+    'claims 字段契约：source_fact 需 { kind, text, sourceIds }（sourceIds 非空）；inference 需 { kind, text, sourceIds, uncertainty }（sourceIds 与 uncertainty 非空）；general_explanation 需 { kind, text }；unverified 需 { kind, question, missingEvidence }。',
+    `请直接返回修正后的合法 JSON 对象，不要包裹代码块围栏，schemaVersion=${COMPILE_OUTPUT_SCHEMA_VERSION}。`
+  ].join('')
 }
 
 export type CandidateEdge = {

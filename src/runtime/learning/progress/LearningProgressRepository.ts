@@ -14,6 +14,7 @@ export class LearningProgressRepository {
     cursorVersion: number
     question: string
     rubricJson: string
+    nodeId?: string
     createdAt: number
   }): Promise<PersistedCheckpointView> {
     const command: LearningDbWorkerOp = {

@@ -106,9 +106,26 @@ function executeSaveCheckpoint(
   const now = op.createdAt
   const { projectId, clearGeneration } = ensureProject(db, op.workspaceRoot, now)
   const cursor = ensureCursor(db, op.sessionId, projectId, clearGeneration, now)
-  if (op.cursorVersion !== cursor.cursorVersion) {
-    throw new Error('cursorVersion 不匹配')
+  const cursorRow = db
+    .prepare(`SELECT selected_node_id FROM learning_cursors WHERE session_id = ?`)
+    .get(op.sessionId) as { selected_node_id: string | null }
+
+  if (op.nodeId !== undefined) {
+    const validMember = db
+      .prepare(
+        `SELECT 1 FROM version_members vm
+         INNER JOIN projects p
+           ON p.project_id = vm.project_id
+          AND p.current_knowledge_revision = vm.knowledge_revision
+         WHERE vm.project_id = ? AND vm.node_id = ?`
+      )
+      .get(projectId, op.nodeId)
+    if (!validMember) {
+      throw new Error(`nodeId 不属于当前有效大纲: ${op.nodeId}`)
+    }
   }
+
+  const resolvedNodeId = op.nodeId ?? cursorRow.selected_node_id ?? null
 
   const existing = db
     .prepare(`SELECT * FROM checkpoints WHERE checkpoint_id = ?`)
@@ -118,7 +135,9 @@ function executeSaveCheckpoint(
       existing.session_id === op.sessionId &&
       existing.question === op.question &&
       existing.run_id === op.runId &&
-      (existing.rubric_json as string | null) === op.rubricJson
+      (existing.rubric_json as string | null) === op.rubricJson &&
+      ((existing.node_id as string | null) ?? null) === resolvedNodeId &&
+      (existing.cursor_version as number) === op.cursorVersion
     ) {
       return {
         checkpointId: op.checkpointId,
@@ -134,6 +153,10 @@ function executeSaveCheckpoint(
     throw new Error('checkpointId 已被不同内容占用')
   }
 
+  if (op.cursorVersion !== cursor.cursorVersion) {
+    throw new Error('cursorVersion 不匹配')
+  }
+
   const active = db
     .prepare(
       `SELECT checkpoint_id FROM checkpoints
@@ -147,8 +170,8 @@ function executeSaveCheckpoint(
   db.prepare(
     `INSERT INTO checkpoints (
       checkpoint_id, session_id, project_id, run_id, cursor_version,
-      question, rubric_json, state, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'awaiting_answer', ?, ?)`
+      question, rubric_json, node_id, state, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_answer', ?, ?)`
   ).run(
     op.checkpointId,
     op.sessionId,
@@ -157,13 +180,11 @@ function executeSaveCheckpoint(
     op.cursorVersion,
     op.question,
     op.rubricJson,
+    resolvedNodeId,
     now,
     now
   )
 
-  db.prepare(`UPDATE checkpoints SET node_id =
-    (SELECT selected_node_id FROM learning_cursors WHERE session_id = ?) WHERE checkpoint_id = ?`
-  ).run(op.sessionId, op.checkpointId)
   const nextVersion = op.cursorVersion + 1
   db.prepare(
     `UPDATE learning_cursors SET
@@ -810,10 +831,18 @@ function executeSubmitAssessment(
       throw new Error(`无效出处 ${ref.receiptId}；没有大纲时不要填 factReferences`)
     }
   }
-  const helpCount = countHelpEvents(db, submission.checkpointId)
-  if (submission.verdict === 'understanding_observed' && helpCount > 0) {
-    throw new Error('存在提示或跳过后不能记为无帮助理解')
+  const skippedOrExplained = db
+    .prepare(
+      `SELECT 1 FROM learning_observations
+       WHERE checkpoint_id = ? AND kind = 'help_event'
+         AND json_extract(payload_json, '$.kind') IN ('skip', 'explain')
+       LIMIT 1`
+    )
+    .get(submission.checkpointId)
+  if (skippedOrExplained) {
+    throw new Error('已跳过或直接讲解的问题不能再提交评估')
   }
+  const helpCount = countHelpEvents(db, submission.checkpointId)
   const currentCheckpoint = db.prepare('SELECT current_checkpoint_id FROM learning_cursors WHERE session_id = ?').get(op.sessionId) as { current_checkpoint_id: string | null }
   if (currentCheckpoint.current_checkpoint_id !== submission.checkpointId) throw new Error('该问题已不是当前停点')
   const previous = latestAssessmentForSession(db, op.sessionId)
@@ -855,6 +884,10 @@ function executeGetLearningContext(
   const cursor = executeGetCursor(db, op.workspaceRoot, op.sessionId)
   const nodeId = op.nodeId ?? cursor.selectedNodeId
   const material = nodeId ? executeGetNodeMaterial(db, op.workspaceRoot, nodeId) : null
+  const outlineNodes = executeGetTreeProjection(db, op.workspaceRoot).nodes.map(node => ({
+    nodeId: node.nodeId,
+    title: node.title
+  }))
   const checkpoint = executeGetCheckpoint(db, op.sessionId)
   const attempt = checkpoint ? db.prepare(
     `SELECT attempt_id AS attemptId, answer_excerpt AS answer, source_message_ref AS messageId
@@ -868,11 +901,12 @@ function executeGetLearningContext(
   ).get(op.sessionId, assessment.assessmentId) as { reason: string } | undefined : undefined
   const page = Math.max(0, op.page)
   return {
-    status: material || checkpoint ? 'ok' : 'empty',
+    status: material || checkpoint || outlineNodes.length > 0 ? 'ok' : 'empty',
     cursorVersion: cursor.cursorVersion,
     clearGeneration: cursor.clearGeneration,
     nodeId,
     knowledgeRevision: executeGetCurrentRevision(db, op.workspaceRoot).revision,
+    outlineNodes,
     material: material ? {
       nodeId: material.nodeId, title: material.title, nodeRevision: material.nodeRevision,
       sources: material.sources, bodyPage: page,
@@ -913,6 +947,7 @@ function latestAssessmentForSession(
   checkpointId: string
   verdict: string
   summary: string
+  assisted: boolean
   disputed: boolean
   createdAt: number
 } | null {
@@ -927,7 +962,10 @@ function latestAssessmentForSession(
     | { observation_id: string; checkpoint_id: string; payload_json: string; created_at: number }
     | undefined
   if (!row) return null
-  const payload = parseLearningAssessSubmission(JSON.parse(row.payload_json))
+  const rawPayload = JSON.parse(row.payload_json) as Record<string, unknown>
+  const payload = parseLearningAssessSubmission(rawPayload)
+  const assisted =
+    typeof rawPayload.derivedHelpEventCount === 'number' && rawPayload.derivedHelpEventCount > 0
   const disputed =
     (
       db
@@ -943,6 +981,7 @@ function latestAssessmentForSession(
     checkpointId: row.checkpoint_id,
     verdict: typeof payload.verdict === 'string' ? payload.verdict : 'inconclusive',
     summary: typeof payload.summary === 'string' ? payload.summary : '',
+    assisted,
     disputed,
     createdAt: row.created_at
   }
@@ -969,10 +1008,16 @@ function executeGetSurface(
       FROM learning_observations o WHERE o.project_id = ? AND o.kind = 'assessment'
     )
     SELECT c.node_id,
-      CASE WHEN EXISTS (SELECT 1 FROM learning_observations d
-        WHERE d.session_id = o.session_id AND d.kind = 'dispute'
-          AND json_extract(d.payload_json, '$.assessmentId') = o.observation_id)
-      THEN 'pending_review' ELSE COALESCE(json_extract(o.payload_json, '$.verdict'), 'explained') END AS state,
+      CASE
+        WHEN EXISTS (SELECT 1 FROM learning_observations d
+          WHERE d.session_id = o.session_id AND d.kind = 'dispute'
+            AND json_extract(d.payload_json, '$.assessmentId') = o.observation_id)
+        THEN 'pending_review'
+        WHEN json_extract(o.payload_json, '$.verdict') = 'understanding_observed'
+          AND COALESCE(json_extract(o.payload_json, '$.derivedHelpEventCount'), 0) > 0
+        THEN 'explained'
+        ELSE COALESCE(json_extract(o.payload_json, '$.verdict'), 'explained')
+      END AS state,
       COUNT(*) AS count
     FROM checkpoints c LEFT JOIN ranked o ON o.checkpoint_id = c.checkpoint_id AND o.position = 1
     WHERE c.project_id = ? GROUP BY 1, 2
@@ -1018,6 +1063,7 @@ function executeListSessionQuestions(
       r.observation_id AS assessment_id,
       json_extract(r.payload_json, '$.verdict') AS verdict,
       json_extract(r.payload_json, '$.summary') AS summary,
+      COALESCE(json_extract(r.payload_json, '$.derivedHelpEventCount'), 0) AS help_count,
       EXISTS (SELECT 1 FROM learning_observations d
         WHERE d.session_id = c.session_id AND d.kind = 'dispute'
           AND json_extract(d.payload_json, '$.assessmentId') = r.observation_id) AS disputed
@@ -1027,7 +1073,7 @@ function executeListSessionQuestions(
     ORDER BY c.created_at ASC, c.rowid ASC
   `).all(sessionId, sessionId) as {
     checkpoint_id: string; question: string; state: string; created_at: number
-    assessment_id: string | null; verdict: string | null; summary: string | null; disputed: number
+    assessment_id: string | null; verdict: string | null; summary: string | null; help_count: number; disputed: number
   }[]
   return rows.map(row => {
     if (!QUESTION_STATES.has(row.state)) throw new Error(`学习停点状态非法: ${row.state}`)
@@ -1039,7 +1085,13 @@ function executeListSessionQuestions(
       state: row.state as import('../../../shared/learning/surface').LearningCheckpointUiState,
       createdAt: row.created_at,
       assessment: row.assessment_id
-        ? { assessmentId: row.assessment_id, verdict, summary: row.summary ?? '', disputed: row.disputed === 1 }
+        ? {
+            assessmentId: row.assessment_id,
+            verdict,
+            summary: row.summary ?? '',
+            assisted: Number(row.help_count ?? 0) > 0,
+            disputed: row.disputed === 1
+          }
         : null
     }
   })

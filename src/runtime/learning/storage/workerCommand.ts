@@ -17,6 +17,7 @@ export type LearningDbWorkerOp =
       cursorVersion: number
       question: string
       rubricJson: string
+      nodeId?: string
       createdAt: number
     }
   | {
@@ -199,6 +200,9 @@ export function parseLearningDbWorkerOp(raw: unknown): LearningDbWorkerOp {
       cursorVersion: readInt(value.cursorVersion, 'cursorVersion'),
       question: readString(value.question, 'question'),
       rubricJson: readString(value.rubricJson, 'rubricJson'),
+      ...(typeof value.nodeId === 'string' && value.nodeId.trim()
+        ? { nodeId: value.nodeId.trim() }
+        : {}),
       createdAt: readInt(value.createdAt, 'createdAt')
     }
   }

@@ -10,6 +10,7 @@ export interface LearningCheckpointPersistInput {
   readonly cursorVersion: number
   readonly question: string
   readonly rubricJson: string
+  readonly nodeId?: string
 }
 
 export class LearningProgress {

@@ -669,4 +669,179 @@ describe('learning surface projection', () => {
       await reopened.close()
     }
   }, 30_000)
+
+  it('自然对话未选主题时可通过显式 nodeId 归属大纲进度且不篡改游标选中态，非法或过期 nodeId 被拒绝', async () => {
+    const { harness, workspace } = await openHarness()
+    const sessionId = 'sess-natural-node'
+
+    await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-nat-1',
+      parentRevision: null,
+      inputFingerprint: 'fp-nat-1',
+      expectedCurrentRevision: null,
+      nodes: [
+        {
+          nodeId: 'node-flow',
+          nodeRevision: 'nr-flow-1',
+          title: '请求链路',
+          bodyJson: JSON.stringify({
+            materialStatus: 'verified',
+            navDimension: 'key_user_flows',
+            parentNodeId: null,
+            summary: '请求处理主链路',
+            learningGoal: '掌握请求流转',
+            claims: []
+          })
+        },
+        {
+          nodeId: 'node-legacy',
+          nodeRevision: 'nr-legacy-1',
+          title: '旧状态模块',
+          bodyJson: JSON.stringify({
+            materialStatus: 'verified',
+            navDimension: 'data_and_state',
+            parentNodeId: null,
+            summary: '旧模块',
+            learningGoal: '理解旧模块',
+            claims: []
+          })
+        }
+      ],
+      members: [
+        { nodeId: 'node-flow', nodeRevision: 'nr-flow-1' },
+        { nodeId: 'node-legacy', nodeRevision: 'nr-legacy-1' }
+      ]
+    })
+
+    const context = (await harness.progress.getLearningContext({
+      workspaceRoot: workspace,
+      sessionId,
+      page: 0
+    })) as {
+      status: string
+      nodeId: string | null
+      outlineNodes: readonly { nodeId: string; title: string }[]
+    }
+    expect(context.status).toBe('ok')
+    expect(context.nodeId).toBeNull()
+    expect(context.outlineNodes).toEqual([
+      { nodeId: 'node-flow', title: '请求链路' },
+      { nodeId: 'node-legacy', title: '旧状态模块' }
+    ])
+
+    await expect(
+      harness.progress.saveCheckpoint({
+        workspaceRoot: workspace,
+        sessionId,
+        runId: 'run-invalid-node',
+        checkpointId: 'ckpt-invalid-node',
+        cursorVersion: await cursorOf(harness, workspace, sessionId),
+        question: '未知节点问题',
+        rubricJson: JSON.stringify({
+          targetClaim: 'c',
+          knowledgeRevision: 'rev-nat-1',
+          verificationMethod: 'open_answer',
+          criteria: 'c'
+        }),
+        nodeId: 'node-does-not-exist'
+      })
+    ).rejects.toThrow(/nodeId 不属于当前有效大纲/)
+
+    await harness.progress.saveCheckpoint({
+      workspaceRoot: workspace,
+      sessionId,
+      runId: 'run-nat-1',
+      checkpointId: 'ckpt-nat-1',
+      cursorVersion: await cursorOf(harness, workspace, sessionId),
+      question: '请求进入后第一步经过哪一层校验？',
+      rubricJson: JSON.stringify({
+        targetClaim: '说明入口校验',
+        knowledgeRevision: 'rev-nat-1',
+        verificationMethod: 'open_answer',
+        criteria: '能指出入口边界校验'
+      }),
+      nodeId: 'node-flow'
+    })
+
+    await harness.progress.applyCommand(
+      command(sessionId, await cursorOf(harness, workspace, sessionId), {
+        type: 'answer',
+        checkpointId: 'ckpt-nat-1',
+        text: '先经过入口边界参数校验再进入核心编排',
+        optionIds: []
+      })
+    )
+    const outbox = await harness.progress.getPendingOutbox(sessionId)
+    const { attemptId } = JSON.parse(outbox!.payload_json) as { attemptId: string }
+    await harness.progress.submitAssessment({
+      workspaceRoot: workspace,
+      sessionId,
+      runId: 'run-nat-assess',
+      cursorVersion: await cursorOf(harness, workspace, sessionId),
+      submissionJson: JSON.stringify({
+        attemptId,
+        checkpointId: 'ckpt-nat-1',
+        verdict: 'understanding_observed',
+        summary: '独立说清入口校验顺序',
+        factReferences: []
+      })
+    })
+
+    const surface = await harness.progress.getSurface(workspace, sessionId)
+    expect(surface.selectedNodeId).toBeNull()
+    expect(surface.questions[0]?.assessment).toMatchObject({
+      verdict: 'understanding_observed',
+      assisted: false,
+      disputed: false
+    })
+    expect(surface.nodeProgress).toEqual([
+      { nodeId: 'node-flow', state: 'understanding_observed' }
+    ])
+
+    // 发布新版本大纲移除 node-legacy 后，过期 nodeId 不能再绑定新停点
+    await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-nat-2',
+      parentRevision: 'rev-nat-1',
+      inputFingerprint: 'fp-nat-2',
+      expectedCurrentRevision: 'rev-nat-1',
+      nodes: [
+        {
+          nodeId: 'node-flow',
+          nodeRevision: 'nr-flow-1',
+          title: '请求链路',
+          bodyJson: JSON.stringify({
+            materialStatus: 'verified',
+            navDimension: 'key_user_flows',
+            parentNodeId: null,
+            summary: '请求处理主链路',
+            learningGoal: '掌握请求流转',
+            claims: []
+          })
+        }
+      ],
+      members: [{ nodeId: 'node-flow', nodeRevision: 'nr-flow-1' }]
+    })
+
+    await expect(
+      harness.progress.saveCheckpoint({
+        workspaceRoot: workspace,
+        sessionId,
+        runId: 'run-stale-node',
+        checkpointId: 'ckpt-stale-node',
+        cursorVersion: await cursorOf(harness, workspace, sessionId),
+        question: '过期节点问题',
+        rubricJson: JSON.stringify({
+          targetClaim: 'c',
+          knowledgeRevision: 'rev-nat-2',
+          verificationMethod: 'open_answer',
+          criteria: 'c'
+        }),
+        nodeId: 'node-legacy'
+      })
+    ).rejects.toThrow(/nodeId 不属于当前有效大纲/)
+
+    await harness.close()
+  })
 })

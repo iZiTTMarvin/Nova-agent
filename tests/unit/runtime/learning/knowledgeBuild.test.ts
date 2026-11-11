@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,6 +9,7 @@ import { SkeletonKnowledgeBuild } from '../../../../src/runtime/learning/build/S
 import { WorkspaceEvidencePort, verifyFragmentAgainstDisk } from '../../../../src/runtime/learning/knowledge/evidence/WorkspaceEvidencePort'
 import { validateCompileCandidate } from '../../../../src/runtime/learning/knowledge/validation/validateCompileCandidate'
 import { parseCompileOutputText } from '../../../../src/runtime/learning/build/compileOutputSchema'
+import { selectFragmentWindow } from '../../../../src/runtime/learning/knowledge/evidence/evidenceStrategy'
 import {
   LEARNING_COMPILE_OUTPUT_RESERVE_TOKENS,
   LEARNING_MAX_COMPILE_OUTPUT_BYTES,
@@ -107,6 +108,77 @@ describe('knowledge skeleton build', () => {
     const body = JSON.parse(material?.bodyJson ?? '{}')
     expect(body.claims.some((c: { kind: string }) => c.kind === 'unverified')).toBe(true)
     await harness.close()
+  })
+
+  it('模型返回包裹在 ```json 围栏中且包含四类 claim 时，单次调用直接编译通过', async () => {
+    const { harness, workspace } = await openHarness()
+    try {
+      const builder = new SkeletonKnowledgeBuild()
+      const mock = new EvidenceAwareMockModelClient(evidence => {
+        const rawJson = compileJsonFromEvidence(evidence, nodes => {
+          const firstFact = (nodes[0]!.claims as Array<{ sourceIds?: string[] }>)[0]!
+          const sourceIds = firstFact.sourceIds ?? []
+          nodes[0] = {
+            ...nodes[0]!,
+            claims: [
+              {
+                kind: 'source_fact',
+                text: '保存前先校验金额与备注',
+                sourceIds
+              },
+              {
+                kind: 'inference',
+                text: '优先在入口处拦截脏数据以简化持久化层',
+                sourceIds,
+                uncertainty: '设计文档未显式记载该取舍'
+              },
+              {
+                kind: 'general_explanation',
+                text: '前置参数校验通常用于缩小写入事务失败面'
+              },
+              {
+                kind: 'unverified',
+                question: '并发写入时是否有跨进程文件锁？',
+                missingEvidence: '当前片段未覆盖底层文件锁实现'
+              }
+            ]
+          }
+        })
+        return `\`\`\`json\n${rawJson}\n\`\`\``
+      })
+
+      const result = await builder.run({
+        workspaceRoot: workspace,
+        modelClient: mock,
+        knowledge: harness.knowledge,
+        reader: harness.reader,
+        focusRelativePaths: ['src/save.ts', 'src/index.ts']
+      })
+
+      expect(result).toMatchObject({ ok: true, modelCallCount: 1 })
+      expect(mock.calls).toHaveLength(1)
+
+      const promptPayload = JSON.parse(String(mock.calls[0]?.messages[0]?.content ?? '{}')) as {
+        outputContract: { nodes: Array<{ claims: Array<{ kind: string }> }> }
+      }
+      expect(promptPayload.outputContract.nodes[0]?.claims.map(c => c.kind)).toEqual([
+        'source_fact',
+        'inference',
+        'general_explanation',
+        'unverified'
+      ])
+
+      const material = await harness.reader.getNodeMaterial(workspace, 'flow-save')
+      const body = JSON.parse(material?.bodyJson ?? '{}') as { claims: Array<{ kind: string }> }
+      expect(body.claims.map(c => c.kind)).toEqual([
+        'source_fact',
+        'inference',
+        'general_explanation',
+        'unverified'
+      ])
+    } finally {
+      await harness.close()
+    }
   })
 
   it.each([200_000, 32_000, 24_000])('约 1500 个文件的项目：窗口 %i 下请求不超预算，覆盖多个目录，片段不从 import 开始', async contextWindow => {
@@ -408,6 +480,159 @@ describe('knowledge skeleton build', () => {
     expect(result).toMatchObject({ ok: false, code: 'provider_error', modelCallCount: 1 })
     expect(mock.getCalls()).toHaveLength(1)
     expect(await harness.reader.getCurrentKnowledgeRevision(workspace)).toBeNull()
+    await harness.close()
+  })
+
+  it.each([
+    {
+      name: 'Python 带行尾注释的导入',
+      content: 'import os  # environment\n\ndef run():\n    return 42\n',
+      startLine: 3,
+      symbolLabel: 'run'
+    },
+    {
+      name: 'Java 静态导入',
+      content: 'package app;\nimport static java.lang.Math.*;\npublic class Main {\n}\n',
+      startLine: 3,
+      symbolLabel: 'Main'
+    },
+    {
+      name: 'TypeScript 跨行导入',
+      content: "import Default, {\ntype Token,\nhelper,\n} from './dependency'\nexport const run = () => helper(Default)\n",
+      startLine: 5,
+      symbolLabel: 'run'
+    }
+  ])('$name 不会吞掉后续源码正文', ({ content, startLine, symbolLabel }) => {
+    expect(selectFragmentWindow('code', content)).toMatchObject({
+      startLine,
+      symbolLabel,
+      text: content.split('\n').slice(startLine - 1).join('\n')
+    })
+  })
+
+  it('多语言工作区可抽取代码片段与顶层符号，且非 JS 越界路径同样被拦截', async () => {
+    const { harness } = await openHarness()
+    const pyWorkspace = join(tempDir, 'py-ws')
+    mkdirSync(join(pyWorkspace, 'app'), { recursive: true })
+    writeFileSync(
+      join(pyWorkspace, 'pyproject.toml'),
+      '[project]\nname = "demo-service"\nversion = "0.1.0"\n',
+      'utf8'
+    )
+    writeFileSync(join(pyWorkspace, 'README.md'), '# Demo Python Service\n', 'utf8')
+    writeFileSync(
+      join(pyWorkspace, 'main.py'),
+      [
+        '#!/usr/bin/env python3',
+        '# 入口启动注释',
+        '"""模块说明文档"""',
+        'import os  # 读取运行环境',
+        'from app.service import OrderProcessor',
+        '',
+        'async def run_server() -> None:',
+        '    processor = OrderProcessor(os.getenv("ENV", "dev"))',
+        '    processor.handle_order("ord-1")',
+        ''
+      ].join('\n'),
+      'utf8'
+    )
+    writeFileSync(
+      join(pyWorkspace, 'app', 'service.py'),
+      [
+        '# 业务处理层',
+        'from dataclasses import dataclass',
+        '',
+        'class OrderProcessor:',
+        '    def __init__(self, env: str) -> None:',
+        '        self.env = env',
+        '',
+        '    def handle_order(self, order_id: str) -> str:',
+        '        return f"{self.env}:{order_id}"',
+        ''
+      ].join('\n'),
+      'utf8'
+    )
+    mkdirSync(join(pyWorkspace, 'gateway'), { recursive: true })
+    writeFileSync(
+      join(pyWorkspace, 'gateway', 'server.go'),
+      [
+        'package gateway',
+        '',
+        'import (',
+        '\t"fmt"',
+        '\t"net/http"',
+        ')',
+        '',
+        'func (s *Server) Start(addr string) error {',
+        '\tfmt.Println(addr)',
+        '\treturn http.ListenAndServe(addr, nil)',
+        '}',
+        ''
+      ].join('\n'),
+      'utf8'
+    )
+    mkdirSync(join(pyWorkspace, 'core'), { recursive: true })
+    writeFileSync(
+      join(pyWorkspace, 'core', 'lib.rs'),
+      [
+        'use std::collections::HashMap;',
+        '',
+        '#[derive(Debug, Clone)]',
+        'pub struct EngineConfig {',
+        '    pub routes: HashMap<String, String>,',
+        '}',
+        ''
+      ].join('\n'),
+      'utf8'
+    )
+    mkdirSync(join(pyWorkspace, 'java'), { recursive: true })
+    writeFileSync(
+      join(pyWorkspace, 'java', 'Main.java'),
+      'package app;\nimport static java.lang.Math.*;\npublic class Main {\n}\n',
+      'utf8'
+    )
+
+    const evidence = await new WorkspaceEvidencePort().collectSkeletonEvidence({
+      workspaceRoot: pyWorkspace
+    })
+    const mainFrag = evidence.fragments.find(f => f.relativePath === 'main.py')
+    const serviceFrag = evidence.fragments.find(f => f.relativePath === 'app/service.py')
+    const goFrag = evidence.fragments.find(f => f.relativePath === 'gateway/server.go')
+    const rustFrag = evidence.fragments.find(f => f.relativePath === 'core/lib.rs')
+    const javaFrag = evidence.fragments.find(f => f.relativePath === 'java/Main.java')
+    expect(mainFrag).toBeDefined()
+    expect(mainFrag?.symbolLabel).toBe('run_server')
+    expect(mainFrag?.startLine).toBe(7)
+    expect(mainFrag?.snippetText).toContain('async def run_server()')
+    expect(serviceFrag).toBeDefined()
+    expect(serviceFrag?.symbolLabel).toBe('OrderProcessor')
+    expect(serviceFrag?.startLine).toBe(4)
+    expect(goFrag?.symbolLabel).toBe('Start')
+    expect(goFrag?.startLine).toBe(8)
+    expect(rustFrag?.symbolLabel).toBe('EngineConfig')
+    expect(rustFrag?.startLine).toBe(4)
+    expect(javaFrag).toMatchObject({ startLine: 3, symbolLabel: 'Main' })
+
+    const leakCandidate = parseCompileOutputText(
+      compileJsonFromEvidence(
+        evidence,
+        nodes => {
+          nodes[0] = {
+            ...nodes[0]!,
+            summary: '读取 ../outside/secret_config.py 初始化环境'
+          }
+        },
+        'app/'
+      )
+    )
+    const leakValidation = await validateCompileCandidate({
+      workspaceRoot: pyWorkspace,
+      evidence,
+      output: leakCandidate
+    })
+    expect(leakValidation.ok).toBe(false)
+    if (!leakValidation.ok) expect(leakValidation.failure.code).toBe('out_of_bounds_path')
+
     await harness.close()
   })
 })

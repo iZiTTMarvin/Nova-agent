@@ -104,6 +104,35 @@ describe('novaSettings', () => {
     expect(readFileSync(join(mockHome, '.nova', 'settings.json'), 'utf8')).toBe(before)
   })
 
+  it('全局、内置与用户级第三方 Skill 许可不绑定工作区，旧版带工作区的全局许可读取时自动归一', () => {
+    const builtinA = createSkillId({ name: 'frontend-design', source: 'builtin', sourcePath: 'C:/App/skills/frontend-design/SKILL.md' }, 'C:/RepoA')
+    const builtinB = createSkillId({ name: 'frontend-design', source: 'builtin', sourcePath: 'C:/App/skills/frontend-design/SKILL.md' }, 'C:/RepoB')
+    expect(builtinA).toBe(builtinB)
+
+    const globalA = createSkillId({ name: 'human-writing', source: 'global', sourcePath: 'C:/Users/me/.nova/skills/human-writing/SKILL.md' }, 'C:/RepoA')
+    const globalB = createSkillId({ name: 'human-writing', source: 'global', sourcePath: 'C:/Users/me/.nova/skills/human-writing/SKILL.md' }, 'C:/RepoB')
+    expect(globalA).toBe(globalB)
+
+    const userThirdPartyA = createSkillId({ name: 'ext-helper', source: 'third_party', sourcePath: 'C:/Users/me/.claude/skills/ext-helper/SKILL.md' }, 'C:/RepoA')
+    const userThirdPartyB = createSkillId({ name: 'ext-helper', source: 'third_party', sourcePath: 'C:/Users/me/.claude/skills/ext-helper/SKILL.md' }, 'C:/RepoB')
+    expect(userThirdPartyA).toBe(userThirdPartyB)
+
+    const projectThirdPartyA = createSkillId({ name: 'repo-claude', source: 'third_party', sourcePath: 'C:/RepoA/.claude/skills/repo-claude/SKILL.md' }, 'C:/RepoA')
+    const projectThirdPartyB = createSkillId({ name: 'repo-claude', source: 'third_party', sourcePath: 'C:/RepoA/.claude/skills/repo-claude/SKILL.md' }, 'C:/RepoB')
+    expect(projectThirdPartyA).not.toBe(projectThirdPartyB)
+
+    const legacyGlobalWithWorkspace = JSON.stringify([
+      'human-writing',
+      'global',
+      'C:\\Users\\me\\.nova\\skills\\human-writing\\SKILL.md',
+      'C:\\OldRepo'
+    ])
+    writeFileSync(join(mockHome, '.nova', 'settings.json'), JSON.stringify({
+      pilotSkillIds: [legacyGlobalWithWorkspace, globalB]
+    }), 'utf-8')
+    expect(loadNovaSettings().pilotSkillIds).toEqual([globalA])
+  })
+
   it('streamSmoothness 默认 smooth，合法值持久化，非法值拒绝且旧文件缺省回落', async () => {
     const { loadNovaSettings, saveNovaSettings, DEFAULT_NOVA_SETTINGS } = await import(
       '../../../../src/runtime/settings/novaSettings'

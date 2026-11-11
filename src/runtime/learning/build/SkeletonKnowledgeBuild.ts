@@ -68,7 +68,12 @@ function evidencePrompt(fragments: readonly EvidenceFragment[], layout: readonly
           learningGoal: 'string',
           navDimension: 'project_purpose | startup_runtime | module_roles | key_user_flows | data_and_state | design_tradeoffs',
           parentNodeId: 'string | null',
-          claims: [],
+          claims: [
+            { kind: 'source_fact', text: 'string', sourceIds: ['sourceId'] },
+            { kind: 'inference', text: 'string', sourceIds: ['sourceId'], uncertainty: 'string' },
+            { kind: 'general_explanation', text: 'string' },
+            { kind: 'unverified', question: 'string', missingEvidence: 'string' }
+          ],
           prerequisiteNodeIds: [],
           relatedNodeIds: [],
           flowNextNodeIds: []
@@ -78,7 +83,10 @@ function evidencePrompt(fragments: readonly EvidenceFragment[], layout: readonly
     rules: [
       '只有 evidenceFragments 可以作为 source_fact 的出处；projectLayout 只说明项目规模，不能当作事实出处',
       'source_fact 只能引用 evidenceFragments 中的 sourceId',
-      '设计原因无文档时用 inference'
+      '设计原因无文档时用 inference',
+      'inference 必须包含非空的 sourceIds 与 uncertainty（说明推断的不确定性）',
+      'unverified 使用 question 与 missingEvidence 字段，不使用 text 或 sourceIds',
+      '请直接输出合法 JSON 对象，不要包含额外解释文本'
     ]
   })
 }

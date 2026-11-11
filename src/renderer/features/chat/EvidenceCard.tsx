@@ -5,6 +5,8 @@
 import React, { useState } from 'react'
 import { Button } from '@astryxdesign/core/Button'
 import type { EvidenceReference } from '../../../shared/evidence'
+import { useBrowserStore } from '../browser/useBrowserStore'
+import { useLayoutStore } from '../../stores/useLayoutStore'
 import './EvidenceCard.css'
 
 interface EvidenceCardProps {
@@ -42,7 +44,13 @@ const EvidenceItem: React.FC<{ sessionId: string; item: EvidenceReference }> = (
     setMessage(null)
     try {
       const result = await window.api.invoke('evidence:open-browser', { sessionId, id: evidenceId(item) })
-      setMessage(result.status === 'applied' ? '已打开实时页面' : `实时页面不可用：${result.detail}，请重新验证`)
+      if (result.status === 'applied') {
+        useBrowserStore.getState().focusPage(result.page.browserId)
+        useLayoutStore.getState().openBrowserPane(false)
+        setMessage('已打开实时页面')
+      } else {
+        setMessage(`实时页面不可用：${result.detail}，请重新验证`)
+      }
     } catch {
       setMessage('实时页面不可用，请重新验证')
     }

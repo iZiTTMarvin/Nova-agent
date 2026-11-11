@@ -20,14 +20,14 @@ Pilot is a set of task-specific working methods. This document contains shared r
 
 | Task | Read |
 | --- | --- |
-| Read-only questions, option comparisons, or feasibility analysis | `workflows/investigation.md` |
-| Add or change user-visible behavior | `workflows/feature.md` |
-| Errors, crashes, or behavior that differs from expectations | `workflows/bug-fix.md` |
-| Change structure while preserving behavior | `workflows/refactoring.md` |
-| Resolve a design question with a disposable prototype | `workflows/prototype.md` |
-| Performance problems with measurable baselines | `workflows/performance.md` |
-| Establish verification or collect real artifact evidence | `workflows/verification.md` |
-| Tasks that fit none of these methods, or span several modules | `workflows/general.md` |
+| Read-only questions, option comparisons, or feasibility analysis | `<%= skillDirectory %>/workflows/investigation.md` |
+| Add or change user-visible behavior | `<%= skillDirectory %>/workflows/feature.md` |
+| Errors, crashes, or behavior that differs from expectations | `<%= skillDirectory %>/workflows/bug-fix.md` |
+| Change structure while preserving behavior | `<%= skillDirectory %>/workflows/refactoring.md` |
+| Resolve a design question with a disposable prototype | `<%= skillDirectory %>/workflows/prototype.md` |
+| Performance problems with measurable baselines | `<%= skillDirectory %>/workflows/performance.md` |
+| Establish verification or collect real artifact evidence | `<%= skillDirectory %>/workflows/verification.md` |
+| Tasks that fit none of these methods, or span several modules | `<%= skillDirectory %>/workflows/general.md` |
 
 - Reuse the chosen method for ordinary follow-ups within the same task.
 - Choose again for a distinct new task or a change of direction. Do not infer a workflow stage from historical todos.

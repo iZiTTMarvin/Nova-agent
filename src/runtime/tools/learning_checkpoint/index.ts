@@ -32,6 +32,10 @@ export function createLearningCheckpointTool(
         },
         cursorVersion: { type: 'integer', description: 'Expected cursor version.' },
         checkpointId: { type: 'string', description: 'Stable checkpoint id for idempotent retries.' },
+        nodeId: {
+          type: 'string',
+          description: '关联的大纲节点 ID（可选；对应 learning_context.outlineNodes 中的 nodeId）'
+        },
         rubric: {
           type: 'object',
           description: '冻结判据。评估学习者是否理解核心因果逻辑，不要求精确匹配代码字面。',
@@ -93,6 +97,10 @@ export function createLearningCheckpointTool(
         typeof args.checkpointId === 'string' && args.checkpointId.trim()
           ? args.checkpointId.trim()
           : randomUUID()
+      const nodeId =
+        typeof args.nodeId === 'string' && args.nodeId.trim()
+          ? args.nodeId.trim()
+          : undefined
 
       const progress = getProgress()
       if (!progress) {
@@ -117,7 +125,8 @@ export function createLearningCheckpointTool(
           checkpointId,
           cursorVersion: args.cursorVersion as number,
           question,
-          rubricJson
+          rubricJson,
+          ...(nodeId ? { nodeId } : {})
         })
       } catch (error) {
         // 持久化失败不占本轮名额，模型换停点 id 重试不该被幽灵槽位挡住

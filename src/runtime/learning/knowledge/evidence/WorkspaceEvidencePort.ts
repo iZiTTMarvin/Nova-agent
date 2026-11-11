@@ -21,6 +21,7 @@ import { isPathSkipped, loadIgnoreMatcher } from '../../../workspace'
 import type { EvidenceFragment, EvidencePackage } from './evidenceTypes'
 import { LEARNING_EVIDENCE_STRATEGY_VERSION } from './evidenceTypes'
 import {
+  CODE_EXTENSIONS,
   buildProjectLayout,
   evidenceFileKind,
   extractRelativeImports,
@@ -35,8 +36,15 @@ import {
 import { isSensitiveRelativePath } from './sensitivePaths'
 import { deriveProjectId, normalizeWorkspaceForProject } from '../../storage/workerCommand'
 
-const TEXT_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.md', '.html', '.css', '.yaml', '.yml'
+const TEXT_EXTENSIONS = new Set<string>([
+  ...CODE_EXTENSIONS,
+  '.json',
+  '.md',
+  '.toml',
+  '.html',
+  '.css',
+  '.yaml',
+  '.yml'
 ])
 
 function hashText(text: string): string {

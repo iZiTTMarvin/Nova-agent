@@ -11,11 +11,12 @@ export type LearningCheckpointUiState =
   | 'skipped'
   | 'superseded'
 
-/** 某道核对问题的最新评估；disputed 表示用户不认同且尚未复核。 */
+/** 某道核对问题的最新评估；assisted 表示经过提示后答出，disputed 表示用户不认同且尚未复核。 */
 export interface LearningQuestionAssessmentView {
   readonly assessmentId: string
   readonly verdict: LearningAssessVerdict
   readonly summary: string
+  readonly assisted: boolean
   readonly disputed: boolean
 }
 

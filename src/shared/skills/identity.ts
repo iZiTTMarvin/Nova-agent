@@ -20,13 +20,25 @@ function normalizeSkillPath(path: string): string {
   return windows ? normalized.toLowerCase() : normalized
 }
 
-/** 身份绑定当前来源、规范路径和工作区；同名替换不会继承许可。 */
+/** 身份绑定当前来源与规范路径；仅项目级来源额外绑定工作区，避免全局与内置许可跨工作区失效。 */
 export function createSkillId(skill: SkillIdentity, workspaceRoot?: string | null): string {
+  const normalizedSource = normalizeSkillPath(skill.sourcePath)
+  const normalizedRoot = workspaceRoot ? normalizeSkillPath(workspaceRoot) : ''
+  const scopedWorkspace =
+    skill.source === 'project'
+      ? normalizedRoot
+      : skill.source === 'third_party' &&
+          normalizedRoot !== '' &&
+          (normalizedRoot === '/'
+            ? normalizedSource.startsWith('/')
+            : normalizedSource.startsWith(`${normalizedRoot}/`))
+        ? normalizedRoot
+        : ''
   return JSON.stringify([
     skill.name,
     skill.source,
-    normalizeSkillPath(skill.sourcePath),
-    workspaceRoot ? normalizeSkillPath(workspaceRoot) : ''
+    normalizedSource,
+    scopedWorkspace
   ])
 }
 

@@ -2,6 +2,7 @@ import type { ModelClient, ChatOptions } from '../../../src/runtime/model/ModelC
 import type { ChatEvent, ChatMessage, ToolDefinition } from '../../../src/runtime/model/types'
 import type { RequestBudgetMeasurement } from '../../../../src/runtime/model/requestBudget'
 import type { EvidencePackage } from '../../../src/runtime/learning/knowledge/evidence/evidenceTypes'
+import { LEARNING_EVIDENCE_STRATEGY_VERSION } from '../../../../src/runtime/learning/knowledge/evidence/evidenceTypes'
 import { estimateTextTokens } from '../../../../src/shared/model/tokenEstimate'
 
 /** 读取请求里的证据包并按回调生成编译输出；可声明上下文窗口以驱动预算。 */
@@ -45,7 +46,7 @@ export class EvidenceAwareMockModelClient implements ModelClient {
     const evidence: EvidencePackage = {
       projectId: 'test',
       workspaceRoot: '',
-      strategyVersion: 'learning-evidence-v2',
+      strategyVersion: LEARNING_EVIDENCE_STRATEGY_VERSION,
       fingerprint: '',
       projectLayout: payload.projectLayout ?? [],
       fragments: (payload.evidenceFragments ?? []).map(f => ({

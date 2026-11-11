@@ -132,7 +132,43 @@ describe('resolveAgentTurnRoute 路由矩阵', () => {
     const accepted = resolveAgentTurnRoute({ ...request, pilotSkillIds: [id] })
     expect(accepted.kind).toBe(forkAgent ? 'skill_fork' : 'agent')
     if (accepted.kind === 'agent') expect(accepted.dispatch.kind).toBe('inject')
-    expect(resolveAgentTurnRoute({ ...request, workspacePath: join(root, 'another-workspace'), pilotSkillIds: [id] }).kind).toBe('slash_rejected')
+    // 全局 Skill 许可跨工作区保持有效
+    expect(resolveAgentTurnRoute({ ...request, workspacePath: join(root, 'another-workspace'), pilotSkillIds: [id] }).kind)
+      .toBe(forkAgent ? 'skill_fork' : 'agent')
+
+    // 项目级 Skill 许可严格绑定原工作区，切换工作区后拒绝
+    const projectDir = join(root, '.nova', 'skills')
+    mkdirSync(join(projectDir, 'proj-only'), { recursive: true })
+    writeFileSync(
+      join(projectDir, 'proj-only', 'SKILL.md'),
+      [
+        '---',
+        'name: proj-only',
+        'description: project scoped skill',
+        'user-invocable: true',
+        ...(forkAgent ? ['fork_agent: true'] : []),
+        '---',
+        'PROJECT_BODY'
+      ].join('\n')
+    )
+    const projectRegistry = SkillRegistry.load({ globalDir: join(root, 'skills'), projectDir })
+    const projectSkill = projectRegistry.get('proj-only')!
+    const projectId = createSkillId(projectSkill, root)
+    expect(resolveAgentTurnRoute({
+      content: '/proj-only task',
+      mode: 'pilot',
+      skillRegistry: projectRegistry,
+      workspacePath: root,
+      pilotSkillIds: [projectId]
+    }).kind).toBe(forkAgent ? 'skill_fork' : 'agent')
+    expect(resolveAgentTurnRoute({
+      content: '/proj-only task',
+      mode: 'pilot',
+      skillRegistry: projectRegistry,
+      workspacePath: join(root, 'another-workspace'),
+      pilotSkillIds: [projectId]
+    }).kind).toBe('slash_rejected')
+
     expect(resolveAgentTurnRoute({ ...request, mode: 'default' }).kind).toBe(forkAgent ? 'skill_fork' : 'agent')
     expect(resolveAgentTurnRoute({ ...request, mode: 'plan' }).kind).toBe(forkAgent ? 'skill_fork' : 'agent')
   })

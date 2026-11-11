@@ -1,11 +1,25 @@
 import type { EvidenceFragment, EvidencePackage } from '../evidence/evidenceTypes'
 import type { CompileOutput, CompileOutputNode, CandidateEdge } from '../../build/compileOutputSchema'
+import { CODE_EXTENSIONS } from '../evidence/evidenceStrategy'
 import { verifyFragmentAgainstDisk } from '../evidence/WorkspaceEvidencePort'
 import { isPathWithinRoot, lexicalNormalize } from '../../../permissions/pathAccess'
 import { isAbsolute, join, resolve } from 'node:path'
 
-const PATH_LIKE =
-  /(?:^|[\s"'`])((?:[a-zA-Z]:\/)?(?:\.\.\/)?[\w./-]*\.(?:ts|tsx|js|jsx|json|md))(?:[\s"'`:\/]|$)/g
+const CITATION_EXT_PATTERN = [
+  ...CODE_EXTENSIONS.map(ext => ext.slice(1)),
+  'json',
+  'md',
+  'toml',
+  'html',
+  'css',
+  'yaml',
+  'yml'
+].join('|')
+
+const PATH_LIKE = new RegExp(
+  `(?:^|[\\s"'\`])((?:[a-zA-Z]:\\/)?(?:\\.\\.\\/)?[\\w./-]*\\.(?:${CITATION_EXT_PATTERN}))(?:[\\s"'\`:\\/]|$)`,
+  'g'
+)
 
 export type CompileValidationFailure =
   | { code: 'unknown_source_id' }

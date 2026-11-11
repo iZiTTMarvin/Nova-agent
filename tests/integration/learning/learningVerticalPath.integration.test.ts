@@ -8,6 +8,7 @@ import type { LearningCommand } from '../../../src/shared/learning/command'
 import { createLearningContextTool } from '../../../src/runtime/tools/learning_context'
 import { createLearningAssessTool } from '../../../src/runtime/tools/learning_assess'
 import { createReadState } from '../../../src/runtime/tools/editTool'
+import { learningQuestionRowStatus } from '../../../src/renderer/features/learning/learningCopy'
 
 const sampleRubricJson =
   '{"targetClaim":"指出数据来源","knowledgeRevision":"rev-1","verificationMethod":"open_answer","criteria":"能说明刷新后数据从哪读取"}'
@@ -120,7 +121,7 @@ describe('learning vertical path integration', () => {
     await harness.close()
   })
 
-  it('回答评估引用原文；错误原话拒绝；hint 后不能记无帮助理解', async () => {
+  it('回答评估绑定服务端原话；hint 后答对记为提示后理解且大纲保持讲过；explain 后拒绝评估', async () => {
     const { harness, workspace } = await openHarness()
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
@@ -208,6 +209,32 @@ describe('learning vertical path integration', () => {
     expect(context2.attempt).toMatchObject({ attemptId: attemptId2, answer: '答案B' })
     expect(context2.assessment?.checkpointId).toBe('ckpt-b')
 
+    await harness.knowledge.publishVersion({
+      workspaceRoot: workspace,
+      knowledgeRevision: 'rev-hint',
+      parentRevision: null,
+      inputFingerprint: 'fp-hint',
+      expectedCurrentRevision: null,
+      nodes: [
+        {
+          nodeId: 'node-hint',
+          nodeRevision: 'nr-hint',
+          title: '缓存回退',
+          bodyJson: JSON.stringify({
+            materialStatus: 'verified',
+            navDimension: 'data_and_state',
+            parentNodeId: null,
+            summary: '缓存未命中时回源',
+            learningGoal: '理解回源路径',
+            claims: []
+          })
+        }
+      ],
+      members: [{ nodeId: 'node-hint', nodeRevision: 'nr-hint' }],
+      edges: [],
+      sourceReceipts: [],
+      nodeSources: []
+    })
     await harness.progress.saveCheckpoint({
       workspaceRoot: workspace,
       sessionId: 'sess-hint',
@@ -215,7 +242,8 @@ describe('learning vertical path integration', () => {
       checkpointId: 'ckpt-h',
       cursorVersion: 0,
       question: 'Qh',
-      rubricJson: sampleRubricJson
+      rubricJson: sampleRubricJson,
+      nodeId: 'node-hint'
     })
     await harness.progress.applyCommand({
       commandId: 'cmd-hint',
@@ -232,14 +260,14 @@ describe('learning vertical path integration', () => {
       action: { type: 'answer', checkpointId: 'ckpt-h', text: '有提示的答案', optionIds: [] }
     })
     const cursorH = await harness.progress.getCursor(workspace, 'sess-hint')
-    const blocked = await assessTool.execute(
+    const assisted = await assessTool.execute(
       {
         attemptId: JSON.parse(
           (await harness.progress.getPendingOutbox('sess-hint', 'cmd-ans-h'))!.payload_json
         ).attemptId,
         checkpointId: 'ckpt-h',
         verdict: 'understanding_observed',
-        summary: '无提示掌握',
+        summary: '经过提示说清了回源条件',
         factReferences: [],
         cursorVersion: cursorH.cursorVersion
       },
@@ -251,7 +279,55 @@ describe('learning vertical path integration', () => {
         mode: 'learn'
       }
     )
-    expect(blocked.success).toBe(false)
+    expect(assisted.success).toBe(true)
+    const hintSurface = await harness.progress.getSurface(workspace, 'sess-hint')
+    expect(hintSurface.questions[0]?.assessment).toMatchObject({
+      verdict: 'understanding_observed',
+      assisted: true,
+      disputed: false
+    })
+    expect(learningQuestionRowStatus(hintSurface.questions[0]!, false)).toEqual({
+      label: '提示后理解',
+      tone: 'success',
+      icon: 'check'
+    })
+    expect(hintSurface.nodeProgress).toEqual([{ nodeId: 'node-hint', state: 'explained' }])
+
+    await harness.progress.saveCheckpoint({
+      workspaceRoot: workspace,
+      sessionId: 'sess-explain',
+      runId: 'run-exp',
+      checkpointId: 'ckpt-exp',
+      cursorVersion: 0,
+      question: 'Qexp',
+      rubricJson: sampleRubricJson
+    })
+    await harness.progress.applyCommand({
+      commandId: 'cmd-exp',
+      sessionId: 'sess-explain',
+      expectedClearGeneration: 0,
+      expectedCursorVersion: 1,
+      action: { type: 'explain', checkpointId: 'ckpt-exp' }
+    })
+    const cursorExp = await harness.progress.getCursor(workspace, 'sess-explain')
+    const rejectedAfterExplain = await assessTool.execute(
+      {
+        attemptId: 'att-missing',
+        checkpointId: 'ckpt-exp',
+        verdict: 'understanding_observed',
+        summary: '不应通过',
+        factReferences: [],
+        cursorVersion: cursorExp.cursorVersion
+      },
+      {
+        workingDir: workspace,
+        readState: createReadState(),
+        sessionId: 'sess-explain',
+        runId: 'run-exp-assess',
+        mode: 'learn'
+      }
+    )
+    expect(rejectedAfterExplain.success).toBe(false)
     await harness.close()
   })
 

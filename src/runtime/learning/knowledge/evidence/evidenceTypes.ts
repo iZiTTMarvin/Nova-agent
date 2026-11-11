@@ -1,5 +1,5 @@
 /** 取证策略版本；排序、片段切取或核对口径变化时递增。 */
-export const LEARNING_EVIDENCE_STRATEGY_VERSION = 'learning-evidence-v2'
+export const LEARNING_EVIDENCE_STRATEGY_VERSION = 'learning-evidence-v3'
 
 export interface EvidenceFragment {
   readonly sourceId: string

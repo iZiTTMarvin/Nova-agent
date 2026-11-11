@@ -11,11 +11,29 @@ import {
 } from '../../../../shared/learning/buildLimits'
 import type { ProjectLayoutEntry } from './evidenceTypes'
 
-const CODE_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']
-const ENTRY_NAME = /(?:^|\/)(index|main|app)\.(tsx?|jsx?|mjs|cjs)$/i
-const TEST_PATH = /(?:^|\/)(tests?|__tests__)\/|\.(test|spec)\.[^/]+$/i
-const LOCKFILES = new Set(['package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'npm-shrinkwrap.json'])
-const ROOT_DOCS = ['package.json', 'README.md', 'readme.md', 'Readme.md']
+export const CODE_EXTENSIONS = [
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+  '.py', '.go', '.rs', '.java', '.c', '.cpp', '.cc', '.h', '.hpp',
+  '.cs', '.rb', '.php', '.swift', '.kt'
+] as const
+
+const ENTRY_NAME =
+  /(?:^|\/)(?:(?:index|main|app)\.(?:tsx?|jsx?|mjs|cjs)|(?:main|app|manage|__init__)\.py|main\.go|(?:main|lib)\.rs|main\.(?:c|cpp|cc)|program\.cs|main\.(?:java|kt|swift|rb)|index\.php)$/i
+const TEST_PATH =
+  /(?:^|\/)(?:tests?|__tests__)\/|(?:^|\/)test_[^/]+\.py$|_test\.(?:py|go|rs)$|\.(?:test|spec)\.[^/]+$/i
+const LOCKFILES = new Set([
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'npm-shrinkwrap.json',
+  'Cargo.lock',
+  'poetry.lock',
+  'Pipfile.lock',
+  'Gemfile.lock',
+  'composer.lock'
+])
+const ROOT_MANIFESTS = ['package.json', 'pyproject.toml', 'Cargo.toml']
+const ROOT_READMES = ['README.md', 'readme.md', 'Readme.md']
 
 export type EvidenceFileKind = 'code' | 'readme' | 'package_json' | 'other'
 
@@ -97,15 +115,17 @@ function groupKeyOf(path: string, nestedUnderSrc: boolean): string {
   return parts[0]!
 }
 
-/** 根目录脚本与各类 *.config.* 是工具配置，不参与代码轮转，排到其他文本之前。 */
-function isToolingConfig(path: string): boolean {
-  return !path.includes('/') || /\.config\.[^/]+$/.test(path)
+/** 根目录非入口脚本与各类 *.config.* 是工具配置，不参与代码轮转，排到其他文本之前。 */
+function isToolingConfig(path: string, entryPaths: ReadonlySet<string>): boolean {
+  if (/\.config\.[^/]+$/i.test(path)) return true
+  if (path.includes('/')) return false
+  return !entryPaths.has(path) && !ENTRY_NAME.test(path)
 }
 
 const depthOf = (path: string): number => path.split('/').length
 
 /**
- * 候选顺序：head 为根 package.json / README；groups 为按目录分组的代码队列（组内入口按深度优先、
+ * 候选顺序：head 为根清单文件 / README；groups 为按目录分组的代码队列（组内入口按深度优先、
  * 其余按被引用次数），由取证方按轮次各取一个可用片段；tail 为工具配置与其他文本。
  * 轮流取保证覆盖面不被单个大目录吃光。
  */
@@ -115,11 +135,12 @@ export function rankEvidenceCandidates(params: {
   readonly referenceCounts: ReadonlyMap<string, number>
 }): { head: string[]; groups: string[][]; tail: string[] } {
   const eligible = params.paths.filter(path => !isExcludedEvidencePath(path))
-  const readme = ROOT_DOCS.slice(1).find(doc => eligible.includes(doc))
-  const head = [...(eligible.includes('package.json') ? ['package.json'] : []), ...(readme ? [readme] : [])]
+  const manifests = ROOT_MANIFESTS.filter(doc => eligible.includes(doc))
+  const readme = ROOT_READMES.find(doc => eligible.includes(doc))
+  const head = [...manifests, ...(readme ? [readme] : [])]
   const allCode = eligible.filter(isCodePath)
-  const code = allCode.filter(path => !isToolingConfig(path))
-  const tooling = allCode.filter(isToolingConfig)
+  const code = allCode.filter(path => !isToolingConfig(path, params.entryPaths))
+  const tooling = allCode.filter(path => isToolingConfig(path, params.entryPaths))
   const nestedUnderSrc = code.filter(path => path.startsWith('src/')).length * 2 >= code.length
 
   const score = (path: string): [number, number, number] => {
@@ -166,9 +187,40 @@ export function buildProjectLayout(paths: readonly string[]): ProjectLayoutEntry
     .sort((a, b) => a.dir.localeCompare(b.dir))
 }
 
-const DECLARATION =
-  /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(function\*?|class|const|let|var|interface|type|enum|namespace)\s+([A-Za-z_$][\w$]*)/
+const JS_TS_DECLARATION =
+  /^(?:export\s+)?(?:default\s+)?(?:declare\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\*?|class|const|let|var|interface|type|enum|namespace)\s+([A-Za-z_$][\w$]*)/
 const EXPORT_DEFAULT = /^export\s+default\b/
+const PY_DECLARATION = /^(?:async\s+)?(?:def|class)\s+([A-Za-z_]\w*)\b/
+const GO_DECLARATION = /^(?:func\s+(?:\([^)]*\)\s*)?|type\s+)([A-Za-z_]\w*)\b/
+const RUST_DECLARATION =
+  /^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?(?:fn|struct|enum|trait|type|mod)\s+([A-Za-z_]\w*)\b/
+const RUST_IMPL = /^impl(?:<[^>]*>)?\s+(?:[\w:<>]+\s+for\s+)?([A-Za-z_]\w*)\b/
+const OOP_TYPE_DECLARATION =
+  /^(?:(?:public|private|protected|internal|final|abstract|sealed|open|data|value|static|partial|actor)\s+)*(?:class|interface|struct|enum|record|object|trait|protocol|extension|module)\s+([A-Za-z_]\w*)\b/
+const OOP_FN_DECLARATION =
+  /^(?:(?:public|private|protected|internal|open|override|suspend|inline|mutating|static|final)\s+)*(?:fun|func|def|function)\s+([A-Za-z_]\w*)\b/
+const C_FN_DECLARATION =
+  /^(?:template\s*<[^>]*>\s*)?(?:(?:static|inline|extern|virtual|constexpr|const|unsigned|signed|struct|enum)\s+)*[A-Za-z_][\w:<>]*[\s*&]+([A-Za-z_]\w*)\s*\(/
+const C_CONTROL_KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'return', 'sizeof', 'catch'])
+
+function matchDeclarationSymbol(line: string): string | null | undefined {
+  for (const pattern of [
+    JS_TS_DECLARATION,
+    PY_DECLARATION,
+    GO_DECLARATION,
+    RUST_DECLARATION,
+    RUST_IMPL,
+    OOP_TYPE_DECLARATION,
+    OOP_FN_DECLARATION
+  ]) {
+    const match = line.match(pattern)
+    if (match) return match[1] ?? null
+  }
+  if (EXPORT_DEFAULT.test(line)) return 'default'
+  const cFn = line.match(C_FN_DECLARATION)
+  if (cFn?.[1] && !C_CONTROL_KEYWORDS.has(cFn[1])) return cFn[1]
+  return undefined
+}
 
 export interface FragmentWindow {
   readonly startLine: number
@@ -177,10 +229,11 @@ export interface FragmentWindow {
   readonly symbolLabel: string | null
 }
 
-/** 代码文件跳过开头注释与 import 区，从第一个顶层声明开始取；只有引用/再导出的文件返回 null。 */
+/** 代码文件跳过开头注释与模块导入区，从第一个顶层声明开始取；只有引用/再导出的文件返回 null。 */
 function codeStartLine(lines: readonly string[]): { index: number; symbol: string | null } | null {
   let inBlockComment = false
-  let inImport = false
+  let inTripleQuote: '"""' | "'''" | null = null
+  let inImport: 'es' | 'paren' | null = null
   let firstBody = -1
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!
@@ -189,26 +242,59 @@ function codeStartLine(lines: readonly string[]): { index: number; symbol: strin
       if (trimmed.includes('*/')) inBlockComment = false
       continue
     }
-    if (inImport) {
-      if (/['"];?\s*$/.test(trimmed) || /\bfrom\s*['"]/.test(trimmed)) inImport = false
+    if (inTripleQuote) {
+      if (trimmed.includes(inTripleQuote)) inTripleQuote = null
+      continue
+    }
+    if (inImport === 'es') {
+      if (/['"];?\s*$/.test(trimmed) || /\bfrom\s*['"]/.test(trimmed)) inImport = null
+      continue
+    }
+    if (inImport === 'paren') {
+      if (/[)\}];?\s*$/.test(trimmed)) inImport = null
       continue
     }
     if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#!')) continue
+    if (/^#\s*(?:include|pragma)\b/.test(trimmed) || /^#\[/.test(trimmed)) continue
+    if (trimmed.startsWith('#') && !/^#\s*(?:define|if|ifdef|ifndef|endif)\b/.test(trimmed)) continue
     if (trimmed.startsWith('/*')) {
       if (!trimmed.includes('*/')) inBlockComment = true
       continue
     }
-    if (/^['"]use (strict|client|server)['"];?$/.test(trimmed)) continue
-    if (/^import\b/.test(trimmed) || /^export\s+(\*|\{[^}]*\}?)\s*(from\b|$)/.test(trimmed) || /^export\s+type\s+\{/.test(trimmed)) {
-      const complete = /\bfrom\s*['"][^'"]+['"]/.test(trimmed) || /^import\s*['"]/.test(trimmed)
-      if (!complete) inImport = true
+    if (firstBody < 0 && (trimmed.startsWith('"""') || trimmed.startsWith("'''"))) {
+      const quote = trimmed.slice(0, 3) as '"""' | "'''"
+      if (!trimmed.slice(3).includes(quote)) inTripleQuote = quote
       continue
     }
-    if (/^(const|let|var)\s+[\w${}\s,]+=\s*require\(/.test(trimmed)) continue
+    if (/^['"]use (strict|client|server)['"];?$/.test(trimmed)) continue
+    if (/^package\s+[\w.]+;?\s*$/.test(trimmed)) continue
+    if (/^(?:namespace|using)\s+[\w.\\=]+(?:\s+as\s+\w+)?\s*;\s*$/.test(trimmed)) continue
+    if (/^use\s+/.test(trimmed)) {
+      if (trimmed.includes('{') && !/;\s*$/.test(trimmed)) inImport = 'paren'
+      continue
+    }
+    if (/^from\s+[\w.]+\s+import\b/.test(trimmed)) {
+      if (/\(\s*$/.test(trimmed) && !trimmed.includes(')')) inImport = 'paren'
+      continue
+    }
+    if (/^import\s*\(\s*$/.test(trimmed)) {
+      inImport = 'paren'
+      continue
+    }
+    if (/^import\b/.test(trimmed) || /^export\s+(\*|\{[^}]*\}?)\s*(from\b|$)/.test(trimmed) || /^export\s+type\s+\{/.test(trimmed)) {
+      const complete =
+        /\bfrom\s*['"][^'"]+['"]/.test(trimmed) ||
+        /^import\s*['"][^'"]+['"]/.test(trimmed)
+      if (!complete) {
+        const clause = trimmed.replace(/(?:#|\/\/).*$/, '').trimEnd()
+        if (clause.includes('{') || clause.endsWith(',')) inImport = 'es'
+      }
+      continue
+    }
+    if (/^(?:require|require_relative)\b/.test(trimmed) || /^(const|let|var)\s+[\w${}\s,]+=\s*require\(/.test(trimmed)) continue
     if (firstBody < 0) firstBody = i
-    const declaration = line.match(DECLARATION)
-    if (declaration) return { index: i, symbol: declaration[2] ?? null }
-    if (EXPORT_DEFAULT.test(line)) return { index: i, symbol: 'default' }
+    const symbol = matchDeclarationSymbol(line)
+    if (symbol !== undefined) return { index: i, symbol }
   }
   return firstBody < 0 ? null : { index: firstBody, symbol: null }
 }

@@ -122,6 +122,9 @@ export function learningQuestionRowStatus(
   const assessment = question.assessment
   if (!assessment) return { label: null, tone: 'muted', icon: 'circle' }
   if (assessment.disputed) return { label: '等待复核', tone: 'warning', icon: 'help' }
+  if (assessment.verdict === 'understanding_observed' && assessment.assisted) {
+    return { label: '提示后理解', tone: 'success', icon: 'check' }
+  }
   return LEARNING_VERDICT_STATUS[assessment.verdict]
 }
 
